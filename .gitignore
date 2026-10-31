@@ -1,0 +1,10 @@
+build/
+build-*/
+*.wav
+__pycache__/
+node_modules/
+web/dist/
+web/public/revforge.wasm
+web/test-results/
+web/playwright-report/
+.DS_Store
