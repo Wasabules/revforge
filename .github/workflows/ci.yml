@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get install -y ninja-build
+      - run: cmake -S . -B build -G Ninja
+      - run: cmake --build build
+      - run: ctest --test-dir build --output-on-failure
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get install -y ninja-build
+      - uses: mymindstorm/setup-emsdk@v14
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: cmake -S . -B build -G Ninja && cmake --build build --target revforge-render
+      - run: emcmake cmake -S . -B build-wasm -G Ninja && cmake --build build-wasm
+      - run: node tools/check_wasm.mjs build-wasm/revforge.wasm build/revforge-render
+      - run: cp build-wasm/revforge.wasm web/public/revforge.wasm
+      - run: npm ci
+        working-directory: web
+      - run: npm run check && npm run build
+        working-directory: web
+      - run: npx playwright install --with-deps chromium firefox
+        working-directory: web
+      - run: npx playwright test
+        working-directory: web
