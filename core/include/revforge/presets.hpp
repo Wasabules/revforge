@@ -3,6 +3,7 @@
 #include <cstddef>
 
 #include "revforge/engine_config.hpp"
+#include "revforge/powertrain.hpp"
 
 namespace revforge {
 
@@ -12,8 +13,11 @@ struct Preset {
     const char* description;
     EngineConfig config;
     bool electric;
+    CarConfig car;
+    GearboxConfig gearbox;
 
-    EngineProfile profile() const { return electric ? electricProfile() : config.toProfile(); }
+    EngineProfile profile() const { return powertrain().profile(); }
+    Powertrain powertrain() const { return Powertrain{config, electric, car, gearbox}; }
 };
 
 const Preset* presets(std::size_t& count);

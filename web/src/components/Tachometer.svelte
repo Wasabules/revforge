@@ -1,74 +1,98 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+  import Gauge from './Gauge.svelte';
+  import { animate } from '../lib/canvas';
+  import { digitColumns } from '../lib/digits';
+  import { InstrumentClock } from '../lib/instruments';
+  import { t, whole } from '../lib/i18n.svelte';
+
   interface Props {
-    rpm: number;
+    /** Le régime et la vitesse, lissés par l'horloge commune. */
+    rpm: () => number;
+    speed: () => number;
+    gear: () => number;
     redline: number;
-    gear: number;
-    speed: number;
+    idle: number;
     running: boolean;
     showRoad: boolean;
+    /** Lit la simulation pour cette image : à appeler avant de lire les jauges. */
+    sample: (now: number) => void;
   }
-  let { rpm, redline, gear, speed, running, showRoad }: Props = $props();
+  let { rpm, speed, gear, redline, idle, running, showRoad, sample }: Props = $props();
 
-  const START = 135;
-  const SWEEP = 270;
-  const CENTER = 160;
-  const RADIUS = 134;
-
+  const clock = new InstrumentClock();
+  // Une graduation de plus au-delà du rupteur : la zone rouge reste visible.
   const scaleMax = $derived(Math.ceil(redline / 1000) * 1000 + (redline % 1000 === 0 ? 1000 : 0));
-  const ticks = $derived(Array.from({ length: scaleMax / 1000 + 1 }, (_, i) => i));
+  let root: HTMLElement;
+  let gearNode = $state<SVGTextElement>();
+  let speedNode = $state<SVGTextElement>();
+  /** Au centre du cadran de 320 de large, décalé à droite. */
+  const SPEED_X = 204;
+  const ROAD_SIZE = 40;
 
-  const point = (angle: number, radius: number) => {
-    const radians = (angle * Math.PI) / 180;
-    return [CENTER + radius * Math.cos(radians), CENTER + radius * Math.sin(radians)];
-  };
-  const angleOf = (value: number) => START + (SWEEP * Math.min(value, scaleMax)) / scaleMax;
-  const arc = (from: number, to: number, radius: number) => {
-    if (to - from < 0.1) return '';
-    const [x1, y1] = point(from, radius);
-    const [x2, y2] = point(to, radius);
-    return `M ${x1} ${y1} A ${radius} ${radius} 0 ${to - from > 180 ? 1 : 0} 1 ${x2} ${y2}`;
-  };
-  const gearLabel = $derived(gear === 0 ? 'N' : String(gear));
-  const inRed = $derived(rpm >= redline * 0.985);
+  function writeSpeed(node: SVGTextElement, kmh: number) {
+    const text = whole(kmh);
+    node.textContent = text;
+    node.setAttribute('x', digitColumns(text, SPEED_X, ROAD_SIZE));
+  }
+
+  // Moteur coupé, l'aiguille retombe : on ne garde pas le dernier régime lu.
+  const read = () => (running ? Math.max(rpm(), 0) : 0);
+
+  onMount(() => {
+    const stop = animate(root, (_seconds, now) => {
+      sample(now);
+      clock.run(now);
+    }, false);
+    let lastGear = NaN;
+    let lastSpeed = NaN;
+    const road = clock.add((text) => {
+      if (!text) return;
+      const g = gear();
+      if (gearNode && g !== lastGear) {
+        lastGear = g;
+        gearNode.textContent = g === 0 ? 'N' : g < 0 ? 'R' : String(g);
+      }
+      const s = Math.round(speed());
+      if (speedNode && s !== lastSpeed) {
+        lastSpeed = s;
+        writeSpeed(speedNode, s);
+      }
+    });
+    return () => {
+      stop();
+      road();
+    };
+  });
+
+  // Rouvrir la zone route : ce nœud est neuf, il attend sa première écriture.
+  $effect(() => {
+    if (!showRoad) return;
+    if (gearNode) gearNode.textContent = gear() === 0 ? 'N' : gear() < 0 ? 'R' : String(gear());
+    if (speedNode) writeSpeed(speedNode, Math.round(speed()));
+  });
 </script>
 
-<svg class="tacho" viewBox="0 0 320 300" role="img" aria-label="Compte-tours : {Math.round(rpm)} tours par minute">
-  <path d={arc(START, START + SWEEP, RADIUS)} class="track" />
-  <path d={arc(angleOf(redline), START + SWEEP, RADIUS)} class="red-zone" />
-  <path d={arc(START, angleOf(rpm), RADIUS)} class="value" class:in-red={inRed} />
-  {#each ticks as tick (tick)}
-    {@const angle = angleOf(tick * 1000)}
-    {@const [x1, y1] = point(angle, RADIUS - 16)}
-    {@const [x2, y2] = point(angle, RADIUS - 26)}
-    {@const [tx, ty] = point(angle, RADIUS - 42)}
-    <line {x1} {y1} {x2} {y2} class="tick" class:hot={tick * 1000 >= redline} />
-    <text x={tx} y={ty} class="tick-label" class:hot={tick * 1000 >= redline}>{tick}</text>
-  {/each}
-  <text x={CENTER} y="150" class="rpm" class:off={!running} data-testid="rpm">{running ? Math.round(rpm / 10) * 10 : 0}</text>
-  <text x={CENTER} y="174" class="unit">tr/min</text>
-  {#if showRoad}
-    <text x="128" y="226" class="road-value" data-testid="gear">{gearLabel}</text>
-    <text x="128" y="244" class="unit">rapport</text>
-    <text x="192" y="226" class="road-value" data-testid="speed">{Math.round(speed)}</text>
-    <text x="192" y="244" class="unit">km/h</text>
-  {/if}
-</svg>
+<div class="tach" bind:this={root}>
+  <Gauge id="rpm" large label={t('tacho.label')} note={t('tacho.note', { redline: whole(redline) })} unit={t('unit.rpm')}
+    min={0} max={scaleMax} step={1000} minor={scaleMax > 12000 ? 500 : 200} tickDivisor={1000} sweep={270}
+    zone={{ from: redline, to: scaleMax }} mark={idle > 0 ? idle : null} {clock} {read} digits={0} valueTestId="rpm">
+    {#snippet center({ cx, cy })}
+      {#if showRoad}
+        <text x={cx - 44} y={cy + 92} class="road" data-testid="gear" bind:this={gearNode}>N</text>
+        <text x={cx - 44} y={cy + 110} class="caption">{t('tacho.gear')}</text>
+        <text x={SPEED_X} y={cy + 92} class="road" data-testid="speed" bind:this={speedNode}>0</text>
+        <text x={cx + 44} y={cy + 110} class="caption">km/h</text>
+      {/if}
+    {/snippet}
+  </Gauge>
+  <p class="redline"><span data-testid="tach-redline">{t('tacho.redline', { rpm: whole(redline) })}</span>{#if idle > 0}<i aria-hidden="true"></i>{t('tacho.idle', { rpm: whole(idle) })}{/if}</p>
+</div>
 
 <style>
-  .tacho { width: 100%; max-width: 280px; display: block; margin: 0 auto; user-select: none; }
-  @media (max-width: 860px) { .tacho { max-width: 340px; } }
-  path { fill: none; stroke-linecap: round; }
-  .track { stroke: var(--line); stroke-width: 12; }
-  .red-zone { stroke: var(--danger); stroke-width: 12; opacity: 0.5; stroke-linecap: butt; }
-  .value { stroke: var(--accent); stroke-width: 12; }
-  .value.in-red { stroke: var(--danger); }
-  .tick { stroke: var(--text-dim); stroke-width: 2; }
-  .tick.hot { stroke: var(--danger); }
-  text { fill: var(--text); text-anchor: middle; font-variant-numeric: tabular-nums; }
-  .tick-label { fill: var(--text-dim); font-size: 14px; dominant-baseline: central; }
-  .tick-label.hot { fill: var(--danger); }
-  .rpm { font-size: 56px; font-weight: 300; letter-spacing: -1px; }
-  .rpm.off { fill: var(--text-dim); }
-  .unit { fill: var(--text-dim); font-size: 13px; }
-  .road-value { font-size: 26px; font-weight: 500; }
+  .tach { width: 100%; max-width: var(--tach-max, 440px); margin: 0 auto; }
+  .road { fill: var(--text); text-anchor: middle; font-family: var(--display); font-size: 40px; font-weight: 800; }
+  .caption { fill: var(--text-dim); text-anchor: middle; font-size: 13px; }
+  .redline i { display: inline-block; width: 7px; height: 7px; margin: 0 4px 0 10px; border-radius: 50%; background: var(--text); vertical-align: 1px; }
+  .redline { margin: 2px 0 0; color: var(--text-dim); font-size: var(--type-small); text-align: center; font-variant-numeric: tabular-nums; }
 </style>

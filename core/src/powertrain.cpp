@@ -1,0 +1,362 @@
+#include "revforge/powertrain.hpp"
+
+#include <algorithm>
+#include <cmath>
+
+#include "revforge/driving_model.hpp"
+
+namespace revforge {
+
+namespace {
+
+constexpr double kPi = 3.141592653589793;
+constexpr double kAirDensity = 1.2;
+constexpr double kRollingResistance = 0.0095;  // pneus de route récents, environ 8 à 10 kg par tonne
+constexpr double kGravity = 9.81;
+
+// Pression moyenne au frein à pleine charge (bar).
+constexpr double kBmepDieselNa = 8.5;
+// Chaque bar de pression ajoute presque un remplissage de plus : l'échangeur ne rattrape pas tout.
+constexpr double kBoostEfficiency = 0.9;
+// Un moteur suralimenté a une compression plus basse, pour ne pas détoner.
+constexpr double kTurboCompressionLoss = 0.95;
+// Le calculateur tient le couple constant au sommet : le plateau des moteurs turbo.
+constexpr double kPlateauShare = 0.97;
+constexpr double kPistonSpeedLimit = 24.0;  // m/s, au-delà le moteur respire mal
+
+constexpr double kElectricTorqueNm = 350.0;
+constexpr double kElectricPowerW = 190000.0;
+constexpr double kElectricMaxRpm = 12000.0;
+
+double clamp(double v, double low, double high) { return v < low ? low : (v > high ? high : v); }
+
+double liters(const EngineConfig& e) { return static_cast<double>(e.displacementCc) / 1000.0; }
+
+/** Couple net d'une pression moyenne (bar), quatre temps : p × V / 4π. */
+double bmepToNm(const EngineConfig& e, double bar) { return bar * 1e5 * liters(e) * 1e-3 / (4.0 * kPi); }
+
+/** Un moteur qui tourne haut est plus poussé : soupapes, calage, admission. */
+double naturalBmep(const EngineConfig& e) {
+    if (e.fuel == Fuel::Diesel) return kBmepDieselNa;
+    return clamp(11.0 + 1.1 * (static_cast<double>(e.redlineRpm) - 6200.0) / 1000.0, 10.5, 14.5);
+}
+
+/** La respiration selon le régime : 1 au pic de couple. */
+double breathing(const EngineConfig& e, double rpm) {
+    const double redline = static_cast<double>(e.redlineRpm);
+    const double peakAt = (e.aspiration == Aspiration::Turbo ? 0.6 : 0.62) * redline;
+    double shape;
+    if (rpm <= peakAt) {
+        const double below = 1.0 - rpm / peakAt;
+        shape = 1.0 - 0.4 * below * below;
+    } else {
+        const double above = (rpm - peakAt) / (redline - peakAt);
+        shape = 1.0 - 0.22 * above * above;
+    }
+    // Une longue course à haut régime : le gaz n'a plus le temps de passer.
+    const double pistonSpeed = 2.0 * e.strokeMm() / 1000.0 * rpm / 60.0;
+    const double excess = std::max(pistonSpeed - kPistonSpeedLimit, 0.0);
+    shape *= std::max(1.0 - 0.012 * excess * excess, 0.55);
+    // Une ligne libre gagne en haut, mais perd la contre-pression qui aide en bas.
+    const double fraction = clamp(rpm / redline, 0.0, 1.0);
+    switch (e.exhaust) {
+        case Exhaust::Stock: shape *= 0.96 - 0.04 * fraction; break;
+        case Exhaust::Sport: break;
+        case Exhaust::Straight: shape *= 1.0 + 0.04 * fraction - 0.08 * (1.0 - fraction) * (1.0 - fraction); break;
+        case Exhaust::MufflerDelete: shape *= 1.0 + 0.02 * fraction - 0.04 * (1.0 - fraction) * (1.0 - fraction); break;
+        case Exhaust::ResonatorDelete: shape *= 0.97 - 0.03 * fraction; break;
+        case Exhaust::Quiet: shape *= 0.95 - 0.05 * fraction; break;
+    }
+    return shape;
+}
+
+}  // namespace
+
+const BodySpec& bodySpec(Body body) {
+    static const BodySpec city{0.68, 2.45, 0.55, 0.58, 0.85f, 0.38, 5, 3.75f, 1.68f, 1.5f, 0.6f, 0.32f, EnginePlacement::Front};
+    static const BodySpec compact{0.70, 2.62, 0.55, 0.56, 1.0f, 0.3, 6, 4.3f, 1.8f, 1.45f, 0.75f, 0.33f, EnginePlacement::Front};
+    static const BodySpec coupe{0.66, 2.72, 0.5, 0.52, 1.1f, 0.22, 6, 4.6f, 1.85f, 1.3f, 0.85f, 0.33f, EnginePlacement::Front};
+    static const BodySpec supercar{0.62, 2.65, 0.42, 0.43, 0.45f, 0.12, 7, 4.55f, 1.95f, 1.15f, 0.95f, 0.5f, EnginePlacement::Mid};
+    static const BodySpec van{1.35, 3.2, 0.85, 0.55, 1.25f, 0.45, 5, 4.9f, 1.9f, 1.95f, 1.0f, 0.38f, EnginePlacement::Front};
+    switch (body) {
+        case Body::Compact: return compact;
+        case Body::Coupe: return coupe;
+        case Body::Supercar: return supercar;
+        case Body::Van: return van;
+        case Body::City: break;
+    }
+    return city;
+}
+
+EnginePlacement placementOf(const CarConfig& car) {
+    return car.placement == EnginePlacement::Natural ? bodySpec(car.body).naturalPlacement : car.placement;
+}
+
+namespace {
+
+/** Le moteur, par rapport à l'essieu arrière (m) : juste derrière le train avant, devant le train arrière, ou derrière lui. */
+double engineFromRearAxle(const BodySpec& body, EnginePlacement placement) {
+    switch (placement) {
+        case EnginePlacement::Mid: return 0.6;
+        case EnginePlacement::Rear: return -0.35;
+        default: return body.wheelbaseM - 0.15;
+    }
+}
+
+/**
+ * Le moteur et sa boîte pèsent environ 16 % de la voiture, le reste est à peu près équilibré. Ce simple
+ * calcul donne 55 % sur l'avant pour un moteur avant, 44 % au centre, 38 % à l'arrière (une 911 fait 38 à 39 %).
+ */
+double engineFrontShare(const BodySpec& body, EnginePlacement placement) {
+    constexpr double kEngineShare = 0.16;
+    constexpr double kRestOfCar = 0.48;
+    return (1.0 - kEngineShare) * kRestOfCar + kEngineShare * engineFromRearAxle(body, placement) / body.wheelbaseM;
+}
+
+}  // namespace
+
+double frontShareOf(const CarConfig& car) {
+    const BodySpec& body = bodySpec(car.body);
+    const EnginePlacement placement = placementOf(car);
+    if (placement == body.naturalPlacement) return body.frontShare;
+    return body.frontShare + engineFrontShare(body, placement) - engineFrontShare(body, body.naturalPlacement);
+}
+
+float exhaustScaleOf(const CarConfig& car) {
+    const BodySpec& body = bodySpec(car.body);
+    const EnginePlacement placement = placementOf(car);
+    if (placement == body.naturalPlacement) return body.exhaustScale;
+    // Le trajet du moteur jusqu'à l'arrière de la voiture. Un moteur arrière enroule quand même ses tubes.
+    const double natural = static_cast<double>(body.rearAxleM) + engineFromRearAxle(body, body.naturalPlacement);
+    const double here = static_cast<double>(body.rearAxleM) + engineFromRearAxle(body, placement);
+    return std::max(body.exhaustScale * static_cast<float>(here / natural), 0.25f);
+}
+
+namespace {
+
+CarAcoustics carAcousticsOf(const CarConfig& car, const EngineProfile& profile) {
+    const BodySpec& body = bodySpec(car.body);
+    const EnginePlacement placement = placementOf(car);
+    CarAcoustics a;
+    a.lengthM = body.lengthM;
+    a.widthM = body.widthM;
+    a.heightM = body.heightM;
+    a.wheelbaseM = static_cast<float>(body.wheelbaseM);
+    a.placement = placement;
+    a.insulation = car.insulation;
+    a.windowsOpen = car.windowsOpen;
+
+    const float rearEnd = -body.lengthM / 2.0f;
+    const float rearAxle = rearEnd + body.rearAxleM;
+    const float frontAxle = rearAxle + static_cast<float>(body.wheelbaseM);
+    const float engineX = rearAxle + static_cast<float>(engineFromRearAxle(body, placement));
+    a.engine = {engineX, 0.0f, 0.6f};
+    // La tête du conducteur : assis loin du train avant, sauf si un moteur central l'en rapproche.
+    const float seatX = placement == EnginePlacement::Mid ? rearAxle + 1.45f : frontAxle - 1.7f;
+    a.seat = {seatX, 0.37f, body.heightM - 0.22f};
+    a.cabinFrontM = placement == EnginePlacement::Mid ? 0.95f : 0.85f;
+    a.cabinBackM = placement == EnginePlacement::Mid ? 0.25f : 0.95f;
+
+    // Sur de vrais passages, le peigne de sol ne dépasse pas 3 dB : une voiture n'est pas un point, et l'air bouge.
+    constexpr float kGroundCoherence = 0.25f;
+    const auto place = [&a](Source source, Point3 at, float extent) {
+        a.sources[static_cast<std::size_t>(source)] = SourcePlace{at, extent, kGroundCoherence};
+    };
+    // Une sortie unique est décalée d'un côté ; deux sorties s'écartent.
+    const float tailY = profile.routing == ExhaustRouting::Single ? -0.35f : 0.4f * body.widthM / 2.0f + 0.2f;
+    // Rayon de sortie : le tube suit la cylindrée (voir ExhaustLine).
+    const double litres = static_cast<double>(profile.boreM * profile.boreM * profile.strokeM) * 0.7854 * profile.cylinders * 1000.0;
+    const double diameter = std::clamp(0.05 * std::sqrt(std::max(litres, 0.1) / 2.0), 0.032, 0.09);
+    a.outletRadiusM = static_cast<float>(diameter / 2.0);
+    // La pression au plan de sortie est celle d'un monopôle à 0,35 rayon : la source ne diverge jamais. Et le centre
+    // acoustique est à 0,61 rayon en aval de la bouche : c'est la correction de bout.
+    const float outletExtent = 0.35f * a.outletRadiusM;
+    const float outletX = rearEnd - 0.03f - 0.61f * a.outletRadiusM;
+    place(Source::ExhaustA, {outletX, tailY, body.outletHeightM}, outletExtent);
+    place(Source::ExhaustB, {outletX, profile.routing == ExhaustRouting::Single ? tailY : -tailY, body.outletHeightM}, outletExtent);
+
+    // L'admission : derrière la calandre sur un moteur avant, une prise d'air sur le flanc au centre, le capot arrière au fond.
+    if (placement == EnginePlacement::Front) place(Source::Intake, {-rearEnd + 0.02f, 0.3f, 0.65f}, 0.06f);
+    else if (placement == EnginePlacement::Mid) place(Source::Intake, {engineX + 0.25f, body.widthM / 2.0f + 0.02f, 0.75f}, 0.06f);
+    else place(Source::Intake, {rearEnd - 0.02f, 0.25f, body.heightM * 0.7f}, 0.06f);
+
+    // Le compartiment moteur rayonne par ses ouvertures : capot fermé, on l'entend par le bas et la calandre.
+    if (placement == EnginePlacement::Front) place(Source::Bay, {-rearEnd + 0.02f, 0.0f, 0.35f}, 0.3f);
+    else place(Source::Bay, {rearEnd - 0.02f, 0.0f, 0.45f}, 0.3f);
+
+    // Sous le plancher, au milieu de la voiture : boîte et transmission. À l'arrière pour un moteur arrière.
+    const float underX = placement == EnginePlacement::Rear ? rearAxle : (rearAxle + frontAxle) / 2.0f;
+    place(Source::Underfloor, {underX, 0.0f, 0.12f}, 0.35f);
+    // Les pneus et le vent : répartis sur toute la voiture.
+    place(Source::Road, {0.0f, 0.0f, 0.12f}, static_cast<float>(body.wheelbaseM) / 2.0f);
+    return a;
+}
+
+}  // namespace
+
+EngineProfile Powertrain::profile() const {
+    EngineProfile p = electric ? electricProfile() : engine.toProfile();
+    p.exhaustScale = exhaustScaleOf(car);
+    p.car = carAcousticsOf(car, p);
+    return p;
+}
+
+Powertrain referencePowertrain() {
+    Powertrain p;
+    p.engine.cylinders = 4;
+    p.engine.displacementCc = 1360;
+    p.engine.boreMm = 75;
+    p.engine.redlineRpm = 6200;
+    p.engine.exhaust = Exhaust::Stock;
+    return p;
+}
+
+TurboSpec turboSpecOf(const Powertrain& p) { return turboSpecFor(p.engine, breathing(p.engine, 0.88 * static_cast<double>(p.engine.redlineRpm))); }
+
+double breathingOf(const Powertrain& p, double rpm) { return breathing(p.engine, rpm); }
+
+double steadyBoost(const Powertrain& p, double rpm) {
+    if (p.electric || p.engine.aspiration != Aspiration::Turbo) return 0.0;
+    return turboSteady(turboSpecOf(p), rpm, breathing(p.engine, rpm)).boost;
+}
+
+double fullLoadTorqueNm(const Powertrain& p, double rpm, double boost) {
+    if (p.electric) {
+        const double omega = std::max(rpm, 1.0) * 2.0 * kPi / 60.0;
+        return std::min(kElectricTorqueNm, kElectricPowerW / omega);
+    }
+    const EngineConfig& e = p.engine;
+    // Sous le ralenti, la combustion devient instable : le couple s'effondre.
+    const double idle = idleRpmOf(p);
+    const double under = rpm < idle ? (rpm / idle) * (rpm / idle) : 1.0;
+    if (e.aspiration != Aspiration::Turbo) return bmepToNm(e, naturalBmep(e)) * breathing(e, rpm) * under;
+    const double base = bmepToNm(e, naturalBmep(e) * kTurboCompressionLoss);
+    const double gain = kBoostEfficiency * static_cast<double>(e.boostBar);
+    return std::min(base * breathing(e, rpm) * (1.0 + gain * boost), base * (1.0 + gain) * kPlateauShare) * under;
+}
+
+double torqueCurveNm(const Powertrain& p, double rpm) {
+    if (p.electric || p.engine.aspiration != Aspiration::Turbo) return fullLoadTorqueNm(p, rpm, 0.0);
+    // L'arbre stabilisé : la courbe de la fiche ne dit rien du retard. La contre-pression, elle, se paie toujours.
+    const TurboSpec spec = turboSpecOf(p);
+    const TurboSteady steady = turboSteady(spec, rpm, breathing(p.engine, rpm));
+    return fullLoadTorqueNm(p, rpm, steady.boost) - turboBackPressureNm(spec, steady.chargePa, steady.turbineInPa, steady.flow, 1.0);
+}
+
+double frictionTorqueNm(const Powertrain& p, double rpm) {
+    // Fer et ventilation d'un moteur électrique, de l'ordre du kilowatt à 5000 tr/min : le reste est dans le rendement.
+    if (p.electric) return 0.6 + rpm * 0.00035;
+    const double k = rpm / 1000.0;
+    const double bar = 0.9 + 0.12 * k + 0.03 * k * k + (p.engine.fuel == Fuel::Diesel ? 0.3 : 0.0);
+    return bmepToNm(p.engine, bar);
+}
+
+double pumpingTorqueNm(const Powertrain& p, double rpm, double manifold) {
+    if (p.electric) return 0.0;
+    const double idle = idleRpmOf(p);
+    const double above = clamp((rpm - idle) / 1500.0, 0.0, 1.0);
+    return bmepToNm(p.engine, 3.2) * above * (1.0 - clamp(manifold, 0.0, 1.0));
+}
+
+double engineInertia(const Powertrain& p) {
+    if (p.electric) return 0.05;
+    const double light = clamp(6500.0 / static_cast<double>(p.engine.redlineRpm), 0.6, 1.2);
+    return (0.03 + 0.055 * liters(p.engine)) * light;
+}
+
+double idleRpmOf(const Powertrain& p) { return static_cast<double>(p.profile().idleRpm); }
+
+double redlineRpmOf(const Powertrain& p) { return p.electric ? kElectricMaxRpm : static_cast<double>(p.engine.redlineRpm); }
+
+PowerSummary powerSummary(const Powertrain& p) {
+    PowerSummary s;
+    const double redline = redlineRpmOf(p);
+    for (double rpm = 500.0; rpm <= redline; rpm += 50.0) {
+        const double torque = torqueCurveNm(p, rpm);
+        const double kw = torque * rpm * 2.0 * kPi / 60.0 / 1000.0;
+        if (torque > s.peakTorqueNm) {
+            s.peakTorqueNm = torque;
+            s.peakTorqueRpm = rpm;
+        }
+        if (kw > s.peakPowerKw) {
+            s.peakPowerKw = kw;
+            s.peakPowerRpm = rpm;
+        }
+    }
+    return s;
+}
+
+double wheelRadiusM(const CarConfig& car) {
+    const double rim = static_cast<double>(car.rimInch);
+    return rim * 0.0127 + 0.095 - 0.002 * (rim - 14.0);
+}
+
+double roadLoadN(const Powertrain& p, double speedMs) {
+    const BodySpec& body = bodySpec(p.car.body);
+    const double rolling = speedMs > 0.1 ? kRollingResistance * static_cast<double>(p.car.massKg) * kGravity : 0.0;
+    return 0.5 * kAirDensity * body.dragArea * speedMs * speedMs + rolling;
+}
+
+Gearing gearingOf(const Powertrain& p) {
+    const BodySpec& body = bodySpec(p.car.body);
+    const PowerSummary peak = powerSummary(p);
+    const bool rearOrAll = p.car.drive != Drive::Front;
+    const bool allWheels = p.car.drive == Drive::All;
+    const GearboxKind kind = p.electric ? GearboxKind::Reducer : p.gearbox.kind;
+    const double efficiency = drivelineEfficiency(kind, p.gearbox.form, rearOrAll, allWheels);
+    const double available = peak.peakPowerKw * 1000.0 * efficiency;
+    // Vitesse où la puissance équilibre la résistance, par dichotomie.
+    double low = 5.0, high = 150.0;
+    for (int i = 0; i < 40; ++i) {
+        const double middle = 0.5 * (low + high);
+        (roadLoadN(p, middle) * middle > available ? high : low) = middle;
+    }
+    const double radius = wheelRadiusM(p.car);
+    GearboxContext context;
+    context.defaultGears = body.gears;
+    context.engineTorqueNm = peak.peakTorqueNm;
+    context.rearOrAll = rearOrAll;
+    context.allWheels = allWheels;
+    context.electric = p.electric;
+    // Un seul rapport, choisi pour le démarrage : il plafonne la vitesse avant la puissance.
+    context.topOverall = p.electric ? kElectricMaxRpm * 2.0 * kPi / 60.0 * radius / std::min(low, 58.0)
+                                    : peak.peakPowerRpm * 2.0 * kPi / 60.0 * radius / low;
+    Gearing g;
+    g.box = designGearbox(p.gearbox, context);
+    g.gears = g.box.gears;
+    for (int i = 0; i < g.gears; ++i) g.overall[static_cast<std::size_t>(i)] = g.box.boxRatio[static_cast<std::size_t>(i)] * g.box.finalDrive;
+    g.reverseOverall = g.box.reverseRatio * g.box.finalDrive;
+    return g;
+}
+
+Performance measurePerformance(const Powertrain& p) {
+    Performance out;
+    constexpr double kStep = 0.01;
+    DrivingModel model(p);
+    // Le chronomètre part une fois la première engagée, embrayage au point de patinage.
+    for (int i = 0; i < 100 && !model.meshed(); ++i) model.stepPedal(kStep, 1.0, 0.0);
+    for (int i = 0; i < 40 * 100; ++i) {
+        model.stepPedal(kStep, 1.0, 0.0);
+        if (model.speedKmh() >= 100.0) {
+            out.zeroTo100S = static_cast<double>(i) * kStep;
+            break;
+        }
+    }
+    const Gearing gearing = gearingOf(p);
+    const double radius = wheelRadiusM(p.car);
+    const double redline = redlineRpmOf(p);
+    for (int gear = 0; gear < gearing.gears; ++gear) {
+        const double ratio = gearing.overall[static_cast<std::size_t>(gear)];
+        for (double kmh = 20.0; kmh <= 500.0; kmh += 0.5) {
+            const double speed = kmh / 3.6;
+            const double rpm = speed * ratio * 60.0 / (2.0 * kPi * radius);
+            if (rpm > redline) break;
+            if (torqueCurveNm(p, rpm) * ratio * gearing.box.meshEfficiency / radius >= roadLoadN(p, speed)) {
+                out.topSpeedKmh = std::max(out.topSpeedKmh, kmh);
+            }
+        }
+    }
+    return out;
+}
+
+}  // namespace revforge

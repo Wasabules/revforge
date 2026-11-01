@@ -1,5 +1,7 @@
 #include "revforge/driving_model.hpp"
 
+#include "portable_math.hpp"
+
 #include <algorithm>
 #include <cmath>
 
@@ -8,210 +10,1198 @@ namespace revforge {
 namespace {
 
 constexpr double kPi = 3.141592653589793;
-constexpr double kRatios[] = {3.42, 1.81, 1.28, 0.98, 0.77};
-constexpr int kGears = 5;
-constexpr double kFinalDrive = 3.94;
-constexpr double kWheelRadius = 0.285;
-constexpr double kMassKg = 1100.0;
-constexpr double kDrivelineEfficiency = 0.9;
-constexpr double kEngineBrakeNm = 16.0;
-constexpr double kThrottlePerKmh = 0.09;
-constexpr double kPedalUpPerS = 1.6;
-constexpr double kPedalDownPerS = 3.5;
-constexpr double kBrakeMarginKmh = 4.0;
-constexpr double kBrakeRatePerS = 1.2;
-constexpr double kShiftSec = 0.42;
-constexpr double kClutchOutPerS = 9.0;
-constexpr double kClutchInPerS = 3.0;
-constexpr double kClutchLaunchPerS = 0.75;
-constexpr double kLaunchEndKmh = 14.0;
-constexpr double kLaunchClutch = 0.85;
-constexpr double kLaunchRpm = 1300.0;
-constexpr double kMinShiftGapSec = 2.5;
-constexpr double kDownshiftRpm = 1450.0;
+constexpr double kStep = 0.001;
+constexpr double kGravity = 9.81;
+constexpr double kTyreGrip = 1.05;
+constexpr double kTyreSlipMs = 1.0;
+constexpr double kWheelInertia = 1.6;  // deux roues et le pont
+constexpr double kPedalUpPerS = 6.0;
+constexpr double kPedalDownPerS = 12.0;
+constexpr double kBrakeRatePerS = 3.6;
+// La route : la pente change progressivement, et un virage coûte une part de la force latérale (dérive des pneus).
+constexpr double kGradePerSecond = 0.02;
+constexpr double kCorneringDragShare = 0.05;
+constexpr double kAirDensity = 1.2;
+constexpr double kTrailerRolling = 0.012;
+constexpr double kTrailerDragArea = 1.2;
+// Le pied est au plancher depuis ce temps, et rien ne vient : la voiture n'en a pas la force.
+constexpr double kStrainS = 2.0;
 constexpr double kNeutralBelowKmh = 8.0;
-constexpr double kRpmTauS = 0.09;
-constexpr double kRpmUpPerS = 3800.0;
-constexpr double kRpmDownPerS = 2600.0;
-// Au point mort, le moteur est libre : il prend et perd ses tours bien plus vite.
-constexpr double kFreeRevUpPerS = 12000.0;
-constexpr double kFreeRevDownPerS = 5000.0;
-constexpr double kFreeRevTauS = 0.05;
-constexpr double kLimiterDrop = 180.0;
+constexpr double kLimiterDropShare = 0.04;
+constexpr double kLimiterMinCutS = 0.03;
+constexpr double kStopRpm = 60.0;
+constexpr double kPullInSeconds = 0.02;
+constexpr double kReleaseAfterCatchS = 0.3;
+constexpr double kMeshHoldS = 0.25;
+constexpr double kStarterEfficiency = 0.85;
+constexpr double kColdFriction = 1.5;
+// Sous ce régime, en prise, la combustion ne suit plus : le moteur cale.
+constexpr double kStallShare = 0.68;
+// Le cône a fini sous cet écart : le baladeur peut passer.
+constexpr double kSyncToleranceRad = 3.0;
+// Sans débrayer, le cône abandonne vite : il ne peut pas freiner tout le moteur. Le baladeur force alors sur les dents.
+constexpr double kBlockedPatienceS = 0.09;
+// Le conducteur insiste, puis renonce.
+constexpr double kGrindGiveUpS = 0.8;
+// Sous charge, un rapport ne sort pas : les dents sont plaquées (part du couple admissible).
+constexpr double kReleaseShare = 0.35;
+constexpr double kReleaseGiveUpS = 0.45;
+// Les crabots tombent tant que l'écart leur laisse le temps de trouver leur place (rad/s à l'arbre primaire).
+constexpr double kDogWindowRad = 170.0;
+// Une boîte en surcharge s'use d'autant plus vite que le couple dépasse ce qu'elle admet (règle de Miner).
+constexpr double kWearRefS = 30.0;
+// Les arbres de roue et le pneu, en série (Nm/rad et Nm·s/rad, vus à la roue).
+constexpr double kShaftStiffness = 6000.0;
+constexpr double kShaftDamping = 60.0;
 
 double approach(double from, double to, double maxStep) {
     const double delta = to - from;
     return std::fabs(delta) <= maxStep ? to : from + maxStep * (delta > 0 ? 1 : -1);
 }
 
-double coerceIn(double v, double low, double high) { return v < low ? low : (v > high ? high : v); }
+double clamp(double v, double low, double high) { return v < low ? low : (v > high ? high : v); }
 
-/** Courbe de couple d'un 1.4 atmosphérique. */
-double torqueAt(double r) {
-    const double x = coerceIn((r - 3200.0) / 3500.0, -1.0, 1.0);
-    return 118.0 * (1.0 - 0.32 * x * x);
-}
+double toOmega(double rpm) { return rpm * 2.0 * kPi / 60.0; }
+double toRpm(double omega) { return omega * 60.0 / (2.0 * kPi); }
 
-double resistance(double speed) {
-    return 0.5 * 1.2 * 0.68 * speed * speed + (speed > 0.1 ? 0.012 * kMassKg * 9.81 : 0.0);
-}
+/** Comme une tangente hyperbolique, sans dépendre de la bibliothèque mathématique. */
+double saturate(double x) { return x / std::sqrt(1.0 + x * x); }
 
 }  // namespace
 
-void DrivingModel::step(double dt) {
-    // Boucle de kLoopSec secondes : ville, feu, voie rapide, dépassement, arrêt.
-    static const Leg legs[] = {
-        {0.0, 0.0, 0.0},
-        {5.0, 50.0, 0.55},
-        {20.0, 50.0, 0.4},
-        {26.0, 0.0, 0.0},
-        {36.0, 112.0, 1.0},
-        {62.0, 90.0, 0.35},
-        {76.0, 128.0, 1.0},
-        {92.0, 0.0, 0.0},
-    };
-    clock_ += dt;
-    cycleSec_ = std::fmod(clock_, kLoopSec);
-    const Leg* leg = &legs[0];
-    for (const Leg& candidate : legs) {
-        if (candidate.fromSec <= cycleSec_) leg = &candidate;
-    }
-    const double speed = speedKmh_ / 3.6;
+DrivingModel::DrivingModel() : DrivingModel(referencePowertrain()) {}
 
-    drive(*leg, speed, dt);
-    selectGear(leg->targetKmh > 0.0, dt);
-    moveCar(speed, dt);
-    turnEngine(dt);
+DrivingModel::DrivingModel(const Powertrain& powertrain) {
+    setPowertrain(powertrain);
+    omega_ = powertrain.electric ? 0.0 : toOmega(idle_);
+    inputOmega_ = omega_;
+}
+
+void DrivingModel::setPowertrain(const Powertrain& powertrain) {
+    const bool sameBox = powertrain.gearbox == powertrain_.gearbox;
+    // Un autre moteur ou une autre voiture : le trajet repart de zéro. Les vitres ou l'isolation ne changent pas ce qu'on brûle.
+    const bool sameConsumer = sameBox && powertrain.electric == powertrain_.electric && powertrain.engine == powertrain_.engine &&
+                              powertrain.car.body == powertrain_.car.body && powertrain.car.massKg == powertrain_.car.massKg &&
+                              powertrain.car.rimInch == powertrain_.car.rimInch && powertrain.car.drive == powertrain_.car.drive;
+    powertrain_ = powertrain;
+    consumption_.configure(powertrain);
+    if (!sameConsumer) consumption_.resetTrip();
+    gearing_ = gearingOf(powertrain);
+    efficiency_ = gearing_.box.meshEfficiency;
+    if (!sameBox) repairGearbox();
+    radius_ = wheelRadiusM(powertrain.car);
+    idle_ = idleRpmOf(powertrain);
+    redline_ = redlineRpmOf(powertrain);
+    inertia_ = engineInertia(powertrain);
+    const PowerSummary peak = powerSummary(powertrain);
+    peakTorqueRpm_ = peak.peakTorqueRpm;
+    shiftMap_ = buildShiftMap(powertrain, gearing_);
+    clutchCapacity_ = 1.6 * peak.peakTorqueNm;
+    // Le robot change d'autant plus vite que la voiture est sportive ; sur une boîte à crabots, c'est le barillet qui décide.
+    shiftPace_ = bodySpec(powertrain.car.body).shiftSeconds;
+    const double litres = static_cast<double>(powertrain.engine.displacementCc) / 1000.0;
+    // Le convertisseur est dimensionné pour caler vers 45 % du régime maximal à pleine charge.
+    const double stallOmega = toOmega(0.4 * redline_);
+    converterK_ = stallOmega / std::sqrt(std::max(fullLoadTorqueNm(powertrain, 0.4 * redline_, 1.0), 1.0));
+    // Couple de chaque explosion : gaz et compression, un cylindre à la fois, une fois les autres retranchés.
+    const double firings = static_cast<double>(powertrain.engine.cylinders);
+    const double overlap = firings <= 4.0 ? 1.0 : (firings <= 5.0 ? 0.8 : (firings <= 6.0 ? 0.55 : (firings <= 8.0 ? 0.35 : (firings <= 10.0 ? 0.25 : 0.15))));
+    const double fuelScale = powertrain.engine.fuel == Fuel::Diesel ? 2.0 : 1.0;
+    const double perCylinder = litres / firings * 4.0 * overlap * fuelScale;
+    rippleIdleNm_ = 45.0 * perCylinder;
+    rippleNm_ = 160.0 * perCylinder;
+    // Un collecteur plus gros met plus de temps à se remplir.
+    manifoldTau_ = 0.06 + 0.02 * litres;
+    starter_ = powertrain.profile().starter;
+    turboEngine_ = !powertrain.electric && powertrain.engine.aspiration == Aspiration::Turbo;
+    if (turboEngine_) turbo_.setSpec(turboSpecOf(powertrain));
+    if (gear_ > gearing_.gears) gear_ = gearing_.gears;
+    step_ = ShiftStep::None;
+    ignitionCut_ = false;
+    torqueScale_ = 1.0;
+    if (powertrain.electric) {
+        gear_ = 1;
+        pendingGear_ = 1;
+        clutch_ = 1.0;
+        locked_ = true;
+        meshed_ = true;
+        cut_ = false;
+    } else if (gear_ != 0 && meshed_) {
+        wheelOmega_ = speedMs_ / radius_;
+        if (locked_) omega_ = std::max(wheelOmega_ * ratio(gear_), toOmega(idle_));
+        inputOmega_ = wheelOmega_ * ratio(gear_);
+        locked_ = false;
+        twist_ = 0.0;
+    } else if (gear_ == 0) {
+        meshed_ = false;
+    }
+    omega_ = std::min(omega_, toOmega(redline_));
+    if (!turboEngine_) boost_ = 0.0;
+}
+
+double DrivingModel::rpm() const {
+    const double value = toRpm(omega_);
+    // Le moteur électrique siffle encore à l'arrêt : l'onduleur reste sous tension.
+    return powertrain_.electric ? std::max(value, idle_) : value;
+}
+
+double DrivingModel::powerKw() const { return torque_ * omega_ / 1000.0; }
+
+double DrivingModel::wheelRpm() const { return toRpm(wheelOmega_); }
+
+double DrivingModel::inputRpm() const { return toRpm(powertrain_.electric ? omega_ : inputOmega_); }
+
+double DrivingModel::outputRpm() const { return toRpm(wheelOmega_ * gearing_.box.finalDrive); }
+
+double DrivingModel::ratio(int gear) const {
+    if (gear < 0) return gearing_.reverseOverall;
+    const int index = clamp(gear, 1, gearing_.gears) - 1;
+    return gearing_.overall[static_cast<std::size_t>(index)];
+}
+
+double DrivingModel::rpmInGear(int gear) const { return toRpm(speedMs_ / radius_ * ratio(gear)); }
+
+void DrivingModel::setManual(bool manual) {
+    manual_ = manual;
+}
+
+void DrivingModel::requestShift(int direction) {
+    if (powertrain_.electric || broken_) return;
+    // Le levier bouge encore : la demande attend la fin du passage, au lieu de se perdre.
+    if (step_ != ShiftStep::None) {
+        queuedShift_ = direction;
+        return;
+    }
+    int next = clamp(gear_ + direction, -1, gearing_.gears);
+    if (next == gear_) return;
+    // Aux palettes, l'automatique garde la main sur le point mort et ne recule pas.
+    if (!manual_ && shiftMode_ == ShiftMode::Paddles && next < 1) return;
+    // Du point mort, en roulant, le levier va droit au rapport qui convient à cette vitesse.
+    if (gear_ == 0 && direction > 0) {
+        while (next < gearing_.gears && rpmInGear(next) > redline_ * 0.8) ++next;
+    }
+    if (next > 0 && rpmInGear(next) > redline_ * 0.98) return;
+    // La marche arrière ne s'engage qu'à l'arrêt : assisté, le levier refuse ; au pied, elle craque (pignon droit, sans synchro).
+    if (next < 0 && speedMs_ > 0.7 && assisted()) return;
+    beginShift(next);
+}
+
+void DrivingModel::repairGearbox() {
+    broken_ = false;
+    wear_ = 0.0;
+    overload_ = 0.0;
+}
+
+void DrivingModel::crank() {
+    if (powertrain_.electric) return;
+    // Jamais deux démarrages de la même durée.
+    crankLeft_ = kPullInSeconds + 0.7 + 0.25 * std::fmod(clock_ * 7.31 + 0.4, 1.0);
+    pullInLeft_ = kPullInSeconds;
+    overrunLeft_ = 0.0;
+    crankAngle_ = std::fmod(clock_ * 3.7, 4.0 * kPi);
+    stalled_ = false;
+    catching_ = true;
+    fastIdle_ = 0.45;
+    omega_ = 0.0;
+    gear_ = 0;
+    clutch_ = 0.0;
+    locked_ = false;
+    meshed_ = false;
+    step_ = ShiftStep::None;
+    ignitionCut_ = false;
+    torqueScale_ = 1.0;
+}
+
+void DrivingModel::halt() {
+    omega_ = 0.0;
+    inputOmega_ = 0.0;
+    crankLeft_ = 0.0;
+    pullInLeft_ = 0.0;
+    overrunLeft_ = 0.0;
+    meshHoldLeft_ = 0.0;
+    stalled_ = false;
+    catching_ = false;
+}
+
+void DrivingModel::step(double dt) {
+    clock_ += dt;
+    cycleSec_ = scenarioCycle(scenarioOf(scenario_), clock_ - scenarioStart_);
+    advance(dt, Driver::Pilot, 0.0, 0.0);
 }
 
 void DrivingModel::stepPedal(double dt, double pedal, double brakePedal) {
     clock_ += dt;
-    const double speed = speedKmh_ / 3.6;
-    const double wantedThrottle = shiftLeft_ > 0.0 ? 0.0 : coerceIn(pedal, 0.0, 1.0);
-    throttle_ = approach(throttle_, wantedThrottle, (wantedThrottle > throttle_ ? kPedalUpPerS * 2.0 : kPedalDownPerS * 2.0) * dt);
-    brake_ = approach(brake_, coerceIn(brakePedal, 0.0, 1.0) * 0.8, kBrakeRatePerS * 3.0 * dt);
-    selectGear(pedal > 0.02, dt);
-    moveCar(speed, dt);
-    turnEngine(dt);
+    advance(dt, Driver::Pedal, clamp(pedal, 0.0, 1.0), clamp(brakePedal, 0.0, 1.0));
 }
 
 void DrivingModel::stepNeutral(double dt, double pedal) {
     clock_ += dt;
-    const double speed = speedKmh_ / 3.6;
-    gear_ = 0;
-    pendingGear_ = 0;
-    shiftLeft_ = 0.0;
-    brake_ = approach(brake_, speedKmh_ > 0.0 ? 0.4 : 0.0, kBrakeRatePerS * 3.0 * dt);
-    clutch_ = approach(clutch_, 0.0, kClutchOutPerS * dt);
-    const double wanted = limiterCut_ ? 0.0 : coerceIn(pedal, 0.0, 1.0);
-    throttle_ = approach(throttle_, wanted, (wanted > throttle_ ? 9.0 : 14.0) * dt);
-    moveCar(speed, dt);
+    advance(dt, Driver::Neutral, clamp(pedal, 0.0, 1.0), 0.0);
+}
 
-    const double idle = kIdleRpm + 9.0 * std::sin(clock_ * 2.1) + 4.0 * std::sin(clock_ * 5.3);
-    // Le rupteur coupe l'injection au régime maximal, puis la rend un peu plus bas.
-    const double target = idle + throttle_ * (kRedlineRpm + 400.0 - idle);
-    const double rate = target > rpm_ ? kFreeRevUpPerS : kFreeRevDownPerS;
-    const double glide = (target - rpm_) * std::min(1.0, dt / kFreeRevTauS);
-    rpm_ = coerceIn(rpm_ + coerceIn(glide, -rate * dt, rate * dt), std::min(idle, rpm_), kRedlineRpm);
-    if (rpm_ >= kRedlineRpm) {
-        limiterCut_ = true;
-    } else if (rpm_ < kRedlineRpm - kLimiterDrop) {
-        limiterCut_ = false;
+void DrivingModel::stepOff(double dt) {
+    clock_ += dt;
+    advance(dt, Driver::Off, 0.0, 0.0);
+}
+
+void DrivingModel::advance(double dt, Driver driver, double pedal, double brakePedal) {
+    pending_ += dt;
+    while (pending_ >= kStep) {
+        pending_ -= kStep;
+        substep(driver, pedal, brakePedal);
     }
 }
 
-void DrivingModel::drive(const Leg& leg, double speed, double dt) {
-    const double error = leg.targetKmh - speedKmh_;
-    double wantedThrottle;
-    if (shiftLeft_ > 0.0 || leg.targetKmh == 0.0) {
-        wantedThrottle = 0.0;
-    } else {
-        const double hold = resistance(speed) * kWheelRadius / driveRatio() / std::max(torqueAt(rpm_), 1.0);
-        wantedThrottle = coerceIn(hold + error * kThrottlePerKmh, 0.0, std::max(leg.eagerness, hold));
-    }
-    const double pedalRate = wantedThrottle > throttle_ ? kPedalUpPerS : kPedalDownPerS;
-    throttle_ = approach(throttle_, wantedThrottle, pedalRate * dt);
+void DrivingModel::pilot(double& pedal, double& brakePedal) {
+    // Le trajet : des données (driver_scenarios.cpp). Le modèle ne fait que lui donner ce que le conducteur voit.
+    const Scenario& scenario = scenarioOf(scenario_);
+    legIndex_ = scenarioLegAt(scenario, cycleSec_);
+    const ScenarioLeg& leg = scenario.legs[legIndex_];
+    gradeTarget_ = leg.gradePct / 100.0;
+    cornerRadius_ = leg.cornerRadiusM;
+    trailerKg_ = scenario.trailerKg;
 
-    const double wantedBrake = error < -kBrakeMarginKmh ? std::min(-error * 0.03, 0.42) : 0.0;
-    const double comfort = (leg.targetKmh == 0.0 && speedKmh_ < 12.0) ? 0.3 : wantedBrake;
-    brake_ = approach(brake_, comfort, kBrakeRatePerS * dt);
+    DriverView view;
+    view.kmh = speedKmh();
+    view.cycleSec = cycleSec_;
+    view.lifting = shiftLiftsPedal();
+    const double wheelNm = fullLoadTorqueNm(powertrain_, rpm(), boost_) * ratio(gear_ == 0 ? 1 : gear_) * efficiency_;
+    view.holdPedal = (roadLoadN(powertrain_, speedMs_) + roadExtraN()) * radius_ / std::max(wheelNm, 1.0);
+    // Sur une pente, tenir la vitesse peut demander plus que la pédale n'en donne.
+    if (scenario_ != DriveScenario::City) view.holdPedal = std::min(view.holdPedal, 1.0);
+    const DriverOrder order = followLeg(scenario, legIndex_, view);
+    pedal = order.pedal;
+    brakePedal = order.brake;
+    legTarget_ = order.targetKmh;
+
+    const bool flatOut = throttle_ > 0.9 && order.targetKmh < kFlatOutKmh && order.targetKmh - view.kmh > 5.0 && acceleration_ < 0.1;
+    strain_ = flatOut ? std::min(strain_ + kStep, kStrainS * 2.0) : std::max(strain_ - 2.0 * kStep, 0.0);
+    underpowered_ = strain_ > kStrainS;
 }
 
-void DrivingModel::selectGear(bool wantsToMove, double dt) {
-    sinceShift_ += dt;
-    if (shiftLeft_ > 0.0) {
-        shiftLeft_ -= dt;
-        clutch_ = approach(clutch_, 0.0, kClutchOutPerS * dt);
-        if (shiftLeft_ <= 0.0) gear_ = pendingGear_;
+void DrivingModel::substep(Driver driver, double pedal, double brakePedal) {
+    sinceShift_ += kStep;
+    piloted_ = driver == Driver::Pilot;
+    if (piloted_) pilot(pedal, brakePedal);
+    grade_ = approach(grade_, gradeTarget_, kGradePerSecond * kStep);
+    updateDemand();
+
+    const DriverStyle& style = scenarioOf(scenario_).style;
+    const double pedalUp = piloted_ ? style.pedalUpPerS : kPedalUpPerS;
+    const double pedalDown = piloted_ ? style.pedalDownPerS : kPedalDownPerS;
+
+    if (driver == Driver::Neutral || driver == Driver::Off) {
+        if (!powertrain_.electric) {
+            gear_ = 0;
+            pendingGear_ = 0;
+            step_ = ShiftStep::None;
+            meshed_ = false;
+            ignitionCut_ = false;
+            torqueScale_ = 1.0;
+            queuedShift_ = 0;
+        }
+        brakePedal = speedMs_ > 0.0 ? 0.4 : 0.0;
+    } else if (!powertrain_.electric) {
+        selectGear(pedal > 0.02);
+        if (shiftLiftsPedal()) pedal = 0.0;
+    }
+    updateClutch(pedal > 0.02);
+
+    // Rev-match : au rétrogradage, un coup de gaz cale le moteur sur le nouveau rapport.
+    if (step_ != ShiftStep::None && downshifting_ && assisted() && gear_ > 0 && toRpm(omega_) < rpmInGear(gear_) - 80.0) pedal = 0.75;
+
+    const double wanted = pedal;
+    throttle_ = approach(throttle_, wanted, (wanted > throttle_ ? pedalUp : pedalDown) * kStep);
+    brake_ = approach(brake_, brakePedal, kBrakeRatePerS * kStep);
+    updateEngine(throttle_, driver == Driver::Off);
+    integrate(brake_);
+    meterConsumption();
+}
+
+void DrivingModel::meterConsumption() {
+    burnt_.rpm = toRpm(omega_);
+    burnt_.omega = omega_;
+    burnt_.speedMs = speedMs_;
+    consumption_.step(burnt_, kStep);
+}
+
+void DrivingModel::selectGear(bool wantsToMove) {
+    if (broken_) return;
+    if (step_ != ShiftStep::None) {
+        advanceShift();
         return;
     }
+    if (queuedShift_ != 0) {
+        const int direction = queuedShift_;
+        queuedShift_ = 0;
+        requestShift(direction);
+        return;
+    }
+    if (!manual_) autoGear(wantsToMove);
+}
+
+void DrivingModel::autoGear(bool wantsToMove) {
+    // Le robot ne recule pas de lui-même : il sort la marche arrière dès que la voiture le permet.
+    if (gear_ < 0) {
+        if (speedKmh() < kNeutralBelowKmh) {
+            gear_ = 0;
+            pendingGear_ = 0;
+            meshed_ = false;
+            locked_ = false;
+        }
+        return;
+    }
+    const double rpmNow = toRpm(omega_);
+    const double downshiftRpm = downshiftFloor(shiftMap_, ShiftMode::Normal);
     if (gear_ == 0 && wantsToMove) {
-        // Démarrage : l'embrayage patine, le moteur prend des tours.
-        gear_ = 1;
-        clutch_ = 0.0;
-    } else if (gear_ > 0 && !wantsToMove && speedKmh_ < kNeutralBelowKmh) {
+        beginShift(1);
+    } else if (gear_ > 0 && !wantsToMove && speedKmh() < kNeutralBelowKmh) {
+        // Le robot débraye pour laisser le moteur tourner, et sort le rapport : plus rien ne pousse les dents.
         gear_ = 0;
-    } else if (gear_ >= 1 && gear_ < kGears && throttle_ > 0.05 && rpm_ > upshiftRpm() && settled()) {
+        pendingGear_ = 0;
+        meshed_ = false;
+        locked_ = false;
+    } else if (activeMode() != ShiftMode::Normal || grade_ != 0.0 || gradeTarget_ != 0.0 || trailerKg_ > 0.0) {
+        // Les autres modes, et le mode normal dès que la route n'est plus plate : il faut alors regarder ce que la route demande.
+        chooseGear();
+    } else if (gear_ >= 1 && gear_ < gearing_.gears && throttle_ > 0.05 && rpmNow > upshiftRpm() && settled()) {
         // Pied levé, on ne monte pas un rapport : on se prépare à ralentir.
         beginShift(gear_ + 1);
-    } else if (gear_ > 1 && rpm_ < kDownshiftRpm && clutch_ > 0.95) {
+    } else if (gear_ > 1 && locked_ && rpmNow < downshiftRpm) {
         beginShift(gear_ - 1);
-    } else if (gear_ > 1 && throttle_ > 0.85 && rpm_ < 2600.0 && rpmInGear(gear_ - 1) < 4800.0 && settled()) {
+    } else if (gear_ > 1 && throttle_ > 0.85 && rpmNow < redline_ * 0.42 && rpmInGear(gear_ - 1) < redline_ * 0.8 && settled()) {
         // Rétrogradage franc pour dépasser, s'il ne fait pas sur-régimer.
         beginShift(gear_ - 1);
     }
-    // Au démarrage l'embrayage patine tant que la voiture n'a pas assez de vitesse.
-    const bool launching = gear_ == 1 && speedKmh_ < kLaunchEndKmh;
-    const double engage = launching ? kClutchLaunchPerS : kClutchInPerS;
-    const double fullClutch = launching ? kLaunchClutch : 1.0;
-    clutch_ = gear_ == 0 ? approach(clutch_, 0.0, kClutchOutPerS * dt) : approach(clutch_, fullClutch, engage * dt);
 }
 
-bool DrivingModel::settled() const { return clutch_ > 0.95 && sinceShift_ > kMinShiftGapSec; }
-
-void DrivingModel::beginShift(int next) {
-    pendingGear_ = next;
-    shiftLeft_ = kShiftSec;
-    sinceShift_ = 0.0;
+void DrivingModel::chooseGear() {
+    if (gear_ < 1) return;
+    const bool converter = gearing_.box.kind == GearboxKind::Converter;
+    ShiftView view;
+    view.gear = gear_;
+    view.rpm = toRpm(omega_);
+    // Ce sont les roues qui tiennent le moteur, même quand elles patinent : pas la vitesse de la voiture.
+    view.roadRpm = toRpm(wheelOmega_ * ratio(gear_));
+    view.throttle = throttle_;
+    view.demand = demand_;
+    view.speedKmh = speedKmh();
+    view.sinceShift = sinceShift_;
+    view.slipMs = wheelSlip();
+    view.accelMs2 = acceleration_;
+    const Drive drive = powertrain_.car.drive;
+    const double frontShare = frontShareOf(powertrain_.car);
+    const double drivenShare = drive == Drive::All ? 1.0 : (drive == Drive::Front ? frontShare : 1.0 - frontShare);
+    view.tractionN = kTyreGrip * drivenShare * static_cast<double>(powertrain_.car.massKg) * kGravity;
+    view.resistanceN = roadLoadN(powertrain_, speedMs_) + roadExtraN();
+    view.coupled = locked_ || converter;
+    view.braking = brake_ > 0.02;
+    view.cornering = cornerRadius_ > 0.0;
+    view.descending = grade_ < -0.02;
+    const int decision = decideShift(shiftMap_, activeMode(), view);
+    if (decision != 0) beginShift(gear_ + decision);
 }
 
-double DrivingModel::upshiftRpm() const { return 2300.0 + 3400.0 * throttle_ * throttle_; }
+void DrivingModel::updateDemand() {
+    // Le pied, sa vitesse, et sa mémoire : un mode sportif ne repasse pas en douceur parce qu'on a levé le pied un instant.
+    const ShiftTraits& traits = shiftTraits(activeMode());
+    // Reprendre le pied après un passage n'est pas une demande de plus.
+    const bool free = step_ == ShiftStep::None && sinceShift_ > 0.4;
+    const double rate = free ? std::max(throttle_ - lastThrottle_, 0.0) / kStep : 0.0;
+    lastThrottle_ = throttle_;
+    const double asked = clamp(throttle_ + traits.pedalRateSec * rate, 0.0, 1.0);
+    const double memory = traits.demandDecaySec > 0.0 ? demand_ - kStep / traits.demandDecaySec : 0.0;
+    demand_ = std::max(asked, memory);
+    // Le rapport qu'on vient de descendre au freinage, ou qu'on tient dans le virage, reste pour la sortie.
+    if (brake_ > 0.02 || cornerRadius_ > 0.0) demand_ = std::max(demand_, traits.brakeDemand);
+}
 
-void DrivingModel::moveCar(double speed, double dt) {
-    double drive = 0.0;
-    if (gear_ != 0) {
-        if (throttle_ > 0.02) {
-            drive = throttle_ * torqueAt(rpm_) * driveRatio() * kDrivelineEfficiency * clutch_ / kWheelRadius;
-        } else {
-            drive = -kEngineBrakeNm * (rpm_ / 3000.0) * driveRatio() * clutch_ / kWheelRadius;
+void DrivingModel::setRoadGrade(double percent) {
+    grade_ = percent / 100.0;
+    gradeTarget_ = grade_;
+}
+
+void DrivingModel::setDriveScenario(DriveScenario scenario) {
+    if (scenario == scenario_) return;
+    scenario_ = scenario;
+    const Scenario& next = scenarioOf(scenario);
+    // En roulant, on prend le trajet là où il roule aussi : pas d'arrêt pour commencer, seulement de nouvelles consignes.
+    double from = 0.0;
+    if (speedMs_ > 1.5) {
+        for (int i = 0; i < next.legCount; ++i) {
+            if (next.legs[i].targetKmh > 0.0) {
+                from = next.legs[i].fromSec;
+                break;
+            }
         }
     }
-    const double stopping = brake_ * 9.81 * kMassKg;
-    const double force = drive - resistance(speed) - (speed > 0.0 ? stopping : 0.0);
-    const double next = std::max(speed + force / kMassKg * dt, 0.0);
-    speedKmh_ = next * 3.6;
+    scenarioStart_ = clock_ - from;
+    strain_ = 0.0;
+    underpowered_ = false;
 }
 
-void DrivingModel::turnEngine(double dt) {
-    const double idle = kIdleRpm + 9.0 * std::sin(clock_ * 2.1) + 4.0 * std::sin(clock_ * 5.3);
-    const double free = idle + throttle_ * (kRedlineRpm - idle) * 0.85;
-    const double tied = std::max(rpmInGear(gear_), idle);
-    double wanted = gear_ == 0 ? free : free + (tied - free) * clutch_;
-    if (gear_ == 1 && speedKmh_ < kLaunchEndKmh && throttle_ > 0.02) {
-        wanted = std::max(wanted, kLaunchRpm + 1200.0 * throttle_);
+double DrivingModel::slopeShare() const { return grade_ / std::sqrt(1.0 + grade_ * grade_); }
+
+double DrivingModel::roadExtraN() const {
+    if (grade_ == 0.0 && cornerRadius_ <= 0.0 && trailerKg_ <= 0.0) return 0.0;
+    const double carKg = static_cast<double>(powertrain_.car.massKg);
+    double force = (carKg + trailerKg_) * kGravity * slopeShare();
+    if (trailerKg_ > 0.0 && speedMs_ > 0.1) {
+        force += kTrailerRolling * trailerKg_ * kGravity + 0.5 * kAirDensity * kTrailerDragArea * speedMs_ * speedMs_;
     }
-    const double rate = wanted > rpm_ ? kRpmUpPerS : kRpmDownPerS;
-    const double glide = (wanted - rpm_) * std::min(1.0, dt / kRpmTauS);
-    rpm_ = coerceIn(rpm_ + coerceIn(glide, -rate * dt, rate * dt), std::min(idle, rpm_), kRedlineRpm);
+    if (cornerRadius_ > 0.0) force += kCorneringDragShare * carKg * speedMs_ * speedMs_ / cornerRadius_;
+    return force;
 }
 
-double DrivingModel::rpmInGear(int gear) const {
-    if (gear == 0) return 0.0;
-    return speedKmh_ / 3.6 * kRatios[gear - 1] * kFinalDrive * 60.0 / (2.0 * kPi * kWheelRadius);
+bool DrivingModel::settled() const {
+    // Un convertisseur glisse toujours un peu à fond : il n'a pas à se ponter pour passer le rapport suivant.
+    const bool coupled = locked_ || gearing_.box.kind == GearboxKind::Converter;
+    return coupled && sinceShift_ > shiftTraits(ShiftMode::Normal).gapSec;
 }
 
-double DrivingModel::driveRatio() const {
-    return gear_ == 0 ? kRatios[0] * kFinalDrive : kRatios[gear_ - 1] * kFinalDrive;
+bool DrivingModel::shiftLiftsPedal() const {
+    // Au pied, c'est le conducteur qui décide : il peut donner un coup de gaz au point mort, ou forcer sans lever le pied.
+    if (step_ == ShiftStep::None || powerShift() || !assisted()) return false;
+    // Sur une séquentielle, le pied reste au plancher : c'est le calculateur qui coupe l'allumage à la montée.
+    return gearing_.box.kind != GearboxKind::Sequential;
+}
+
+double DrivingModel::stepSeconds(ShiftStep step) const {
+    const GearboxKind kind = gearing_.box.kind;
+    if (kind == GearboxKind::Sequential) {
+        // Barillet motorisé : de 30 à 80 ms au total (HP Academy).
+        switch (step) {
+            case ShiftStep::Declutch: return 0.012;
+            case ShiftStep::PullOut: return 0.008;
+            case ShiftStep::Flight: return 0.022;
+            case ShiftStep::Engage: return 0.004;
+            case ShiftStep::Reclutch: return 0.02;
+            default: return 0.0;
+        }
+    }
+    // Sans cône, le conducteur peut aller bien plus vite : il n'attend pas que le blocage cède.
+    const double pace = (kind == GearboxKind::Dog ? std::min(shiftPace_, 0.14) : shiftPace_) * shiftTraits(activeMode()).pace;
+    switch (step) {
+        case ShiftStep::Declutch: return 0.25 * pace;
+        case ShiftStep::PullOut: return 0.08 * pace;
+        case ShiftStep::Flight: return 0.1 * pace;
+        case ShiftStep::Engage: return 0.07 * pace;
+        case ShiftStep::Reclutch: return 0.25 * pace;
+        default: return 0.0;
+    }
+}
+
+void DrivingModel::enterStep(ShiftStep next) {
+    step_ = next;
+    stepLeft_ = stepSeconds(next);
+    stepHeld_ = 0.0;
+}
+
+void DrivingModel::beginShift(int next) {
+    downshifting_ = next < gear_ && next > 0;
+    pendingGear_ = next;
+    fromNeutral_ = !meshed_;
+    // Passer la première à l'arrêt n'est pas un changement de rapport : le suivant n'a pas à attendre.
+    if (!fromNeutral_) sinceShift_ = 0.0;
+    selectorClicks_ += 1.0;
+    // Pressé, le conducteur pousse deux fois plus fort sur le levier : le cône serre d'autant.
+    shiftEffort_ = 0.6 + 1.4 * throttle_;
+    if (powerShift() && gear_ > 0 && next > 0) {
+        // Le rapport suivant est déjà engagé de l'autre côté : le couple passe d'un embrayage à l'autre.
+        step_ = ShiftStep::Handover;
+        stepLeft_ = (gearing_.box.kind == GearboxKind::Converter ? 0.45 : 0.3) * shiftTraits(activeMode()).pace;
+        gear_ = next;
+        inputOmega_ = wheelOmega_ * ratio(gear_);
+        locked_ = false;
+        twist_ = 0.0;
+        return;
+    }
+    if (powerShift()) {
+        // Depuis le point mort, le robot prépare simplement le rapport : le disque s'arrête et le crabot entre.
+        enterStep(ShiftStep::Declutch);
+        return;
+    }
+    enterStep(ShiftStep::Declutch);
+    // À la montée, sur une boîte à crabots, on décharge les dents en coupant l'allumage.
+    if (dogBox() && assisted() && !fromNeutral_) ignitionCut_ = next > gear_;
+}
+
+void DrivingModel::leaveOldGear() {
+    meshed_ = false;
+    gear_ = pendingGear_;
+    locked_ = locked_ && clutch_ > 0.5;
+    twist_ = 0.0;
+}
+
+void DrivingModel::engageGear() {
+    const double target = wheelOmega_ * ratio(pendingGear_);
+    const double gap = inputOmega_ - target;
+    const GearboxSpec& box = gearing_.box;
+    // Le choc d'engagement : presque rien après un cône, violent sur une boîte à crabots.
+    impacts_ += 0.5 * box.inputInertia * gap * gap;
+    selectorClicks_ += 1.0;
+    meshed_ = true;
+    gear_ = pendingGear_;
+    inputOmega_ = target;
+    // Si l'embrayage était fermé, le moteur rejoint le nouveau rapport en le faisant patiner.
+    locked_ = false;
+    ignitionCut_ = false;
+    twist_ = 0.0;
+}
+
+void DrivingModel::abandonShift() {
+    gear_ = 0;
+    pendingGear_ = 0;
+    grinding_ = 0.0;
+    coneSlip_ = 0.0;
+    coneTorque_ = 0.0;
+    step_ = ShiftStep::None;
+    ignitionCut_ = false;
+    meshed_ = false;
+}
+
+void DrivingModel::advanceShift() {
+    stepLeft_ -= kStep;
+    stepHeld_ += kStep;
+    const GearboxSpec& box = gearing_.box;
+    const double target = wheelOmega_ * ratio(pendingGear_);
+    const double gap = std::fabs(inputOmega_ - target);
+    switch (step_) {
+        case ShiftStep::Declutch: {
+            // Assisté, on attend que l'embrayage soit ouvert ; sur une séquentielle, que l'allumage ait fait tomber le couple.
+            const bool usesClutch = assisted() && (box.kind != GearboxKind::Sequential || fromNeutral_);
+            if (stepLeft_ <= 0.0 && (!usesClutch || clutch_ <= 0.05)) {
+                if (fromNeutral_) {
+                    gear_ = pendingGear_;
+                    enterStep(ShiftStep::Flight);
+                } else {
+                    enterStep(ShiftStep::PullOut);
+                }
+            }
+            break;
+        }
+        case ShiftStep::PullOut:
+            // Les dents sont plaquées par le couple : il faut le faire tomber pour sortir le rapport.
+            if (std::fabs(gearTorque_) > kReleaseShare * box.limitNm && clutch_ > 0.3) {
+                if (stepHeld_ > kReleaseGiveUpS) {
+                    step_ = ShiftStep::None;
+                    ignitionCut_ = false;
+                }
+                break;
+            }
+            if (stepLeft_ <= 0.0) {
+                leaveOldGear();
+                enterStep(ShiftStep::Flight);
+            }
+            break;
+        case ShiftStep::Flight:
+            if (stepLeft_ <= 0.0) {
+                if (pendingGear_ == 0) {
+                    step_ = ShiftStep::None;
+                    ignitionCut_ = false;
+                } else if (box.coneTorqueNm > 0.0 && pendingGear_ > 0) {
+                    enterStep(ShiftStep::Sync);
+                    selectorClicks_ += 0.5;
+                } else {
+                    enterStep(ShiftStep::Sync);
+                }
+            }
+            break;
+        case ShiftStep::Sync: {
+            // Le baladeur reste bloqué tant que le cône n'a pas égalisé les vitesses (Socin et Walters).
+            const bool cones = box.coneTorqueNm > 0.0 && pendingGear_ > 0;
+            const double window = cones ? kSyncToleranceRad : (pendingGear_ < 0 ? kSyncToleranceRad * 4.0 : kDogWindowRad);
+            coneSlip_ = cones ? gap : 0.0;
+            const double patience = cones ? kBlockedPatienceS : 0.0;
+            if (gap <= window) {
+                grinding_ = 0.0;
+                coneSlip_ = 0.0;
+                coneTorque_ = 0.0;
+                enterStep(ShiftStep::Engage);
+            } else if (!assisted() && clutch_ > 0.2) {
+                // L'embrayage relie encore le moteur : le cône ne suffit pas, et le baladeur force sur les dents.
+                if (stepHeld_ > patience) grinding_ = gap;
+                if (stepHeld_ > kGrindGiveUpS) abandonShift();
+            } else if (!cones) {
+                // Pas de cône : on attend que le moteur soit tombé, et les crabots ratissent en attendant.
+                grinding_ = gap;
+                if (stepHeld_ > 0.05 && assisted()) {
+                    grinding_ = 0.0;
+                    enterStep(ShiftStep::Engage);
+                } else if (stepHeld_ > kGrindGiveUpS) {
+                    abandonShift();
+                }
+            } else {
+                grinding_ = 0.0;
+            }
+            break;
+        }
+        case ShiftStep::Engage:
+            if (stepLeft_ <= 0.0) {
+                engageGear();
+                enterStep(ShiftStep::Reclutch);
+            }
+            break;
+        case ShiftStep::Reclutch:
+            if (stepLeft_ <= 0.0) step_ = ShiftStep::None;
+            break;
+        case ShiftStep::Handover: {
+            // Montée : l'embrayage qui arrive prend tout le couple, et le calculateur retient le moteur le temps qu'il tombe.
+            // Descente : il attend que le moteur soit monté.
+            const bool closed = locked_ || std::fabs(omega_ - inputOmega_) < toOmega(40.0);
+            if (closed || stepLeft_ <= 0.0) {
+                step_ = ShiftStep::None;
+                torqueScale_ = 1.0;
+            } else {
+                torqueScale_ = downshifting_ ? 1.0 : 0.5 * shiftTraits(activeMode()).pace;
+            }
+            break;
+        }
+        case ShiftStep::None:
+            break;
+    }
+}
+
+double DrivingModel::upshiftRpm() const {
+    return revforge::upshiftPoint(shiftMap_, ShiftMode::Normal, gear_, throttle_);
+}
+
+void DrivingModel::updateClutch(bool wantsToMove) {
+    if (powertrain_.electric) {
+        clutch_ = 1.0;
+        return;
+    }
+    double wanted = 1.0;
+    double rate = 8.0;
+    const GearboxKind kind = gearing_.box.kind;
+    if (kind == GearboxKind::Converter) {
+        // Pas de pédale : un pontage, fermé quand le convertisseur ne glisse presque plus.
+        const double slipRatio = omega_ > 1.0 ? inputOmega_ / omega_ : 0.0;
+        const ShiftTraits& traits = shiftTraits(activeMode());
+        const bool pontable = meshed_ && gear_ >= traits.lockGear && step_ == ShiftStep::None && slipRatio > traits.lockSlip && throttle_ < traits.lockThrottle;
+        wanted = pontable ? 1.0 : 0.0;
+        rate = 4.0;
+        clutch_ = approach(clutch_, wanted, rate * kStep);
+        if (clutch_ <= 0.5) locked_ = false;
+        return;
+    }
+    if (step_ == ShiftStep::Handover) {
+        // Le relais : l'embrayage qui arrive se serre vite à la montée, et laisse monter le moteur à la descente.
+        const double gapRpm = rpmInGear(gear_) - toRpm(omega_);
+        wanted = downshifting_ && gapRpm > 150.0 ? 0.12 : 1.0;
+        rate = 16.0 / shiftTraits(activeMode()).pace;
+    } else if (step_ != ShiftStep::None && assisted() && (kind != GearboxKind::Sequential || fromNeutral_)) {
+        // Il se referme en douceur : le moteur rejoint le nouveau rapport sans à-coup.
+        // En première à l'arrêt, il attend qu'on accélère pour se refermer.
+        const double quarter = stepSeconds(ShiftStep::Reclutch);
+        const bool waitingInFirst = std::abs(gear_) == 1 && speedMs_ < 1.0;
+        wanted = (step_ != ShiftStep::Reclutch || waitingInFirst) ? 0.0 : 0.3;
+        rate = 1.0 / std::max(quarter, 0.04);
+    } else if (step_ == ShiftStep::None && meshed_ && gear_ != 0 && !locked_) {
+        if (gear_ == 1 && speedKmh() < 25.0) {
+            // Démarrage : l'embrayage patine autour d'un régime qui suit l'accélérateur.
+            const double launch = idle_ + (std::max(peakTorqueRpm_ * 0.8, idle_ * 1.6) - idle_) * throttle_;
+            wanted = clamp((toRpm(omega_) - launch * 0.85) / (launch * 0.3), 0.0, 1.0);
+            if (!wantsToMove && speedMs_ < 0.5) wanted = 0.0;
+            rate = 2.5;
+        } else if (gear_ < 0 && speedKmh() < 15.0) {
+            // Marche arrière : même démarrage, plus doux.
+            const double launch = idle_ * (1.0 + 0.5 * throttle_);
+            wanted = clamp((toRpm(omega_) - launch * 0.85) / (launch * 0.3), 0.0, 1.0);
+            if (!wantsToMove && speedMs_ < 0.5) wanted = 0.0;
+            rate = 2.5;
+        } else {
+            // Une fois les vitesses presque égales, l'embrayage peut transmettre tout le couple.
+            const double gap = std::fabs(toRpm(omega_) - toRpm(wheelOmega_ * ratio(gear_)));
+            wanted = 0.3 + 0.7 * (1.0 - clamp(gap / 400.0, 0.0, 1.0));
+            // Sous charge, il doit transmettre plus que le moteur ne produit, sinon il patine sans fin.
+            if (torque_ > 0.0) wanted = std::max(wanted, std::min(1.0, 1.3 * torque_ / clutchCapacity_));
+            rate = 6.0;
+            // Une boîte à crabots ne débraye pas : l'embrayage reste serré, et patine sous le choc s'il le faut.
+            if (kind == GearboxKind::Sequential) wanted = 1.0;
+        }
+    }
+    clutch_ = approach(clutch_, std::min(wanted, 1.0 - clutchPedal_), rate * kStep);
+    if (clutch_ <= 0.01) locked_ = false;
+}
+
+double DrivingModel::bmepPumping(double rpm) const {
+    // Moteur tiré par les roues, soupapes fermées à tour de rôle : un frein bien plus fort qu'un moteur qui tourne.
+    return pumpingTorqueNm(powertrain_, std::max(rpm, idle_ + 1500.0), 0.0) * clamp(rpm / 1000.0, 0.2, 1.0);
+}
+
+double DrivingModel::compressionLoadNm() const {
+    // Chaque cylindre comprime l'air enfermé, puis le gaz lui rend presque tout en se détendant.
+    const double swept = static_cast<double>(powertrain_.engine.displacementCc) * 1e-6 / powertrain_.engine.cylinders;
+    const double ratio = static_cast<double>(starter_.compressionRatio);
+    const double clearance = swept / (ratio - 1.0);
+    const double full = clearance + swept;
+    constexpr double kAtmosphere = 1e5;
+    // À 250 tr/min, le gaz a le temps de fuir et de refroidir : 13 à 14 bar en essence, 25 à 30 en diesel,
+    // au lieu des 21 et 42 qu'une compression sans perte donnerait.
+    constexpr double kCrankPolytropic = 1.13;
+    constexpr double kExpansionReturn = 0.8;
+    double load = 0.0;
+    const int count = powertrain_.engine.cylinders;
+    // Segments, soupapes : aucun cylindre ne comprime tout à fait comme son voisin.
+    constexpr double kCylinderSeal[6] = {1.0, 0.88, 1.07, 0.93, 1.1, 0.85};
+    for (int i = 0; i < count; ++i) {
+        const double phi = std::fmod(crankAngle_ + 4.0 * kPi * i / count, 4.0 * kPi);
+        const bool compressing = phi >= 3.0 * kPi;
+        if (!compressing && phi >= kPi) continue;
+        const double volume = clearance + swept * 0.5 * (1.0 - portable::cos(phi));
+        const double pressure = kAtmosphere * portable::pow(full / volume, kCrankPolytropic);
+        const double push = kCylinderSeal[i % 6] * (pressure - kAtmosphere) * swept * 0.5 * -std::sin(phi);
+        load += compressing ? push : kExpansionReturn * push;
+    }
+    return load;
+}
+
+void DrivingModel::stepTurbo(double rpmNow, bool burning) {
+    TurboInput input;
+    input.rpm = rpmNow;
+    input.fill = manifold_;
+    input.breathing = breathingOf(powertrain_, rpmNow);
+    input.burning = burning;
+    turbo_.step(kStep, input);
+    boost_ = std::max(turbo_.boost(), 0.0);
+}
+
+void DrivingModel::updateEngine(double throttle, bool off) {
+    const double rpmNow = toRpm(omega_);
+    burnt_.burning = false;
+    if (powertrain_.electric) {
+        manifold_ = throttle;
+        cut_ = off;
+        const double regen = speedMs_ > 0.5 ? 0.18 * fullLoadTorqueNm(powertrain_, rpmNow, 0.0) : 0.0;
+        double available = fullLoadTorqueNm(powertrain_, rpmNow, 0.0);
+        if (gear_ == 0) available *= 0.12;
+        torque_ = off ? 0.0 : (throttle > 0.01 ? throttle * available : -regen * (1.0 - throttle));
+        burnt_.motorNm = torque_;
+        torque_ -= frictionTorqueNm(powertrain_, rpmNow);
+        return;
+    }
+
+    if (overrunLeft_ > 0.0) overrunLeft_ = std::max(overrunLeft_ - kStep, 0.0);
+    if (meshHoldLeft_ > 0.0) {
+        meshHoldLeft_ = rpmNow > idle_ * 0.85 ? 0.0 : meshHoldLeft_ - kStep;
+        starterLoad_ *= 1.0 - kStep / 0.05;
+    }
+    if (crankLeft_ > 0.0) {
+        // Rien ne brûle encore : l'arbre, s'il tournait, continue sur son élan.
+        if (turboEngine_) stepTurbo(rpmNow, false);
+        crankLeft_ -= kStep;
+        cut_ = true;
+        manifold_ = 0.0;
+        torque_ = 0.0;
+        if (crankLeft_ <= 0.0) {
+            overrunLeft_ = kReleaseAfterCatchS;
+            // Le démarreur reste engagé pendant que le moteur prend : le pignon ne sort qu'une fois dépassé.
+            meshHoldLeft_ = kMeshHoldS;
+            // Le collecteur s'est rempli pendant le lancement : les premières explosions sont franches.
+            manifold_ = 0.7;
+        }
+        if (pullInLeft_ > 0.0) {
+            // Le solénoïde pousse le pignon vers la couronne : rien ne tourne encore.
+            pullInLeft_ -= kStep;
+            return;
+        }
+        // Moteur à courant continu : tout son couple à l'arrêt, plus rien à sa vitesse libre.
+        const double gear = static_cast<double>(starter_.ringTeeth) / starter_.pinionTeeth;
+        const double reduction = static_cast<double>(starter_.reduction);
+        const double freePinion = toOmega(static_cast<double>(starter_.motorFreeRpm)) / reduction;
+        const double stallAtPinion = 4.0 * static_cast<double>(starter_.powerKw) * 1000.0 / freePinion;
+        const double pinionTorque = std::max(stallAtPinion * (1.0 - omega_ * gear / freePinion), 0.0);
+        const double motorInertia = static_cast<double>(starter_.motorInertia) * reduction * reduction;
+        const double total = inertia_ + motorInertia * gear * gear;
+        const double driven = pinionTorque * gear * kStarterEfficiency;
+        const double net = driven - compressionLoadNm() - kColdFriction * frictionTorqueNm(powertrain_, rpmNow);
+        const double alpha = net / total;
+        // Ce qui passe vraiment par les dents : le couple du moteur, moins ce qu'il faut pour accélérer
+        // l'induit. Il s'annule, et change de sens, quand une détente fait filer le vilebrequin.
+        starterLoad_ = (driven - motorInertia * gear * gear * alpha) / (stallAtPinion * gear);
+        // La roue libre du pignon : le vilebrequin peut filer, jamais repartir en arrière.
+        omega_ = std::max(omega_ + alpha * kStep, 0.0);
+        crankAngle_ = std::fmod(crankAngle_ + omega_ * kStep, 4.0 * kPi);
+        return;
+    }
+
+    if (stalled_) {
+        // Calé : plus rien ne brûle, seuls les frottements et les compressions restent.
+        cut_ = true;
+        manifold_ += (0.0 - manifold_) * std::min(1.0, kStep / manifoldTau_);
+        // Calé : plus de gaz, mais l'arbre garde son élan.
+        if (turboEngine_) stepTurbo(rpmNow, false);
+        torque_ = -kColdFriction * frictionTorqueNm(powertrain_, rpmNow) - bmepPumping(rpmNow);
+        return;
+    }
+
+    // Rupteur : la combustion s'arrête, puis reprend un peu plus bas.
+    // Elle laisse le moteur redescendre de 4 % : c'est ce rebond qu'on entend, une dizaine de fois par seconde.
+    cutHeld_ = std::max(cutHeld_ - kStep, 0.0);
+    if (rpmNow >= redline_ && !limiterCut_) {
+        limiterCut_ = true;
+        cutHeld_ = kLimiterMinCutS;
+    } else if (limiterCut_ && cutHeld_ <= 0.0 && rpmNow < redline_ * (1.0 - limiterDrop_)) {
+        limiterCut_ = false;
+        // Jamais deux rebonds identiques : le calculateur reprend à une explosion près.
+        limiterSeed_ = limiterSeed_ * 1664525u + 1013904223u;
+        const double draw = static_cast<double>(limiterSeed_ >> 16 & 0xFFFF) / 65535.0;
+        limiterDrop_ = kLimiterDropShare * (0.65 + 0.7 * draw);
+    }
+    cut_ = off || limiterCut_ || ignitionCut_;
+
+    const double friction = frictionTorqueNm(powertrain_, rpmNow);
+    double indicated = fullLoadTorqueNm(powertrain_, rpmNow, boost_) + frictionTorqueNm(powertrain_, rpmNow);
+    // Au démarrage, le calculateur enrichit le mélange : le moteur prend même très bas.
+    if (catching_ && rpmNow < idle_) indicated = std::max(indicated, 0.8 * fullLoadTorqueNm(powertrain_, idle_, 0.0));
+
+    // Régulation de ralenti : juste assez d'air pour compenser les frottements, jusqu'à ce que
+    // le pied prenne le relais. Au démarrage, le moteur prend une poignée de tours en trop.
+    const double ripple = 9.0 * portable::sin(clock_ * 2.1) + 4.0 * portable::sin(clock_ * 5.3);
+    // Ralenti accéléré : le moteur vient de partir, il redescend en une seconde environ.
+    double idleTarget = idle_ * (1.0 + fastIdle_) + ripple;
+    if (catching_) {
+        if (rpmNow > idleTarget * 0.98) catching_ = false;
+    } else {
+        fastIdle_ *= 1.0 - kStep / 0.9;
+    }
+    const double balance = friction / std::max(indicated, 1.0);
+    const double idleOpen = off ? 0.0 : clamp(balance * (1.0 + (idleTarget - rpmNow) / 60.0), 0.0, catching_ ? 0.8 : 0.45);
+
+    // Un petit filet d'accélérateur remplit vite à bas régime, moins à haut régime.
+    const double fraction = clamp(rpmNow / redline_, 0.0, 1.0);
+    const double softness = 0.15 + 0.6 * fraction;
+    const double opened = throttle * (1.0 + softness) / (throttle + softness);
+    const double wantedManifold = std::max(opened, idleOpen);
+    manifold_ += (wantedManifold - manifold_) * std::min(1.0, kStep / manifoldTau_);
+
+    // Turbine : tout est dans `TurboCharger`. Le moteur lui donne ce qu'il rejette, et reçoit la pression qui en résulte.
+    if (turboEngine_) stepTurbo(rpmNow, !cut_);
+    else boost_ = 0.0;
+
+    const double produced = cut_ ? 0.0 : manifold_ * indicated * torqueScale_;
+    // Rupteur : le papillon reste ouvert, donc peu de pompage. Le moteur ne redescend que sur ses frottements.
+    // Sur un turbo, s'y ajoute le gaz à pousser contre la turbine.
+    const double pumping = pumpingTorqueNm(powertrain_, rpmNow, manifold_) + (turboEngine_ ? turbo_.backPressureNm(manifold_) : 0.0);
+    torque_ = produced - friction - pumping;
+    // Pour la consommation : le couple au frein que demande cette charge d'air. Le calculateur qui retient le moteur
+    // pendant un relais retarde l'allumage : il gaspille, il ne dépense pas moins. Le broutement s'annule en moyenne.
+    burnt_.burning = !cut_;
+    burnt_.brakeNm = manifold_ * indicated - friction - pumping;
+    burnt_.frictionNm = friction;
+    burnt_.fullGrossNm = indicated;
+    burnt_.load = manifold_;
+    lugging_ = manual_ && gear_ != 0 && meshed_ && locked_ && rpmNow < idle_ * 1.3 && speedMs_ > 0.5;
+    // Trop bas en prise : chaque explosion donne un à-coup que rien n'amortit, ça broute.
+    if (lugging_) {
+        const double beat = clock_ * 2.0 * kPi * rpmNow / 120.0 * powertrain_.engine.cylinders;
+        torque_ += 0.5 * std::fabs(produced) * portable::sin(beat);
+    }
+}
+
+double DrivingModel::inputDrag() const {
+    const GearboxSpec& box = gearing_.box;
+    return box.dragNm + box.dragPerRad * inputOmega_;
+}
+
+void DrivingModel::trackOverload(double torque) {
+    gearTorque_ = torque;
+    const double limit = gearing_.box.limitNm;
+    // Le couple change de sens : les dents traversent leur jeu, et le flanc d'en face prend le choc. Il vaut ce que le
+    // moteur a eu le temps de donner au primaire pendant la traversée : J·α·θ. Bien plus sur de larges crabots.
+    const bool nowDriving = torque > 0.0;
+    if (nowDriving != drivingFlank_ && std::fabs(torque) > 0.03 * limit) {
+        drivingFlank_ = nowDriving;
+        const double lash = dogBox() ? 0.25 : 0.006;
+        impacts_ += gearing_.box.inputInertia * std::fabs(torque_) / inertia_ * lash;
+    }
+    overload_ = std::fabs(torque) / std::max(limit, 1.0);
+    if (overload_ > 1.0) {
+        // Règle de Miner : une pente raide en fatigue, ici la puissance sixième.
+        const double o = overload_ * overload_ * overload_;
+        wear_ += o * o / kWearRefS * kStep;
+        if (wear_ >= 1.0 && !broken_ && !powertrain_.electric) {
+            // Une dent cède : plus rien ne passe, et le choc s'entend.
+            broken_ = true;
+            impacts_ += 0.5 * gearing_.box.inputInertia * inputOmega_ * inputOmega_;
+            meshed_ = false;
+            gear_ = 0;
+            pendingGear_ = 0;
+            step_ = ShiftStep::None;
+            locked_ = false;
+        }
+    }
+}
+
+/**
+ * Un rapport en prise. Le primaire et la sortie de boîte tournent ensemble, l'embrayage les relie au moteur, et les
+ * arbres de roue se tordent entre la sortie et les roues. Ce ressort, chargé de l'inertie du moteur vue par le
+ * rapport, donne les à-coups : de 2 à 3 Hz en première, jusqu'à 10 Hz sur les hauts rapports.
+ */
+void DrivingModel::drivenStep(double tyre, double wheelInertia) {
+    const double g = ratio(gear_);
+    const double J = gearing_.box.inputInertia;
+    const double drag = inputDrag();
+    const double reflected = (locked_ ? inertia_ + J : J) * g * g * efficiency_;
+    // Assez amorti pour s'éteindre en deux ou trois battements, sans jamais dépasser ce que le pas de 1 ms sait intégrer.
+    // Embrayage ouvert, l'huile, les roulements et les pignons freinent seuls le primaire : il ne reste presque plus d'inertie.
+    const double damping = std::min(locked_ ? kShaftDamping : 2.5 * kShaftDamping, 0.6 * reflected / kStep);
+    const double shaft = kShaftStiffness * twist_ + damping * (inputOmega_ / g - wheelOmega_);
+    const double onInput = shaft / (g * efficiency_);
+    const double capacity = clutchCapacity_ * clutch_;
+    double transmitted = 0.0;
+    if (locked_) {
+        const double alpha = (torque_ - drag - onInput) / (inertia_ + J);
+        transmitted = torque_ - inertia_ * alpha;
+        if (std::fabs(transmitted) > capacity * 1.05) {
+            locked_ = false;
+        } else {
+            omega_ = std::max(omega_ + alpha * kStep, 0.0);
+            inputOmega_ = omega_;
+            clutchSlipKw_ = 0.0;
+        }
+    }
+    if (!locked_) {
+        const double difference = omega_ - inputOmega_;
+        transmitted = difference > 0.0 ? capacity : -capacity;
+        const double engineNext = omega_ + (torque_ - transmitted) / inertia_ * kStep;
+        const double inputNext = inputOmega_ + (transmitted - drag - onInput) / J * kStep;
+        const double after = engineNext - inputNext;
+        if (capacity > 1.0 && (after > 0.0) != (difference > 0.0)) {
+            // Les deux disques ont rejoint la même vitesse : l'embrayage colle.
+            const double shared = (inertia_ * engineNext + J * inputNext) / (inertia_ + J);
+            omega_ = std::max(shared, 0.0);
+            inputOmega_ = omega_;
+            locked_ = clutch_ > 0.5;
+        } else {
+            omega_ = std::max(engineNext, 0.0);
+            inputOmega_ = std::max(inputNext, 0.0);
+        }
+        clutchSlipKw_ = std::fabs(difference * transmitted) / 1000.0;
+    }
+    wheelOmega_ = std::max(wheelOmega_ + (shaft - tyre * radius_) / wheelInertia * kStep, 0.0);
+    twist_ += (inputOmega_ / g - wheelOmega_) * kStep;
+    trackOverload(transmitted - drag);
+}
+
+/** Aucun rapport en prise : le primaire ne dépend que de l'embrayage, et des cônes s'il y en a. */
+void DrivingModel::freeStep(double tyre, double wheelInertia) {
+    const GearboxSpec& box = gearing_.box;
+    const double J = box.inputInertia;
+    const double drag = inputDrag();
+    double cone = 0.0;
+    coneTorque_ = 0.0;
+    if (step_ == ShiftStep::Sync && pendingGear_ != 0) {
+        const double g = ratio(pendingGear_);
+        const double target = wheelOmega_ * g;
+        const double difference = target - inputOmega_;
+        // À la montée, les pertes aident le cône ; à la descente, elles s'y opposent (Socin et Walters).
+        const double available = pendingGear_ > 0 ? box.coneTorqueFor(pendingGear_) * shiftEffort_ : 0.0;
+        cone = clamp(difference * J / kStep, -available, available);
+        coneTorque_ = std::fabs(cone);
+        // La réaction sur les roues, négligeable, mais physique.
+        wheelOmega_ = std::max(wheelOmega_ - cone * g * efficiency_ / wheelInertia * kStep, 0.0);
+    }
+    if (crankLeft_ > 0.0) {
+        // Le démarreur fixe seul le régime pendant le lancement : le primaire suit s'il est embrayé, sans rien changer.
+        locked_ = false;
+        inputOmega_ = clutch_ > 0.5 ? omega_ : std::max(inputOmega_ - drag / J * kStep, 0.0);
+        gearTorque_ = 0.0;
+        clutchSlipKw_ = 0.0;
+    } else {
+        const double capacity = clutchCapacity_ * clutch_;
+        if (locked_) {
+            const double alpha = (torque_ + cone - drag) / (inertia_ + J);
+            const double transmitted = torque_ - inertia_ * alpha;
+            if (std::fabs(transmitted) > capacity * 1.05) {
+                locked_ = false;
+            } else {
+                omega_ = std::max(omega_ + alpha * kStep, 0.0);
+                inputOmega_ = omega_;
+                clutchSlipKw_ = 0.0;
+            }
+        }
+        if (!locked_) {
+            const double difference = omega_ - inputOmega_;
+            const double transmitted = difference > 0.0 ? capacity : -capacity;
+            const double engineNext = omega_ + (torque_ - transmitted) / inertia_ * kStep;
+            const double inputNext = inputOmega_ + (transmitted + cone - drag) / J * kStep;
+            const double after = engineNext - inputNext;
+            if (capacity > 0.1 && (after > 0.0) != (difference > 0.0)) {
+                const double shared = (inertia_ * engineNext + J * inputNext) / (inertia_ + J);
+                omega_ = std::max(shared, 0.0);
+                inputOmega_ = omega_;
+                locked_ = clutch_ > 0.5;
+            } else {
+                omega_ = std::max(engineNext, 0.0);
+                inputOmega_ = std::max(inputNext, 0.0);
+            }
+            clutchSlipKw_ = std::fabs(difference * transmitted) / 1000.0;
+        }
+        gearTorque_ = 0.0;
+        overload_ = 0.0;
+    }
+    wheelOmega_ = std::max(wheelOmega_ - tyre * radius_ / wheelInertia * kStep, 0.0);
+}
+
+/**
+ * Le convertisseur : une pompe liée au moteur, une turbine à l'entrée de la boîte. La pompe absorbe (ω/K)², et la
+ * turbine rend ce couple multiplié tant que les deux glissent : c'est ce qui fait décoller sans embrayage.
+ */
+void DrivingModel::converterTorque(double& pump, double& turbine) const {
+    const double ratioNow = omega_ > 1.0 ? clamp(inputOmega_ / omega_, 0.0, 1.2) : 1.0;
+    const double absorb = omega_ / converterK_;
+    // La capacité chute quand les deux roues tournent à la même vitesse.
+    const double factor = ratioNow < 0.85 ? 1.0 : std::max((1.0 - ratioNow) / 0.15, 0.0);
+    pump = absorb * absorb * factor;
+    const double multiply = ratioNow < 0.85 ? 2.0 - ratioNow / 0.85 : 1.0;
+    // Pendant un passage, les embrayages internes glissent : le choc ne va pas jusqu'aux dents.
+    const double torqueCap = clutchCapacity_ * (step_ == ShiftStep::Handover ? 1.0 : 1.25);
+    turbine = std::min(pump * multiply, torqueCap);
+}
+
+void DrivingModel::converterStep(double tyre, double wheelInertia) {
+    const double J = gearing_.box.inputInertia;
+    const double drag = inputDrag();
+    double pump = 0.0, turbine = 0.0;
+    converterTorque(pump, turbine);
+    const bool driving = meshed_ && gear_ != 0;
+    const double g = driving ? ratio(gear_) : 1.0;
+    double transmitted = turbine;
+    if (locked_) {
+        const double wheelSide = wheelInertia / (g * g * efficiency_) + J;
+        const double loadOnEngine = tyre * radius_ / (g * efficiency_) + drag;
+        const double alpha = (torque_ - loadOnEngine) / (inertia_ + wheelSide);
+        transmitted = torque_ - inertia_ * alpha;
+        if (driving && std::fabs(transmitted) <= clutchCapacity_ * clutch_) {
+            omega_ = std::max(omega_ + alpha * kStep, 0.0);
+            wheelOmega_ = omega_ / g;
+            inputOmega_ = omega_;
+            trackOverload(transmitted - drag);
+            return;
+        }
+        locked_ = false;
+    }
+    omega_ = std::max(omega_ + (torque_ - pump) / inertia_ * kStep, 0.0);
+    if (driving) {
+        const double wheelNext = wheelOmega_ + ((turbine - drag) * g * efficiency_ - tyre * radius_) / (wheelInertia + J * g * g * efficiency_) * kStep;
+        wheelOmega_ = std::max(wheelNext, 0.0);
+        inputOmega_ = wheelOmega_ * g;
+        trackOverload(turbine - drag);
+        clutchSlipKw_ = 0.0;
+        // Le pontage referme : les deux roues du convertisseur se rejoignent, sans perdre leur élan.
+        if (clutch_ > 0.9) {
+            const double wheelSide = wheelInertia / (g * g * efficiency_) + J;
+            const double shared = (inertia_ * omega_ + wheelSide * inputOmega_) / (inertia_ + wheelSide);
+            omega_ = shared;
+            inputOmega_ = shared;
+            wheelOmega_ = shared / g;
+            locked_ = true;
+        }
+    } else {
+        inputOmega_ = std::max(inputOmega_ + (turbine - drag) / J * kStep, 0.0);
+        wheelOmega_ = std::max(wheelOmega_ - tyre * radius_ / wheelInertia * kStep, 0.0);
+        gearTorque_ = 0.0;
+    }
+}
+
+GearboxDrive DrivingModel::gearboxDrive() const {
+    GearboxDrive d;
+    const GearboxSpec& box = gearing_.box;
+    const bool driving = meshed_ && gear_ != 0;
+    const double overallFinal = box.finalDrive > 0.0 ? box.finalDrive : 1.0;
+    d.inputOmega = static_cast<float>(powertrain_.electric ? omega_ : inputOmega_);
+    d.outputOmega = static_cast<float>(wheelOmega_ * overallFinal);
+    d.torqueNm = static_cast<float>(powertrain_.electric ? torque_ : (driving ? gearTorque_ : 0.0));
+    d.firings = powertrain_.engine.cylinders;
+    d.gear = driving ? gear_ : 0;
+    d.running = omega_ > 1.0 && !cut_ && crankLeft_ <= 0.0 && !stalled_ && !powertrain_.electric;
+    d.coneSlip = static_cast<float>(coneSlip_);
+    d.coneTorque = static_cast<float>(coneTorque_);
+    d.grind = static_cast<float>(grinding_);
+    d.clutchSlip = static_cast<float>(clutchSlipKw_);
+    d.pedal = static_cast<float>(clutchPedal_);
+    d.impacts = impacts_;
+    d.selectorClicks = selectorClicks_;
+    if (d.running && (locked_ || clutch_ > 0.7) && box.kind != GearboxKind::Converter) {
+        // Ce que chaque explosion impose au primaire : le couple rapporté au volant, passé par l'amortisseur du disque.
+        // Résonance de 40 à 80 Hz sous charge (LuK), plus bas avec le pré-amortisseur au point mort.
+        const double firesHz = toRpm(omega_) / 120.0 * powertrain_.engine.cylinders;
+        const double swing = (rippleIdleNm_ + rippleNm_ * manifold_) / inertia_;
+        const double resonance = driving ? 55.0 : 22.0;
+        const double r = firesHz / resonance;
+        const double damping = 2.0 * 0.15 * r;
+        const double spring = 1.0 - r * r;
+        double through = 1.0 / std::sqrt(spring * spring + damping * damping);
+        // Le double volant isole presque tout au-dessus de sa résonance, sous le ralenti.
+        if (box.flywheel == Flywheel::DualMass) through = std::min(through, 0.12);
+        d.acyclism = static_cast<float>(swing * through);
+    }
+    return d;
+}
+
+void DrivingModel::integrate(double brakePedal) {
+    const CarConfig& car = powertrain_.car;
+    const BodySpec& body = bodySpec(car.body);
+    const double mass = static_cast<double>(car.massKg);
+    const double totalMass = mass + trailerKg_;
+    const double wheelInertia = kWheelInertia * (car.drive == Drive::All ? 2.0 : 1.0);
+
+    // Motricité : le poids passe sur l'arrière à l'accélération.
+    // Une côte charge l'arrière comme une accélération : c'est la gravité qui tire.
+    const double transfer = mass * (acceleration_ + kGravity * slopeShare()) * body.cgHeightM / body.wheelbaseM;
+    const double frontShare = frontShareOf(car);
+    const double frontLoad = mass * kGravity * frontShare - transfer;
+    const double rearLoad = mass * kGravity * (1.0 - frontShare) + transfer;
+    double drivenLoad = mass * kGravity;
+    if (car.drive == Drive::Front) drivenLoad = frontLoad;
+    else if (car.drive == Drive::Rear) drivenLoad = rearLoad;
+    const double slip = wheelSpeedMs() - speedMs_;
+    const double tyre = kTyreGrip * std::max(drivenLoad, 0.0) * saturate(slip / kTyreSlipMs);
+
+    if (powertrain_.electric) {
+        const double g = ratio(1);
+        const double wheelSide = wheelInertia / (g * g * efficiency_);
+        const double loadOnEngine = tyre * radius_ / (g * efficiency_);
+        const double alpha = (torque_ - loadOnEngine) / (inertia_ + wheelSide);
+        omega_ = std::max(omega_ + alpha * kStep, 0.0);
+        wheelOmega_ = omega_ / g;
+        inputOmega_ = omega_;
+        gearTorque_ = torque_ - inertia_ * alpha;
+    } else if (gearing_.box.kind == GearboxKind::Converter) {
+        converterStep(tyre, wheelInertia);
+    } else if (meshed_ && gear_ != 0) {
+        drivenStep(tyre, wheelInertia);
+    } else {
+        freeStep(tyre, wheelInertia);
+    }
+
+    if (!powertrain_.electric && !cut_ && crankLeft_ <= 0.0 && meshed_ && gear_ != 0 && gearing_.box.kind != GearboxKind::Converter &&
+        toRpm(omega_) < idle_ * (manual_ ? kStallShare : 0.8)) {
+        if (manual_) {
+            // En manuelle, rien ne protège le moteur : si l'embrayage le relie aux roues, il cale.
+            // La première reste assistée au démarrage, pour pouvoir partir au clavier.
+            if (locked_ || (std::abs(gear_) >= 2 && clutch_ > 0.25)) stalled_ = true;
+        } else {
+            // L'embrayage piloté d'une boîte automatique s'ouvre avant que le moteur ne cale.
+            locked_ = false;
+            clutch_ = std::min(clutch_, 0.15);
+        }
+    }
+    // Un moteur qui s'éteint le dit, quelle que soit la boîte : sans cela, plus rien ne propose de le relancer.
+    if (!powertrain_.electric && !stalled_ && !cut_ && crankLeft_ <= 0.0 && toRpm(omega_) < 2.0 * kStopRpm) stalled_ = true;
+    if (toRpm(omega_) < kStopRpm && cut_ && crankLeft_ <= 0.0 && !powertrain_.electric) omega_ = 0.0;
+
+    const double stopping = brakePedal * kTyreGrip * totalMass * kGravity;
+    // À l'arrêt, freins serrés, la pente ne fait pas partir la voiture. Elle ne recule jamais : la vitesse reste positive (voir docs/modele.md).
+    const double extra = speedMs_ <= 0.0 && brakePedal > 0.02 ? std::max(roadExtraN(), 0.0) : roadExtraN();
+    const double force = tyre - roadLoadN(powertrain_, speedMs_) - extra - (speedMs_ > 0.0 ? stopping : 0.0);
+    acceleration_ = clamp(force / totalMass, -12.0, 12.0);
+    speedMs_ = std::max(speedMs_ + force / totalMass * kStep, 0.0);
+    // À l'arrêt, freins serrés : les roues ne tournent plus.
+    if (speedMs_ <= 0.0 && brakePedal > 0.02 && !meshed_) wheelOmega_ = 0.0;
+    if (!meshed_) wheelOmega_ += (speedMs_ / radius_ - wheelOmega_) * std::min(1.0, kStep / 0.05);
 }
 
 }  // namespace revforge

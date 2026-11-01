@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { heated } from '../lib/heat';
   interface Props {
     label: string;
     hint: string;
@@ -51,7 +52,7 @@
   onlostpointercapture={up}
   oncontextmenu={(event) => event.preventDefault()}
 >
-  <span class="fill" style:height="{pressure * 100}%"></span>
+  <span class="fill" style:height="{pressure * 100}%" use:heated></span>
   <span class="text">
     <strong>{label}</strong>
     <small>{hint}</small>
@@ -62,10 +63,13 @@
   .pedal {
     position: relative;
     flex: 1;
-    min-height: 112px;
+    /* Trois pédales dans une colonne étroite : leur nom se règle sur leur largeur, sans déborder. */
+    container-type: inline-size;
+    min-width: 0;
+    padding: 6px 3px;
+    min-height: var(--pedal-h, 112px);
     overflow: hidden;
-    border: 1px solid var(--line-strong);
-    border-radius: var(--radius);
+    border: 0;
     background: var(--surface-raised);
     color: var(--text);
     cursor: pointer;
@@ -74,11 +78,10 @@
     -webkit-user-select: none;
   }
   .pedal:disabled { opacity: 0.45; cursor: not-allowed; }
-  .pedal.active { border-color: var(--accent); }
-  .pedal.danger.active { border-color: var(--danger); }
-  .fill { position: absolute; left: 0; right: 0; bottom: 0; background: var(--accent); opacity: 0.32; }
+  .fill { position: absolute; left: 0; right: 0; bottom: 0; background: var(--heat-text); opacity: 0.5; }
   .danger .fill { background: var(--danger); }
+  .active small { color: var(--text); }
   .text { position: relative; display: flex; flex-direction: column; gap: 4px; align-items: center; pointer-events: none; }
-  strong { font-size: 1.05rem; font-weight: 600; }
-  small { color: var(--text-dim); font-size: 0.8rem; }
+  strong { font-family: var(--display); font-size: clamp(0.9rem, 17cqi, 1.375rem); font-weight: 700; line-height: 1.1; text-transform: uppercase; white-space: nowrap; }
+  small { color: var(--text-dim); font-size: clamp(0.65rem, 11cqi, var(--type-small)); line-height: 1.2; }
 </style>

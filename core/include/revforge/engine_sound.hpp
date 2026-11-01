@@ -6,8 +6,16 @@
 #include <vector>
 
 #include "revforge/engine_config.hpp"
+#include "revforge/gearbox.hpp"
+#include "revforge/turbo.hpp"
 
 namespace revforge {
+
+/**
+ * Positions d'écoute toutes prêtes : chacune est un point autour de la voiture (voir `setListener`).
+ * Outside : derrière elle, à 5 m. L'ordre compte : le site envoie la position dans cette liste.
+ */
+enum class Listener { Outside, Cabin, EngineBay, Front, Side, Far, Pipe };
 
 /**
  * Simulation acoustique d'un moteur.
@@ -38,10 +46,56 @@ public:
 
     float targetRpm() const { return targetRpm_.load(std::memory_order_relaxed); }
 
+    /**
+     * État réel du moteur, quand on le connaît : remplissage (0-1), pression du turbo (0-1),
+     * combustion coupée, démarreur. Sans cet appel, la charge se déduit de la montée du régime.
+     * `throttle` : l'accélérateur (0-1), s'il est connu. Pied levé, l'injection se coupe ; un filet de gaz, lui, brûle
+     * encore. Sans lui, seul le remplissage permet de deviner le lever de pied.
+     */
+    void setDrive(float load, float boost, bool cut, bool cranking, float throttle = -1.0f);
+    /**
+     * Le vrai turbo, quand il y en a un : la vitesse de l'arbre fait le sifflement, les débits font la décharge et le flutter.
+     * Sans cet appel, le son déduit tout cela de la pression de `setDrive`.
+     */
+    void setTurbo(const TurboDrive& drive);
+    /** Le démarreur : alimenté ; pignon engagé dans la couronne. Le contact des dents fait le son. */
+    void setStarter(bool powered, bool meshed, float load = 0.5f);
+    /** Vitesse de la voiture et glissement des pneus : vent, roulement, crissement. */
+    void setRoad(float speedMs, float slipMs);
+    /** La boîte et son état : ses dents sifflent et ses roues folles claquent. Sans cet appel, elle reste muette et ne coûte rien. */
+    void setGearbox(const GearboxSpec& spec, const GearboxDrive& drive);
+    /** Le claquement, pour l'affichage : position d'une roue folle dans son jeu (-1 à 1), force du dernier choc. Ne change rien au son. */
+    float gearboxLoose(int index) const;
+    float gearboxStrike() const;
+    /** Une position toute prête, à la mesure de cette voiture. */
+    void setListener(Listener listener);
+    /**
+     * Une position libre : en mètres, au sol et au centre de la voiture, x vers l'avant, y vers la gauche, z vers le
+     * haut. La tête regarde la voiture et s'y rend en glissant, à `maxSpeed` m/s au plus : ni clic, ni saut.
+     */
+    void setListenerPosition(float x, float y, float z, float maxSpeed = 15.0f);
+    /** Où est la tête en ce moment, dans le repère de la voiture. */
+    float listenerX() const;
+    float listenerY() const;
+    float listenerZ() const;
+    /** Niveau estimé à la position d'écoute, pondéré A, constante de temps « fast » : indépendant du volume. */
+    float levelDbA() const;
+    /** Ce que le limiteur retire en ce moment (1 : rien). Il ne doit plus travailler en continu. */
+    float limiterGain() const;
+    /** Nombre de détonations depuis le début : pour faire jaillir une flamme à l'écran. */
+    std::uint32_t pops() const;
+    /** Vitesse de la turbine, 0 à 1 : elle garde son élan quand la pression retombe. */
+    float turbine() const;
+    /** Décharge du turbo en cours (0 : aucune). */
+    float turboRelease() const;
+
     /** Vrai quand la sortie est muette et le restera : la piste peut être mise en pause. */
     bool isSilent() const;
 
+    /** Un seul canal : un micro au centre de la tête. Sert aux tests et aux empreintes. */
     void render(float* out, int count);
+    /** Les deux oreilles : retards et ombre de la tête. */
+    void renderStereo(float* left, float* right, int count);
 
     /** Pour l'affichage : charge estimée (0-1), pression du turbo (0-1). */
     float load() const;

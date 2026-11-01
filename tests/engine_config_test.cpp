@@ -5,6 +5,7 @@
 #include <functional>
 #include <utility>
 
+#include "exhaust_line.hpp"
 #include "revforge/presets.hpp"
 #include "test_support.hpp"
 
@@ -24,12 +25,45 @@ double brightness(const EngineConfig& c) {
     return slopeRms(played) / rms(played);
 }
 
+double powerAt(const Samples& x, double hz) {
+    constexpr double kPi = 3.141592653589793;
+    double re = 0.0, im = 0.0;
+    for (std::size_t i = 0; i < x.size(); ++i) {
+        const double a = 2.0 * kPi * hz * static_cast<double>(i) / kRate;
+        const double w = 0.5 - 0.5 * std::cos(2.0 * kPi * static_cast<double>(i) / static_cast<double>(x.size()));
+        re += x[i] * w * std::cos(a);
+        im += x[i] * w * std::sin(a);
+    }
+    return re * re + im * im;
+}
+
+/** Ce qu'il y a au-dessus de 2 kHz, par rapport au dessous, à 3000 tr/min et à cette charge. */
+double airiness(const EngineConfig& c, float load) {
+    EngineSound core(kRate);
+    core.setProfile(c.toProfile());
+    core.setVolume(0.7f);
+    // Sur le côté : pile dans l'axe, un gros tube concentre ses aigus vers l'auditeur, et ce n'est pas ce qu'on mesure ici.
+    core.setListener(Listener::Side);
+    core.setTargetRpm(3000.0f);
+    core.setDrive(load, 0.0f, false, false);
+    Samples x(kRate * 2);
+    core.render(x.data(), static_cast<int>(x.size()));
+    const Samples played = slice(x, kRate, kRate + 16384);
+    const auto bandPower = [&played](double from, double to) {
+        double sum = 0.0;
+        for (double hz = from; hz < to; hz += 50.0) sum += powerAt(played, hz);
+        return sum;
+    };
+    return bandPower(2000.0, 8000.0) / bandPower(100.0, 2000.0);
+}
+
 /** Monte, tient, puis lève le pied d'un coup. Renvoie (pied sur l'accélérateur, lever de pied). */
-std::pair<Samples, Samples> blip(const EngineConfig& c) {
+std::pair<Samples, Samples> blip(const EngineConfig& c, float volume = 0.7f, Listener listener = Listener::Outside) {
     const EngineProfile p = c.toProfile();
     EngineSound core(kRate);
     core.setProfile(p);
-    core.setVolume(0.7f);
+    core.setVolume(volume);
+    core.setListener(listener);
     auto play = [&core](float seconds, const std::function<float(float)>& rpm) {
         Samples out(static_cast<std::size_t>(seconds * kRate));
         std::size_t done = 0;
@@ -49,9 +83,10 @@ std::pair<Samples, Samples> blip(const EngineConfig& c) {
 }
 
 /** Autour de la plus forte détonation : (crête, brillance) sur 40 ms. */
-std::pair<float, double> loudestPop(const EngineConfig& c) {
-    const Samples lift = blip(c).second;
-    const auto top = std::max_element(lift.begin(), lift.end(), [](float a, float b) { return std::fabs(a) < std::fabs(b); });
+std::pair<float, double> loudestPop(const EngineConfig& c, float volume = 0.7f) {
+    const Samples lift = blip(c, volume).second;
+    // Pas le premier quart de seconde : le niveau suit maintenant la physique, et le plein gaz n'y est pas encore retombé.
+    const auto top = std::max_element(lift.begin() + kRate / 4, lift.end(), [](float a, float b) { return std::fabs(a) < std::fabs(b); });
     const std::size_t at = static_cast<std::size_t>(top - lift.begin());
     const std::size_t from = at > 882 ? at - 882 : 0;
     const Samples window = slice(lift, from, std::min(from + 1764, lift.size()));
@@ -72,7 +107,11 @@ TEST_CASE("de gros cylindres sonnent plus grave") {
     big.displacementCc = 6000;
     small.displacementCc = 1000;
     CHECK(big.toProfile().strokeM > small.toProfile().strokeM);
-    CHECK(brightness(big) < brightness(small));
+    // À toute charge : un cylindre plus gros se vide plus lentement, et sa ligne garde moins d'aigus.
+    for (float load : {0.1f, 0.3f, 0.6f, 1.0f}) {
+        INFO(load);
+        CHECK(airiness(big, load) < airiness(small, load) * 0.85);
+    }
 }
 
 TEST_CASE("un échappement libre est plus brillant") {
@@ -225,7 +264,11 @@ TEST_CASE("un échappement libre détone plus fort") {
     stock.pops = PopLevel::Strong;
     EngineConfig straight = stock;
     straight.exhaust = Exhaust::Straight;
-    CHECK(loudestPop(straight).first > loudestPop(stock).first);
+    // Volume bas : à 0,7, les deux crêtes butent sur le limiteur, et on ne compare plus rien.
+    const float loud = loudestPop(straight, 0.1f).first;
+    const float tame = loudestPop(stock, 0.1f).first;
+    CHECK(tame < 0.8f);
+    CHECK(loud > tame);
 }
 
 TEST_CASE("l'échappement et le moteur façonnent la détonation") {
@@ -268,8 +311,9 @@ TEST_CASE("le turbo décharge sa pression au lever de pied") {
     dump.aspiration = Aspiration::Turbo;
     EngineConfig flutter = dump;
     flutter.turboRelease = TurboRelease::Flutter;
+    // La soupape décharge sous le capot : on l'entend depuis l'avant, pas derrière la caisse et la ligne.
     const auto hiss = [](const EngineConfig& c) {
-        const Samples lift = blip(c).second;
+        const Samples lift = blip(c, 0.7f, Listener::Front).second;
         return slopeRms(slice(lift, 0, lift.size() / 2));
     };
     CHECK(hiss(dump) > hiss(atmo) * 1.2);
@@ -305,4 +349,89 @@ TEST_CASE("même configuration, pas de fondu inutile") {
     changed.boreMm = 70;
     CHECK(a == b);
     CHECK_FALSE(a == changed.toProfile());
+}
+
+TEST_CASE("un silencieux garni retient les aigus, une ligne directe les laisse passer") {
+    // Le niveau sort maintenant de la physique : on compare ce que chaque ligne retient, plus un timbre égalisé.
+    ExhaustLine line(kRate);
+    const auto heldBack = [&line](Exhaust exhaust) {
+        line.compute(exhaust, 1.0f, 0.002);
+        return line.lossDb(2000.0, 6000.0);
+    };
+    MESSAGE("retenu entre 2 et 6 kHz : origine " << heldBack(Exhaust::Stock) << " dB, sport " << heldBack(Exhaust::Sport) << " dB, directe " << heldBack(Exhaust::Straight) << " dB");
+    CHECK(heldBack(Exhaust::Straight) < heldBack(Exhaust::Sport) - 6.0);
+    CHECK(heldBack(Exhaust::Sport) < heldBack(Exhaust::Stock) - 6.0);
+}
+
+// Le calcul de la ligne face à la formule analytique d'une chambre d'expansion.
+TEST_CASE("la matrice d'une chambre retrouve la perte par transmission analytique") {
+    constexpr double kPiLocal = 3.141592653589793;
+    constexpr double kLength = 0.4;
+    constexpr double kRatio = 8.0;
+    for (double hz : {100.0, 300.0, 625.0, 900.0, 1250.0, 1700.0}) {
+        INFO(hz);
+        const double k = 2.0 * kPiLocal * hz / 500.0;
+        const double m = kRatio - 1.0 / kRatio;
+        const double sine = std::sin(k * kLength);
+        const double expected = 10.0 * std::log10(1.0 + 0.25 * m * m * sine * sine);
+        CHECK(ExhaustLine::chamberLossDb(hz, kLength, kRatio) == doctest::Approx(expected).epsilon(0.001));
+    }
+    // Aucune perte quand la chambre fait une demi-longueur d'onde : le creux caractéristique.
+    CHECK(std::fabs(ExhaustLine::chamberLossDb(625.0, kLength, kRatio)) < 0.01);
+}
+
+// Le défaut « canette » : une ligne calculée en ondes planes forme un peigne de bosses régulières et fixes dans les
+// médiums, qui reviennent tous les 600 Hz environ. De vrais moteurs ont un relief de 1,3 à 3,5 dB, sans cette régularité.
+TEST_CASE("la ligne ne forme pas de peigne régulier dans les médiums") {
+    constexpr double kPiLocal = 3.141592653589793;
+    constexpr double kStepHz = 20.0;
+    constexpr int kFirstHz = 800;
+    ExhaustLine line(kRate);
+    for (const Exhaust exhaust : {Exhaust::Stock, Exhaust::Sport, Exhaust::Straight, Exhaust::MufflerDelete, Exhaust::ResonatorDelete, Exhaust::Quiet}) {
+        INFO(static_cast<int>(exhaust));
+        const std::vector<float>& impulse = line.compute(exhaust, 1.0f, 0.002);
+        std::vector<double> level;
+        for (double hz = kFirstHz; hz <= 6000.0; hz += kStepHz) {
+            double re = 0.0, im = 0.0;
+            for (std::size_t i = 0; i < impulse.size(); ++i) {
+                const double a = 2.0 * kPiLocal * hz * static_cast<double>(i) / kRate;
+                re += impulse[i] * std::cos(a);
+                im += impulse[i] * std::sin(a);
+            }
+            level.push_back(10.0 * std::log10(re * re + im * im + 1e-20));
+        }
+        // On retire la pente, sur une octave autour de chaque point.
+        const int count = static_cast<int>(level.size());
+        std::vector<double> relief(level.size());
+        double mean = 0.0;
+        for (int i = 0; i < count; ++i) {
+            const double hz = kFirstHz + kStepHz * i;
+            double sum = 0.0;
+            int inside = 0;
+            for (int j = 0; j < count; ++j) {
+                const double other = kFirstHz + kStepHz * j;
+                if (other > hz / std::sqrt(2.0) && other < hz * std::sqrt(2.0)) {
+                    sum += level[static_cast<std::size_t>(j)];
+                    ++inside;
+                }
+            }
+            relief[static_cast<std::size_t>(i)] = level[static_cast<std::size_t>(i)] - sum / inside;
+            mean += relief[static_cast<std::size_t>(i)];
+        }
+        mean /= count;
+        double variance = 0.0;
+        for (double& value : relief) {
+            value -= mean;
+            variance += value * value;
+        }
+        // La régularité : le relief ressemble-t-il à lui-même, décalé de 400 à 1500 Hz ?
+        double regular = 0.0;
+        for (int lag = 20; lag < 75; ++lag) {
+            double same = 0.0;
+            for (int i = 0; i + lag < count; ++i) same += relief[static_cast<std::size_t>(i)] * relief[static_cast<std::size_t>(i + lag)];
+            regular = std::max(regular, same / variance);
+        }
+        MESSAGE("relief " << std::sqrt(variance / count) << " dB, régularité " << regular);
+        CHECK(regular < 0.53);
+    }
 }

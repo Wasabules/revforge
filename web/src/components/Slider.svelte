@@ -49,10 +49,10 @@
   .disabled { opacity: 0.45; }
   .head { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
   label { color: var(--text-dim); font-size: 0.85rem; }
-  output { font-size: 0.95rem; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  output { font-size: 0.95rem; color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
   input {
     width: 100%;
-    height: 24px;
+    height: 28px;
     margin: 0;
     background: transparent;
     appearance: none;
@@ -62,20 +62,21 @@
   input:disabled { cursor: not-allowed; }
   input::-webkit-slider-runnable-track {
     height: 6px;
-    border-radius: 3px;
-    background: linear-gradient(to right, var(--accent) var(--progress), var(--line-strong) var(--progress));
+    background: linear-gradient(to right, var(--control) var(--progress), var(--line-strong) var(--progress));
   }
-  input::-moz-range-track { height: 6px; border-radius: 3px; background: var(--line-strong); }
-  input::-moz-range-progress { height: 6px; border-radius: 3px; background: var(--accent); }
+  input::-moz-range-track { height: 6px; background: var(--line-strong); }
+  input::-moz-range-progress { height: 6px; background: var(--control); }
   input::-webkit-slider-thumb {
     appearance: none;
     -webkit-appearance: none;
-    width: 20px;
-    height: 20px;
-    margin-top: -7px;
-    border: 3px solid var(--bg);
-    border-radius: 50%;
+    width: 12px;
+    height: 24px;
+    margin-top: -9px;
+    border: 0;
+    border-radius: 0;
     background: var(--text);
   }
-  input::-moz-range-thumb { width: 14px; height: 14px; border: 3px solid var(--bg); border-radius: 50%; background: var(--text); }
+  input::-moz-range-thumb { width: 12px; height: 24px; border: 0; border-radius: 0; background: var(--text); }
+  /* Au doigt, la cible fait ses 44 px. */
+  @media (pointer: coarse) { input { height: 44px; } }
 </style>

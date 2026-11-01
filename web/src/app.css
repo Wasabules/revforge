@@ -1,16 +1,45 @@
+/* Polices hébergées avec le site, sous licence OFL : aucun appel à un service de polices. Seuls les graisses et le jeu latin servis. */
+@import '@fontsource/big-shoulders-display/latin-700';
+@import '@fontsource/big-shoulders-display/latin-800';
+@import '@fontsource/inter-tight/latin-400';
+@import '@fontsource/inter-tight/latin-600';
+
 :root {
   color-scheme: dark;
-  --bg: #0e1116;
-  --surface: #161a21;
-  --surface-raised: #1f242d;
-  --line: #2a303a;
-  --line-strong: #3a424f;
-  --text: #eef1f5;
-  --text-dim: #98a2b0;
-  --accent: #ff8a3d;
-  --on-accent: #1d0f05;
+  /* Les zones se distinguent par leur ton, jamais par un contour. */
+  --bg: #0c0a09;
+  --surface: #15110e;
+  --surface-raised: #1f1a16;
+  --surface-high: #2a241e;
+  /* Filets des tableaux et graduations, pistes : ce qui reste à l'arrière-plan. */
+  --line: #2c2620;
+  --line-strong: #4a4136;
+  --text: #efe9df;
+  --text-dim: #c9c0b3;
+  --text-quiet: #a79d90;
+  /*
+   * La chaleur, couleur du thème : `heat.ts` la réécrit sur les seules zones qui s'en servent. Ces valeurs sont celles du métal froid.
+   * --heat remplit, --heat-text se lit sur fond sombre, --on-heat se lit sur --heat.
+   */
+  --heat: #4a3e36;
+  --heat-text: #8c827a;
+  --on-heat: #ffffff;
+  /* Ce qui est choisi sans être chaud : les réglages restent neutres, la chaleur garde sa place. */
+  --control: #e8e2d8;
+  --on-control: #14100d;
+  /* Couleurs d'état, réservées à ce qui veut dire quelque chose : jamais pour distinguer deux séries. */
+  --warn: #f2b33d;
+  --on-warn: #1d0f05;
   --danger: #ef5350;
-  --radius: 14px;
+  --cool: #5aa9e6;
+  --metal: #8a8075;
+  --cut: 14px;
+  --display: 'Big Shoulders Display', 'Arial Narrow', 'Liberation Sans Narrow', sans-serif;
+  --type-tiny: 0.6875rem;
+  --type-small: 0.75rem;
+  --type-label: 0.75rem;
+  --type-body: 0.875rem;
+  --type-lead: 1rem;
 }
 
 * { box-sizing: border-box; }
@@ -21,10 +50,30 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Ubuntu, sans-serif;
-  line-height: 1.45;
+  font-family: 'Inter Tight', system-ui, -apple-system, 'Segoe UI', Roboto, Ubuntu, sans-serif;
+  line-height: 1.4;
+  /* Sans cela, sous Linux, les lettres se calent au pixel : les titres étroits y prennent des trous. */
+  text-rendering: geometricPrecision;
 }
 
 button, select { font: inherit; }
 
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+:focus-visible { outline: 3px solid var(--text); outline-offset: 2px; }
+
+/*
+ * Une plaque usinée, deux coins abattus. La découpe est sur le fond, pas sur le bouton : un `clip-path` sur le bouton
+ * couperait aussi son contour de focus.
+ */
+.plate { position: relative; isolation: isolate; border: 0; background: transparent; --plate: var(--surface-raised); }
+.plate::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--plate);
+  clip-path: polygon(0 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% 100%, var(--cut) 100%, 0 calc(100% - var(--cut)));
+}
+
+@media (forced-colors: active) {
+  .plate { border: 1px solid ButtonText; }
+}

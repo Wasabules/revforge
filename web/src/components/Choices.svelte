@@ -24,20 +24,19 @@
   fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
   fieldset:disabled { opacity: 0.45; }
   legend { padding: 0; margin-bottom: 8px; color: var(--text-dim); font-size: 0.85rem; }
-  .row { display: flex; flex-wrap: wrap; gap: 6px; }
+  .row { display: flex; flex-wrap: wrap; gap: 4px; }
   button {
-    min-height: 38px;
-    min-width: 38px;
+    min-height: 40px;
+    min-width: 40px;
     padding: 0 12px;
-    border: 1px solid var(--line-strong);
-    border-radius: 8px;
-    background: transparent;
+    border: 0;
+    background: var(--surface-raised);
     color: var(--text);
     font: inherit;
     font-size: 0.9rem;
     cursor: pointer;
   }
-  button:hover:not(:disabled):not(.selected) { background: var(--surface-raised); }
-  button.selected { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+  button:hover:not(:disabled):not(.selected) { background: var(--surface-high); }
+  button.selected { background: var(--control); color: var(--on-control); font-weight: 600; }
   button:disabled { cursor: not-allowed; }
 </style>

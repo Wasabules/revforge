@@ -14,6 +14,7 @@ inline float sqrt(float x) { return static_cast<float>(std::sqrt(static_cast<dou
 inline float tanh(float x) { return static_cast<float>(std::tanh(static_cast<double>(x))); }
 inline float pow(float x, float y) { return static_cast<float>(std::pow(static_cast<double>(x), static_cast<double>(y))); }
 inline float floor(float x) { return static_cast<float>(std::floor(static_cast<double>(x))); }
+inline float log10(float x) { return static_cast<float>(std::log10(static_cast<double>(x))); }
 inline float abs(float x) { return std::fabs(x); }
 inline float max(float a, float b) { return a >= b ? a : b; }
 inline float min(float a, float b) { return a <= b ? a : b; }
