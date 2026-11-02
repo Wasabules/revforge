@@ -286,6 +286,7 @@ export const en = {
   'body.coupe': 'Coupe',
   'body.supercar': 'Supercar',
   'body.van': 'Van',
+  'body.retro': '80s coupe',
   'drive.front': 'FWD',
   'drive.rear': 'RWD',
   'drive.all': 'AWD',

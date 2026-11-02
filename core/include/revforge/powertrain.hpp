@@ -8,7 +8,7 @@
 
 namespace revforge {
 
-enum class Body { City, Compact, Coupe, Supercar, Van };
+enum class Body { City, Compact, Coupe, Supercar, Van, Retro };
 enum class Drive { Front, Rear, All };
 
 /** La voiture autour du moteur : ce que règle l'utilisateur. */

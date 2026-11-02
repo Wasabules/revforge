@@ -23,6 +23,23 @@
     wheelbase: number;
     outline: [number, number][];
     glass: [number, number][];
+    /** Une caisse à arêtes franches : sans lui, le contour s'arrondit et les passages de roue suivent le pneu. */
+    trim?: Trim;
+  }
+  /** Ce qui fait une voiture carrée : tout en fractions de la silhouette, sauf le rayon et le jeu, en mètres. */
+  interface Trim {
+    corner: number;
+    pillar: number;
+    archGap: number;
+    /** De `x0` à `x1`, de `y0` à `y1`. */
+    frontBumper: [number, number, number, number];
+    rearBumper: [number, number, number, number];
+    headlight: [number, number, number, number];
+    taillight: [number, number, number, number];
+    strip: [number, number, number];
+    gutter: [number, number, number];
+    mirror: [number, number];
+    handle: [number, number];
   }
   const SHAPES: Record<Body, Shape> = {
     city: {
@@ -50,6 +67,22 @@
       outline: [[0, 0.24], [0, 0.93], [0.03, 1], [0.66, 1], [0.8, 0.62], [0.93, 0.5], [1, 0.36], [1, 0.2], [0.97, 0.12], [0.03, 0.12]],
       glass: [[0.56, 0.6], [0.56, 0.92], [0.66, 0.93], [0.76, 0.62]],
     },
+    retro: {
+      length: 4.25, height: 1.36, rearAxle: 0.95, wheelbase: 2.5,
+      outline: [[0.02, 0.15], [0.004, 0.24], [0.002, 0.66], [0.012, 0.715], [0.2, 0.735], [0.29, 0.995], [0.6, 1], [0.69, 0.71], [0.975, 0.645], [0.998, 0.615], [1, 0.27], [0.985, 0.16]],
+      glass: [[0.222, 0.725], [0.302, 0.95], [0.587, 0.955], [0.664, 0.715]],
+      trim: {
+        corner: 0.025, pillar: 0.415, archGap: 0.06,
+        frontBumper: [0.905, 1.012, 0.26, 0.385],
+        rearBumper: [-0.012, 0.125, 0.26, 0.385],
+        headlight: [0.966, 0.997, 0.5, 0.585],
+        taillight: [0.003, 0.034, 0.53, 0.655],
+        strip: [0.125, 0.905, 0.46],
+        gutter: [0.3, 0.592, 0.975],
+        mirror: [0.652, 0.748],
+        handle: [0.43, 0.625],
+      },
+    },
   };
 
   let canvas: HTMLCanvasElement;
@@ -66,6 +99,74 @@
       ctx.quadraticCurveTo(toX(x), toY(y), (toX(x) + toX(nx)) / 2, (toY(y) + toY(ny)) / 2);
     }
     ctx.closePath();
+  }
+
+  /** Le contour à arêtes franches : des segments droits, chaque angle à peine cassé. */
+  function angularPath(ctx: CanvasRenderingContext2D, points: [number, number][], toX: (x: number) => number, toY: (y: number) => number, radius: number) {
+    ctx.beginPath();
+    const last = points[points.length - 1];
+    ctx.moveTo((toX(last[0]) + toX(points[0][0])) / 2, (toY(last[1]) + toY(points[0][1])) / 2);
+    for (let i = 0; i < points.length; i++) {
+      const [x, y] = points[i];
+      const [nx, ny] = points[(i + 1) % points.length];
+      ctx.arcTo(toX(x), toY(y), (toX(x) + toX(nx)) / 2, (toY(y) + toY(ny)) / 2, radius);
+    }
+    ctx.closePath();
+  }
+
+  /** Un passage de roue carré : droit de chaque côté du pneu, plat au-dessus, les angles coupés. */
+  function squareArch(ctx: CanvasRenderingContext2D, theme: Theme, center: number, tyre: number, gap: number, sill: number, X: (m: number) => number, Y: (m: number) => number) {
+    const half = tyre + gap;
+    const top = 2 * tyre + gap;
+    const cut = gap;
+    ctx.beginPath();
+    ctx.moveTo(X(center - half), Y(sill - 0.03));
+    ctx.lineTo(X(center - half), Y(top - cut));
+    ctx.lineTo(X(center - half + cut), Y(top));
+    ctx.lineTo(X(center + half - cut), Y(top));
+    ctx.lineTo(X(center + half), Y(top - cut));
+    ctx.lineTo(X(center + half), Y(sill - 0.03));
+    ctx.fillStyle = theme.bg;
+    ctx.fill();
+    ctx.strokeStyle = theme.text;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'miter';
+    ctx.stroke();
+  }
+
+  /** Pare-chocs épais, baguette, phare et feu rectangulaires, gouttière, rétroviseur et poignée carrés. */
+  function drawTrim(ctx: CanvasRenderingContext2D, theme: Theme, trim: Trim, bodyX: (f: number) => number, bodyY: (f: number) => number, braking: number) {
+    const block = ([x0, x1, y0, y1]: [number, number, number, number], fill: string, edge: string, radius: number) => {
+      ctx.beginPath();
+      ctx.roundRect(bodyX(x0), bodyY(y1), bodyX(x1) - bodyX(x0), bodyY(y0) - bodyY(y1), radius);
+      ctx.fillStyle = fill;
+      ctx.fill();
+      ctx.strokeStyle = edge;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    };
+    const line = (x0: number, x1: number, y: number, color: string, width: number) => {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.lineCap = 'butt';
+      ctx.beginPath();
+      ctx.moveTo(bodyX(x0), bodyY(y));
+      ctx.lineTo(bodyX(x1), bodyY(y));
+      ctx.stroke();
+    };
+    line(trim.strip[0], trim.strip[1], trim.strip[2], theme.lineStrong, 2);
+    line(trim.gutter[0], trim.gutter[1], trim.gutter[2], theme.lineStrong, 1);
+    const rubber = mix(theme.raised, theme.text, 0.18);
+    block(trim.frontBumper, rubber, theme.text, 2);
+    block(trim.rearBumper, rubber, theme.text, 2);
+    block(trim.headlight, mix(theme.text, theme.accent, 0.15), theme.text, 1);
+    block(trim.taillight, mix(theme.raised, theme.danger, 0.65 + 0.35 * braking), theme.text, 1);
+    // La poignée et le rétroviseur : deux petits rectangles, à l'échelle de la voiture.
+    const size = Math.max(2, (bodyX(0.03) - bodyX(0)) * 0.6);
+    ctx.fillStyle = theme.lineStrong;
+    ctx.fillRect(bodyX(trim.handle[0]), bodyY(trim.handle[1]), size * 1.6, Math.max(2, size * 0.4));
+    ctx.fillStyle = theme.text;
+    ctx.fillRect(bodyX(trim.mirror[0]), bodyY(trim.mirror[1]), size, size * 0.7);
   }
 
   function tube(ctx: CanvasRenderingContext2D, points: [number, number][], width: number, color: string) {
@@ -488,7 +589,9 @@
     // Caisse transparente : on voit la mécanique à travers.
     const bodyX = (f: number) => X(f * shape.length);
     const bodyY = (f: number) => Y(f * shape.height);
-    outlinePath(ctx, shape.outline, bodyX, bodyY);
+    const trim = shape.trim;
+    if (trim) angularPath(ctx, shape.outline, bodyX, bodyY, trim.corner * scale);
+    else outlinePath(ctx, shape.outline, bodyX, bodyY);
     ctx.fillStyle = theme.surface;
     ctx.globalAlpha = 0.88;
     ctx.fill();
@@ -496,6 +599,11 @@
     ctx.strokeStyle = theme.text;
     ctx.lineWidth = 2;
     ctx.stroke();
+    if (trim) {
+      const sill = shape.outline[0][1] * shape.height;
+      squareArch(ctx, theme, rearX, tyreM, trim.archGap, sill, X, Y);
+      squareArch(ctx, theme, frontX, tyreM, trim.archGap, sill, X, Y);
+    }
     // Vitres : des arêtes nettes, un montant au milieu.
     ctx.beginPath();
     shape.glass.forEach(([gx, gy], i) => (i ? ctx.lineTo(bodyX(gx), bodyY(gy)) : ctx.moveTo(bodyX(gx), bodyY(gy))));
@@ -505,7 +613,7 @@
     ctx.strokeStyle = theme.lineStrong;
     ctx.lineWidth = 1;
     ctx.stroke();
-    const pillar = (shape.glass[1][0] + shape.glass[2][0]) / 2;
+    const pillar = trim?.pillar ?? (shape.glass[1][0] + shape.glass[2][0]) / 2;
     const glassBottom = Math.min(shape.glass[0][1], shape.glass[3][1]);
     ctx.lineWidth = 3;
     ctx.strokeStyle = theme.surface;
@@ -520,11 +628,15 @@
     ctx.moveTo(bodyX(pillar), bodyY(glassBottom));
     ctx.lineTo(bodyX(pillar), bodyY(0.2));
     ctx.stroke();
-    const front = shape.outline.reduce((best, p) => (p[0] > best[0] ? p : best));
-    ctx.fillStyle = mix(theme.text, theme.accent, 0.15);
-    ctx.fillRect(bodyX(0.985) - 12, bodyY(front[1] + 0.12), 12, 4);
-    ctx.fillStyle = theme.danger;
-    ctx.fillRect(bodyX(0.003), bodyY(shape.outline[1][1] - 0.05), 6, 5 + 26 * telemetryBrake());
+    if (trim) {
+      drawTrim(ctx, theme, trim, bodyX, bodyY, telemetryBrake() / 0.4);
+    } else {
+      const front = shape.outline.reduce((best, p) => (p[0] > best[0] ? p : best));
+      ctx.fillStyle = mix(theme.text, theme.accent, 0.15);
+      ctx.fillRect(bodyX(0.985) - 12, bodyY(front[1] + 0.12), 12, 4);
+      ctx.fillStyle = theme.danger;
+      ctx.fillRect(bodyX(0.003), bodyY(shape.outline[1][1] - 0.05), 6, 5 + 26 * telemetryBrake());
+    }
 
     const floor = 0.26;
     const litres = config.displacementCc / 1000;

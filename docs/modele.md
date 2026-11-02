@@ -607,6 +607,46 @@ La boîte automatique du modèle joue peu : un conducteur qui suit des rapports 
 
 **Les réglages de turbo et de boîte comptent** : ces chiffres suivent le couple et la pression réels du modèle, et bougeront si ces parties changent.
 
+## La carrosserie des années 80
+
+`Body::Retro` est un coupé trois volumes à arêtes franches. Elle n'ajoute aucun calcul : `BodySpec` donne ses chiffres et tout en découle, traînée, vitesse de pointe, pont, place des sources, longueur de ligne, tête du conducteur. Les autres carrosseries ne bougent pas.
+
+| Grandeur | Retenu | D'où ça vient |
+|---|---:|---|
+| Cx | 0,40 | Liste Wikipédia (lue) : Capri III 0,374, 280ZX 0,38, Mark VII 0,38, Cougar 1983 0,40, XJS 0,40, Volvo 740 de 1982 0,41 ; mais Sierra 0,34 et E30 M3 0,33 : tout le monde n'en était pas là. Choisi dans la plage demandée, en haut d'une plage réelle plus large |
+| Surface frontale | 1,85 m² | **Supposée.** Aucune valeur publiée lue. La règle 0,84 × largeur × hauteur (vue citée, sans la page d'origine) donnerait 1,88 m². Contrôle : le CdA de 0,808 m² de la Volvo 740 Turbo, lu, avec Cx 0,41, implique 1,97 m² pour une voiture plus grosse |
+| CdA | 0,74 m² | Le seul chiffre que lit la physique : Cx et surface n'y sont pas séparés |
+| Dimensions | 4,25 × 1,65 × 1,36 m, empattement 2,50 m | E30 325i coupé (Auto-Data, lu) : 4,325 × 1,645 × 1,38 m, 2,57 m. Capri 2.8i (vu cité) : 4,35 × 1,70 × 1,30 m, 2,565 m. Plus courte qu'elles : **choix** d'un empattement court |
+| Masse | 1100 kg au choix de la carrosserie, 1150 kg au préréglage | E30 325i : 1145 kg (Auto-Data, lu), 1180 kg (vu cité). Capri 2.8i : 1170 kg (vu cité) |
+| Jantes | 14 pouces | 5,5J × 14 en 195/60 R14 sur la 325i (lu). Le rayon reste la formule commune : 273 mm, pour environ 295 mm réels |
+| Boîte | 5 rapports | Fréquent à l'époque, sans source lue pour le fixer : la Capri a existé en 4 et 5 rapports (vu cité) |
+| Centre de gravité, part sur l'avant, temps de passage | 0,52 m, 53 %, 0,36 s | **Supposés**, entre le coupé et la citadine |
+| Ligne | 0,98 fois celle d'une compacte | Suit la longueur, comme les autres carrosseries |
+| Isolation | Sportive au choix de la carrosserie | **Supposée :** peu de garnissage, vitres fines. Aucune mesure d'habitacle d'époque lue. Le site la règle en choisissant la carrosserie et la retire en la quittant, sauf si on l'a changée à la main. En ligne de commande, `--body retro` ne la change pas : donner `--insulation light` |
+
+Le préréglage `retro_coupe` est un 6 cylindres en ligne de 2,5 L, 84 mm d'alésage, 6400 tr/min, à arbre unique. Rien n'y est réglé pour coller à un chiffre publié, et le modèle donne moins de puissance que la référence : 149 ch et 209 Nm, pour 171 ch et 222 Nm (Auto-Data, lu).
+
+| | Coupé, préréglage | Compacte, même moteur, réglages de la compacte | Compacte, même moteur, même masse et mêmes jantes |
+|---|---:|---:|---:|
+| Cx, surface | 0,40, 1,85 m² | non saisis | non saisis |
+| CdA | 0,74 m² | 0,70 m² | 0,70 m² |
+| Masse, jantes, transmission | 1150 kg, 14", propulsion | 1350 kg, 18", traction | 1150 kg, 14", propulsion |
+| Rapports | 5 | 6 | 6 |
+| Vitesse maximale | 213 km/h | 218,5 km/h | 217 km/h |
+| 0 à 100 km/h | 8,45 s | 9,53 s | 8,45 s |
+| WLTC | 9,47 L/100 km | 9,49 L/100 km | 9,35 L/100 km |
+| 120 km/h | 9,34 L/100 km | 8,95 L/100 km | 9,01 L/100 km |
+| Habitacle, ralenti, plein gaz | 46,2, 76,0 dB(A) | 42,0, 70,8 dB(A) | avec la même isolation : 46,7, 76,0 dB(A) |
+| Dehors, à 5 m, plein gaz | 80,4 dB(A) | 80,6 dB(A) | 80,6 dB(A) |
+
+Mesuré par `measurePerformance`, `--fuel 1` et `soundSheet`. Les niveaux restent des estimations.
+
+Face aux chiffres publiés : 8,3 s et 217 km/h en manuelle (E30 325i, vus cités, Cx donné à 0,38), 10 s et 206 km/h en automatique à 4 rapports (Auto-Data, lu, Cx donné à 0,35) ; 8 s et 210 km/h pour la Capri 2.8i (vus cités). Consommation : 12,7 L/100 km en ville et 6,8 sur route pour cette automatique, dans une norme d'époque qui n'est pas le WLTC.
+
+**Ce que la caisse change peu :** le CdA de la compacte, à 0,70 m², est déjà haut pour une voiture récente, et une petite surface frontale rattrape un mauvais Cx. L'écart de traînée n'est donc que de 6 %. Cela vaut 4 km/h en pointe, et 3,7 % à 120 km/h ; en WLTC, à basse vitesse, l'écart se confond avec celui des rapports. Dans l'habitacle, presque tout l'écart vient de l'isolation : à isolation égale, les deux caisses sont à moins de 1 dB.
+
+**Ce qui manque :** la résistance au roulement (0,0095) et l'adhérence sont celles de pneus récents, pour toutes les voitures. Le moteur n'a ni carburateur ni allumage d'époque : c'est le même modèle de couple, et sa consommation garde l'écart du tableau « Face aux chiffres publiés ». `camshaft: sohc` n'a d'effet que si ce réglage est modélisé.
+
 ## Calibration
 
 Le réglage est comparé à dix enregistrements de voitures de Wikimedia Commons (série « engine and

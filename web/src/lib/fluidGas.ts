@@ -93,7 +93,7 @@ function sectionsOf(exhaust: Exhaust): LineSection[] {
 export const LINE_SECTIONS = Object.fromEntries((Object.keys(EXHAUST_LINES) as Exhaust[]).map((exhaust) => [exhaust, sectionsOf(exhaust)])) as Record<Exhaust, LineSection[]>;
 
 /** Longueur de ligne de chaque carrosserie : recopie de `BodySpec::exhaustScale`. */
-const LINE_SCALE: Record<EngineConfig['body'], number> = { city: 0.85, compact: 1, coupe: 1.1, supercar: 0.45, van: 1.25 };
+const LINE_SCALE: Record<EngineConfig['body'], number> = { city: 0.85, compact: 1, coupe: 1.1, supercar: 0.45, van: 1.25, retro: 0.98 };
 
 /** Un tronçon placé sur la ligne. */
 export interface PlacedSection extends LineSection {

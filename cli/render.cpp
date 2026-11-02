@@ -39,7 +39,7 @@ void usage() {
         "          --pops off|light|strong --release dump_valve|flutter --boost BAR --turbo small|medium|large\n"
         "          --supercharger roots|twin_screw|centrifugal --antilag off|retard|air|cut --turbo-pipe MM\n"
         "          --cam dohc|sohc --filter stock|panel|cone|stacks\n"
-        "Car:      --body city|compact|coupe|supercar|van --mass KG --rim INCHES --drive front|rear|all\n"
+        "Car:      --body city|compact|coupe|supercar|van|retro --mass KG --rim INCHES --drive front|rear|all\n"
         "          --placement front|mid|rear --insulation stripped|light|standard|comfort|luxury --windows open|closed\n"
         "Gearbox:  --gearbox synchro|dog|sequential|dual_clutch|converter --gears N --family matched|short|close|long\n"
         "          --ratios 3.2,2.0,1.4,1.1,0.9 --final X --teeth helical|spur --helix DEG --module MM --limit NM\n"
@@ -490,7 +490,7 @@ int main(int argc, char** argv) {
         else if (arg == "--placement") { car.placement = pick<EnginePlacement>(value, {{"front", EnginePlacement::Front}, {"mid", EnginePlacement::Mid}, {"rear", EnginePlacement::Rear}}); customCar = true; }
         else if (arg == "--insulation") { car.insulation = pick<Insulation>(value, {{"stripped", Insulation::Stripped}, {"light", Insulation::Light}, {"standard", Insulation::Standard}, {"comfort", Insulation::Comfort}, {"luxury", Insulation::Luxury}}); customCar = true; }
         else if (arg == "--windows") { car.windowsOpen = value == "open"; customCar = true; }
-        else if (arg == "--body") { car.body = pick<Body>(value, {{"city", Body::City}, {"compact", Body::Compact}, {"coupe", Body::Coupe}, {"supercar", Body::Supercar}, {"van", Body::Van}}); customCar = true; }
+        else if (arg == "--body") { car.body = pick<Body>(value, {{"city", Body::City}, {"compact", Body::Compact}, {"coupe", Body::Coupe}, {"supercar", Body::Supercar}, {"van", Body::Van}, {"retro", Body::Retro}}); customCar = true; }
         else if (arg == "--mass") { car.massKg = std::atoi(value.c_str()); customCar = true; }
         else if (arg == "--rim") { car.rimInch = std::atoi(value.c_str()); customCar = true; }
         else if (arg == "--drive") { car.drive = pick<Drive>(value, {{"front", Drive::Front}, {"rear", Drive::Rear}, {"all", Drive::All}}); customCar = true; }
