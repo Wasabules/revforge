@@ -12,7 +12,7 @@ Il n'y a aucun échantillon sonore. Tout ce qu'on entend est calculé, échantil
 
 ## Ce qu'on peut faire
 
-- **Construire le moteur.** Cylindres (de 2 à 12), architecture, cylindrée, alésage, régime maximal, essence ou diesel, et un turbo avec sa taille et sa pression. Puissance, couple, 0 à 100 km/h et vitesse de pointe découlent de ces réglages : rien n'est saisi à la main. Le temps de réponse du turbo vient d'un vrai bilan de puissance sur son arbre, et se sent dans la voiture.
+- **Construire le moteur.** Cylindres (de 2 à 12), architecture, cylindrée, alésage, régime maximal, essence ou diesel, un turbo avec sa taille et sa pression, et un filtre à air (papier d'origine, panneau sport, cône à l'air libre, cornets). Puissance, couple, 0 à 100 km/h et vitesse de pointe découlent de ces réglages : rien n'est saisi à la main. Le temps de réponse du turbo vient d'un vrai bilan de puissance sur son arbre, et se sent dans la voiture.
 - **Choisir l'échappement.** Confort, origine, sans résonateur, sport, sans silencieux ou ligne directe, avec une ou deux sorties, et un pont en H ou en X sur un moteur en V. Chaque ligne est calculée depuis sa géométrie.
 - **Choisir la boîte, indépendamment du moteur.** Synchros, crabots, séquentielle, double embrayage ou convertisseur ; nombre de rapports, rapports issus de vrais nombres de dents, couple final, denture hélicoïdale ou droite, volant simple ou bi-masse. Une boîte mal adaptée a de vraies conséquences : on peut caler, manquer de vitesse ou la casser.
 - **Conduire.** Démarreur, calage, embrayage qu'on fait patiner, coup de gaz au rétrogradage, grattement si on passe sans débrayer, marche arrière, rupteur, coupure d'injection, détonations, décharge du turbo. Les automatiques ont des modes Éco, Normal, Sport, Piste et palettes, avec des points de passage issus des courbes du moteur.
@@ -67,7 +67,7 @@ cmake --build build
     --gearbox dog --teeth spur --listener cabin --insulation stripped --scenario launch --out cinq.wav
 ```
 
-Autres options utiles : `--turbo small|medium|large`, `--shift-mode`, `--drive-scenario`, et `--fuel 1` avec `--out none` pour la consommation. `--help` donne la liste complète.
+Autres options utiles : `--turbo small|medium|large`, `--filter stock|panel|cone|stacks`, `--shift-mode`, `--drive-scenario`, et `--fuel 1` avec `--out none` pour la consommation. `--help` donne la liste complète.
 
 ## Comment le son est fabriqué
 

@@ -589,6 +589,56 @@ The model's automatic gearbox matters little: a driver following longer gears, a
 
 **Turbo and gearbox settings count:** these figures follow the model's real torque and pressure, and will move if those parts change.
 
+## The air filter
+
+Four filters (`AirFilter`, `core/src/air_filter.cpp`): stock paper in its airbox, a sport panel in the same box, an open cone, velocity stacks. Paper is the reference: the torques are calibrated on it, and with it none of these calculations runs. Everything else is written relative to it. The setting does nothing on an electric motor, which has no filter.
+
+**Pressure drop** follows `ΔP = k·ṁ²`. At the design point, 0.11 kg/s, that is 2 L at 6000 rpm:
+
+| | Drop | Where the figure comes from |
+|---|---|---|
+| Paper and box | 3 kPa | Set from the best filter fitted in a stock airbox: 2.56 kPa at 6 m³/min (fastcar.co.uk, a magazine flow bench, read in summary). Already the turbo's `kRatedFilterPa` |
+| Panel | 2.55 kPa | Same box, freer element. A stock box with no element at all still loses 1.25 kPa (5 inH₂O: Bob Is The Oil Guy, an amateur test, read in summary): removing paper does not remove the box |
+| Cone | 1.21 kPa | The most restrictive cone on the same fastcar.co.uk bench, at 6 m³/min |
+| Stacks | 0.2 kPa | Assumed: a rounded mouth and hardly any mesh |
+
+`k` depends on the engine. A box grows like a box, its area as V^(2/3): a 5 L does not get a box 2.5 times larger than a 2 L, and it loses more in it. A manufacturer still stays under 5 kPa on a clean filter, since the usual limit for a loaded filter is 20 to 25 inH₂O, 5 to 6 kPa (order of magnitude read in a filtration patent). On a turbo, `k` is the existing one, 3 kPa at rated flow, multiplied by the ratio from this table.
+
+**Temperature.** With no box, the filter breathes underbonnet air. Its rise follows a balance: what is rejected follows power, so engine speed, and what ventilates follows car speed, with a fan share (`kFanShare`, 35%, assumed). At full load, with engine speed `r` relative to the rated point, `ΔT = ΔT₀ · r / (0.35 + 0.65·r)`. `ΔT₀` is 12 K with a front engine, 16 K at the rear and 20 K in the middle, where the exhaust is enclosed with the engine: **these values are assumed**. No controlled bonnet-closed test was found; accounts range from 10 to 30 K, and a bonnet-open dyno sees almost nothing, which is why a cone "gains" on the dyno and loses on the road. The temperature depends on neither load nor actual road speed: it is the full-load figure, the one the spec sheet also sees, with no thermal inertia. Heat soak at a standstill is not simulated, nor is clogging.
+
+**Torque.** On a naturally aspirated engine, the air mass follows the pressure and density behind the filter, and acts only on the work of the gases: `T = (T_ref + T_friction)·r_fill − T_friction`, minus the change in pumping (`ΔP·V/4π`). On a turbo, the wastegate holds the pressure: the drop takes no torque on the plateau, it changes the shaft. Air enters the compressor at `inletPa` and at its temperature, which changes the reduced flow, the head and the compressor outlet (`TurboSpec::inletFilter`). Only the charge temperature touches torque, softened by the intercooler (`turboChargeDensityShare`). The turbo stays sized on the stock paper, and so does the gearbox: changing filter does not change the ratios (`gearingOf`).
+
+**Stacks.** Their length is chosen: tuned to 72% of redline, it comes to 28 cm on a 2 L at 6800 rpm, a quarter wave of `f = c/(4(L + 0.61a))`, 294 Hz. The wave returning in the tube changes what the valve finds as it closes (inertial tuning: Heywood, *Internal Combustion Engine Fundamentals*, § 7.6, cited from memory and not re-read). The model takes `−A·cos(2π·f·25/N)` from this, damped with the number of round trips (`A` = 3%, `Q` = 6, **assumed**). The torque peak therefore moves towards the tuned speed, with a dip above it. A turbo's stack is a single mouth on the compressor inlet: no tuning, and no plenum removed.
+
+**Sound.** This is the strongest effect. `IntakePath` (`core/src/intake_path.cpp`) computes both paths from valve to open air by transfer matrices: duct, box, element, snorkel, mouth for paper; short duct, element and cone for the cone; one tube per cylinder for stacks. Since the paper's level is calibrated, only their **ratio** is applied, at minimum phase, to everything leaving the intake (mouth noise, orders, turbo whistle and blow-off). There is no new noise and no new random draw. The box leaks through its walls (mass law, 2.5 kg/m²): that is what bounds the gain from removing it, and no level is typed in per filter. Above 3 kHz the ratio falls back: there the box was hiding a part of the source the model never described, and without this the stacks made white noise right by the block (8-16 kHz only 3 dB under 0.5-2 kHz at idle, 21 dB once fixed, against 14 dB with paper). Those 3 kHz are a choice, close to `kNoiseTopHz`.
+
+Computed gain for a 2 L: the panel stays at 2 dB or less. The cone and stacks lose 1 to 7 dB below 100 Hz, where the box resonates on its snorkel, then gain 10 to 25 dB between 200 Hz and 2 kHz. With no box, the intake opens into the engine bay: it leaves with it (`Source::Bay`, bonnet closed), no longer through an inlet behind the grille. These levels are compared with no recording: **only listening will settle them**.
+
+**The figures.** Computed by this model, compact car of 1300 kg (coupe of 1650 kg for the V8). The level is an estimated LAeq during an 8 s full-load launch, never a measurement.
+
+| Engine | Filter | Peak torque (Nm) | Peak power (kW) | Air at peak power (°C) | Drop at peak power (kPa) | 0-100 km/h (s) | WLTC (L/100 km) | Cabin, launch (dB(A)) | In front, launch (dB(A)) |
+|---|---|---|---|---|---|---|---|---|---|
+| 2.0 L NA | Paper | 174 | 96.8 | 20 | 2.1 | 9.99 | 8.80 | 72.4 | 82.1 |
+|  | Panel | 174 | 97.3 | 20 | 1.8 | 9.97 | 8.80 | 72.5 | 82.4 |
+|  | Cone | 168 | 93.3 | 32 | 0.8 | 10.21 | 8.77 | 75.9 | 84.0 |
+|  | Stacks | 173 | 93.6 | 32 | 0.1 | 10.16 | 8.77 | 77.6 | 85.0 |
+| 5.0 L V8 | Paper | 473 | 275.1 | 20 | 4.7 | 6.28 | 15.81 | 77.6 | 84.8 |
+|  | Panel | 475 | 277.9 | 20 | 4.0 | 6.26 | 15.81 | 77.6 | 85.4 |
+|  | Cone | 463 | 270.8 | 32 | 1.8 | 6.37 | 15.76 | 80.7 | 86.2 |
+|  | Stacks | 482 | 273.4 | 32 | 0.3 | 6.37 | 15.76 | 83.8 | 88.5 |
+| 2.0 L turbo, 1.3 bar | Paper | 354 | 193.5 | 20 | 2.9 | 8.09 | 8.69 | 70.2 | 83.7 |
+|  | Panel | 354 | 193.6 | 20 | 2.5 | 8.09 | 8.69 | 70.1 | 84.1 |
+|  | Cone | 350 | 190.0 | 32 | 1.1 | 8.06 | 8.69 | 74.2 | 84.2 |
+|  | Stacks | 350 | 190.2 | 32 | 0.2 | 8.06 | 8.68 | 76.5 | 85.5 |
+
+On the turbo, at 6000 rpm: shaft at 176,700 rpm with paper, 176,500 with the panel, 179,650 with the cone. The time to reach 90% of the pressure at 2500 rpm goes from 1.31 s to 1.35 s with the cone: the hot air costs more than the lower drop brings. Yet this turbo's 0-100 gains 0.03 s with less torque: this 350 Nm front-driver spins its wheels, and with all-wheel drive the same cone loses 0.09 s (6.32 to 6.41 s). WLTC consumption barely moves, as expected: at part load the throttle does the restricting, not the filter.
+
+At a held speed, the difference in the cabin depends heavily on engine speed, since body modes can cover everything: 0.4 dB at 5000 rpm, up to 9 dB at 6500 rpm for the cone, on the 2 L at full load. At 30% load the cone's stays under 3 dB; behind the car the exhaust stays in charge, within 1 dB. At idle the level moves by no more than 2 dB in the cabin, and 3 to 11 dB with the head above the engine: low-speed balance holds, and a quiet exhaust is not covered by a fixed background.
+
+**The gas on screen** (`AIR_FILTER_GAS`, `fluidGas.ts`): friction follows the same ratio, the inlet section shrinks without a box, and the air enters hotter. The volume between compressor and throttle does not change. **The views** draw the box, a panel's frame, the cone, or one stack per cylinder with no plenum or central throttle. The vacuum gauge shows the intake air, only with a cone or stacks: it is `intakeAirK`, what the torque sees.
+
+**Not modelled:** filtration and the wear it spares (stacks stop nothing), clogging, the knock that hot air encourages, a stack airbox fed with fresh air, and an engine computer compensating for density on a turbo.
+
 ## Calibration
 
 The tuning is compared to ten car recordings from Wikimedia Commons ("engine and exhaust sound" series, CC BY 3.0: Shelby Cobra, Mustang GT, Shelby GT500,
