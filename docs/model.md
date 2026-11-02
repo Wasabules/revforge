@@ -103,7 +103,7 @@ It works when the pedal is lifted (under 3%) and the engine is above 27% of its 
 - **Air injection.** A valve, 17 mm on a 2 L, links the cold pipe to the manifold. Its flow is an orifice law between the charge pressure and the pressure before the turbine, solved by bisection at each step (explicitly, it would chatter); a check valve stops it if the manifold pushes harder. The ECU adds the matching fuel, up to λ 0.65 in the cylinder, and 70% of this surplus burns in the manifold, if it is hot enough. The heat arrives without going through the cycle. On the 2.0 L at 4400 rpm, compressor, flame and turbine sustain one another like a gas turbine: pressure holds at 1.3 bar, turbine valve open, without any value asking for it, until the speed falls to around 3500 rpm, when it drops to 0.3 of the pressure. Throttle at 25%, 40° of retard: less open (15%), it lacks the air to carry the surplus, and the system stays much weaker.
 - **Cylinder cut.** Two firings out of five, in firing order (F C C F C): the pattern thus moves from one cylinder to the next on 4 or 6 cylinders. Throttle at 35%. The mixture of the cut cylinders passes through unburnt, and 45% ignites in the manifold if the gas there exceeds 800 K (all of it at 1100 K): cold, it does not light, and the manifold cools further, as seen around 1900 rpm (260 °C), where the system no longer does anything.
 
-If the admitted air gave enough torque for the engine to gain revs, the ECU retards further: it always brakes by at least a tenth of its losses (`kAntiLagMostOfBrake`, assumed). Without this, air injection left a 5-cylinder hanging high, pedal lifted, never finding idle again.
+Nothing regulates the torque that remains. Pedal lifted, the engine brakes far less, and on the 5-cylinder air injection even gives 4 Nm more than its losses in fourth. In neutral, every petrol turbo tried finds idle again (tested).
 
 **The diesel is left out, by choice.** No throttle to crack, no spark to retard, no prepared mixture to pass through unburnt. A post-injection into oxygen-rich gas exists to regenerate a filter, at 600 °C: no figure was found to make an anti-lag of it. The site hides the choice, and everything stays identical to the bit (tested).
 
@@ -116,17 +116,17 @@ If the admitted air gave enough torque for the engine to gain revs, the ECU reta
 | Shaft, 1 s after the lift (rpm) | 54,000 | 109,000 | 149,000 | 110,000 |
 | Shaft, 3 s after | 22,000 | 97,000 | 149,000 | 99,000 |
 | Pressure at 3 s (share of 1.3 bar) | 0.01 | 0.29 | 0.99 | 0.34 |
-| 90% of the pressure, after a 0.35 s lift | 0.40 s | 0.21 s | 0.21 s | 0.16 s |
-| 90% of the pressure, stab from 1800 rpm | 2.20 s | 1.63 s | 1.94 s | 2.01 s |
+| 90% of the pressure, after a 0.35 s lift | 0.40 s | 0.21 s | 0.21 s | 0.15 s |
+| 90% of the pressure, stab from 1800 rpm | 2.20 s | 1.62 s | 1.92 s | 2.00 s |
 | 90% of the pressure, after a 3 s lift (test, in fourth) | 0.97 s | 0.53 s | 0.51 s | 0.54 s |
-| Peak `T3` | 789 °C | 1090 °C | 1090 °C | 936 °C |
-| Crankshaft torque, pedal lifted | −80 Nm | −36 Nm | −7 Nm | −24 Nm |
-| Torque taken from this air charge | 0 | 54 Nm | 37 Nm | 59 Nm |
+| Peak `T3` | 789 °C | 1090 °C | 1094 °C | 937 °C |
+| Crankshaft torque, pedal lifted | −80 Nm | −36 Nm | −4 Nm | −24 Nm |
+| Torque taken from this air charge | 0 | 54 Nm | 34 Nm | 59 Nm |
 | Air sent to the manifold | 0 | 0 | 27 g/s | 0 |
-| Fuel, pedal lifted | 0 | 2.07 g/s | 3.63 g/s | 2.29 g/s |
-| Fuel over the 32 s | 0.136 L | 0.163 L | 0.177 L | 0.166 L |
-| WLTC, L/100 km and g CO₂/km | 8.90 and 210 | 9.48 and 224 | 9.40 and 222 | 9.54 and 225 |
-| 0-100 km/h | 6.86 s | 6.58 s | 6.62 s | 6.55 s |
+| Fuel, pedal lifted | 0 | 2.08 g/s | 3.66 g/s | 2.30 g/s |
+| Fuel over the 32 s | 0.136 L | 0.163 L | 0.178 L | 0.166 L |
+| WLTC, L/100 km and g CO₂/km | 8.90 and 210 | 9.48 and 224 | 9.39 and 222 | 9.54 and 225 |
+| 0-100 km/h | 6.86 s | 6.64 s | 6.66 s | 6.68 s |
 
 The differences have their cause. Retard heats without depending on the manifold temperature, but at a low flow. Air injection alone raises the flow through the turbine, hence the pressure it holds, and it is the dearest in fuel. The cut burns less well what it sends, but keeps its reserve: after a 0.35 s lift it catches fastest, on a still-hot manifold. Lower in the revs it goes out, and air injection is cooled by fresh air: around 1800 rpm, only retard clearly wins.
 
@@ -139,8 +139,8 @@ The brake torque given to `ConsumptionMeter` follows the admitted air, not the t
 Everything goes through `setTurbo` (`TurboDrive::antiLag`), with its own generator. Without anti-lag, none of this code runs: no fingerprint moves.
 
 - The fuel is not cut: no `overrun`, no pressure drop of a lift. The pressure when the valve opens is multiplied by the extra heat retard leaves (`evoRatio`).
-- The cut acts on the firing forces: a cut cylinder opens on 28% of the pressure and does not strike the block. Against retard, the firing line loses 10 dB (140 Hz), and the sub-harmonics of the pattern (21 to 35 Hz) gain 8 to 17: the sound is chopped by the cause, not by an envelope.
-- The bangs leave by the same path as `pops`. One chance per valve opening, depending on whether the manifold can ignite what arrives: 9 per second on the cut, 5 on retard and 2 on air injection. Their amplitude follows the square root of the energy per opening, against an ordinary 90 J bang: about 360 J for a cut cylinder.
+- The cut acts on the firing forces: a cut cylinder opens on 28% of the pressure and does not strike the block. Against retard, the firing line loses 8 dB (140 Hz), and the sub-harmonics of the pattern (21 to 35 Hz) gain 6 to 18: the sound is chopped by the cause, not by an envelope.
+- The bangs leave by the same path as `pops`. One chance per valve opening, depending on whether the manifold can ignite what arrives: 8 per second on the cut, 4 on retard and 1 on air injection. Their amplitude follows the square root of the energy per opening, against an ordinary 90 J bang: about 360 J for a cut cylinder.
 - The flame is a low noise, around 380 Hz, at the square root of the heat released, which crosses the line like the rest. The 8-16 kHz band does not rise above that of the same turbo at full throttle (−69 dB against −64 dB).
 - The outlet jet follows the real flow, at the computed temperature.
 

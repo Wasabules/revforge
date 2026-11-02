@@ -189,6 +189,21 @@ TEST_CASE("la vanne d'air ne s'ouvre que si le compresseur pousse plus fort que 
     CHECK(turbo.antiLag().surplusFuel > 0.0);
 }
 
+TEST_CASE("le réglage retiré en marche, la vanne d'air ne vide plus la pression") {
+    Powertrain p = withAntiLag(AntiLag::AirInjection);
+    DrivingModel model(p);
+    pull(model);
+    for (int i = 0; i < 100; ++i) model.stepPedal(0.01, 0.0, 0.0);
+    REQUIRE(model.turbo().antiLag().airFlow > 0.0);
+    p.engine.antiLag = AntiLag::Off;
+    model.setPowertrain(p);
+    model.stepPedal(0.01, 0.0, 0.0);
+    CHECK_FALSE(model.antiLagActive());
+    CHECK(model.turbo().antiLag().airFlow == 0.0);
+    CHECK(model.turbo().antiLag().collectorHeatW == 0.0);
+    CHECK(model.turbo().antiLag().surplusFuel == 0.0);
+}
+
 TEST_CASE("le pied posé, ou trop bas dans les tours, l'anti-lag ne fait rien") {
     for (const AntiLag kind : kSystems) {
         DrivingModel model(withAntiLag(kind));
@@ -226,10 +241,7 @@ TEST_CASE("pied levé au point mort, aucun moteur ne reste accroché en haut") {
             double last = model.rpm();
             for (int i = 0; i < 2000; ++i) {
                 model.stepNeutral(0.01, 0.0);
-                if (model.antiLagActive()) {
-                    REQUIRE(model.torqueNm() < 0.0);
-                    last = model.rpm();
-                }
+                if (model.antiLagActive()) last = model.rpm();
             }
             CAPTURE(id);
             CAPTURE(static_cast<int>(kind));

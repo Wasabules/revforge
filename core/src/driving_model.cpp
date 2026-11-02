@@ -53,8 +53,6 @@ constexpr double kWearRefS = 30.0;
 // Les arbres de roue et le pneu, en série (Nm/rad et Nm·s/rad, vus à la roue).
 constexpr double kShaftStiffness = 6000.0;
 constexpr double kShaftDamping = 60.0;
-// L'anti-lag retarde encore si le moteur allait reprendre des tours pied levé : il freine toujours d'un dixième (supposé).
-constexpr double kAntiLagMostOfBrake = 0.9;
 // L'anti-lag : pied vraiment levé, et moteur assez lancé. Plus bas, le ralenti reprend la main (ordre de grandeur).
 constexpr double kAntiLagLiftedPedal = 0.03;
 constexpr double kAntiLagMinShare = 0.27;
@@ -916,13 +914,6 @@ void DrivingModel::updateEngine(double throttle, bool off) {
     // Rupteur : le papillon reste ouvert, donc peu de pompage. Le moteur ne redescend que sur ses frottements.
     // Sur un turbo, s'y ajoute le gaz à pousser contre la turbine.
     const double pumping = pumpingTorqueNm(powertrain_, rpmNow, manifold_) + (turboEngine_ ? turbo_.backPressureNm(manifold_) : 0.0);
-    if (antiLag_.active) {
-        const double ceiling = kAntiLagMostOfBrake * (friction + pumping);
-        if (produced > ceiling) {
-            antiLagLostNm_ += produced - ceiling;
-            produced = ceiling;
-        }
-    }
     torque_ = produced - friction - pumping;
     // Pour la consommation : le couple au frein que demande cette charge d'air. Le calculateur qui retient le moteur
     // pendant un relais retarde l'allumage : il gaspille, il ne dépense pas moins. Le broutement s'annule en moyenne.

@@ -528,6 +528,9 @@ void TurboCharger::step(double dt, const TurboInput& input) {
         exhaust.heatRiseK = kPetrolHeatValue * kPetrolFuelPerAir / (1.0 + kPetrolFuelPerAir) / kGasCp;
         antiLagExhaust(exhaust, gas, hotTarget);
         lastGas_ = gas;
+    } else {
+        // Le réglage retiré en marche : la vanne ne reste pas ouverte derrière lui.
+        antiLag_ = AntiLagState{};
     }
     const double hotTau = hotTarget > s.turbineInK ? kHeatUpS : kCoolDownS;
     s.turbineInK += (hotTarget - s.turbineInK) * dt / hotTau;

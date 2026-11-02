@@ -104,7 +104,7 @@ Il travaille si le pied est levé (moins de 3 %), si le moteur dépasse 27 % du 
 - **Injection d'air.** Une vanne, de 17 mm sur un 2 L, relie le tube froid au collecteur. Son débit est une loi d'orifice entre la pression de charge et celle avant la turbine, résolue par dichotomie à chaque pas (explicite, elle battrait) ; un clapet l'arrête si le collecteur pousse plus fort. Le calculateur ajoute l'essence qui lui correspond, au plus jusqu'à λ 0,65 dans le cylindre, et 70 % de ce surplus brûle dans le collecteur, s'il y fait assez chaud. La chaleur y arrive sans passer par le cycle. Sur le 2,0 L à 4400 tr/min, compresseur, flamme et turbine s'entretiennent comme une turbine à gaz : la pression tient à 1,3 bar, soupape de turbine ouverte, sans qu'aucune valeur ne l'ait demandé, jusqu'à ce que le régime tombe vers 3500 tr/min : elle retombe alors à 0,3 de la pression. Papillon à 25 %, 40° de retard : moins ouvert (15 %), il manque d'air pour porter le surplus, et le système reste bien plus faible.
 - **Coupure de cylindres.** Deux explosions sur cinq, dans l'ordre d'allumage (F C C F C) : le motif tourne ainsi d'un cylindre à l'autre sur 4 ou 6 cylindres. Papillon à 35 %. Le mélange des cylindres coupés traverse sans brûler, et 45 % s'enflamme au collecteur si le gaz y dépasse 800 K (entièrement à 1100 K) : à froid il ne s'allume pas, et le collecteur refroidit encore, ce qu'on voit vers 1900 tr/min (260 °C), où le système ne sert plus à rien.
 
-Si l'air admis donnait assez de couple pour que le moteur reprenne des tours, le calculateur retarde encore : il freine toujours d'au moins un dixième de ses pertes (`kAntiLagMostOfBrake`, supposé). Sans cela, l'injection d'air laissait un 5 cylindres accroché en haut, pied levé, sans jamais retrouver le ralenti.
+Rien ne régule le couple qui reste. Pied levé, le moteur freine beaucoup moins, et sur le 5 cylindres l'injection d'air donne même 4 Nm de plus que ses pertes en quatrième. Au point mort, tous les turbos à essence essayés retrouvent le ralenti (testé).
 
 **Le diesel n'est pas concerné, par choix.** Ni papillon à entrouvrir, ni étincelle à retarder, ni mélange préparé à faire passer imbrûlé. Une post-injection dans un gaz riche en oxygène existe pour régénérer un filtre, à 600 °C : on n'a trouvé aucun chiffre pour en faire un anti-lag. Le site cache le choix, et tout reste identique au bit près (testé).
 
@@ -117,17 +117,17 @@ Si l'air admis donnait assez de couple pour que le moteur reprenne des tours, le
 | Arbre, 1 s après le lever (tr/min) | 54 000 | 109 000 | 149 000 | 110 000 |
 | Arbre, 3 s après | 22 000 | 97 000 | 149 000 | 99 000 |
 | Pression à 3 s (part de 1,3 bar) | 0,01 | 0,29 | 0,99 | 0,34 |
-| 90 % de la pression, après 0,35 s de lever | 0,40 s | 0,21 s | 0,21 s | 0,16 s |
-| 90 % de la pression, coup de gaz depuis 1800 tr/min | 2,20 s | 1,63 s | 1,94 s | 2,01 s |
+| 90 % de la pression, après 0,35 s de lever | 0,40 s | 0,21 s | 0,21 s | 0,15 s |
+| 90 % de la pression, coup de gaz depuis 1800 tr/min | 2,20 s | 1,62 s | 1,92 s | 2,00 s |
 | 90 % de la pression, après 3 s de lever (test, en quatrième) | 0,97 s | 0,53 s | 0,51 s | 0,54 s |
-| `T3` au plus haut | 789 °C | 1090 °C | 1090 °C | 936 °C |
-| Couple au vilebrequin pied levé | −80 Nm | −36 Nm | −7 Nm | −24 Nm |
-| Couple retiré à cette charge d'air | 0 | 54 Nm | 37 Nm | 59 Nm |
+| `T3` au plus haut | 789 °C | 1090 °C | 1094 °C | 937 °C |
+| Couple au vilebrequin pied levé | −80 Nm | −36 Nm | −4 Nm | −24 Nm |
+| Couple retiré à cette charge d'air | 0 | 54 Nm | 34 Nm | 59 Nm |
 | Air envoyé au collecteur | 0 | 0 | 27 g/s | 0 |
-| Carburant pied levé | 0 | 2,07 g/s | 3,63 g/s | 2,29 g/s |
-| Carburant sur les 32 s | 0,136 L | 0,163 L | 0,177 L | 0,166 L |
-| WLTC, L/100 km et g CO₂/km | 8,90 et 210 | 9,48 et 224 | 9,40 et 222 | 9,54 et 225 |
-| 0-100 km/h | 6,86 s | 6,58 s | 6,62 s | 6,55 s |
+| Carburant pied levé | 0 | 2,08 g/s | 3,66 g/s | 2,30 g/s |
+| Carburant sur les 32 s | 0,136 L | 0,163 L | 0,178 L | 0,166 L |
+| WLTC, L/100 km et g CO₂/km | 8,90 et 210 | 9,48 et 224 | 9,39 et 222 | 9,54 et 225 |
+| 0-100 km/h | 6,86 s | 6,64 s | 6,66 s | 6,68 s |
 
 Les écarts ont leur cause. Le retard chauffe sans dépendre de la température du collecteur, mais à faible débit. L'injection d'air est la seule à augmenter le débit dans la turbine, d'où sa pression tenue, et la plus chère en essence. La coupure brûle moins bien ce qu'elle envoie, mais garde sa réserve : à 0,35 s de lever, elle reprend le plus vite, sur un collecteur encore chaud. Elle s'éteint plus bas dans les tours, et l'injection d'air s'y refroidit à l'air frais : vers 1800 tr/min, seul le retard gagne franchement.
 
@@ -140,8 +140,8 @@ Le couple au frein passé à `ConsumptionMeter` suit l'air admis, pas le couple 
 Tout passe par `setTurbo` (`TurboDrive::antiLag`), avec un générateur à part. Sans anti-lag, rien de ce code ne s'exécute : aucune empreinte ne bouge.
 
 - L'injection ne se coupe pas : ni `overrun`, ni la chute de pression d'un lever de pied. La pression à l'ouverture de la soupape est multipliée par ce que le retard laisse de chaleur en plus (`evoRatio`).
-- La coupure agit sur les forces d'explosion : un cylindre coupé s'ouvre sur 28 % de la pression et ne frappe pas le bloc. Face au retard, la raie d'allumage perd 10 dB (140 Hz), et les sous-harmoniques du motif (21 à 35 Hz) en gagnent 8 à 17 : le son est haché par la cause, pas par une enveloppe.
-- Les détonations sortent du même chemin que les `pops`. Une chance par ouverture de soupape, selon que le collecteur peut enflammer ce qui arrive : on en compte 9 par seconde sur la coupure, 5 sur le retard et 2 sur l'injection d'air. Leur amplitude suit la racine de l'énergie par ouverture, rapportée à une détonation ordinaire de 90 J : environ 360 J pour un cylindre coupé.
+- La coupure agit sur les forces d'explosion : un cylindre coupé s'ouvre sur 28 % de la pression et ne frappe pas le bloc. Face au retard, la raie d'allumage perd 8 dB (140 Hz), et les sous-harmoniques du motif (21 à 35 Hz) en gagnent 6 à 18 : le son est haché par la cause, pas par une enveloppe.
+- Les détonations sortent du même chemin que les `pops`. Une chance par ouverture de soupape, selon que le collecteur peut enflammer ce qui arrive : on en compte 8 par seconde sur la coupure, 4 sur le retard et 1 sur l'injection d'air. Leur amplitude suit la racine de l'énergie par ouverture, rapportée à une détonation ordinaire de 90 J : environ 360 J pour un cylindre coupé.
 - La flamme est un bruit grave, autour de 380 Hz, à la racine de la chaleur libérée, qui traverse la ligne comme le reste. La bande 8-16 kHz ne monte pas au-delà de celle du même turbo à plein gaz (−69 dB contre −64 dB).
 - Le jet de sortie suit le débit réel, à la température calculée.
 
