@@ -120,6 +120,10 @@ public:
     /** L'arbre, les pressions, les soupapes : tout est dans `TurboState`. Rien de neuf sur un moteur sans turbo. */
     const TurboCharger& turbo() const { return turbo_; }
     TurboDrive turboDrive() const { return turbo_.drive(); }
+    /** Le compresseur mécanique : mêmes pressions, en unités physiques. Rien de neuf sur un moteur sans compresseur. */
+    bool supercharged() const { return superchargerEngine_; }
+    const Supercharger& supercharger() const { return supercharger_; }
+    SuperchargerDrive superchargerDrive() const { return supercharger_.drive(); }
     /** Couple au vilebrequin, négatif en frein moteur (Nm). */
     double torqueNm() const { return torque_; }
     double powerKw() const;
@@ -191,6 +195,7 @@ private:
     double ratio(int gear) const;
     double compressionLoadNm() const;
     void stepTurbo(double rpmNow, bool burning);
+    void stepSupercharger(double rpmNow);
     double bmepPumping(double rpm) const;
     double wheelSpeedMs() const { return wheelOmega_ * radius_; }
     void meterConsumption();
@@ -237,6 +242,8 @@ private:
     double boost_ = 0.0;
     TurboCharger turbo_;
     bool turboEngine_ = false;
+    Supercharger supercharger_;
+    bool superchargerEngine_ = false;
     double torque_ = 0.0;
     bool cut_ = false;
     bool limiterCut_ = false;

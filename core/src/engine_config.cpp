@@ -3,6 +3,7 @@
 #include <cmath>
 
 #include "kotlin_math.hpp"
+#include "revforge/supercharger.hpp"
 
 namespace revforge {
 
@@ -127,6 +128,15 @@ EngineProfile EngineConfig::toProfile() const {
     p.exhaust = exhaust;
     p.diesel = isDiesel;
     p.turbo = aspiration == Aspiration::Turbo;
+    p.supercharged = aspiration == Aspiration::Supercharger;
+    if (p.supercharged) {
+        // La respiration n'est connue que du groupe : à 1 ici, ce qui ne sert qu'au son sans modèle de conduite.
+        const SuperchargerSpec charger = superchargerSpecFor(*this, 1.0, 1.0);
+        p.superchargerKind = superchargerKind;
+        p.superchargerRatio = static_cast<float>(charger.driveRatio);
+        p.superchargerPocketM3 = static_cast<float>(charger.rotorVolumeM3 / charger.pulsesPerTurn);
+        p.superchargerInnerPressure = static_cast<float>(charger.innerPressure);
+    }
     p.pops = isDiesel ? PopLevel::Off : pops;
     // Grosse cylindrée : plus de carburant imbrûlé. La turbine absorbe une partie de l'onde.
     p.popForce = km::pow(km::coerceIn(cc / 500.0f, 0.4f, 3.0f), 0.3f) * (aspiration == Aspiration::Turbo ? 0.72f : 1.0f);
@@ -139,7 +149,8 @@ EngineProfile EngineConfig::toProfile() const {
     const float litres = static_cast<float>(displacementCc) / 1000.0f;
     StarterSpec& s = p.starter;
     s.kind = (cylinders >= 8 || litres > 4.5f) ? StarterKind::Direct : StarterKind::Reduction;
-    s.compressionRatio = isDiesel ? 18.0f : (aspiration == Aspiration::Turbo ? 9.5f : 10.5f);
+    // Un moteur suralimenté comprime moins pour ne pas détoner, quelle que soit la façon dont il l'est.
+    s.compressionRatio = isDiesel ? 18.0f : (aspiration != Aspiration::Natural ? 9.5f : 10.5f);
     s.powerKw = (0.75f + 0.38f * litres) * (isDiesel ? 1.15f : 1.0f);
     s.ringTeeth = static_cast<int>(km::coerceIn(105.0f + 9.0f * litres, 110.0f, 170.0f));
     if (s.kind == StarterKind::Direct) {

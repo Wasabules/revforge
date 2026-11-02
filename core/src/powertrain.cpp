@@ -44,7 +44,8 @@ double naturalBmep(const EngineConfig& e) {
 /** La respiration selon le régime : 1 au pic de couple. */
 double breathing(const EngineConfig& e, double rpm) {
     const double redline = static_cast<double>(e.redlineRpm);
-    const double peakAt = (e.aspiration == Aspiration::Turbo ? 0.6 : 0.62) * redline;
+    // Un moteur suralimenté, turbo ou compresseur, a des cames plus sages : son couple culmine un peu plus tôt.
+    const double peakAt = (e.aspiration == Aspiration::Natural ? 0.62 : 0.6) * redline;
     double shape;
     if (rpm <= peakAt) {
         const double below = 1.0 - rpm / peakAt;
@@ -215,8 +216,19 @@ TurboSpec turboSpecOf(const Powertrain& p) { return turboSpecFor(p.engine, breat
 
 double breathingOf(const Powertrain& p, double rpm) { return breathing(p.engine, rpm); }
 
+SuperchargerSpec superchargerSpecOf(const Powertrain& p) {
+    const double redline = static_cast<double>(p.engine.redlineRpm);
+    return superchargerSpecFor(p.engine, breathing(p.engine, kVolumetricSizingShare * redline), breathing(p.engine, kSuperchargerRatedShare * redline));
+}
+
+double superchargerDriveNm(const Powertrain& p, double rpm, double fill) {
+    if (p.electric || p.engine.aspiration != Aspiration::Supercharger) return 0.0;
+    return superchargerSteady(superchargerSpecOf(p), rpm, breathing(p.engine, rpm), fill).driveNm;
+}
+
 double steadyBoost(const Powertrain& p, double rpm) {
-    if (p.electric || p.engine.aspiration != Aspiration::Turbo) return 0.0;
+    if (p.electric || p.engine.aspiration == Aspiration::Natural) return 0.0;
+    if (p.engine.aspiration == Aspiration::Supercharger) return superchargerSteady(superchargerSpecOf(p), rpm, breathing(p.engine, rpm)).boost;
     return turboSteady(turboSpecOf(p), rpm, breathing(p.engine, rpm)).boost;
 }
 
@@ -229,14 +241,24 @@ double fullLoadTorqueNm(const Powertrain& p, double rpm, double boost) {
     // Sous le ralenti, la combustion devient instable : le couple s'effondre.
     const double idle = idleRpmOf(p);
     const double under = rpm < idle ? (rpm / idle) * (rpm / idle) : 1.0;
-    if (e.aspiration != Aspiration::Turbo) return bmepToNm(e, naturalBmep(e)) * breathing(e, rpm) * under;
+    if (e.aspiration == Aspiration::Natural) return bmepToNm(e, naturalBmep(e)) * breathing(e, rpm) * under;
     const double base = bmepToNm(e, naturalBmep(e) * kTurboCompressionLoss);
+    // Le compresseur : l'air admis, tel qu'il sort de son calcul. Ce qu'il prend au vilebrequin se compte à part, comme le pompage.
+    if (e.aspiration == Aspiration::Supercharger) {
+        const double shape = breathing(e, rpm);
+        return base * shape * superchargerAirShare(superchargerSpecOf(p), rpm, shape, boost) * under;
+    }
     const double gain = kBoostEfficiency * static_cast<double>(e.boostBar);
     return std::min(base * breathing(e, rpm) * (1.0 + gain * boost), base * (1.0 + gain) * kPlateauShare) * under;
 }
 
 double torqueCurveNm(const Powertrain& p, double rpm) {
-    if (p.electric || p.engine.aspiration != Aspiration::Turbo) return fullLoadTorqueNm(p, rpm, 0.0);
+    if (p.electric || p.engine.aspiration == Aspiration::Natural) return fullLoadTorqueNm(p, rpm, 0.0);
+    // Pas d'arbre à lancer : la pression d'équilibre, moins ce que coûte l'entraînement.
+    if (p.engine.aspiration == Aspiration::Supercharger) {
+        const SuperchargerSteady steady = superchargerSteady(superchargerSpecOf(p), rpm, breathing(p.engine, rpm));
+        return fullLoadTorqueNm(p, rpm, steady.boost) - steady.driveNm;
+    }
     // L'arbre stabilisé : la courbe de la fiche ne dit rien du retard. La contre-pression, elle, se paie toujours.
     const TurboSpec spec = turboSpecOf(p);
     const TurboSteady steady = turboSteady(spec, rpm, breathing(p.engine, rpm));

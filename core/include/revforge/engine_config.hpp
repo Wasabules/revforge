@@ -165,6 +165,14 @@ struct EngineProfile {
     /** Deux rangées séparées ? Sinon, tous les cylindres rejoignent la même ligne. */
     bool twoBanks = false;
     CarAcoustics car;
+    /** Le compresseur mécanique : son sifflement et l'air qu'il aspire. Sans lui, rien de cela ne s'exécute. */
+    bool supercharged = false;
+    SuperchargerKind superchargerKind = SuperchargerKind::Roots;
+    /** Tours d'arbre par tour de vilebrequin, et volume d'une poche (m³) : pour quand aucun modèle ne donne l'état réel. */
+    float superchargerRatio = 0.0f;
+    float superchargerPocketM3 = 0.0f;
+    /** La pression que la vis atteint d'elle-même, rapportée à l'entrée : 1 pour un Roots. */
+    float superchargerInnerPressure = 1.0f;
 
     /**
      * Régime simulé pour un régime réel de la voiture. Au ralenti, les deux ralentis

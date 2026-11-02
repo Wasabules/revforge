@@ -11,6 +11,7 @@
 #include "gearbox_sound.hpp"
 #include "kotlin_math.hpp"
 #include "starter_sound.hpp"
+#include "supercharger_sound.hpp"
 
 namespace revforge {
 
@@ -229,6 +230,9 @@ struct EngineSound::State {
     std::uint32_t roadRng = 0x51A7E;
     Svf windBand, tyreBand, squealBand, roadTone;
     StarterSound starter;
+    SuperchargerSound supercharger;
+    bool superchargerDriven = false;
+    SuperchargerDrive superchargerIn;
     GearboxSound gearbox;
     GearboxSpec gearboxSpec{};
     bool gearboxKnown = false;
@@ -379,6 +383,7 @@ struct EngineSound::State {
           field(static_cast<float>(sampleRate)),
           cabin(static_cast<float>(sampleRate)),
           starter(static_cast<float>(sampleRate)),
+          supercharger(static_cast<float>(sampleRate)),
           gearbox(static_cast<float>(sampleRate)),
           controlDt(static_cast<float>(kControlSamples) / static_cast<float>(sampleRate)),
           line(static_cast<float>(sampleRate)) {
@@ -470,7 +475,7 @@ struct EngineSound::State {
     static bool sameParts(const EngineProfile& a, const EngineProfile& b) {
         return a.firingCount == b.firingCount && a.firing == b.firing && a.firingGain == b.firingGain && a.headerM == b.headerM &&
                a.exhaust == b.exhaust && a.exhaustScale == b.exhaustScale && a.diesel == b.diesel && a.turbo == b.turbo &&
-               a.electric == b.electric && a.routing == b.routing && a.bank == b.bank && a.twoBanks == b.twoBanks && sameShell(a.car, b.car);
+               a.electric == b.electric && a.supercharged == b.supercharged && a.routing == b.routing && a.bank == b.bank && a.twoBanks == b.twoBanks && sameShell(a.car, b.car);
     }
 
     /** La même caisse aux mêmes endroits : seule l'isolation change, et l'habitacle se recalcule sans couper le moteur. */
@@ -504,6 +509,7 @@ struct EngineSound::State {
         const float bar = km::sqrt(km::max(p.boostBar, 0.1f));
         boostPitch = km::coerceIn(bar, 0.7f, 1.6f);
         boostLevel = km::coerceIn(bar, 0.6f, 1.8f);
+        if (p.supercharged) supercharger.setup(p);
     }
 
     void applyProfile(const EngineProfile& p) {
@@ -712,6 +718,7 @@ struct EngineSound::State {
 
         if (a.electric) tone.set(km::min(a.lowpassIdleHz + (a.lowpassRedlineHz - a.lowpassIdleHz) * rpmFrac, sr * 0.3f), 0.707f, sr);
         if (a.turbo) updateTurbo(wantedLoad);
+        if (a.supercharged) updateSupercharger();
         // Pendant le lancement, l'air pompé par l'échappement est un souffle à peine audible.
         const float gainTarget = (!engineOn || switching) ? 0.0f : 1.0f - 0.97f * starterLevel;
         const float smoothed = gain + (gainTarget - gain) * smoothing(kGainTauS);
@@ -773,7 +780,7 @@ struct EngineSound::State {
         const float logN = km::log10(rpmNow);
         const float logB = km::log10(bore);
         float blockDb = 50.0f * logN + 60.0f * logB - 203.0f;
-        if (a.diesel) blockDb = a.turbo ? 40.0f * logN + 50.0f * logB - 135.0f : 30.0f * logN + 50.0f * logB - 106.0f;
+        if (a.diesel) blockDb = (a.turbo || a.supercharged) ? 40.0f * logN + 50.0f * logB - 135.0f : 30.0f * logN + 50.0f * logB - 106.0f;
         // Sans charge, un moteur essence perd un peu ; un diesel presque rien (Austen et Priede, 1959 ; mesures sur une Saturn : presque rien non plus).
         blockDb -= (a.diesel ? 2.0f : 5.0f) * (1.0f - km::min(load, 1.0f));
         // Au ralenti, accessoires et distribution tiennent un plancher.
@@ -790,7 +797,7 @@ struct EngineSound::State {
 
         // Le débit moyen : le cylindre rejette ce qu'il a avalé, dilaté par la chaleur. Vitesse dans le tube de sortie.
         const float displacement = 0.7854f * a.boreM * a.boreM * a.strokeM * static_cast<float>(a.cylinders);
-        const float fillNow = 0.1f + 0.85f * load + (a.turbo ? 0.5f * boost * a.boostBar : 0.0f);
+        const float fillNow = 0.1f + 0.85f * load + ((a.turbo || a.supercharged) ? 0.5f * boost * a.boostBar : 0.0f);
         const float hot = 1.6f + 1.0f * load;
         const float flowNow = displacement * rpmNow / 120.0f * fillNow * hot;
         const float paths = (twoPaths || a.routing != ExhaustRouting::Single) ? 2.0f : 1.0f;
@@ -846,6 +853,22 @@ struct EngineSound::State {
         const bool flutter = active.turboRelease == TurboRelease::Flutter;
         releaseGoal = km::min(flutter ? kBackflowLevel * turboIn.backflowShare : turboIn.blowOffShare, 1.5f);
         releaseBand.set(flutter ? 1250.0f : 1800.0f + 2000.0f * km::min(releaseEnv, 1.0f), 0.8f, sr);
+    }
+
+    /** Le compresseur : le modèle dit son état ; sans modèle, la charge le laisse deviner. */
+    void updateSupercharger() {
+        const EngineProfile& a = active;
+        boost = driven ? km::coerceIn(driveBoost, 0.0f, 1.0f) : km::coerceIn((load - 0.3f) / 0.7f, 0.0f, 1.0f);
+        if (superchargerDriven && driven) {
+            supercharger.control(superchargerIn);
+            return;
+        }
+        SuperchargerDrive guess;
+        guess.ratio = a.superchargerRatio;
+        guess.liftPa = boost * a.boostBar * 1e5f;
+        guess.flowShare = km::max(rpm, 0.0f) / (0.88f * a.redlineRpm) * load * (1.0f + boost * a.boostBar) / (1.0f + a.boostBar);
+        guess.speedShare = km::max(rpm, 0.0f) / (0.88f * a.redlineRpm);
+        supercharger.control(guess);
     }
 
     /** Du carburant imbrûlé s'enflamme dans le tube : d'autant plus juste après le lever de pied. */
@@ -1104,6 +1127,13 @@ struct EngineSound::State {
             knockEnv *= knockDecay;
         }
         if (p.turbo) turboSample();
+        // Le carter rayonne sous le capot ; l'air qu'il aspire sort par le conduit d'admission. Il a son propre générateur.
+        if (p.supercharged) {
+            float casing = 0.0f, inlet = 0.0f;
+            supercharger.sample(phaseInc * acyclism, phase * static_cast<float>(cylinders), casing, inlet);
+            stem(Source::Bay) += casing * eventGain;
+            stem(Source::Intake) += inlet * eventGain;
+        }
 
         // Ce que le bloc rayonne : la combustion, et un fond mécanique large.
         const float blockNoise = addedRandom();
@@ -1358,6 +1388,11 @@ void EngineSound::setDrive(float load, float boost, bool cut, bool cranking, flo
 void EngineSound::setTurbo(const TurboDrive& drive) {
     s_->turboDriven = true;
     s_->turboIn = drive;
+}
+
+void EngineSound::setSupercharger(const SuperchargerDrive& drive) {
+    s_->superchargerDriven = true;
+    s_->superchargerIn = drive;
 }
 
 void EngineSound::setStarter(bool powered, bool meshed, float load) {

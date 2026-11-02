@@ -203,6 +203,7 @@ static void advance(int frames) {
         target = static_cast<float>(g_model->rpm());
         g_sound->setDrive(static_cast<float>(g_model->load()), static_cast<float>(g_model->boost()), g_model->cut(), g_model->cranking(), static_cast<float>(g_model->throttle()));
         g_sound->setTurbo(g_model->turboDrive());
+        g_sound->setSupercharger(g_model->superchargerDrive());
         g_sound->setStarter(g_model->starterPowered(), g_model->starterMeshed(), static_cast<float>(g_model->starterLoad()));
         g_sound->setRoad(static_cast<float>(g_model->speedKmh() / 3.6), static_cast<float>(g_model->wheelSlip()));
         g_sound->setGearbox(g_model->box(), g_model->gearboxDrive());
@@ -238,20 +239,29 @@ float rf_turbo_release() { return g_sound->turboRelease(); }
 /** L'arbre et les pressions, en unités physiques : tr/min, bar au-dessus de l'atmosphère, °C, kg/s. */
 float rf_turbo_rpm() { return static_cast<float>(g_model->turbo().state().shaftOmega * 60.0 / (2.0 * 3.141592653589793)); }
 static float gaugeBar(double pascals) { return static_cast<float>((pascals - 101325.0) / 1e5); }
-float rf_turbo_charge() { return gaugeBar(g_model->turbo().state().chargePa); }
-float rf_turbo_plenum() { return gaugeBar(g_model->turbo().state().plenumPa); }
-float rf_turbo_outlet() { return gaugeBar(g_model->turbo().state().outletPa); }
-float rf_turbo_inlet() { return gaugeBar(g_model->turbo().state().inletPa); }
+// Le chemin de l'air est le même avec un compresseur : mêmes jauges, lues là où il est.
+float rf_turbo_charge() { return gaugeBar(g_model->supercharged() ? g_model->supercharger().state().chargePa : g_model->turbo().state().chargePa); }
+float rf_turbo_plenum() { return gaugeBar(g_model->supercharged() ? g_model->supercharger().state().plenumPa : g_model->turbo().state().plenumPa); }
+float rf_turbo_outlet() { return gaugeBar(g_model->supercharged() ? g_model->supercharger().state().outletPa : g_model->turbo().state().outletPa); }
+float rf_turbo_inlet() { return gaugeBar(g_model->supercharged() ? g_model->supercharger().state().inletPa : g_model->turbo().state().inletPa); }
 float rf_turbo_exhaust() { return gaugeBar(g_model->turbo().state().turbineInPa); }
 float rf_turbo_wastegate() { return static_cast<float>(g_model->turbo().state().wastegate); }
 float rf_turbo_blowoff() { return static_cast<float>(g_model->turbo().state().blowOff); }
-float rf_turbo_flow() { return static_cast<float>(g_model->turbo().state().compressorFlow); }
-float rf_turbo_out_c() { return static_cast<float>(g_model->turbo().state().compressorOutK - 273.15); }
-float rf_turbo_cool_c() { return static_cast<float>(g_model->turbo().state().coolerOutK - 273.15); }
+float rf_turbo_flow() { return static_cast<float>(g_model->supercharged() ? g_model->supercharger().state().engineFlow : g_model->turbo().state().compressorFlow); }
+float rf_turbo_out_c() { return static_cast<float>((g_model->supercharged() ? g_model->supercharger().state().compressorOutK : g_model->turbo().state().compressorOutK) - 273.15); }
+float rf_turbo_cool_c() { return static_cast<float>((g_model->supercharged() ? g_model->supercharger().state().coolerOutK : g_model->turbo().state().coolerOutK) - 273.15); }
 float rf_turbo_gas_c() { return static_cast<float>(g_model->turbo().state().turbineInK - 273.15); }
 /** Ce que le moteur a choisi : diamètre de la roue (mm), inertie de l'arbre (kg·m²). */
 float rf_turbo_wheel_mm() { return static_cast<float>(turboSpecOf(g_powertrain).wheelDiameterM * 1000.0); }
 float rf_turbo_inertia() { return static_cast<float>(turboSpecOf(g_powertrain).inertia); }
+/** Le compresseur mécanique : tr/min de l'arbre, kW pris au vilebrequin, part du débit rendue à l'entrée. */
+float rf_supercharger_rpm() { return static_cast<float>(g_model->supercharger().state().rotorOmega * 60.0 / (2.0 * 3.141592653589793)); }
+float rf_supercharger_kw() { return static_cast<float>(g_model->supercharger().state().shaftW / 1000.0); }
+float rf_supercharger_spill() { return static_cast<float>(g_model->supercharger().state().spillShare); }
+/** Ce que le moteur a choisi : rapport d'entraînement, volume engendré (L par tour), diamètre de la roue (mm). */
+float rf_supercharger_ratio() { return static_cast<float>(superchargerSpecOf(g_powertrain).driveRatio); }
+float rf_supercharger_volume() { const SuperchargerSpec spec = superchargerSpecOf(g_powertrain); return spec.kind == SuperchargerKind::Centrifugal ? 0.0f : static_cast<float>(spec.rotorVolumeM3 * 1000.0); }
+float rf_supercharger_wheel_mm() { const SuperchargerSpec spec = superchargerSpecOf(g_powertrain); return spec.kind == SuperchargerKind::Centrifugal ? static_cast<float>(spec.wheelDiameterM * 1000.0) : 0.0f; }
 float rf_torque() { return static_cast<float>(g_model->torqueNm()); }
 float rf_power() { return static_cast<float>(g_model->powerKw()); }
 float rf_clutch() { return static_cast<float>(g_model->clutch()); }
