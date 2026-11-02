@@ -1,7 +1,7 @@
 <script lang="ts">
   import Choices from './Choices.svelte';
   import Slider from './Slider.svelte';
-  import { ASPIRATIONS, CYLINDERS, FUELS, LAYOUTS, LIMITS, RELEASES, TURBO_SIZES, cylinderCc, strokeMm, type EngineConfig } from '../lib/config';
+  import { ASPIRATIONS, CYLINDERS, FUELS, LAYOUTS, LIMITS, RELEASES, SUPERCHARGER_KINDS, TURBO_SIZES, cylinderCc, strokeMm, type EngineConfig } from '../lib/config';
   import { fixed, t } from '../lib/i18n.svelte';
 
   interface Props {
@@ -40,6 +40,17 @@
       <p class="help" data-testid="turbo-size-help">{TURBO_SIZES.find((item) => item.value === config.turboSize)?.help}</p>
     </div>
     <Choices label={t('builder.release')} options={RELEASES} value={config.turboRelease} onchange={(turboRelease) => onapply({ turboRelease })} />
+  {/if}
+  {#if config.aspiration === 'supercharger'}
+    <div>
+      <Slider label={t('builder.chargerBoost')} value={config.boostBar} {...LIMITS.boostBar} format={(value) => `${fixed(value, 1)} bar`}
+        oninput={(boostBar) => onlive({ boostBar })} onchange={(boostBar) => onapply({ boostBar })} />
+      <p class="help">{t('builder.chargerBoost.help')}</p>
+    </div>
+    <div>
+      <Choices label={t('builder.chargerKind')} options={SUPERCHARGER_KINDS} value={config.superchargerKind} onchange={(superchargerKind) => onapply({ superchargerKind })} />
+      <p class="help" data-testid="charger-kind-help">{SUPERCHARGER_KINDS.find((item) => item.value === config.superchargerKind)?.help}</p>
+    </div>
   {/if}
 {/if}
 

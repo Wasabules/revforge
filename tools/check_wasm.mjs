@@ -379,4 +379,20 @@ for (const [size, release] of [['small', 0], ['medium', 1], ['large', 0]]) {
   rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6500, EXHAUST.sport, 1, 0, 0, 0, release, 1.3, ROUTING.single, TURBO[size], 0, 0, 400, 0, 0);
   check(`retard du turbo, ${size}`, turboStab(rf, 24), native(...turboArgs, '--turbo', size, '--release', release ? 'flutter' : 'dump_valve'));
 }
+// Le compresseur mécanique : le coup de gaz de `turboStab`, puis plein gaz au volant, pour chaque type.
+const chargerArgs = ['--cylinders', '4', '--cc', '2000', '--bore', '84', '--redline', '6500', '--aspiration', 'supercharger', '--boost', '1', '--exhaust', 'sport', '--body', 'compact', '--mass', '1400', '--rim', '18'];
+const chargerLoad = (kind) => {
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1400, 18, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6500, EXHAUST.sport, 2, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium, kind, 0, 400, 0, 0);
+  return rf;
+};
+for (const [name, kind] of [['roots', 0], ['twin_screw', 1], ['centrifugal', 2]]) {
+  check(`compresseur, ${name}`, turboStab(chargerLoad(kind), 24), native(...chargerArgs, '--supercharger', name, '--scenario', 'turbo', '--seconds', '24'));
+  const rf = chargerLoad(kind);
+  rf.rf_set_mode(FRESH);
+  rf.rf_set_mode(2);
+  const hash = render(rf, 20, 128, (step) => rf.rf_set_controls(step * TICK_S >= 1 ? 1 : 0, 0, 0));
+  check(`compresseur, plein gaz, ${name}`, hash, native(...chargerArgs, '--supercharger', name, '--scenario', 'launch'));
+}
 process.exit(failed ? 1 : 0);

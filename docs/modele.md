@@ -94,6 +94,43 @@ Le sifflement est à la vitesse de l'arbre : son ordre 2 domine, avec un peu d'o
 
 L'ordre dominant, le niveau du flutter et le partage entre ordres restent des choix : aucun enregistrement de référence n'a été comparé, et seule l'écoute tranchera.
 
+## Le compresseur mécanique
+
+`Supercharger` (`core/src/supercharger.cpp`) avance à chaque pas de 1 ms de `DrivingModel`. Son arbre est lié au vilebrequin par une courroie : sa vitesse est un rapport fixe du régime, sans turbine ni inertie à lancer. Le seul temps de réponse est celui du volume entre le compresseur et le papillon (1 L + 0,8 fois la cylindrée) : 80 % de la pression en 0,28 s à 2500 tr/min sur un 2,0 L, contre 1,2 s pour le turbo moyen au même régime.
+
+```
+dp/dt = (R·T/V)·(ṁ_compresseur − ṁ_moteur − ṁ_dérivation)
+```
+
+- **Volumétriques (Roots, à vis).** `ṁ = ρ·(V_r·N − A_fuite·√(2Δp/ρ))` : le volume engendré, moins des fuites qui suivent l'écart de pression et pas la vitesse. D'où une pression qui tient dès le bas, et un manque tout en bas seulement. Le rapport de poulie vient de la vitesse maximale de l'arbre (16 000 tr/min pour un Roots, 20 000 pour une vis, ordres de grandeur des constructeurs) ; le volume engendré, de la pression demandée à 40 % du régime maximal. Le calcul donne 0,95 L par tour sur un 2,0 L à 1 bar, soit l'ordre d'un Eaton M45 à M62. La section de fuite (`kRootsLeak`, `kScrewLeak`) est supposée : elle donne 85 % de rendement volumétrique à 8000 tr/min et 0,5 bar sur 1,5 L.
+- **Le travail.** Un Roots ne comprime pas en lui : la poche s'ouvre sur la sortie, et tout le volume engendré paie `Δp`. Une vis referme d'abord son volume (rapport 1,3, supposé), puis finit à l'ouverture : `w = γ/(γ−1)·p₁·(v^(γ−1)−1) + (p₂ − p₁·v^γ)/v`. Avec `v = 1`, c'est le Roots. Ce même calcul explique deux choses connues : le Roots chauffe plus (tout ce travail finit dans l'air qui sort, 144 °C à 2720 tr/min et 1 bar, contre 104 °C pour la vis), et la vis coûte un peu plus soupape ouverte, puisqu'elle comprime quand même.
+- **Centrifuge.** Une roue, comme celle d'un turbo, mais entraînée : hauteur `ψ·U²`, donc une pression qui croît avec le carré de la vitesse. Le point nominal est à 88 % du régime maximal. Avec un débit réduit de 1,5, le calcul donne 101 mm et 67 000 tr/min sur un 6,2 L à 0,8 bar, 60 mm et 120 000 tr/min sur un 2,0 L à 1 bar : l'ordre de ProCharger et de Rotrex. Vitesse de bout de pale plafonnée à 520 m/s : sur un petit moteur, 3,5 bar ne sont plus atteints. Rendement de 72 %, pas de pompage modélisé : la soupape de dérivation est censée l'éviter. Passé le point nominal, elle jette à pleine pression ce que la roue continue de monter, d'où une cassure dans la courbe de couple : un vrai montage sans décharge laisserait plutôt monter la pression, mais ici `boostBar` est tenue.
+- **La soupape de dérivation.** Le vide du collecteur l'ouvre (grande ouverte à 70 % de remplissage, fermée à 95 %, en 40 ms) : pédale relâchée, le débit revient à l'entrée, sous quelques kPa. Plein gaz, elle tient aussi la pression demandée, en rendant le surplus : c'est `spillShare`. Ce qu'on rend a quand même été comprimé : à 6500 tr/min, un Roots de 1 bar rend 33 % de son débit et prend 29 kW au vilebrequin.
+- **Le couple.** `fullLoadTorqueNm` est ce que donnent les pistons : le couple atmosphérique (compression abaissée de 5 %, comme un turbo), multiplié par `p/T` de l'air après l'échangeur (efficacité de 0,86 à bas débit, 0,72 au nominal, 0,05 bar de perte). L'air plus chaud d'un Roots pèse moins : à même pression, il donne moins de couple brut qu'une vis. L'entraînement se retire à part, comme le pompage, et s'ajoute au frein moteur : c'est de la puissance que l'échappement ne donne pas. Ce sont aussi ses `driveNm` qui font que, sur un Roots, monter la pression au-delà de 2 bar coûte plus qu'il ne rapporte : 3,5 bar donnent moins de couple net que 1 bar. Ce n'est pas un défaut du calcul : c'est pour cela qu'on ne suralimente pas ainsi à forte pression. La détonation n'est pas modélisée, et aucun moteur à 3,5 bar n'y survivrait à cet air-là.
+- **Ce qui compare à `Aspiration::Turbo`, et a été décidé un par un.** Comme un turbo : le pic de couple un peu plus tôt (`peakAt`, cames plus sages), la compression de 9,5 du démarreur, le rendement indiqué et l'enrichissement à pleine charge de la consommation, la formule d'Anderton d'un diesel suralimenté, le débit d'échappement sous pression. Sans turbine, contrairement à lui : `popForce` n'est pas amorti, les bouffées ne sont pas lissées (`active.turbo` dans `gasPathSample`), rien n'est pris à l'échappement, pas d'huile en plus pour des paliers d'arbre (les rotors ont leur propre huile, hors de ce chiffre). Le réglage de décharge n'a pas de sens : pas de soupape à l'atmosphère, et le réglage disparaît du volet.
+- **La consommation** lit le couple : `burnt_.frictionNm` compte l'entraînement, car les pistons le paient. Soupape ouverte, il reste petit : voir le tableau.
+
+| 2,0 L, 4 cylindres, 6800 tr/min, 1 bar | Couple max | Puissance | 0-100 km/h | Vmax | 90 km/h | WLTC |
+|---|---|---|---|---|---|---|
+| Atmosphérique | 174 Nm à 4100 | 97 kW | 10,2 s | 209 km/h | 6,8 L/100 km | 8,9 L/100 km |
+| Turbo moyen | 311 Nm à 3750 | 170 kW | 7,8 s | 254 km/h | 6,4 L/100 km | 8,9 L/100 km |
+| Roots | 260 Nm à 3750 | 138 kW | 8,5 s | 237 km/h | 6,6 L/100 km | 9,2 L/100 km |
+| À vis | 280 Nm à 3750 | 150 kW | 8,2 s | 244 km/h | 6,6 L/100 km | 9,3 L/100 km |
+| Centrifuge | 235 Nm à 5950 | 146 kW | 9,8 s | 242 km/h | 6,4 L/100 km | 9,2 L/100 km |
+
+Les consommations restent les estimations de `ConsumptionMeter` (voir « La consommation »). Une boîte différente, plus longue quand il y a plus de puissance, y joue autant que le compresseur.
+
+### Le son du compresseur
+
+Le son vient de `SuperchargerSound` (`core/src/supercharger_sound.cpp`), avec son propre générateur : aucun tirage du moteur n'est décalé, et sans compresseur rien de cela ne s'exécute.
+
+- **Volumétriques.** Quand une poche s'ouvre sur la sortie, l'air comprimé y rentre d'un coup : c'est une pulsation de débit, à (poches par tour) × (tours par seconde). Trois lobes sur deux rotors font six poches par tour d'un Roots (1412 Hz à 6000 tr/min sur le 2,0 L). Trois lobes sur le rotor mâle font trois poches par tour d'une vis. La phase de l'arbre suit celle du vilebrequin, acyclisme compris. Le niveau est un monopôle `ρ/(4π)·2πf·Q`, avec `Q = V_poche·part·f`, où `part` est ce que la poche a à rattraper : `Δp/p₂` sur un Roots, l'écart à sa pression interne sur une vis, plus un reste (0,2, supposé). D'où un niveau en `f²·Δp` : presque rien soupape ouverte ou au ralenti, et un sifflement qui monte vite plein gaz. La transmission par le carter et le conduit (36 dB, 31 pour une vis) est supposée, sans mesure.
+- **Le timbre.** Quatre harmoniques, un souffle étroit autour de la raie, une légère gigue de phase, des raies voisines d'ordre rotor et la variation d'une explosion à l'autre : ce sont elles qui évitent la sirène. Les modes du carter sont fixes (1,7 kHz) : les raies défilent devant.
+- **Centrifuge.** Un ordre 2 de l'arbre, dans un souffle étroit, comme le turbo, et le passage des six aubes, qui s'éteint entre 4 et 12 kHz : sans cela, sur un 2,0 L, la raie restait à 12 kHz devant tout. Niveau en `U³` selon le débit, 0,35 Pa à 1 m au nominal (supposé).
+- **Sa place.** Le carter d'un volumétrique rayonne sous le capot (`Source::Bay`). La roue d'un centrifuge et le souffle d'entrée (0,5 Pa au débit nominal, en carré du débit, sous 3 kHz) sortent par le conduit d'admission (`Source::Intake`). Le sifflement n'a pas de niveau fixe, et ne passe donc pas devant au ralenti : à 800 tr/min, soupape ouverte, ni la bande 500-2000 Hz ni la bande 8-16 kHz ne bougent de plus de 1,5 dB (test contre-éprouvé).
+
+Mesuré sur `--scenario launch`, de l'avant, à plein gaz : la raie se lit sur le spectrogramme de 500 à 1500 Hz sans changer le bilan des bandes (500-2000 Hz : −31,7 dB contre −31,3 dB sans compresseur ; 8-16 kHz : −55,7 dB contre −54,2 dB). De derrière, elle reste masquée par l'échappement, comme sur une vraie voiture. **Aucune écoute n'a été faite** : le niveau et le timbre restent à juger.
+
 ## Ce qui est simulé dans le son
 
 Une première version, qui détruisait toute raie au-dessus de 850 Hz pour éviter la fermeture éclair, était

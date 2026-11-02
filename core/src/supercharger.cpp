@@ -45,7 +45,7 @@ constexpr double kHeadCoefficient = 0.5;
 constexpr double kCentrifugalEta = 0.72;
 constexpr double kFlowCoefficient = 0.065;
 // Débit réduit au point nominal, plus bas qu'un turbo : une roue plus grande, moins rapide. Avec cette valeur, le calcul donne
-// de l'ordre de 64 000 tr/min et 116 mm sur un 6,2 L à 1 bar, 114 000 tr/min et 65 mm sur un 2,0 L : ProCharger et Rotrex.
+// 101 mm et 67 000 tr/min sur un 6,2 L à 0,8 bar, 60 mm et 120 000 tr/min sur un 2,0 L à 1 bar : l'ordre de ProCharger et de Rotrex.
 constexpr double kRatedReducedFlow = 1.5;
 // À la vitesse nominale, le débit nominal fait perdre 10 % de la pression demandée sur la hauteur à vide.
 constexpr double kCurveLossShare = 0.1;

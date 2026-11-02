@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "doctest.h"
+#include "dsp.hpp"
 #include "revforge/consumption.hpp"
 #include "revforge/driving_model.hpp"
 #include "revforge/engine_sound.hpp"
@@ -141,6 +142,18 @@ double strongestIn(const Samples& x, double from, double to) {
     double most = 0.0;
     for (double hz = from; hz <= to; hz += 0.25) most = std::max(most, powerAt(x, hz));
     return most;
+}
+
+/** L'énergie d'une bande large, filtrée : une raie ne peut pas passer entre les mailles, comme entre deux fréquences sondées. */
+double filteredEnergy(const Samples& x, float hz, float q) {
+    dsp::Svf filter;
+    filter.set(hz, q, static_cast<float>(kRate));
+    double sum = 0.0;
+    for (std::size_t i = 0; i < x.size(); ++i) {
+        filter.process(x[i]);
+        if (i > x.size() / 4) sum += static_cast<double>(filter.bp) * filter.bp;
+    }
+    return sum;
 }
 
 double decibels(double ratio) { return 10.0 * std::log10(ratio); }
@@ -330,7 +343,12 @@ TEST_CASE("le carburant paie l'entraînement du compresseur") {
     for (int i = 0; i < 300; ++i) car.stepPedal(0.01, 1.0, 0.0);
     const double drive = car.supercharger().driveNm(car.rpm());
     REQUIRE(drive > 10.0);
-    CHECK(car.consumption().fuelLph() > 0.0);
+    const double carRpm = car.rpm();
+    const double carFriction = frictionTorqueNm(charged, carRpm);
+    const double carGross = fullLoadTorqueNm(charged, carRpm, car.boost()) + carFriction;
+    const double unpaid = model.fuelGps(carRpm, car.torqueNm(), carFriction, carGross);
+    const double burnt = car.consumption().fuelLph() * model.fuel().densityKgPerL / 3.6;
+    CHECK(burnt > 1.05 * unpaid);
 }
 
 TEST_CASE("en croisière, le compresseur ouvert coûte peu") {
@@ -413,11 +431,11 @@ TEST_CASE("le compresseur garde sa place au ralenti : ni devant l'échappement, 
     const Powertrain plain = engine(Aspiration::Natural);
     const Powertrain charged = roots();
     const float idle = plain.engine.toProfile().idleRpm;
-    const auto listen = [idle](const EngineConfig& c, const SuperchargerDrive& drive) {
+    const auto listen = [idle](const Powertrain& c, const SuperchargerDrive& drive) {
         EngineSound core(kRate);
-        core.setProfile(c.toProfile());
+        core.setProfile(c.profile());
         core.setVolume(0.7f);
-        core.setListener(Listener::Outside);
+        core.setListener(Listener::Front);
         Samples out(kRate * 2);
         std::size_t done = 0;
         while (done + 256 <= out.size()) {
@@ -430,11 +448,14 @@ TEST_CASE("le compresseur garde sa place au ralenti : ni devant l'échappement, 
         return out;
     };
     SuperchargerDrive open = stateFor(charged, idle, 0.01, 0.02);
-    const Samples a = listen(plain.engine, SuperchargerDrive{});
-    const Samples b = listen(charged.engine, open);
+    const Samples a = listen(plain, SuperchargerDrive{});
+    const Samples b = listen(charged, open);
     // Bande médiane et aigus : le niveau bouge à peine, ce qui est le signe qu'aucune source fixe n'est passée devant.
-    const double mid = decibels(band(b, 500.0, 2000.0, 20.0) / band(a, 500.0, 2000.0, 20.0));
-    const double high = decibels(band(b, 8000.0, 16000.0, 40.0) / band(a, 8000.0, 16000.0, 40.0));
+    const double low = decibels(filteredEnergy(b, 300.0f, 1.0f) / filteredEnergy(a, 300.0f, 1.0f));
+    const double mid = decibels(filteredEnergy(b, 1000.0f, 0.67f) / filteredEnergy(a, 1000.0f, 0.67f));
+    const double high = decibels(filteredEnergy(b, 11300.0f, 1.4f) / filteredEnergy(a, 11300.0f, 1.4f));
+    MESSAGE("au ralenti, compresseur contre rien : ", low, " dB à 300 Hz, ", mid, " dB à 1 kHz, ", high, " dB à 11 kHz");
+    CHECK(std::fabs(low) < 1.5);
     CHECK(std::fabs(mid) < 1.5);
     CHECK(std::fabs(high) < 1.5);
 }

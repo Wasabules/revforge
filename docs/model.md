@@ -93,6 +93,43 @@ The whistle is at shaft speed: its second order dominates, with a little of the 
 
 The dominant order, the flutter level and the split between orders remain choices: no reference recording was compared, and only listening will settle them.
 
+## The supercharger
+
+`Supercharger` (`core/src/supercharger.cpp`) advances at each 1 ms step of `DrivingModel`. Its shaft is tied to the crank by a belt: its speed is a fixed ratio of engine speed, with no turbine and no inertia to spin up. The only response time is that of the volume between the compressor and the throttle (1 L + 0.8 times the displacement): 80 % of the pressure in 0.28 s at 2500 rpm on a 2.0 L, against 1.2 s for the medium turbo at the same speed.
+
+```
+dp/dt = (R·T/V)·(ṁ_compressor − ṁ_engine − ṁ_bypass)
+```
+
+- **Positive displacement (Roots, twin-screw).** `ṁ = ρ·(V_r·N − A_leak·√(2Δp/ρ))`: the swept volume, minus leaks that follow the pressure difference rather than the speed. Hence pressure from low revs, falling short only at the very bottom. The pulley ratio comes from the maximum shaft speed (16,000 rpm for a Roots, 20,000 for a screw, manufacturers' orders of magnitude); the swept volume from the requested pressure at 40 % of the redline. This gives 0.95 L per turn on a 2.0 L at 1 bar, the size of an Eaton M45 to M62. The leak area (`kRootsLeak`, `kScrewLeak`) is assumed: it gives 85 % volumetric efficiency at 8000 rpm and 0.5 bar on 1.5 L.
+- **The work.** A Roots does not compress inside itself: the pocket opens on the outlet, and the whole swept volume pays `Δp`. A screw first closes its volume (ratio 1.3, assumed) and finishes at the opening: `w = γ/(γ−1)·p₁·(v^(γ−1)−1) + (p₂ − p₁·v^γ)/v`. With `v = 1`, this is the Roots. The same sum explains two known facts: the Roots runs hotter (all this work ends up in the outgoing air, 144 °C at 2720 rpm and 1 bar, against 104 °C for the screw), and the screw costs a little more with the bypass open, since it compresses anyway.
+- **Centrifugal.** A wheel like a turbo's, but driven: head `ψ·U²`, so a pressure that grows with the square of speed. The rated point is at 88 % of the redline. With a reduced flow of 1.5, the calculation gives 101 mm and 67,000 rpm on a 6.2 L at 0.8 bar, 60 mm and 120,000 rpm on a 2.0 L at 1 bar: the range of ProCharger and Rotrex. Tip speed is capped at 520 m/s: on a small engine, 3.5 bar is out of reach. Efficiency is 72 %, with no surge modelled: the bypass valve is meant to avoid it. Past the rated point it dumps at full pressure what the wheel keeps raising, hence a kink in the torque curve: a real kit without relief would let the pressure rise instead, but here `boostBar` is held.
+- **The bypass valve.** Manifold vacuum opens it (wide open at 70 % fill, closed at 95 %, in 40 ms): pedal released, the flow returns to the inlet across a few kPa. At full throttle it also holds the requested pressure by returning the surplus: that is `spillShare`. What is returned has still been compressed: at 6500 rpm, a 1 bar Roots returns 33 % of its flow and takes 29 kW from the crank.
+- **Torque.** `fullLoadTorqueNm` is what the pistons give: the atmospheric torque (compression lowered by 5 %, like a turbo) times `p/T` of the air after the intercooler (effectiveness 0.86 at low flow, 0.72 at rated, 0.05 bar lost). A Roots' hotter air weighs less: at equal pressure it gives less gross torque than a screw. The drive is taken off separately, like pumping, and adds to engine braking: this power does not come from the exhaust. It is also `driveNm` that makes raising a Roots above 2 bar cost more than it brings: 3.5 bar gives less net torque than 1 bar. This is not a flaw of the calculation: it is why nobody boosts that way at high pressure. Knock is not modelled, and no engine would survive 3.5 bar of that air.
+- **What compares to `Aspiration::Turbo`, decided one by one.** Like a turbo: the torque peak a little earlier (`peakAt`, milder cams), the starter's 9.5 compression, the fuel model's indicated efficiency and full-load enrichment, Anderton's formula for a boosted diesel, exhaust flow under pressure. Without a turbine, unlike it: `popForce` is not damped, pulses are not smoothed (`active.turbo` in `gasPathSample`), nothing is taken from the exhaust, no extra oil for shaft bearings (rotors have their own oil, outside this figure). The release setting has no meaning: there is no valve to atmosphere, and the setting disappears from the panel.
+- **Consumption** reads the torque: `burnt_.frictionNm` counts the drive, because the pistons pay for it. With the bypass open it stays small: see the table.
+
+| 2.0 L, 4 cylinders, 6800 rpm, 1 bar | Peak torque | Power | 0-100 km/h | Top speed | 90 km/h | WLTC |
+|---|---|---|---|---|---|---|
+| Naturally aspirated | 174 Nm at 4100 | 97 kW | 10.2 s | 209 km/h | 6.8 L/100 km | 8.9 L/100 km |
+| Medium turbo | 311 Nm at 3750 | 170 kW | 7.8 s | 254 km/h | 6.4 L/100 km | 8.9 L/100 km |
+| Roots | 260 Nm at 3750 | 138 kW | 8.5 s | 237 km/h | 6.6 L/100 km | 9.2 L/100 km |
+| Twin-screw | 280 Nm at 3750 | 150 kW | 8.2 s | 244 km/h | 6.6 L/100 km | 9.3 L/100 km |
+| Centrifugal | 235 Nm at 5950 | 146 kW | 9.8 s | 242 km/h | 6.4 L/100 km | 9.2 L/100 km |
+
+Consumption figures remain `ConsumptionMeter` estimates (see "Consumption"). A different gearbox, longer when there is more power, plays as large a part as the compressor.
+
+### The supercharger's sound
+
+The sound comes from `SuperchargerSound` (`core/src/supercharger_sound.cpp`), with its own generator: no engine draw is shifted, and without a supercharger none of it runs.
+
+- **Positive displacement.** When a pocket opens on the outlet, compressed air rushes in: a flow pulsation at (pockets per turn) × (turns per second). Three lobes on two rotors make six pockets per turn of a Roots (1412 Hz at 6000 rpm on the 2.0 L). Three lobes on the male rotor make three pockets per turn of a screw. The shaft's phase follows the crank's, cyclic irregularity included. The level is a monopole `ρ/(4π)·2πf·Q`, with `Q = V_pocket·share·f`, where `share` is what the pocket has to catch up: `Δp/p₂` on a Roots, the gap to its inner pressure on a screw, plus a remainder (0.2, assumed). Hence a level in `f²·Δp`: almost nothing with the bypass open or at idle, and a whine that climbs fast at full throttle. The transmission through the casing and duct (36 dB, 31 for a screw) is assumed, with no measurement behind it.
+- **Timbre.** Four harmonics, a narrow noise around the line, slight phase jitter, neighbouring rotor-order lines and variation from one firing to the next: these keep it from being a siren. The casing modes are fixed (1.7 kHz): the lines move past them.
+- **Centrifugal.** A shaft order 2, in a narrow noise, like the turbo, and the passing of six blades, which fades between 4 and 12 kHz: without this, on a 2.0 L, the line sat at 12 kHz in front of everything. Level in `U³` with flow, 0.35 Pa at 1 m at rated (assumed).
+- **Its place.** A positive-displacement casing radiates under the hood (`Source::Bay`). A centrifugal wheel and the inlet rush (0.5 Pa at rated flow, in flow squared, below 3 kHz) come out through the intake duct (`Source::Intake`). The whine has no fixed level, so it does not move ahead at idle: at 800 rpm, bypass open, neither the 500-2000 Hz band nor the 8-16 kHz band moves by more than 1.5 dB (counter-tested).
+
+Measured on `--scenario launch`, from the front, at full throttle: the line shows on the spectrogram from 500 to 1500 Hz without changing the band balance (500-2000 Hz: −31.7 dB against −31.3 dB without a supercharger; 8-16 kHz: −55.7 dB against −54.2 dB). From behind, the exhaust masks it, as on a real car. **No listening has been done**: level and timbre remain to be judged.
+
 ## What is simulated in the sound
 
 A first version, which destroyed every spectral line above 850 Hz to avoid the zipper, had gone too far: measured on

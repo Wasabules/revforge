@@ -6,6 +6,7 @@
  */
 import { mix, type Theme } from './canvas';
 import { collectorPosition, DEG, type Cylinder, type EngineLayout, type EnginePose, lobeNoseDeg, lobeRadius, plenumPosition } from './engineLayout';
+import { chargerUnit, lobedOutline, type ChargerUnit } from './superchargerLayout';
 import { turboChain, type TurboChain, type TurboUnit } from './turboChain';
 import { EVC, EVO, IVC, IVO } from './fluidGas';
 import { heatColors } from './heat';
@@ -56,11 +57,15 @@ export interface Labels2D {
   chargeCold?: string;
   blowoff?: string;
   wastegate?: string;
+  /** La courroie du compresseur mécanique. */
+  belt?: string;
 }
 
 export class Engine2D {
   /** Le chemin de l'air, sur un moteur qui a un turbo : `null` sinon, et rien à dessiner. */
   readonly chain: TurboChain | null = null;
+  /** Le compresseur mécanique : `null` sur un moteur qui n'en a pas. */
+  readonly charger: ChargerUnit | null = null;
   private readonly web: Path2D;
   private readonly webPoints: P2[];
   private readonly rod: Path2D;
@@ -227,6 +232,12 @@ export class Engine2D {
       xMax = Math.max(xMax, chain.xMax);
       yBottom = Math.min(yBottom, chain.yMin);
       yMax = Math.max(yMax, chain.yMax);
+    }
+    if (layout.charger) {
+      const charger = chargerUnit(layout, layout.charger);
+      this.charger = charger;
+      xMax = Math.max(xMax, charger.xMax);
+      yMax = Math.max(yMax, charger.yMax);
     }
     this.frontBounds = { xMin: -xMax, xMax, yMin: Math.min(yBottom, -ringR), yMax };
   }
@@ -435,6 +446,7 @@ export class Engine2D {
     ctx.stroke();
 
     this.drawTurboFront(ctx, pose, painter, theme, px);
+    this.drawChargerFront(ctx, pose, painter, theme, px);
 
     ctx.restore();
 
@@ -444,6 +456,13 @@ export class Engine2D {
       ctx.textAlign = 'center';
       const labelAt = (text: string, mx: number, my: number) => ctx.fillText(text, ox + mx * scale, oy - my * scale);
       this.labelTurboFront(ctx, labels, labelAt);
+      const charger = this.charger;
+      if (charger) {
+        // Sous le carter : au-dessus, il y a la boîte à air.
+        if (labels.compressor) labelAt(labels.compressor, charger.x, charger.y - charger.halfY - bore * 0.2);
+        if (labels.belt) labelAt(labels.belt, charger.pulleyX / 2 + bore * 0.2, charger.pulleyY / 2);
+        if (labels.airbox) labelAt(labels.airbox, charger.airbox[0], charger.airbox[1] + charger.airboxSize[1] + bore * 0.08);
+      }
       labelAt(labels.flywheel, ring.radius * 0.72, -ring.radius * 0.72);
       labelAt(labels.pan, 0, -ring.radius * 0.88);
       labelAt(labels.head, 0, layout.deck + bore * 2.08);
@@ -1040,6 +1059,173 @@ export class Engine2D {
   }
 
   /** Ce que le visiteur peut lire : les noms, seulement si on les lui demande. */
+  /** Vu de face : la courroie depuis le vilebrequin, le carter et ce qui tourne dedans, la boîte à air et son conduit. */
+  private drawChargerFront(ctx: CanvasRenderingContext2D, pose: EnginePose, painter: GasPainter, theme: Theme, px: number): void {
+    const unit = this.charger;
+    if (!unit) return;
+    const { bore } = this.layout;
+    // La courroie : les deux tangentes extérieures aux poulies.
+    const dx = unit.pulleyX;
+    const dy = unit.pulleyY;
+    const distance = Math.hypot(dx, dy);
+    const base = Math.atan2(dy, dx);
+    const open = Math.acos(Math.min(Math.max((unit.crankPulley - unit.pulleyRadius) / distance, -1), 1));
+    ctx.strokeStyle = theme.text;
+    ctx.lineWidth = bore * 0.05;
+    ctx.beginPath();
+    for (const side of [-1, 1]) {
+      const a = base + side * open;
+      ctx.moveTo(Math.cos(a) * unit.crankPulley, Math.sin(a) * unit.crankPulley);
+      ctx.lineTo(dx + Math.cos(a) * unit.pulleyRadius, dy + Math.sin(a) * unit.pulleyRadius);
+    }
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, 0, unit.crankPulley, 0, Math.PI * 2);
+    ctx.lineWidth = bore * 0.03;
+    ctx.stroke();
+
+    // La boîte à air, et son conduit.
+    const fresh = painter.airStyle(theme, 293, 1.2);
+    const hot = painter.airStyle(theme, pose.compressorOutK, 1.6);
+    const [ax, ay] = unit.airbox;
+    const [ahx, ahy] = unit.airboxSize;
+    const eyeY = unit.volumetric ? unit.y + unit.halfY : unit.y;
+    ctx.strokeStyle = fresh;
+    ctx.lineCap = 'round';
+    ctx.lineWidth = bore * 0.2;
+    ctx.beginPath();
+    ctx.moveTo(ax, ay - ahy);
+    ctx.lineTo(unit.x, eyeY);
+    ctx.stroke();
+    ctx.lineCap = 'butt';
+    ctx.fillStyle = theme.raised;
+    ctx.strokeStyle = theme.text;
+    ctx.lineWidth = 1.2 * px;
+    ctx.fillRect(ax - ahx, ay - ahy, 2 * ahx, 2 * ahy);
+    ctx.strokeRect(ax - ahx, ay - ahy, 2 * ahx, 2 * ahy);
+
+    if (unit.volumetric) {
+      ctx.fillStyle = hot;
+      ctx.beginPath();
+      ctx.roundRect(unit.x - unit.halfX, unit.y - unit.halfY, 2 * unit.halfX, 2 * unit.halfY, bore * 0.1);
+      ctx.fill();
+      ctx.stroke();
+      const rotor = (cx: number, lobes: number, angle: number) => {
+        const outline = lobes === 3 ? this.lobesThree(unit) : this.lobesFive(unit);
+        ctx.save();
+        ctx.translate(cx, unit.y);
+        ctx.rotate(angle);
+        ctx.fillStyle = theme.metal;
+        ctx.fill(outline);
+        ctx.strokeStyle = theme.text;
+        ctx.lineWidth = px;
+        ctx.stroke(outline);
+        ctx.restore();
+      };
+      rotor(unit.x - unit.rotorSpacing, unit.lobesA, pose.chargerAngle);
+      rotor(unit.x + unit.rotorSpacing, unit.lobesB, -pose.chargerAngle * (unit.lobesA / unit.lobesB));
+    } else {
+      // De la volute au papillon, et la roue.
+      ctx.strokeStyle = hot;
+      ctx.lineCap = 'round';
+      ctx.lineWidth = bore * 0.2;
+      ctx.beginPath();
+      ctx.moveTo(unit.outFrom[0], unit.outFrom[1]);
+      ctx.lineTo(unit.outTo[0], unit.outTo[1]);
+      ctx.stroke();
+      ctx.lineCap = 'butt';
+      ctx.fillStyle = hot;
+      ctx.strokeStyle = theme.text;
+      ctx.lineWidth = 1.2 * px;
+      ctx.beginPath();
+      ctx.arc(unit.x, unit.y, unit.halfX, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      this.drawWheelFront(ctx, unit.x, unit.y, unit.wheelRadius, pose.chargerAngle, 11, -0.55, pose.turbineBlur, theme, px);
+    }
+    // La poulie, devant.
+    ctx.fillStyle = theme.raised;
+    ctx.strokeStyle = theme.text;
+    ctx.lineWidth = 1.2 * px;
+    ctx.beginPath();
+    ctx.arc(unit.pulleyX, unit.pulleyY, unit.pulleyRadius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    for (let k = 0; k < 3; k++) {
+      const a = pose.chargerAngle + (k / 3) * Math.PI * 2;
+      ctx.moveTo(unit.pulleyX, unit.pulleyY);
+      ctx.lineTo(unit.pulleyX + Math.cos(a) * unit.pulleyRadius, unit.pulleyY + Math.sin(a) * unit.pulleyRadius);
+    }
+    ctx.stroke();
+  }
+
+  private lobeCache: { three: Path2D | null; five: Path2D | null } = { three: null, five: null };
+
+  private lobesThree(unit: ChargerUnit): Path2D {
+    return (this.lobeCache.three ??= this.lobePath(3, unit.rotorRadius));
+  }
+
+  private lobesFive(unit: ChargerUnit): Path2D {
+    return (this.lobeCache.five ??= this.lobePath(5, unit.rotorRadius * 0.92));
+  }
+
+  private lobePath(lobes: number, radius: number): Path2D {
+    const path = new Path2D();
+    lobedOutline(lobes, radius).forEach(([x, y], k) => (k === 0 ? path.moveTo(x, y) : path.lineTo(x, y)));
+    path.closePath();
+    return path;
+  }
+
+  /** Dans cette coupe, le carter cacherait la culasse : il est dessiné au-dessus d'elle. */
+  private chargerSideY(unit: ChargerUnit): number {
+    return this.layout.deck + this.layout.bore * 2.08 + unit.halfY;
+  }
+
+  /** Vu de côté : le carter, et sa poulie devant le moteur, reliée à celle du vilebrequin. */
+  private drawChargerSide(ctx: CanvasRenderingContext2D, pose: EnginePose, painter: GasPainter, theme: Theme, px: number): void {
+    const placed = this.charger;
+    if (!placed) return;
+    const { bore } = this.layout;
+    const hot = painter.airStyle(theme, pose.compressorOutK, 1.6);
+    const y = this.chargerSideY(placed);
+    const unit = { ...placed, y, pulleyY: y };
+    // La courroie, et l'arbre jusqu'à sa poulie.
+    ctx.strokeStyle = theme.text;
+    ctx.lineWidth = bore * 0.05;
+    ctx.beginPath();
+    ctx.moveTo(unit.beltZ, unit.pulleyY);
+    ctx.lineTo(unit.beltZ, 0);
+    ctx.moveTo(unit.z + unit.halfZ, unit.pulleyY);
+    ctx.lineTo(unit.beltZ, unit.pulleyY);
+    ctx.stroke();
+    ctx.fillStyle = theme.raised;
+    ctx.strokeStyle = theme.text;
+    ctx.lineWidth = 1.2 * px;
+    ctx.fillRect(unit.beltZ - bore * 0.08, unit.pulleyY - unit.pulleyRadius, bore * 0.16, 2 * unit.pulleyRadius);
+    ctx.strokeRect(unit.beltZ - bore * 0.08, unit.pulleyY - unit.pulleyRadius, bore * 0.16, 2 * unit.pulleyRadius);
+    ctx.fillStyle = hot;
+    ctx.fillRect(unit.z - unit.halfZ, unit.y - unit.halfY, 2 * unit.halfZ, 2 * unit.halfY);
+    ctx.strokeRect(unit.z - unit.halfZ, unit.y - unit.halfY, 2 * unit.halfZ, 2 * unit.halfY);
+    if (unit.volumetric) {
+      // L'hélice qui défile : ce qu'on voit de rotors qui tournent, le long de leur axe.
+      ctx.strokeStyle = theme.text;
+      ctx.lineWidth = px;
+      const pitch = (2 * unit.halfZ) / 5;
+      const shift = (((pose.chargerAngle / (Math.PI * 2)) % 1) + 1) % 1;
+      ctx.beginPath();
+      for (let k = -1; k < 5; k++) {
+        const from = unit.z - unit.halfZ + (k + shift) * pitch;
+        const a = Math.max(from, unit.z - unit.halfZ);
+        const b = Math.min(from + pitch * 0.8, unit.z + unit.halfZ);
+        if (b <= a) continue;
+        ctx.moveTo(a, unit.y - unit.halfY * 0.75);
+        ctx.lineTo(b, unit.y + unit.halfY * 0.75);
+      }
+      ctx.stroke();
+    }
+  }
+
   private labelTurboFront(ctx: CanvasRenderingContext2D, labels: Labels2D, at: (text: string, x: number, y: number) => void): void {
     const chain = this.chain;
     if (!chain) return;
@@ -1076,12 +1262,12 @@ export class Engine2D {
     const flat = layout.flat;
     const zMin = ring.z - bore * 0.5;
     // L'échangeur est devant la poulie : la coupe s'allonge pour lui.
-    const zMax = this.chain ? this.chain.zMax : layout.pulleyZ + bore * 0.2;
-    const top = deck + bore * 2.0;
+    const zMax = this.chain ? this.chain.zMax : this.charger ? this.charger.zMax : layout.pulleyZ + bore * 0.2;
+    const top = this.charger ? this.chargerSideY(this.charger) + this.charger.halfY + bore * 0.3 : deck + bore * 2.0;
     const bottom = Math.min(flat ? -top : Math.min(-ring.radius, -(layout.crank * 1.25 + bore * 1.0)), this.chain ? this.chain.yMin : 0);
     const scale = Math.min(w / (zMax - zMin), h / (top - bottom));
     // Sur un turbo, la coupe n'est plus symétrique : le zéro se place depuis l'arrière.
-    const ox = this.chain ? x + (w - (zMax - zMin) * scale) / 2 - zMin * scale : x + (w - (zMax - zMin) * scale) / 2 + zMax * scale;
+    const ox = this.chain || this.charger ? x + (w - (zMax - zMin) * scale) / 2 - zMin * scale : x + (w - (zMax - zMin) * scale) / 2 + zMax * scale;
     const oy = y + (h - (top - bottom) * scale) / 2 + top * scale;
     const px = 1 / scale;
     // L'avant à droite, côté distribution : u = z.
@@ -1271,6 +1457,7 @@ export class Engine2D {
       this.redrawCrankOverPan(ctx, crankAngle, theme, px);
     }
     this.drawTurboSide(ctx, pose, painter, theme, px);
+    this.drawChargerSide(ctx, pose, painter, theme, px);
     ctx.restore();
 
     if (labels.parts) {
@@ -1279,6 +1466,8 @@ export class Engine2D {
       ctx.textAlign = 'center';
       const labelAt = (text: string, u: number, v: number) => ctx.fillText(text, ox + u * scale, oy - v * scale);
       this.labelTurboSide(ctx, labels, labelAt);
+      const charger = this.charger;
+      if (charger && labels.compressor) labelAt(labels.compressor, charger.z, this.chargerSideY(charger) + charger.halfY + bore * 0.08);
       const mid = (layout.frontZ + layout.rearZ) / 2;
       labelAt(labels.cam, mid, valve.camY + bore * 0.3);
       labelAt(labels.chain, layout.sprocket.z[0], deck + bore * 2);

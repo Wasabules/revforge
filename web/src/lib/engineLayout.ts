@@ -11,7 +11,7 @@
  *
  * Ce calcul donne une vraie manivelle à condition de placer chaque numéro sur la bonne rangée : voir `placementOf`.
  */
-import type { EngineConfig } from './config';
+import type { EngineConfig, SuperchargerKind } from './config';
 import { TURBO_SCALE } from './exhaustLines';
 import { EVC, EVO, ignitionAdvance, IVC, IVO } from './fluidGas';
 import { firingOrder } from './motion';
@@ -120,6 +120,8 @@ export interface EngineLayout {
   flat: boolean;
   fuel: EngineConfig['fuel'];
   turbo: boolean;
+  /** Le compresseur mécanique, s'il y en a un : `null` sinon. */
+  charger: SuperchargerKind | null;
   /** Diamètre des roues du turbo, rapporté au turbo moyen. */
   turboScale: number;
   /** Une soupape de décharge : sans elle (flutter), l'air revient par le compresseur. */
@@ -229,7 +231,7 @@ export function starterTeeth(cylinders: number, displacementCc: number): { ring:
 /** Ce qui fait changer les pièces du moteur : à clé égale, les mêmes maillages. */
 export function layoutKey(config: EngineConfig): string {
   if (config.electric) return 'electric';
-  return `${config.cylinders}|${config.layout}|${config.displacementCc}|${config.boreMm}|${config.fuel}|${config.aspiration}|${config.turboSize}|${config.turboRelease}|${config.boxFlywheel}`;
+  return `${config.cylinders}|${config.layout}|${config.displacementCc}|${config.boreMm}|${config.fuel}|${config.aspiration}|${config.turboSize}|${config.turboRelease}|${config.boxFlywheel}|${config.superchargerKind}`;
 }
 
 export function engineLayout(config: EngineConfig): EngineLayout {
@@ -407,6 +409,7 @@ export function engineLayout(config: EngineConfig): EngineLayout {
     flat,
     fuel: config.fuel,
     turbo: config.aspiration === 'turbo',
+    charger: config.aspiration === 'supercharger' ? (config.superchargerKind ?? 'roots') : null,
     turboScale: TURBO_SCALE[config.turboSize ?? 'medium'],
     releaseValve: config.turboRelease !== 'flutter',
     dualMass: config.boxFlywheel === 'dual_mass',
@@ -571,6 +574,8 @@ export interface PoseClock {
   turns: number;
   /** Angle de l'arbre du turbo (radians). */
   turbineAngle: number;
+  /** Angle de l'arbre du compresseur mécanique (radians). */
+  chargerAngle?: number;
   /** Disque flou quand l'œil ne suit plus les aubes, wastegate et décharge ouvertes (0 à 1), températures de l'air (K). */
   turbineBlur?: number;
   wastegate?: number;
@@ -667,6 +672,7 @@ export class EnginePose {
   starter = 0;
   pinionAngle = 0;
   turbineAngle = 0;
+  chargerAngle = 0;
   turbineBlur = 0;
   wastegate = 0;
   blowoff = 0;
@@ -754,6 +760,7 @@ export class EnginePose {
     this.solve(crankDeg);
     this.chainTurns = clock.turns * 2;
     this.turbineAngle = clock.turbineAngle;
+    this.chargerAngle = clock.chargerAngle ?? 0;
     this.turbineBlur = clock.turbineBlur ?? 0;
     this.wastegate = clock.wastegate ?? 0;
     this.blowoff = clock.blowoff ?? 0;
