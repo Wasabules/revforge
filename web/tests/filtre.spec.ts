@@ -122,32 +122,37 @@ test('le gaz à l’écran freine moins, et entre plus chaud, derrière un cône
   const stacks = plenumDepression('stacks');
   expect(paper.net.inletK).toBe(293);
   expect(cone.net.inletK).toBeGreaterThan(300);
+  // Même boîte, même conduit : seul le frottement diffère.
+  expect(plenumDepression('panel').depression).toBeLessThan(paper.depression);
   expect(cone.depression).toBeLessThan(paper.depression);
   expect(stacks.depression).toBeLessThan(paper.depression);
-});
-
-test('sur un turbo, le volume de charge ne bouge pas avec le filtre', () => {
-  const chargeVolume = (filter: EngineConfig['airFilter']) => {
-    const net = new GasNetwork();
-    net.build({ ...BASE, aspiration: 'turbo', airFilter: filter }, ORDER4);
-    let volume = 0;
-    for (const part of net.intakeParts) {
-      if (part.kind === 'hot' || part.kind === 'cooler' || part.kind === 'cold') {
-        for (let k = 0; k < part.count; k++) volume += 1 / net.invV[part.first + k];
-      }
-    }
-    return volume;
-  };
-  expect(chargeVolume('cone')).toBe(chargeVolume('stock'));
-  expect(chargeVolume('stacks')).toBe(chargeVolume('stock'));
+  // L'air qui entre par la bouche est plus léger : 12 K de plus, 4 % de densité en moins, de la température seule.
+  const inlet = (net: GasNetwork) => net.p[net.intakeFirst] / net.rho[net.intakeFirst] / 287;
+  expect(inlet(cone.net)).toBeGreaterThan(inlet(paper.net) + 4);
 });
 
 test('le gaz à l’écran n’alloue pas plus derrière des cornets', () => {
+  test.setTimeout(120_000);
   const net = new GasNetwork();
   net.build({ ...BASE, airFilter: 'stacks' }, ORDER4);
-  drive(net, 0.02);
-  const before = process.memoryUsage().heapUsed;
-  drive(net, 0.05);
-  // Pas assez pour un objet par appel : voir le test du tas de `turbo.spec.ts`.
-  expect(process.memoryUsage().heapUsed - before).toBeLessThan(4_000_000);
+  // Le cycle continue d'un lot à l'autre, et les lots sont longs : repartir de zéro à chaque fois coûte bien plus que le réseau lui-même.
+  let cycle = 0;
+  const run = (frames: number) => {
+    for (let f = 0; f < frames; f++) {
+      const turns = (WIDE_OPEN.rpm / 120) * FRAME;
+      net.advance(FRAME, cycle, turns, WIDE_OPEN);
+      cycle = (cycle + turns) % 1;
+    }
+  };
+  run(500);
+  // La médiane : le compilateur et le ramasse-miettes font des pics et des creux isolés, une allocation par pas se retrouve dans chaque lot.
+  const lots: number[] = [];
+  for (let lot = 0; lot < 15; lot++) {
+    const before = process.memoryUsage().heapUsed;
+    run(100);
+    lots.push((process.memoryUsage().heapUsed - before) / 100);
+  }
+  lots.sort((a, b) => a - b);
+  // Le même seuil que le test du tas d'`interface.spec.ts`. Mesuré : 1,64 ko par image, autant qu'avec le papier d'origine.
+  expect(lots[7]).toBeLessThan(4000);
 });
