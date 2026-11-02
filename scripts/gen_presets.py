@@ -11,11 +11,15 @@ EXHAUST = {
 ROUTING = {"single": "Single", "dual": "Dual", "h": "HPipe", "x": "XPipe"}
 PLACEMENT = {"front": "Front", "mid": "Mid", "rear": "Rear"}
 INSULATION = {"stripped": "Stripped", "light": "Light", "standard": "Standard", "comfort": "Comfort", "luxury": "Luxury"}
-ASPIRATION = {"natural": "Natural", "turbo": "Turbo"}
+ASPIRATION = {"natural": "Natural", "turbo": "Turbo", "supercharger": "Supercharger"}
 FUEL = {"petrol": "Petrol", "diesel": "Diesel"}
 POPS = {"off": "Off", "light": "Light", "strong": "Strong"}
 RELEASE = {"dump_valve": "DumpValve", "flutter": "Flutter"}
 TURBO_SIZE = {"small": "Small", "medium": "Medium", "large": "Large"}
+SUPERCHARGER = {"roots": "Roots", "twin_screw": "TwinScrew", "centrifugal": "Centrifugal"}
+ANTILAG = {"off": "Off", "retard": "Retard", "air": "AirInjection", "cut": "CylinderCut"}
+CAMSHAFT = {"dohc": "Dohc", "sohc": "Sohc"}
+AIR_FILTER = {"stock": "Stock", "panel": "Panel", "cone": "Cone", "stacks": "Stacks"}
 BODY = {"city": "City", "compact": "Compact", "coupe": "Coupe", "supercar": "Supercar", "van": "Van"}
 DRIVE = {"front": "Front", "rear": "Rear", "all": "All"}
 GEARBOX = {"synchro": "Synchro", "dog": "Dog", "sequential": "Sequential", "dual_clutch": "DualClutch", "converter": "Converter", "reducer": "Reducer"}
@@ -39,7 +43,9 @@ def main(source, target):
             f"Exhaust::{EXHAUST[p.get('exhaust', 'stock')]}, Aspiration::{ASPIRATION[p.get('aspiration', 'natural')]}, "
             f"Fuel::{FUEL[p.get('fuel', 'petrol')]}, 0.0f, PopLevel::{POPS[p.get('pops', 'off')]}, "
             f"TurboRelease::{RELEASE[p.get('turboRelease', 'dump_valve')]}, {p.get('boostBar', 1.0)}f, "
-            f"ExhaustRouting::{ROUTING[p.get('routing', 'single')]}, TurboSize::{TURBO_SIZE[p.get('turboSize', 'medium')]}}}"
+            f"ExhaustRouting::{ROUTING[p.get('routing', 'single')]}, TurboSize::{TURBO_SIZE[p.get('turboSize', 'medium')]}, "
+            f"SuperchargerKind::{SUPERCHARGER[p.get('superchargerKind', 'roots')]}, AntiLag::{ANTILAG[p.get('antiLag', 'off')]}, "
+            f"{p.get('turboPipeMm', 400)}, Camshaft::{CAMSHAFT[p.get('camshaft', 'dohc')]}, AirFilter::{AIR_FILTER[p.get('airFilter', 'stock')]}}}"
         )
         electric = "true" if p.get("electric") else "false"
         # Pas de valeur par défaut pour la voiture : chaque préréglage la donne en entier.

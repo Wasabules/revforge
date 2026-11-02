@@ -6,11 +6,15 @@ export type Exhaust = 'stock' | 'sport' | 'straight' | 'no_muffler' | 'no_resona
 export type Routing = 'single' | 'dual' | 'h' | 'x';
 export type Placement = 'front' | 'mid' | 'rear';
 export type Insulation = 'stripped' | 'light' | 'standard' | 'comfort' | 'luxury';
-export type Aspiration = 'natural' | 'turbo';
+export type Aspiration = 'natural' | 'turbo' | 'supercharger';
 export type Fuel = 'petrol' | 'diesel';
 export type Pops = 'off' | 'light' | 'strong';
 export type Release = 'dump_valve' | 'flutter';
 export type TurboSize = 'small' | 'medium' | 'large';
+export type SuperchargerKind = 'roots' | 'twin_screw' | 'centrifugal';
+export type AntiLag = 'off' | 'retard' | 'air' | 'cut';
+export type Camshaft = 'dohc' | 'sohc';
+export type AirFilter = 'stock' | 'panel' | 'cone' | 'stacks';
 export type Body = 'city' | 'compact' | 'coupe' | 'supercar' | 'van';
 export type Drive = 'front' | 'rear' | 'all';
 export type BoxKind = 'synchro' | 'dog' | 'sequential' | 'dual_clutch' | 'converter';
@@ -35,6 +39,14 @@ export interface EngineConfig {
   boostBar: number;
   /** Taille du turbo : un petit se réveille tôt et s'essouffle en haut, un gros tarde et tient jusqu'au rupteur. */
   turboSize: TurboSize;
+  /** Le compresseur mécanique, sur `aspiration: 'supercharger'`. */
+  superchargerKind: SuperchargerKind;
+  /** L'anti-lag, sur un turbo. */
+  antiLag: AntiLag;
+  /** Longueur du tube entre les cylindres et la turbine (mm). */
+  turboPipeMm: number;
+  camshaft: Camshaft;
+  airFilter: AirFilter;
   electric: boolean;
   body: Body;
   massKg: number;
@@ -105,6 +117,7 @@ export const INSULATIONS: { value: Insulation; label: string; help: string }[] =
 export const ASPIRATIONS: { value: Aspiration; label: string }[] = [
   { value: 'natural', get label() { return t('aspiration.natural'); } },
   { value: 'turbo', get label() { return t('aspiration.turbo'); } },
+  { value: 'supercharger', get label() { return t('aspiration.supercharger'); } },
 ];
 export const FUELS: { value: Fuel; label: string }[] = [
   { value: 'petrol', get label() { return t('fuel.petrol'); } },
@@ -126,6 +139,31 @@ export const TURBO_SIZES: { value: TurboSize; label: string; help: string }[] = 
   { value: 'large', get label() { return t('turboSize.large'); }, get help() { return t('turboSize.large.help'); } },
 ];
 export { TURBO_SCALE } from './exhaustLines';
+/** La position donne la valeur envoyée au C++ : `SuperchargerKind`. */
+export const SUPERCHARGER_KINDS: { value: SuperchargerKind; label: string; help: string }[] = [
+  { value: 'roots', get label() { return t('supercharger.roots'); }, get help() { return t('supercharger.roots.help'); } },
+  { value: 'twin_screw', get label() { return t('supercharger.twin_screw'); }, get help() { return t('supercharger.twin_screw.help'); } },
+  { value: 'centrifugal', get label() { return t('supercharger.centrifugal'); }, get help() { return t('supercharger.centrifugal.help'); } },
+];
+/** La position donne la valeur envoyée au C++ : `AntiLag`. */
+export const ANTI_LAGS: { value: AntiLag; label: string; help: string }[] = [
+  { value: 'off', get label() { return t('antiLag.off'); }, get help() { return t('antiLag.off.help'); } },
+  { value: 'retard', get label() { return t('antiLag.retard'); }, get help() { return t('antiLag.retard.help'); } },
+  { value: 'air', get label() { return t('antiLag.air'); }, get help() { return t('antiLag.air.help'); } },
+  { value: 'cut', get label() { return t('antiLag.cut'); }, get help() { return t('antiLag.cut.help'); } },
+];
+/** La position donne la valeur envoyée au C++ : `Camshaft`. */
+export const CAMSHAFTS: { value: Camshaft; label: string; help: string }[] = [
+  { value: 'dohc', get label() { return t('camshaft.dohc'); }, get help() { return t('camshaft.dohc.help'); } },
+  { value: 'sohc', get label() { return t('camshaft.sohc'); }, get help() { return t('camshaft.sohc.help'); } },
+];
+/** La position donne la valeur envoyée au C++ : `AirFilter`. */
+export const AIR_FILTERS: { value: AirFilter; label: string; help: string }[] = [
+  { value: 'stock', get label() { return t('airFilter.stock'); }, get help() { return t('airFilter.stock.help'); } },
+  { value: 'panel', get label() { return t('airFilter.panel'); }, get help() { return t('airFilter.panel.help'); } },
+  { value: 'cone', get label() { return t('airFilter.cone'); }, get help() { return t('airFilter.cone.help'); } },
+  { value: 'stacks', get label() { return t('airFilter.stacks'); }, get help() { return t('airFilter.stacks.help'); } },
+];
 /** Choisir une carrosserie règle aussi une masse, des jantes et une transmission plausibles. */
 export const BODIES: { value: Body; label: string; massKg: number; rimInch: number; drive: Drive; placement: Placement }[] = [
   { value: 'city', get label() { return t('body.city'); }, massKg: 1100, rimInch: 15, drive: 'front', placement: 'front' },
@@ -207,6 +245,7 @@ export const LIMITS = {
   boreMm: { min: 60, max: 110, step: 1 },
   redlineRpm: { min: 3000, max: 12000, step: 100 },
   boostBar: { min: 0.3, max: 3.5, step: 0.1 },
+  turboPipeMm: { min: 150, max: 3000, step: 50 },
   massKg: { min: 700, max: 3000, step: 25 },
   rimInch: { min: 14, max: 22, step: 1 },
   boxGears: { min: 2, max: 8, step: 1 },
@@ -231,6 +270,11 @@ const DEFAULTS: EngineConfig = {
   turboRelease: 'dump_valve',
   boostBar: 1,
   turboSize: 'medium',
+  superchargerKind: 'roots',
+  antiLag: 'off',
+  turboPipeMm: 400,
+  camshaft: 'dohc',
+  airFilter: 'stock',
   electric: false,
   body: 'city',
   massKg: 1100,
@@ -303,6 +347,11 @@ export function configArgs(c: EngineConfig): number[] {
     c.boostBar,
     index(ROUTINGS, c.routing),
     index(TURBO_SIZES, c.turboSize),
+    index(SUPERCHARGER_KINDS, c.superchargerKind),
+    index(ANTI_LAGS, c.antiLag),
+    c.turboPipeMm,
+    index(CAMSHAFTS, c.camshaft),
+    index(AIR_FILTERS, c.airFilter),
   ];
 }
 
@@ -337,7 +386,7 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 
 // Les champs ajoutés suivent après un « _ » : la pression, avant eux, peut contenir un point. Toujours à la fin, pour que les anciens liens restent valides.
 function encodeCar(c: EngineConfig): string {
-  return `${c.body}.${c.massKg}.${c.rimInch}.${c.drive}.${c.boostBar}_${c.placement}_${c.insulation}_${c.routing}_${c.turboSize}`;
+  return `${c.body}.${c.massKg}.${c.rimInch}.${c.drive}.${c.boostBar}_${c.placement}_${c.insulation}_${c.routing}_${c.turboSize}_${c.superchargerKind}_${c.antiLag}_${c.turboPipeMm}_${c.camshaft}_${c.airFilter}`;
 }
 
 export function encodeConfig(c: EngineConfig): string {
@@ -383,7 +432,7 @@ function decodeBox(text: string | undefined): Partial<EngineConfig> {
 function decodeCar(text: string | undefined): Partial<EngineConfig> {
   // Les anciens liens n'ont pas de voiture : on garde celle par défaut.
   if (!text) return {};
-  const [main, placement, insulation, routing, turboSize] = text.split('_');
+  const [main, placement, insulation, routing, turboSize, superchargerKind, antiLag, turboPipe, camshaft, airFilter] = text.split('_');
   // La pression peut contenir un point : tout ce qui suit la transmission lui appartient.
   const [body, mass, rim, drive, ...pressure] = main.split('.');
   const bar = Number(pressure.join('.'));
@@ -401,6 +450,11 @@ function decodeCar(text: string | undefined): Partial<EngineConfig> {
     ...(INSULATIONS.some((item) => item.value === insulation) ? { insulation: insulation as Insulation } : {}),
     ...(ROUTINGS.some((item) => item.value === routing) ? { routing: routing as Routing } : {}),
     ...(TURBO_SIZES.some((item) => item.value === turboSize) ? { turboSize: turboSize as TurboSize } : {}),
+    ...(SUPERCHARGER_KINDS.some((item) => item.value === superchargerKind) ? { superchargerKind: superchargerKind as SuperchargerKind } : {}),
+    ...(ANTI_LAGS.some((item) => item.value === antiLag) ? { antiLag: antiLag as AntiLag } : {}),
+    ...(turboPipe !== undefined && Number.isFinite(Number(turboPipe)) ? { turboPipeMm: clamp(Number(turboPipe), LIMITS.turboPipeMm.min, LIMITS.turboPipeMm.max) } : {}),
+    ...(CAMSHAFTS.some((item) => item.value === camshaft) ? { camshaft: camshaft as Camshaft } : {}),
+    ...(AIR_FILTERS.some((item) => item.value === airFilter) ? { airFilter: airFilter as AirFilter } : {}),
   };
 }
 

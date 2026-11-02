@@ -61,7 +61,8 @@ float* rf_buffer() { return g_buffer; }
 float* rf_buffer_right() { return g_bufferRight; }
 
 void rf_set_config(int cylinders, int layout, int displacementCc, int boreMm, int redlineRpm, int exhaust, int aspiration, int fuel,
-                   float multiplier, int pops, int release, float boostBar, int routing, int turboSize) {
+                   float multiplier, int pops, int release, float boostBar, int routing, int turboSize,
+                   int superchargerKind, int antiLag, int turboPipeMm, int camshaft, int airFilter) {
     EngineConfig c;
     c.cylinders = cylinders;
     c.layout = static_cast<Layout>(layout);
@@ -77,6 +78,11 @@ void rf_set_config(int cylinders, int layout, int displacementCc, int boreMm, in
     c.boostBar = boostBar;
     c.routing = static_cast<ExhaustRouting>(routing);
     c.turboSize = static_cast<TurboSize>(turboSize);
+    c.superchargerKind = static_cast<SuperchargerKind>(superchargerKind);
+    c.antiLag = static_cast<AntiLag>(antiLag);
+    c.turboPipeMm = turboPipeMm;
+    c.camshaft = static_cast<Camshaft>(camshaft);
+    c.airFilter = static_cast<AirFilter>(airFilter);
     g_powertrain.engine = c;
     g_powertrain.electric = false;
     applyPowertrain();

@@ -11,12 +11,20 @@ enum class Layout { Inline, V, CrossPlane, Boxer };
 enum class Exhaust { Stock, Sport, Straight, MufflerDelete, ResonatorDelete, Quiet };
 /** Le chemin des gaz : une seule ligne, deux lignes séparées (une par rangée), reliées par un pont en H ou en X. */
 enum class ExhaustRouting { Single, Dual, HPipe, XPipe };
-enum class Aspiration { Natural, Turbo };
+enum class Aspiration { Natural, Turbo, Supercharger };
 enum class Fuel { Petrol, Diesel };
 enum class PopLevel { Off, Light, Strong };
 enum class TurboRelease { DumpValve, Flutter };
 /** Petit : réveillé tôt, à bout de souffle en haut. Gros : long à lancer, de l'air jusqu'au rupteur. */
 enum class TurboSize { Small, Medium, Large };
+/** Le compresseur mécanique : à lobes, à vis, ou centrifuge. N'agit que sur `Aspiration::Supercharger`. */
+enum class SuperchargerKind { Roots, TwinScrew, Centrifugal };
+/** L'anti-lag : aucun, retard d'allumage, air injecté au collecteur, coupure de cylindres. N'agit que sur un turbo. */
+enum class AntiLag { Off, Retard, AirInjection, CylinderCut };
+/** L'arbre à cames : deux en tête, quatre soupapes par cylindre ; un seul en tête, deux soupapes. */
+enum class Camshaft { Dohc, Sohc };
+/** Le filtre à air : papier d'origine dans sa boîte, panneau sport dans la boîte, cône à l'air libre, cornets sans boîte. */
+enum class AirFilter { Stock, Panel, Cone, Stacks };
 
 /**
  * Ce qui dépend de l'échappement en dehors de sa géométrie, calculée par ExhaustLine :
@@ -191,6 +199,12 @@ struct EngineConfig {
     float boostBar = 1.0f;
     ExhaustRouting routing = ExhaustRouting::Single;
     TurboSize turboSize = TurboSize::Medium;
+    SuperchargerKind superchargerKind = SuperchargerKind::Roots;
+    AntiLag antiLag = AntiLag::Off;
+    /** Longueur du tube entre les cylindres et la turbine (mm) : 400 est la référence de la calibration. */
+    int turboPipeMm = 400;
+    Camshaft camshaft = Camshaft::Dohc;
+    AirFilter airFilter = AirFilter::Stock;
 
     bool operator==(const EngineConfig&) const = default;
 

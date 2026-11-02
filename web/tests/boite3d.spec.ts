@@ -691,7 +691,7 @@ test.describe('la vue, sur la page', () => {
 
   test('téléphone : pas de défilement horizontal, et un doigt qui glisse verticalement garde la page', async ({ browser, browserName }) => {
     test.skip(browserName === 'firefox', 'émulation de téléphone : Chromium');
-    const context = await browser.newContext({ viewport: { width: 360, height: 780 }, hasTouch: true, isMobile: true, baseURL: 'http://127.0.0.1:4173/', storageState: { cookies: [], origins: [{ origin: 'http://127.0.0.1:4173', localStorage: [{ name: 'revforge.lang', value: 'fr' }] }] } });
+    const context = await browser.newContext({ viewport: { width: 360, height: 780 }, hasTouch: true, isMobile: true, baseURL: `http://127.0.0.1:${process.env.REVFORGE_PW_PORT ?? '4173'}/`, storageState: { cookies: [], origins: [{ origin: `http://127.0.0.1:${process.env.REVFORGE_PW_PORT ?? '4173'}`, localStorage: [{ name: 'revforge.lang', value: 'fr' }] }] } });
     const page = await context.newPage();
     await open(page);
     await voir(page, 'gearbox');

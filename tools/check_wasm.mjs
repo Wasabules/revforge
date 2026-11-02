@@ -95,7 +95,7 @@ function check(label, wasm, expected) {
 {
   const rf = load();
   rf.rf_set_car(BODY.city, 1100, 15, DRIVE.front, PLACEMENT.front, INSULATION.standard);
-  rf.rf_set_config(4, LAYOUT.inline, 1360, 75, 6200, EXHAUST.stock, 0, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium);
+  rf.rf_set_config(4, LAYOUT.inline, 1360, 75, 6200, EXHAUST.stock, 0, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
   rf.rf_set_mode(4);
   rf.rf_set_manual_rpm(5000);
   check('régime tenu', render(rf, 4, 512), native('--cylinders', '4', '--cc', '1360', '--bore', '75', '--redline', '6200', '--scenario', 'steady', '--rpm', '5000'));
@@ -106,7 +106,7 @@ function check(label, wasm, expected) {
   rf.rf_set_car(BODY.supercar, 1500, 20, DRIVE.all, PLACEMENT.mid, INSULATION.stripped);
   // Comme le préréglage : double embrayage.
   rf.rf_set_gearbox(BOX.dual_clutch, 0, 0, 0, 0, 0, 0, 0, 0);
-  rf.rf_set_config(10, LAYOUT.v, 5204, 85, 8500, EXHAUST.straight, 0, 0, 0, 2, 0, 1, ROUTING.single, TURBO.medium);
+  rf.rf_set_config(10, LAYOUT.v, 5204, 85, 8500, EXHAUST.straight, 0, 0, 0, 2, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
   rf.rf_set_mode(3);
   check('tour complet, V10', render(rf, 60, 128), native('--preset', 'v10_open', '--scenario', 'lap'));
 }
@@ -114,7 +114,7 @@ function check(label, wasm, expected) {
 {
   const rf = load();
   rf.rf_set_car(BODY.compact, 1450, 18, DRIVE.all, PLACEMENT.front, INSULATION.standard);
-  rf.rf_set_config(4, LAYOUT.boxer, 2500, 99, 6800, EXHAUST.sport, 1, 0, 0, 1, 1, 1.2, ROUTING.single, TURBO.medium);
+  rf.rf_set_config(4, LAYOUT.boxer, 2500, 99, 6800, EXHAUST.sport, 1, 0, 0, 1, 1, 1.2, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
   rf.rf_set_mode(3);
   check('tour complet, boxer turbo', render(rf, 60, 128), native('--preset', 'boxer_four_turbo', '--scenario', 'lap'));
 }
@@ -122,7 +122,7 @@ function check(label, wasm, expected) {
 {
   const rf = load();
   rf.rf_set_car(BODY.coupe, 1700, 19, DRIVE.rear, PLACEMENT.front, INSULATION.light);
-  rf.rf_set_config(8, LAYOUT.cross_plane, 5000, 96, 6000, EXHAUST.sport, 0, 0, 0, 1, 0, 1, ROUTING.dual, TURBO.medium);
+  rf.rf_set_config(8, LAYOUT.cross_plane, 5000, 96, 6000, EXHAUST.sport, 0, 0, 0, 1, 0, 1, ROUTING.dual, TURBO.medium, 0, 0, 400, 0, 0);
   rf.rf_set_mode(1);
   rf.rf_crank();
   check('démarrage, V8', render(rf, 5, 128), native('--preset', 'v8_cross_plane', '--scenario', 'start'));
@@ -139,14 +139,14 @@ function check(label, wasm, expected) {
 function citadine() {
   const rf = load();
   rf.rf_set_car(BODY.city, 1100, 15, DRIVE.front, PLACEMENT.front, INSULATION.standard);
-  rf.rf_set_config(4, LAYOUT.inline, 1360, 75, 6200, EXHAUST.stock, 0, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium);
+  rf.rf_set_config(4, LAYOUT.inline, 1360, 75, 6200, EXHAUST.stock, 0, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
   return rf;
 }
 function sixCylinders(kind, family, teeth, limit) {
   const rf = load();
   rf.rf_set_car(BODY.coupe, 1500, 18, DRIVE.rear, PLACEMENT.front, INSULATION.light);
   rf.rf_set_gearbox(kind, 0, family, 0, teeth, 0, 0, limit, 0);
-  rf.rf_set_config(6, LAYOUT.inline, 3246, 87, 8000, EXHAUST.sport, 0, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium);
+  rf.rf_set_config(6, LAYOUT.inline, 3246, 87, 8000, EXHAUST.sport, 0, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
   return rf;
 }
 const FRESH = 3; // passer par la balade reconstruit le modèle : une voiture à l'arrêt, moteur au ralenti.
@@ -212,7 +212,7 @@ const TICK_S = 128 / 44100;
 function fourCylinderCoupe(insulation = INSULATION.light, placement = PLACEMENT.front, exhaust = EXHAUST.sport, routing = ROUTING.single) {
   const rf = load();
   rf.rf_set_car(BODY.coupe, 1500, 18, DRIVE.rear, placement, insulation);
-  rf.rf_set_config(6, LAYOUT.v, 3000, 86, 6500, exhaust, 0, 0, 0, 0, 0, 1, routing, TURBO.medium);
+  rf.rf_set_config(6, LAYOUT.v, 3000, 86, 6500, exhaust, 0, 0, 0, 0, 0, 1, routing, TURBO.medium, 0, 0, 400, 0, 0);
   return rf;
 }
 const coupeArgs = ['--cylinders', '6', '--layout', 'v', '--cc', '3000', '--bore', '86', '--redline', '6500', '--body', 'coupe', '--mass', '1500', '--rim', '18', '--drive', 'rear', '--stereo', '1', '--scenario', 'lap', '--seconds', '20'];
@@ -263,7 +263,7 @@ function checkFigures(label, rf, native) {
   const rf = load();
   rf.rf_set_car(BODY.supercar, 1500, 20, DRIVE.all, PLACEMENT.mid, INSULATION.stripped);
   rf.rf_set_gearbox(BOX.dual_clutch, 0, 0, 0, 0, 0, 0, 0, 0);
-  rf.rf_set_config(10, LAYOUT.v, 5204, 85, 8500, EXHAUST.straight, 0, 0, 0, 2, 0, 1, ROUTING.single, 1);
+  rf.rf_set_config(10, LAYOUT.v, 5204, 85, 8500, EXHAUST.straight, 0, 0, 0, 2, 0, 1, ROUTING.single, 1, 0, 0, 400, 0, 0);
   rf.rf_set_mode(3);
   driveLikeNative(rf, 60);
   checkFigures('consommation, V10', rf, nativeFigures('--preset', 'v10_open', '--scenario', 'lap'));
@@ -272,7 +272,7 @@ function checkFigures(label, rf, native) {
   const rf = load();
   rf.rf_set_car(BODY.van, 1950, 16, DRIVE.front, PLACEMENT.front, INSULATION.standard);
   rf.rf_set_gearbox(BOX.synchro, 0, 0, 0, 0, 0, 0, 0, 1);
-  rf.rf_set_config(4, LAYOUT.inline, 2000, 85, 4500, EXHAUST.stock, 1, 1, 0, 0, 0, 1.8, ROUTING.single, TURBO.medium);
+  rf.rf_set_config(4, LAYOUT.inline, 2000, 85, 4500, EXHAUST.stock, 1, 1, 0, 0, 0, 1.8, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
   rf.rf_set_mode(3);
   driveLikeNative(rf, 60);
   checkFigures('consommation, diesel', rf, nativeFigures('--preset', 'diesel_four', '--scenario', 'lap'));
@@ -289,7 +289,7 @@ function checkFigures(label, rf, native) {
 {
   const rf = load();
   rf.rf_set_car(BODY.city, 1100, 15, DRIVE.front, PLACEMENT.front, INSULATION.standard);
-  rf.rf_set_config(4, LAYOUT.inline, 1360, 75, 6200, EXHAUST.stock, 0, 0, 0, 0, 0, 1, ROUTING.single, 1);
+  rf.rf_set_config(4, LAYOUT.inline, 1360, 75, 6200, EXHAUST.stock, 0, 0, 0, 0, 0, 1, ROUTING.single, 1, 0, 0, 400, 0, 0);
   rf.rf_set_mode(3);
   driveLikeNative(rf, 10);
   rf.rf_reset_trip();
@@ -376,7 +376,7 @@ const turboArgs = ['--cylinders', '4', '--cc', '2000', '--bore', '84', '--redlin
 for (const [size, release] of [['small', 0], ['medium', 1], ['large', 0]]) {
   const rf = load();
   rf.rf_set_car(BODY.compact, 1400, 18, DRIVE.front, PLACEMENT.front, INSULATION.standard);
-  rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6500, EXHAUST.sport, 1, 0, 0, 0, release, 1.3, ROUTING.single, TURBO[size]);
+  rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6500, EXHAUST.sport, 1, 0, 0, 0, release, 1.3, ROUTING.single, TURBO[size], 0, 0, 400, 0, 0);
   check(`retard du turbo, ${size}`, turboStab(rf, 24), native(...turboArgs, '--turbo', size, '--release', release ? 'flutter' : 'dump_valve'));
 }
 process.exit(failed ? 1 : 0);

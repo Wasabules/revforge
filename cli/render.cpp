@@ -35,8 +35,10 @@ void usage() {
         "  --volume X        volume (0.7)\n"
         "Engine:   --cylinders N --layout inline|v|cross_plane|boxer --cc N --bore N --redline N\n"
         "          --exhaust stock|sport|straight|no_muffler|no_resonator|quiet --routing single|dual|h|x\n"
-        "          --aspiration natural|turbo --fuel petrol|diesel\n"
+        "          --aspiration natural|turbo|supercharger --fuel petrol|diesel\n"
         "          --pops off|light|strong --release dump_valve|flutter --boost BAR --turbo small|medium|large\n"
+        "          --supercharger roots|twin_screw|centrifugal --antilag off|retard|air|cut --turbo-pipe MM\n"
+        "          --cam dohc|sohc --filter stock|panel|cone|stacks\n"
         "Car:      --body city|compact|coupe|supercar|van --mass KG --rim INCHES --drive front|rear|all\n"
         "          --placement front|mid|rear --insulation stripped|light|standard|comfort|luxury --windows open|closed\n"
         "Gearbox:  --gearbox synchro|dog|sequential|dual_clutch|converter --gears N --family matched|short|close|long\n"
@@ -423,6 +425,11 @@ int main(int argc, char** argv) {
     double kmh = 90.0;
     std::optional<ExhaustRouting> routing;
     std::optional<Exhaust> exhaustChoice;
+    std::optional<SuperchargerKind> superchargerChoice;
+    std::optional<AntiLag> antiLagChoice;
+    std::optional<int> turboPipeChoice;
+    std::optional<Camshaft> camshaftChoice;
+    std::optional<AirFilter> airFilterChoice;
     bool customListener = false;
     Powertrain powertrain = referencePowertrain();
     EngineConfig& config = powertrain.engine;
@@ -519,7 +526,12 @@ int main(int argc, char** argv) {
             else if (arg == "--layout") config.layout = pick<Layout>(value, {{"inline", Layout::Inline}, {"v", Layout::V}, {"cross_plane", Layout::CrossPlane}, {"boxer", Layout::Boxer}});
             else if (arg == "--exhaust") { config.exhaust = pick<Exhaust>(value, {{"stock", Exhaust::Stock}, {"sport", Exhaust::Sport}, {"straight", Exhaust::Straight}, {"no_muffler", Exhaust::MufflerDelete}, {"no_resonator", Exhaust::ResonatorDelete}, {"quiet", Exhaust::Quiet}}); exhaustChoice = config.exhaust; }
             else if (arg == "--routing") { config.routing = pick<ExhaustRouting>(value, {{"single", ExhaustRouting::Single}, {"dual", ExhaustRouting::Dual}, {"h", ExhaustRouting::HPipe}, {"x", ExhaustRouting::XPipe}}); routing = config.routing; }
-            else if (arg == "--aspiration") config.aspiration = pick<Aspiration>(value, {{"natural", Aspiration::Natural}, {"turbo", Aspiration::Turbo}});
+            else if (arg == "--aspiration") config.aspiration = pick<Aspiration>(value, {{"natural", Aspiration::Natural}, {"turbo", Aspiration::Turbo}, {"supercharger", Aspiration::Supercharger}});
+            else if (arg == "--supercharger") superchargerChoice = pick<SuperchargerKind>(value, {{"roots", SuperchargerKind::Roots}, {"twin_screw", SuperchargerKind::TwinScrew}, {"centrifugal", SuperchargerKind::Centrifugal}});
+            else if (arg == "--antilag") antiLagChoice = pick<AntiLag>(value, {{"off", AntiLag::Off}, {"retard", AntiLag::Retard}, {"air", AntiLag::AirInjection}, {"cut", AntiLag::CylinderCut}});
+            else if (arg == "--turbo-pipe") turboPipeChoice = std::atoi(value.c_str());
+            else if (arg == "--cam") camshaftChoice = pick<Camshaft>(value, {{"dohc", Camshaft::Dohc}, {"sohc", Camshaft::Sohc}});
+            else if (arg == "--filter") airFilterChoice = pick<AirFilter>(value, {{"stock", AirFilter::Stock}, {"panel", AirFilter::Panel}, {"cone", AirFilter::Cone}, {"stacks", AirFilter::Stacks}});
             else if (arg == "--fuel") config.fuel = pick<Fuel>(value, {{"petrol", Fuel::Petrol}, {"diesel", Fuel::Diesel}});
             else if (arg == "--pops") config.pops = pick<PopLevel>(value, {{"off", PopLevel::Off}, {"light", PopLevel::Light}, {"strong", PopLevel::Strong}});
             else if (arg == "--release") config.turboRelease = pick<TurboRelease>(value, {{"dump_valve", TurboRelease::DumpValve}, {"flutter", TurboRelease::Flutter}});
@@ -548,6 +560,11 @@ int main(int argc, char** argv) {
     // Sur un préréglage, les réglages donnés en plus l'emportent.
     if (exhaustChoice) powertrain.engine.exhaust = *exhaustChoice;
     if (routing) powertrain.engine.routing = *routing;
+    if (superchargerChoice) powertrain.engine.superchargerKind = *superchargerChoice;
+    if (antiLagChoice) powertrain.engine.antiLag = *antiLagChoice;
+    if (turboPipeChoice) powertrain.engine.turboPipeMm = *turboPipeChoice;
+    if (camshaftChoice) powertrain.engine.camshaft = *camshaftChoice;
+    if (airFilterChoice) powertrain.engine.airFilter = *airFilterChoice;
     if (customCar) {
         if (!presetId.empty()) {
             if (car.placement != EnginePlacement::Natural) powertrain.car.placement = car.placement;
