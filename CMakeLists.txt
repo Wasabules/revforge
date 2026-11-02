@@ -21,6 +21,8 @@ add_custom_command(
 
 add_library(revforge_core STATIC
   core/src/engine_config.cpp
+  core/src/air_filter.cpp
+  core/src/intake_path.cpp
   core/src/engine_sound.cpp
   core/src/exhaust_line.cpp
   core/src/acoustics.cpp
@@ -60,7 +62,7 @@ else()
   target_link_libraries(revforge-render PRIVATE revforge_core)
 
   enable_testing()
-  add_executable(revforge_tests tests/main.cpp tests/engine_sound_test.cpp tests/engine_config_test.cpp tests/driving_model_test.cpp tests/powertrain_test.cpp tests/gearbox_test.cpp tests/acoustics_test.cpp tests/starter_test.cpp tests/shift_modes_test.cpp tests/turbo_test.cpp tests/consumption_test.cpp)
+  add_executable(revforge_tests tests/main.cpp tests/engine_sound_test.cpp tests/engine_config_test.cpp tests/driving_model_test.cpp tests/powertrain_test.cpp tests/gearbox_test.cpp tests/acoustics_test.cpp tests/starter_test.cpp tests/shift_modes_test.cpp tests/turbo_test.cpp tests/consumption_test.cpp tests/air_filter_test.cpp)
   target_include_directories(revforge_tests PRIVATE tests/vendor core/src)
   target_link_libraries(revforge_tests PRIVATE revforge_core)
   # Avertissement d'un en-tête de la bibliothèque standard inclus par doctest.
