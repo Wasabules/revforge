@@ -1,5 +1,6 @@
 #pragma once
 
+#include "revforge/anti_lag.hpp"
 #include "revforge/engine_config.hpp"
 
 namespace revforge {
@@ -64,6 +65,7 @@ struct TurboDrive {
     float backflowShare = 0.0f;   // de même, pour l'air qui revient par le compresseur
     float wastegate = 0.0f;
     float wastegateFlowShare = 0.0f;  // ce qui contourne la turbine, rapporté au débit nominal
+    AntiLagDrive antiLag;
 };
 
 /** Ce qu'il faut savoir du moteur à chaque pas. */
@@ -72,6 +74,7 @@ struct TurboInput {
     double fill = 0.0;      // remplissage 0-1 : le papillon, ou le carburant d'un diesel
     double breathing = 1.0; // respiration du moteur à ce régime, 1 au pic de couple
     bool burning = false;
+    AntiLagCommand antiLag;
 };
 
 /** Le point d'équilibre à pleine charge : ce que donnent les courbes de la fiche. */
@@ -108,10 +111,28 @@ public:
     /** Couple que coûte la contre-pression au moteur (Nm), positif quand elle freine. */
     double backPressureNm(double fill) const;
     TurboDrive drive() const;
+    /** Ce que fait l'anti-lag à ce pas. Tout à zéro sans lui. */
+    const AntiLagState& antiLag() const { return antiLag_; }
 
 private:
+    struct AntiLagExhaust {
+        AntiLagCommand command;
+        double dt = 0.001;
+        double engineAir = 0.0;   // kg/s
+        double fuelPerAir = 0.0;
+        double heatValue = 0.0;   // J/kg de carburant
+        double gasCp = 0.0;
+        double heatRiseK = 0.0;   // échauffement du gaz si tout le carburant lui revenait
+    };
+    /** Le gaz et sa température quand l'anti-lag s'en mêle : anti_lag.cpp. */
+    void antiLagExhaust(const AntiLagExhaust& in, double& gas, double& hotTarget);
+
     TurboSpec spec_;
     TurboState state_;
+    AntiLagState antiLag_;
+    double lastGas_ = 0.0;
+    bool antiLagOn_ = false;
+    AntiLag antiLagKind_ = AntiLag::Off;
     double omegaSquared_ = 0.0;
     bool valveHeld_ = false;
 };

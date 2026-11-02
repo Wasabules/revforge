@@ -77,6 +77,11 @@
     ...(config.aspiration === 'turbo' && !config.electric ? [
       { label: t('live.turbo'), value: () => `${fixed(telemetry().boost * config.boostBar, 2)} bar`, source: sim },
       { label: t('gauge.turbineName'), value: () => `${whole((telemetry() as Telemetry & { turbineRpm?: number }).turbineRpm ?? motion.turbineRpm(config))} ${t('unit.rpm')}`, source: calculated },
+      { label: t('gauge.turbineInlet'), value: () => `${whole(telemetry().turboGasC)} °C`, source: sim },
+      ...(config.fuel === 'petrol' && config.antiLag !== 'off' ? [
+        { label: t('gauge.antiLagHeat'), value: () => `${fixed(telemetry().antiLagHeatKw, 1)} kW`, source: sim },
+        { label: t('gauge.antiLagLost'), value: () => `${whole(telemetry().antiLagLostNm)} Nm`, source: sim },
+      ] : []),
     ] : []),
     { label: t('meter.accel'), value: () => `${fixed(readings.accelG, 2)} g`, source: calculated },
     { label: t('meter.slip'), value: () => `${fixed(telemetry().slip, 1)} m/s`, source: sim },

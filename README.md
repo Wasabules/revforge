@@ -116,6 +116,7 @@ Known limits:
 - Estimated fuel consumption reads about 15 to 25% high against official figures, and oil is an order of magnitude within a factor of three.
 - The car never rolls backwards (hill starts assume hill hold), all cars share one tyre grip, and journeys are timed rather than distance-based.
 - With an automatic, a diesel can occasionally stall at very low speed; the site then offers a restart.
+- Anti-lag wears nothing out: nothing computes wear, so no part breaks and no time limit applies, and its bangs are assumed until someone listens.
 - Gear rattle has no isolated real recording to compare against, and several gearbox parameters (module, helix angle, backlash, wear rate) are assumed.
 - The gas view follows the driving model without feeding back into it, so its pressures do not exactly match the displayed torque.
 - Some regulatory values (UN R51.03 and EU 540/2014) still need checking against the official texts.

@@ -550,6 +550,20 @@
     ctx.stroke();
     drawWheel(ctx, theme, x, view.intakeY, compressorR, -motion.turbineAngle, 11, -0.55);
 
+    // L'anti-lag : une vanne d'air depuis le tube froid jusqu'au collecteur. La flamme, elle, se voit à la couleur du gaz.
+    if (config.antiLag === 'air' && config.fuel === 'petrol') {
+      const from = net.releaseCell - net.intakeFirst;
+      const flowing = clamp(motion.antiLagAirFlow / 0.03, 0, 1);
+      ctx.strokeStyle = flowing > 0.02 ? mix(theme.metal, theme.accent, flowing) : theme.metal;
+      ctx.lineWidth = 1.5 + 2 * flowing;
+      ctx.setLineDash(flowing > 0.02 ? [] : [4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(view.intakeX[from], view.intakeYs[from]);
+      ctx.bezierCurveTo(view.intakeX[from], (view.intakeYs[from] + view.lineY) / 2, x - r * 2.2, view.lineY - r * 2, x - r - 1, view.lineY - r * 0.4);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
     if (view.width > 420) {
       ctx.font = '11px "Inter Tight", system-ui, sans-serif';
       ctx.textAlign = 'center';
@@ -975,7 +989,7 @@
 
   const dual = $derived(config.layout !== 'inline' && config.cylinders >= 4);
   const caption = $derived(
-    config.electric ? '' : [t(`gas.line.${config.exhaust}`), ...(dual ? [t('gas.banks')] : []), ...(config.aspiration === 'turbo' ? [t('gas.turboPulses')] : []), t('gas.legend', { speed: speedLabel(slow) })].join(' '),
+    config.electric ? '' : [t(`gas.line.${config.exhaust}`), ...(dual ? [t('gas.banks')] : []), ...(config.aspiration === 'turbo' ? [t('gas.turboPulses')] : []), ...(config.aspiration === 'turbo' && config.fuel === 'petrol' && config.antiLag === 'air' ? [t('gas.antiLagAir')] : []), t('gas.legend', { speed: speedLabel(slow) })].join(' '),
   );
 </script>
 
@@ -987,6 +1001,7 @@
     <p class="gauge" data-testid="turbo-readout">
       {t('gas.gauge.turbo')} <strong>{fixed(telemetry.boost * config.boostBar, 2)} / {fixed(config.boostBar, 1)} bar</strong>
       · {t('gas.gauge.turbine', { rpm: whole(Math.round(telemetry.turboRpm / 1000) * 1000) })}{telemetry.turboWastegate > 0.1 ? ` · ${t('gas.gauge.wastegate')}` : ''}
+      · {t('gas.gauge.inlet', { celsius: whole(telemetry.turboGasC) })}{telemetry.antiLag ? ` · ${t('gas.gauge.antiLag', { kw: fixed(telemetry.antiLagHeatKw, 0) })}` : ''}
     </p>
   {/if}
   <figcaption>{caption}</figcaption>

@@ -68,7 +68,7 @@ J·ω·dω/dt = P_turbine − P_compresseur − P_paliers
 
 **Ce qui est supposé :** le diamètre de la roue du moteur mesuré par Chung et Lee (ils ne le donnent pas ; on prend celui que ce calcul donne à 2,0 L et 1,3 bar) ; la part du gaz qui passe la turbine au nominal (moitié, 70 % sur un diesel) ; la forme de la ligne de vitesse ; les rendements maximaux (0,74 et 0,68) ; la lenteur des parois du collecteur ; le frottement des paliers (800 W pour une roue de 49 mm au nominal) ; la vitesse limite des roues (520 m/s).
 
-**Ce qui n'est pas modélisé :** le détail des bouffées dans la turbine (seule leur énergie moyenne compte), la géométrie variable (un diesel y gagnerait beaucoup : le sien réagit comme un turbo fixe), le biturbo séquentiel, l'anti-lag. Le gros turbo pompe légèrement à très bas régime sous pleine charge : c'est un vrai défaut de turbo surdimensionné, mais le niveau n'a pas été comparé à une mesure. Sur un V, le modèle sonore et le gaz voient un turbo équivalent, même si les vues en dessinent deux.
+**Ce qui n'est pas modélisé :** le détail des bouffées dans la turbine (seule leur énergie moyenne compte), la géométrie variable (un diesel y gagnerait beaucoup : le sien réagit comme un turbo fixe), le biturbo séquentiel. Le gros turbo pompe légèrement à très bas régime sous pleine charge : c'est un vrai défaut de turbo surdimensionné, mais le niveau n'a pas été comparé à une mesure. Sur un V, le modèle sonore et le gaz voient un turbo équivalent, même si les vues en dessinent deux.
 
 ### Le retard, moteur par moteur
 
@@ -93,6 +93,68 @@ Les vues (`turboChain.ts` pour le moteur, 2D et 3D ; `ExhaustView` et `CarStage`
 Le sifflement est à la vitesse de l'arbre : son ordre 2 domine, avec un peu d'ordre 1 (le balourd). La hauteur et le niveau suivent donc le vrai arbre, sa montée après un coup de gaz, sa lente descente sans soupape. Sous `setTurbo`, la décharge et le flutter n'ont plus d'enveloppe : leur niveau suit la force du jet, débit fois racine de la pression (la soupape reste du bruit sur une large bande, autour de 1,8 à 3,8 kHz), ou le retour par la roue du compresseur. Leurs tirages viennent d'un générateur à part : ils ne décalent aucun autre son. Sans `setTurbo`, un `EngineSound` piloté de l'extérieur garde l'ancien comportement, qui se déduit de la pression.
 
 L'ordre dominant, le niveau du flutter et le partage entre ordres restent des choix : aucun enregistrement de référence n'a été comparé, et seule l'écoute tranchera.
+
+## L'anti-lag
+
+Pied levé, un turbo ordinaire perd son gaz : l'injection se coupe, la soupape vide la pression, l'arbre tombe. L'anti-lag (`core/src/anti_lag.cpp`, réglage `--antilag`) continue d'envoyer de l'énergie à la turbine. Aucun système n'a de constante de temps ni de pression visée : chacun change ce qui arrive à la turbine, et le bilan de puissance de `TurboCharger` fait le reste.
+
+Il travaille si le pied est levé (moins de 3 %), si le moteur dépasse 27 % du régime maximal, hors rupteur et coupure de passage. Le calculateur tient la soupape de décharge fermée, ce que font les vraies préparations : sinon la pression s'en irait par là. L'air qui bute contre un papillon presque fermé repasse par la roue : le pompage déjà calculé, ici vers 17 Hz, devient le « chatter » qu'on entend, soupape montée ou non.
+
+- **Retard d'allumage.** Papillon à 30 %, étincelle 55° après le meilleur couple, soit 35° après le point mort haut. Le couple suit une parabole, `1 − (Δ/68°)²`, 0,35 ici : la forme des tables « torque ratio » des calculateurs. Le travail que le piston ne reçoit pas part dans le gaz, moins 20 % dans les parois : `T3` monte vers 1090 °C. Lambda 0,9 : ce surplus ne brûle pas, faute d'oxygène, et il compte.
+- **Injection d'air.** Une vanne, de 17 mm sur un 2 L, relie le tube froid au collecteur. Son débit est une loi d'orifice entre la pression de charge et celle avant la turbine, résolue par dichotomie à chaque pas (explicite, elle battrait) ; un clapet l'arrête si le collecteur pousse plus fort. Le calculateur ajoute l'essence qui lui correspond, au plus jusqu'à λ 0,65 dans le cylindre, et 70 % de ce surplus brûle dans le collecteur, s'il y fait assez chaud. La chaleur y arrive sans passer par le cycle. Sur le 2,0 L à 4400 tr/min, compresseur, flamme et turbine s'entretiennent comme une turbine à gaz : la pression tient à 1,3 bar, soupape de turbine ouverte, sans qu'aucune valeur ne l'ait demandé, jusqu'à ce que le régime tombe vers 3500 tr/min : elle retombe alors à 0,3 de la pression. Papillon à 25 %, 40° de retard : moins ouvert (15 %), il manque d'air pour porter le surplus, et le système reste bien plus faible.
+- **Coupure de cylindres.** Deux explosions sur cinq, dans l'ordre d'allumage (F C C F C) : le motif tourne ainsi d'un cylindre à l'autre sur 4 ou 6 cylindres. Papillon à 35 %. Le mélange des cylindres coupés traverse sans brûler, et 45 % s'enflamme au collecteur si le gaz y dépasse 800 K (entièrement à 1100 K) : à froid il ne s'allume pas, et le collecteur refroidit encore, ce qu'on voit vers 1900 tr/min (260 °C), où le système ne sert plus à rien.
+
+Si l'air admis donnait assez de couple pour que le moteur reprenne des tours, le calculateur retarde encore : il freine toujours d'au moins un dixième de ses pertes (`kAntiLagMostOfBrake`, supposé). Sans cela, l'injection d'air laissait un 5 cylindres accroché en haut, pied levé, sans jamais retrouver le ralenti.
+
+**Le diesel n'est pas concerné, par choix.** Ni papillon à entrouvrir, ni étincelle à retarder, ni mélange préparé à faire passer imbrûlé. Une post-injection dans un gaz riche en oxygène existe pour régénérer un filtre, à 600 °C : on n'a trouvé aucun chiffre pour en faire un anti-lag. Le site cache le choix, et tout reste identique au bit près (testé).
+
+### Les quatre choix, chiffres mesurés
+
+`hot_hatch_turbo` (2,0 L, 1,3 bar) sur `--scenario turbo --seconds 32`, relevé avec `--trace`, sauf la reprise après 3 s de lever. La moyenne est prise de 0,3 à 3 s après le dernier lever.
+
+| | Sans | Retard | Air | Coupure |
+|---|---|---|---|---|
+| Arbre, 1 s après le lever (tr/min) | 54 000 | 109 000 | 149 000 | 110 000 |
+| Arbre, 3 s après | 22 000 | 97 000 | 149 000 | 99 000 |
+| Pression à 3 s (part de 1,3 bar) | 0,01 | 0,29 | 0,99 | 0,34 |
+| 90 % de la pression, après 0,35 s de lever | 0,40 s | 0,21 s | 0,21 s | 0,16 s |
+| 90 % de la pression, coup de gaz depuis 1800 tr/min | 2,20 s | 1,63 s | 1,94 s | 2,01 s |
+| 90 % de la pression, après 3 s de lever (test, en quatrième) | 0,97 s | 0,53 s | 0,51 s | 0,54 s |
+| `T3` au plus haut | 789 °C | 1090 °C | 1090 °C | 936 °C |
+| Couple au vilebrequin pied levé | −80 Nm | −36 Nm | −7 Nm | −24 Nm |
+| Couple retiré à cette charge d'air | 0 | 54 Nm | 37 Nm | 59 Nm |
+| Air envoyé au collecteur | 0 | 0 | 27 g/s | 0 |
+| Carburant pied levé | 0 | 2,07 g/s | 3,63 g/s | 2,29 g/s |
+| Carburant sur les 32 s | 0,136 L | 0,163 L | 0,177 L | 0,166 L |
+| WLTC, L/100 km et g CO₂/km | 8,90 et 210 | 9,48 et 224 | 9,40 et 222 | 9,54 et 225 |
+| 0-100 km/h | 6,86 s | 6,58 s | 6,62 s | 6,55 s |
+
+Les écarts ont leur cause. Le retard chauffe sans dépendre de la température du collecteur, mais à faible débit. L'injection d'air est la seule à augmenter le débit dans la turbine, d'où sa pression tenue, et la plus chère en essence. La coupure brûle moins bien ce qu'elle envoie, mais garde sa réserve : à 0,35 s de lever, elle reprend le plus vite, sur un collecteur encore chaud. Elle s'éteint plus bas dans les tours, et l'injection d'air s'y refroidit à l'air frais : vers 1800 tr/min, seul le retard gagne franchement.
+
+### La consommation
+
+Le couple au frein passé à `ConsumptionMeter` suit l'air admis, pas le couple rendu : un cylindre retardé ou coupé paie donc déjà tout son carburant. S'y ajoutent `extraFuelGps`, le surplus du retard et de l'injection d'air, et `extraAirGps`, l'air de la vanne. Le CO₂ suit le carburant et le lambda les deux. Rien de cela ne revient vers la physique.
+
+### Le son
+
+Tout passe par `setTurbo` (`TurboDrive::antiLag`), avec un générateur à part. Sans anti-lag, rien de ce code ne s'exécute : aucune empreinte ne bouge.
+
+- L'injection ne se coupe pas : ni `overrun`, ni la chute de pression d'un lever de pied. La pression à l'ouverture de la soupape est multipliée par ce que le retard laisse de chaleur en plus (`evoRatio`).
+- La coupure agit sur les forces d'explosion : un cylindre coupé s'ouvre sur 28 % de la pression et ne frappe pas le bloc. Face au retard, la raie d'allumage perd 10 dB (140 Hz), et les sous-harmoniques du motif (21 à 35 Hz) en gagnent 8 à 17 : le son est haché par la cause, pas par une enveloppe.
+- Les détonations sortent du même chemin que les `pops`. Une chance par ouverture de soupape, selon que le collecteur peut enflammer ce qui arrive : on en compte 9 par seconde sur la coupure, 5 sur le retard et 2 sur l'injection d'air. Leur amplitude suit la racine de l'énergie par ouverture, rapportée à une détonation ordinaire de 90 J : environ 360 J pour un cylindre coupé.
+- La flamme est un bruit grave, autour de 380 Hz, à la racine de la chaleur libérée, qui traverse la ligne comme le reste. La bande 8-16 kHz ne monte pas au-delà de celle du même turbo à plein gaz (−69 dB contre −64 dB).
+- Le jet de sortie suit le débit réel, à la température calculée.
+
+**Écoute restant à faire.** Rien n'a pu être écouté ni comparé à un enregistrement : les chances, les parts de chaleur et le niveau de la flamme sont supposés, et seule l'écoute tranchera.
+
+### Ce qui est supposé, et ce qui manque
+
+Sources, vues par une recherche et non lues en entier : [Antilag system, Wikipédia](https://en.wikipedia.org/wiki/Antilag_system), [Car Throttle](https://www.carthrottle.com/news/anti-lag-blogpost) et [TorqueCars](https://www.torquecars.com/tuning/anti-lag-systems.php) pour les principes et les ordres de grandeur (allumage de 30 à 45° après le point mort haut, plus de 1000 °C), des sources d'amateurs dont aucun chiffre n'a été confirmé par une mesure publiée. **Supposés :** la parabole du couple (la forme est connue, son zéro à 68° est un ordre de grandeur), les ouvertures de papillon, les 20 % de parois, les parts qui brûlent au collecteur (45 et 70 %), les 800 à 1100 K d'allumage, la section de la vanne, le seuil de 27 %.
+
+**Pas modélisé :**
+- **L'usure et la casse.** Rien ne les calcule, donc rien ne casse : un vrai système use vite le collecteur, la turbine et les soupapes, et les vrais calculateurs limitent la durée et la température. Ici, ce temps est sans limite, et `T3` peut rester au-dessus de 1000 °C. C'est écrit dans l'aide du site.
+- **Le couple explosion par explosion.** `DrivingModel` garde un couple moyen ; seuls le son et l'acyclisme transmis à la boîte voient le motif, et leurs compteurs ne sont pas en phase.
+- **Les vues de la voiture et du moteur.** Seule la vue du gaz dessine la vanne d'air et fait partir l'étincelle tard (`fluidGas.ts`) ; `CarStage` et `EngineView` ne la montrent pas.
 
 ## Ce qui est simulé dans le son
 

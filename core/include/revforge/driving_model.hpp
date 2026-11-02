@@ -120,6 +120,10 @@ public:
     /** L'arbre, les pressions, les soupapes : tout est dans `TurboState`. Rien de neuf sur un moteur sans turbo. */
     const TurboCharger& turbo() const { return turbo_; }
     TurboDrive turboDrive() const { return turbo_.drive(); }
+    /** L'anti-lag travaille en ce moment : pied levé, moteur lancé, sur un turbo à essence. */
+    bool antiLagActive() const { return antiLag_.active; }
+    /** Le couple que le retard et les cylindres coupés retirent à ce que donnerait cette charge d'air (Nm). */
+    double antiLagLostNm() const { return antiLagLostNm_; }
     /** Couple au vilebrequin, négatif en frein moteur (Nm). */
     double torqueNm() const { return torque_; }
     double powerKw() const;
@@ -191,6 +195,7 @@ private:
     double ratio(int gear) const;
     double compressionLoadNm() const;
     void stepTurbo(double rpmNow, bool burning);
+    void updateAntiLag(double throttle, double rpmNow, bool off);
     double bmepPumping(double rpm) const;
     double wheelSpeedMs() const { return wheelOmega_ * radius_; }
     void meterConsumption();
@@ -237,6 +242,9 @@ private:
     double boost_ = 0.0;
     TurboCharger turbo_;
     bool turboEngine_ = false;
+    bool antiLagEngine_ = false;
+    AntiLagCommand antiLag_;
+    double antiLagLostNm_ = 0.0;
     double torque_ = 0.0;
     bool cut_ = false;
     bool limiterCut_ = false;

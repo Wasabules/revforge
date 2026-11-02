@@ -1,7 +1,7 @@
 <script lang="ts">
   import Choices from './Choices.svelte';
   import Slider from './Slider.svelte';
-  import { ASPIRATIONS, CYLINDERS, FUELS, LAYOUTS, LIMITS, RELEASES, TURBO_SIZES, cylinderCc, strokeMm, type EngineConfig } from '../lib/config';
+  import { ANTI_LAGS, ASPIRATIONS, CYLINDERS, FUELS, LAYOUTS, LIMITS, RELEASES, TURBO_SIZES, cylinderCc, strokeMm, type EngineConfig } from '../lib/config';
   import { fixed, t } from '../lib/i18n.svelte';
 
   interface Props {
@@ -40,6 +40,12 @@
       <p class="help" data-testid="turbo-size-help">{TURBO_SIZES.find((item) => item.value === config.turboSize)?.help}</p>
     </div>
     <Choices label={t('builder.release')} options={RELEASES} value={config.turboRelease} onchange={(turboRelease) => onapply({ turboRelease })} />
+    {#if config.fuel === 'petrol'}
+      <div>
+        <Choices label={t('builder.antiLag')} options={ANTI_LAGS} value={config.antiLag} onchange={(antiLag) => onapply({ antiLag })} />
+        <p class="help" data-testid="antilag-help">{ANTI_LAGS.find((item) => item.value === config.antiLag)?.help}</p>
+      </div>
+    {/if}
   {/if}
 {/if}
 

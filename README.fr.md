@@ -98,6 +98,7 @@ Limites connues :
 - La consommation estimée lit environ 15 à 25 % au-dessus des chiffres officiels, et l'huile n'est qu'un ordre de grandeur, à un facteur trois près.
 - La voiture ne recule jamais (démarrage en côte avec maintien supposé), toutes les voitures ont la même adhérence, et les trajets sont réglés en durée, pas en distance.
 - En automatique, un diesel peut parfois caler à très faible vitesse ; le site propose alors de le relancer.
+- L'anti-lag n'use rien : rien ne calcule l'usure, donc aucune pièce ne casse et aucune durée n'est limitée, et ses détonations restent supposées tant que personne ne les a écoutées.
 - Le claquement de boîte n'a aucun vrai enregistrement isolé pour comparaison, et plusieurs paramètres de boîte (module, angle d'hélice, jeu, vitesse d'usure) sont supposés.
 - La vue du gaz suit le modèle de conduite sans agir sur lui : ses pressions ne recoupent donc pas exactement le couple affiché.
 - Certaines valeurs réglementaires (ONU R51.03 et UE 540/2014) restent à contrôler sur les textes officiels.

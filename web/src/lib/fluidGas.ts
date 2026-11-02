@@ -125,6 +125,21 @@ export interface GasInputs {
   compressorOutK?: number;
   /** Ouverture de la wastegate, 0 à 1. Absente : déduite de `boost`. */
   wastegate?: number;
+  /** L'anti-lag en marche, tel que le calcule `TurboCharger` : `ANTI_LAG_CODE`, 0 sinon. */
+  antiLag?: number;
+  /** Chaleur libérée au collecteur (W), et air qu'il y reçoit (kg/s). */
+  antiLagHeatW?: number;
+  antiLagAirFlow?: number;
+}
+
+/** Le même ordre que `AntiLag` en C++. */
+export const ANTI_LAG_CODE = { off: 0, retard: 1, air: 2, cut: 3 } as const;
+/** Allumage après le point mort haut (degrés), comme en C++ : 55° et 40° de retard sur un allumage normal, autour de 20° avant. */
+const ANTI_LAG_LATE_RETARD = 35;
+const ANTI_LAG_LATE_AIR = 20;
+/** Le rythme de la coupure, dans l'ordre d'allumage : même motif que `antiLagFires` en C++. */
+export function antiLagFires(event: number): boolean {
+  return ((event % 5) * 2) % 5 < 2;
 }
 
 export type IntakePartKind = 'duct' | 'filter' | 'inlet' | 'hot' | 'cooler' | 'cold';
@@ -314,6 +329,8 @@ export class GasNetwork {
   /** Ouvertures de soupape d'échappement depuis le début : une par explosion, dans l'ordre d'allumage. */
   blowdowns = 0;
   burntBlowdowns = 0;
+  /** L'air que l'anti-lag fait passer au collecteur en ce moment (kg/s). */
+  antiLagAirNow = 0;
   lastBlowdownCylinder = 0;
 
   // ── Géométrie ──
@@ -330,6 +347,7 @@ export class GasNetwork {
   }
   private turbo = false;
   private flutter = false;
+  private antiLagEvent = 0;
   private boostBar = 0;
 
   /** Taille d'une cellule (m). */
@@ -876,6 +894,9 @@ export class GasNetwork {
     const wallCylinder = T_AMB + 160 * inputs.heat;
     const advance = ignitionAdvance(this.diesel, inputs.rpm);
     const duration = burnDegrees(this.diesel, inputs.rpm);
+    const antiLag = inputs.antiLag ?? 0;
+    // Le retard n'est pas écrit dans le gaz : l'étincelle part tard, la combustion de Wiebe finit soupape ouverte.
+    const late = antiLag === ANTI_LAG_CODE.retard ? ANTI_LAG_LATE_RETARD : antiLag === ANTI_LAG_CODE.air ? ANTI_LAG_LATE_AIR : 0;
     for (let c = 0; c < this.cylinders; c++) {
       let phase = cycle + this.phase[c];
       phase -= Math.floor(phase);
@@ -899,15 +920,17 @@ export class GasNetwork {
       this.cylV[c] = volume;
 
       // Combustion : le mélange allumé avant le point mort haut brûle sur quelques dizaines de degrés.
-      const sinceSpark = theta >= 720 - advance ? theta - (720 - advance) : theta + advance;
+      const sinceSpark = late > 0 ? (theta >= late ? theta - late : theta + 720 - late) : theta >= 720 - advance ? theta - (720 - advance) : theta + advance;
       if (sinceSpark < duration + 2) {
         if (this.cylArmed[c] === 1) {
           this.cylArmed[c] = 0;
           this.cylBurn[c] = 0;
-          this.cylFired[c] = burning ? 1 : 0;
+          // La coupure de cylindres : ce mélange-là traverse sans brûler, et finit au collecteur.
+          const fires = burning && (antiLag !== ANTI_LAG_CODE.cut || antiLagFires(this.antiLagEvent++));
+          this.cylFired[c] = fires ? 1 : 0;
           const air = Math.max(mass - burnt, 0);
           const richness = this.diesel ? 0.1 + 0.72 * load : 1;
-          this.cylHeat[c] = burning ? air * 3.0e6 * richness * (this.diesel ? 0.72 : 0.66) : 0;
+          this.cylHeat[c] = fires ? air * 3.0e6 * richness * (this.diesel ? 0.72 : 0.66) : 0;
         }
         if (this.cylFired[c] === 1) {
           const t = sinceSpark / duration;
@@ -1133,6 +1156,7 @@ export class GasNetwork {
       }
     }
     this.releaseFlow = releaseFlow;
+    this.stepAntiLag(inputs);
 
     // Turbine : la détente y prend de l'énergie, et la volute lisse les bouffées. La soupape de décharge la contourne.
     const join = this.zoneJoin;
@@ -1359,6 +1383,28 @@ export class GasNetwork {
       trc[j] += tr * wj;
       mom[j] += (bigLeft ? moS : moB) * wj;
     }
+  }
+
+  /** Ce que l'anti-lag apporte au collecteur, hors du cycle : la chaleur d'une flamme, et l'air pris après l'échangeur. */
+  private stepAntiLag(inputs: GasInputs): void {
+    const code = inputs.antiLag ?? 0;
+    if (code !== ANTI_LAG_CODE.air && code !== ANTI_LAG_CODE.cut) return;
+    const { rho, ene, mom, p, u, invV, dt } = this;
+    const join = this.zoneJoin;
+    this.zE[join] += (inputs.antiLagHeatW ?? 0) * dt;
+    const flow = inputs.antiLagAirFlow ?? 0;
+    this.antiLagAirNow = 0;
+    if (code !== ANTI_LAG_CODE.air || flow <= 0) return;
+    const v = this.releaseCell;
+    const dm = Math.min(flow * dt, 0.2 * rho[v] / invV[v]);
+    const w = invV[v] * dm;
+    const enthalpy = (ene[v] + p[v]) / rho[v];
+    rho[v] -= w;
+    ene[v] -= w * enthalpy;
+    mom[v] -= w * u[v];
+    this.zM[join] += dm;
+    this.zE[join] += dm * enthalpy;
+    this.antiLagAirNow = dm / dt;
   }
 
   /** Compresseur : une face comme les autres, mais la pression y saute du rapport que fixe le turbo. */
