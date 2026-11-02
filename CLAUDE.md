@@ -2,18 +2,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Revforge simule en temps réel une voiture et le son de son moteur, tous deux configurables : un cœur C++20 sans dépendance, joué dans le navigateur via WebAssembly, ou rendu en WAV en ligne de commande. Le code, les commentaires, les noms de tests et les messages de commit sont en français.
+Revforge simule en temps réel une voiture et le son de son moteur, tous deux configurables : un cœur C++20 sans dépendance, joué dans le navigateur via WebAssembly, ou rendu en WAV en ligne de commande. Les commentaires, les noms de tests et les messages de commit sont en français ; les identifiants, la CLI et le texte par défaut du site sont en anglais.
 
 ## Commandes
 
-Si `node`/`npm` sont introuvables, charger Emscripten, qui les fournit : `source ~/emsdk/emsdk_env.sh`.
+Il faut CMake, Ninja, Python 3 (génération des préréglages), GCC ou Clang (les options de déterminisme de `CMakeLists.txt` sont les leurs) et, pour le WASM, Emscripten et Bash. Si `node`/`npm` sont introuvables, charger Emscripten, qui les fournit : `source ~/emsdk/emsdk_env.sh`. `scripts/build_wasm.sh` lit aussi `EMSDK` s'il est installé ailleurs.
 
 ```bash
 # Natif (ctest ne recompile pas : toujours construire avant)
 cmake -S . -B build -G Ninja && cmake --build build
 ctest --test-dir build --output-on-failure
 ctest --test-dir build -R golden_                  # empreintes seules
-./build/revforge_tests -tc="pas de clic quand le régime bouge"   # un test doctest
+./build/revforge_tests -tc="pas de clic*"          # un test doctest
 
 # WebAssembly (compile et copie vers web/public/revforge.wasm, ignoré par git)
 scripts/build_wasm.sh
@@ -27,11 +27,15 @@ npm run build && npx playwright test               # une première fois : npx pl
 npx playwright test -g "exporte un WAV valide" --project=chromium
 ```
 
+`revforge_tests` dure plusieurs minutes, les empreintes moins d'une demi-minute. Un filtre doctest qui ne trouve rien affiche quand même `Status: SUCCESS` : regarder `test cases`. Sous Windows, un filtre accentué ne trouve jamais rien : mettre un joker à la place du mot accentué.
+
 Playwright teste `vite preview`, donc `web/dist` : sans `npm run build` (et `scripts/build_wasm.sh` si le C++ a changé), il teste l'ancienne version. Il réutilise aussi un serveur déjà lancé sur le port 4173.
+
+La CI (`.github/workflows/ci.yml`) enchaîne tout cela sous Ubuntu. `pages.yml` publie le site à chaque push sur `main`, sans attendre la CI, dans un sous-dossier, d'où `base: './'` dans `vite.config.ts`. L'`AudioWorklet` n'existe qu'en contexte sécurisé : `web/index.html` redirige le HTTP vers le HTTPS, sauf en local et sur une adresse IP, et un téléphone sur `http://<IP>` n'a donc pas de son.
 
 Pour la consommation, sans rendre de son : `./build/revforge-render --out none --preset city_14 --scenario wltc --fuel 1` (aussi `cruise --kmh 90` et `idle`).
 
-Pour écouter ou comparer un rendu : `./build/revforge-render --list`, `--help` pour les options, `--scenario turbo` pour le retard (avec `--preset`, les autres réglages du moteur sont ignorés : donner tout le moteur pour changer `--turbo`), `tools/compare_wav.py a.wav b.wav`. Pour mesurer un rendu face à de vrais moteurs : `tools/analyze_sound.py --png sortie.png a.wav b.wav` (numpy, scipy et matplotlib requis) ; regarder le spectrogramme, car un spectre moyen ne révèle pas un défaut temporel. Pour un sifflement de boîte : `tools/analyze_gearbox.py fichier.wav:début:fin:f1min:f1max`.
+Pour écouter ou comparer un rendu : `./build/revforge-render --list`, `--help` pour les options, `--scenario turbo` pour le retard (avec `--preset`, seuls `--exhaust`, `--routing`, l'emplacement, l'isolation, les vitres et les options de boîte s'appliquent, celles-ci remplaçant toute la boîte du préréglage ; le reste est ignoré : donner tout le moteur pour changer `--turbo`), `tools/compare_wav.py a.wav b.wav`. Pour mesurer un rendu face à de vrais moteurs : `tools/analyze_sound.py --png sortie.png a.wav b.wav` (numpy, scipy et matplotlib requis) ; regarder le spectrogramme, car un spectre moyen ne révèle pas un défaut temporel. Pour un sifflement de boîte : `tools/analyze_gearbox.py fichier.wav:début:fin:f1min:f1max`.
 
 ## Architecture
 
@@ -53,11 +57,11 @@ La page est un tableau de bord sur toute la largeur (`App.svelte`) : poste de co
 
 La vue de la boîte (`GearboxView`) a trois couches sans DOM ni WebGL, testées sans navigateur : `gearboxModel.ts` (quelles pièces, où, comment elles tournent, à partir de `BoxSpec`), `gearboxGeometry.ts` (maillages : dentures en développante, hélice), puis `gearboxPaint2d.ts` et `gearboxScene.ts` pour dessiner le même état en coupe 2D ou en 3D. Le primaire vient de `Motion` et tout le reste s'en déduit par les dents, ce qui garde les paires en prise. Une automatique y est un schéma, le simulateur n'ayant pas de train épicycloïdal.
 
-`EngineView` dessine en 3D (three.js, chargé à la demande par `render3d.ts`) ou en écorché 2D (`engine2d.ts`) le même moteur : `engineLayout.ts` déduit de l'ordre d'allumage et de l'architecture la place de chaque cylindre et les angles du vilebrequin, `EnginePose` calcule à chaque image ce que lisent les deux vues, `engineScene.ts` construit les pièces 3D. `mesh3d.ts` génère les maillages, sans dépendance ; `threeSubset.ts` liste ce que le site utilise de three.js, pour que le reste ne soit pas livré. Sur un rendu logiciel, `render3d.ts` remplace le PBR par des matcaps et le verre par des arêtes.
+`EngineView` dessine en 3D (three.js, chargé à la demande par `render3d.ts`) ou en écorché 2D (`engine2d.ts`) le même moteur : `engineLayout.ts` déduit de l'ordre d'allumage et de l'architecture la place de chaque cylindre et les angles du vilebrequin, `EnginePose` calcule à chaque image ce que lisent les deux vues, `turboChain.ts` place pour elles le chemin de l'air d'un turbo, `engineScene.ts` construit les pièces 3D. `mesh3d.ts` génère les maillages, sans dépendance ; `threeSubset.ts` liste ce que le site utilise de three.js, pour que le reste ne soit pas livré. Sur un rendu logiciel, `render3d.ts` remplace le PBR par des matcaps et le verre par des arêtes.
 
 Le texte du site passe par `web/src/lib/i18n.svelte.ts` : `t`, `whole` et `fixed` suivent la langue courante (anglais par défaut, français au choix, jamais celle du navigateur), en direct dans les gabarits et à chaque image dans les canvas, sans jamais toucher au son.
 
-Le gaz à l'écran (`web/src/lib/fluid*.ts`) est un vrai calcul, mais pour l'affichage seulement : il suit `Motion`, en temps physique divisé par `SLOW_MOTION`, et n'agit jamais sur le son. `GasNetwork` (`fluidGas.ts`) : Euler quasi-1D à section variable pour les tubes (volumes finis, flux HLLC), bilans à zéro dimension pour les cylindres (remplissage et vidange, combustion de Wiebe) et les volumes de jonction. `FluidField` (`fluidField.ts`) : stable fluids 2D, pour le panache et la recirculation dans les volumes, pilotés par l'état du réseau. `GasFlow` (`fluid.ts`) assemble le tout avec les particules, la qualité adaptative et le sommeil moteur coupé ; `GasPainter` (`fluidRender.ts`) dessine. Rien de cela n'utilise WebGL. L'embrayage (`ClutchView`) lit la télémétrie, avec son échauffement dans `Motion` : `clutchMechanism.ts` calcule sans rien dessiner la chaîne pédale, hydraulique, fourchette, butée, diaphragme, plateau, et la bague de la butée (`Motion.releaseRace`) ; `clutchSection.ts` donne en millimètres les profils que `clutchDraw2d.ts` coupe et que `clutchScene3d.ts` tourne, sur la scène de `render3d.ts`. La levée du plateau est dessinée agrandie (`LIFT_EXAGGERATION`, indiquée à l'écran), jamais calculée ainsi. Les graphiques (`ChartsPanel`) ne sont montés que panneau ouvert ; `history.ts` remplit en permanence un anneau de mémoire fixe.
+Le gaz à l'écran (`web/src/lib/fluid*.ts`) est un vrai calcul, mais pour l'affichage seulement : il suit `Motion`, en temps physique divisé par `motion.slow`, et n'agit jamais sur le son. `GasNetwork` (`fluidGas.ts`) : Euler quasi-1D à section variable pour les tubes (volumes finis, flux HLLC), bilans à zéro dimension pour les cylindres (remplissage et vidange, combustion de Wiebe) et les volumes de jonction. `FluidField` (`fluidField.ts`) : stable fluids 2D, pour le panache et la recirculation dans les volumes, pilotés par l'état du réseau. `GasFlow` (`fluid.ts`) assemble le tout avec les particules, la qualité adaptative et le sommeil moteur coupé ; `GasPainter` (`fluidRender.ts`) dessine. Rien de cela n'utilise WebGL. L'embrayage (`ClutchView`) lit la télémétrie, avec son échauffement dans `Motion` : `clutchMechanism.ts` calcule sans rien dessiner la chaîne pédale, hydraulique, fourchette, butée, diaphragme, plateau, et la bague de la butée (`Motion.releaseRace`) ; `clutchSection.ts` donne en millimètres les profils que `clutchDraw2d.ts` coupe et que `clutchScene3d.ts` tourne, sur la scène de `render3d.ts`. La levée du plateau est dessinée agrandie (`LIFT_EXAGGERATION`, indiquée à l'écran), jamais calculée ainsi. Les graphiques (`ChartsPanel`) ne sont montés que panneau ouvert ; `history.ts` remplit en permanence un anneau de mémoire fixe.
 
 ## Invariants
 
@@ -92,7 +96,7 @@ Rien ne génère ces correspondances, et un oubli peut passer inaperçu à la co
 - **Valeurs par défaut d'un moteur** : `EngineConfig` en C++, `DEFAULTS` dans `config.ts` et `gen_presets.py`. Les champs moteur absents de `presets/presets.json` les prennent ; la voiture, elle, y est toujours écrite en entier.
 - **Dimensions d'une carrosserie** : `BodySpec` en C++ pour la physique, `SHAPES` dans `CarStage.svelte` pour le dessin.
 - **Géométrie de la ligne à l'écran** : `LINE_SECTIONS` et `LINE_SCALE` dans `fluidGas.ts` recopient `kStock`, `kSport`, `kStraight` (`exhaust_line.cpp`) et `BodySpec::exhaustScale`. `headerLength` reprend les ordres de grandeur de `EngineConfig::toProfile`. Une erreur n'y change pas le son, seulement ce qu'on voit.
-- **Télémétrie de l'embrayage** : `clutchInputRpm`, `clutchSlipKw`, `clutchTorque` dans `Telemetry` et `IDLE_TELEMETRY` (`engine.ts`), `worklet.js`, et `rf_clutch_*`. Le niveau `levelDbA`, s'il existe, est lu par `history.ts` : sa courbe n'apparaît que dans ce cas.
+- **Télémétrie de l'embrayage** : `clutchInputRpm`, `clutchSlipKw`, `clutchTorque` dans `Telemetry` et `IDLE_TELEMETRY` (`engine.ts`), `worklet.js`, et `rf_clutch_*`. Le niveau `levelDbA` (`rf_level_dba`) suit le même chemin et alimente aussi la courbe de `history.ts`.
 - **Couleurs des graphiques** : `seriesStyle` dans `ChartsPanel` et les `light-dark()` de `ChartsPanel`, `ChartsLine`, `ChartsSpectrogram` sont validées contre `--surface` (`validate_palette.js` du skill dataviz). À revalider si le fond change.
 - **Échappements** : `kStock`, `kSport`… dans `core/src/exhaust_line.cpp` (qui font le son) et `EXHAUST_LINES` dans `web/src/lib/exhaustLines.ts` (qui fait le dessin, et le gaz à l'écran).
 - **Positions et sources** : `Listener` en C++ et dans `engine.ts`, les arguments de `--listener` dans la CLI, `presetPoint` dans `ListenerPanel.svelte` (à recaler sur `applyListenerPreset`), et les codes de `check_wasm.mjs`. `Source` : `rf_source_*` et `CabinPath::groupOf`.
@@ -103,6 +107,7 @@ Rien ne génère ces correspondances, et un oubli peut passer inaperçu à la co
 - **Lecture de consommation** : `ConsumptionMeter`, les `rf_*` de `exports.cpp`, `EXPORTED_FUNCTIONS`, `RfExports` et `Telemetry`/`IDLE_TELEMETRY` dans `engine.ts`, `worklet.js`, et les chiffres comparés par `check_wasm.mjs` (ligne `raw` de `--fuel 1`). Une nouvelle coupure de combustion (`cut_`) ou une nouvelle source de couple dans `updateEngine` doit aussi renseigner `burnt_`.
 - **Taille du turbo** : `TurboSize` en C++ et `gen_presets.py`, `--turbo` de la CLI, `TURBO_SIZES` dans `config.ts` (position), `TURBO_SCALE` dans `exhaustLines.ts` (recopie de `kSizeSmall` et `kSizeLarge`).
 - **Chemin de l'air d'un turbo** : la chaîne de `TURBO_INTAKE` dans `fluidGas.ts` (longueurs, sections, frottements) doit garder le même volume que `chargeVolumeM3` en C++, et le même ordre de perte que `kRatedCoolerBar`.
+- **Documents en deux langues** : `docs/modele.md` et `docs/model.md`, `README.fr.md` et `README.md` ont les mêmes sections, et un changement du modèle ou des limites connues va dans les deux.
 - **Lien de partage** : `encodeConfig`/`decodeConfig` sont positionnels, et les liens déjà partagés dépendent du format. La voiture et la pression du turbo suivent après un `~`, l'emplacement, l'isolation, les sorties et la taille du turbo après des `_` dans ce même groupe, la boîte après un second `~`, seulement si elle n'est pas celle par défaut ; le champ `multiplier` reste à sa place, ignoré, pour que les anciens liens restent valides.
 
 `presets/presets.json` est la source unique des préréglages : CMake le convertit en `presets_data.inc` via `scripts/gen_presets.py`, et le site l'importe directement. Ne pas écrire de préréglage ailleurs.
