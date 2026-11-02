@@ -90,6 +90,7 @@ class RevforgeProcessor extends AudioWorkletProcessor {
         turboFlow: rf.rf_turbo_flow(),
         turboOutC: rf.rf_turbo_out_c(),
         turboCoolC: rf.rf_turbo_cool_c(),
+        intakeAirC: rf.rf_intake_air_c(rf.rf_rpm()),
         turboGasC: rf.rf_turbo_gas_c(),
         torque: rf.rf_torque(),
         power: rf.rf_power(),

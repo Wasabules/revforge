@@ -379,4 +379,17 @@ for (const [size, release] of [['small', 0], ['medium', 1], ['large', 0]]) {
   rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6500, EXHAUST.sport, 1, 0, 0, 0, release, 1.3, ROUTING.single, TURBO[size], 0, 0, 400, 0, 0);
   check(`retard du turbo, ${size}`, turboStab(rf, 24), native(...turboArgs, '--turbo', size, '--release', release ? 'flutter' : 'dump_valve'));
 }
+// Le filtre à air : l'air chaud et la perte sur un turbo, et le bruit de bouche, jusque dans sa réponse calculée.
+for (const [name, value] of [['panel', 1], ['cone', 2], ['stacks', 3]]) {
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1400, 18, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6500, EXHAUST.sport, 1, 0, 0, 0, 0, 1.3, ROUTING.single, TURBO.medium, 0, 0, 400, 0, value);
+  check(`retard du turbo, filtre ${name}`, turboStab(rf, 24), native(...turboArgs, '--filter', name));
+}
+{
+  const rf = citadine();
+  rf.rf_set_config(4, LAYOUT.inline, 1360, 75, 6200, EXHAUST.stock, 0, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 3);
+  rf.rf_set_mode(FRESH);
+  check('tour, cornets', render(rf, 60, 128), native('--preset', 'city_14', '--scenario', 'lap', '--filter', 'stacks'));
+}
 process.exit(failed ? 1 : 0);

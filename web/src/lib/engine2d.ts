@@ -5,7 +5,7 @@
  * construction ; dessiner une image n'alloue rien.
  */
 import { mix, type Theme } from './canvas';
-import { collectorPosition, DEG, type Cylinder, type EngineLayout, type EnginePose, lobeNoseDeg, lobeRadius, plenumPosition } from './engineLayout';
+import { collectorPosition, DEG, type Cylinder, type EngineLayout, type EnginePose, lobeNoseDeg, lobeRadius, plenumPosition, stackOf } from './engineLayout';
 import { turboChain, type TurboChain, type TurboUnit } from './turboChain';
 import { EVC, EVO, IVC, IVO } from './fluidGas';
 import { heatColors } from './heat';
@@ -214,6 +214,20 @@ export class Engine2D {
     const plenum = plenumPosition(layout);
     xMax = Math.max(xMax, Math.abs(plenum.x) + plenum.radius);
     yMax = Math.max(yMax, plenum.y + plenum.radius);
+    // Le filtre, et ses cornets : ils dépassent du moteur.
+    if (!layout.turbo) {
+      if (layout.airFilter === 'stacks') {
+        for (const cylinder of layout.cylinders) {
+          const stack = stackOf(layout, cylinder);
+          xMax = Math.max(xMax, Math.abs(stack.to[0]) + stack.radius * 2);
+          yMax = Math.max(yMax, stack.to[1] + stack.radius * 2);
+        }
+      } else {
+        const at = this.filterAt();
+        xMax = Math.max(xMax, Math.abs(at.x) + bore * 0.72);
+        yMax = Math.max(yMax, at.y + bore * 0.72);
+      }
+    }
     for (let b = 0; b < layout.banks; b++) {
       const collector = collectorPosition(layout, b);
       xMax = Math.max(xMax, Math.abs(collector.x) + bore * 0.45);
@@ -434,6 +448,7 @@ export class Engine2D {
     ctx.lineTo(Math.sin(firstPin * DEG) * main * 0.8, Math.cos(firstPin * DEG) * main * 0.8);
     ctx.stroke();
 
+    this.drawNaturalFilter(ctx, painter, theme, px);
     this.drawTurboFront(ctx, pose, painter, theme, px);
 
     ctx.restore();
@@ -761,26 +776,31 @@ export class Engine2D {
     const side = cylinder.intakeSide;
     const plenum = plenumPosition(layout);
     const radius = bore * 0.14;
-    // Le conduit d'admission, du plénum à la culasse.
-    ctx.strokeStyle = theme.cool;
-    ctx.globalAlpha = 0.6;
-    ctx.lineWidth = radius * 2;
-    ctx.lineCap = 'round';
-    const ax = side * W * c + portY * s;
-    const ay = -side * W * s + portY * c;
-    ctx.beginPath();
-    ctx.moveTo(ax, ay);
-    ctx.quadraticCurveTo(plenum.x * 0.5 + ax * 0.5, Math.max(ay, plenum.y), plenum.x, plenum.y);
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-    ctx.lineCap = 'butt';
-    ctx.fillStyle = theme.raised;
-    ctx.strokeStyle = theme.lineStrong;
-    ctx.lineWidth = px * 1.2;
-    ctx.beginPath();
-    ctx.arc(plenum.x, plenum.y, plenum.radius, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
+    if (layout.airFilter === 'stacks' && !layout.turbo) {
+      // Le cornet : un tube droit, sans plénum, qui s'évase à sa bouche.
+      this.drawStack(ctx, stackOf(layout, cylinder), theme, px);
+    } else {
+      // Le conduit d'admission, du plénum à la culasse.
+      ctx.strokeStyle = theme.cool;
+      ctx.globalAlpha = 0.6;
+      ctx.lineWidth = radius * 2;
+      ctx.lineCap = 'round';
+      const ax = side * W * c + portY * s;
+      const ay = -side * W * s + portY * c;
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.quadraticCurveTo(plenum.x * 0.5 + ax * 0.5, Math.max(ay, plenum.y), plenum.x, plenum.y);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.lineCap = 'butt';
+      ctx.fillStyle = theme.raised;
+      ctx.strokeStyle = theme.lineStrong;
+      ctx.lineWidth = px * 1.2;
+      ctx.beginPath();
+      ctx.arc(plenum.x, plenum.y, plenum.radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
     // Le conduit d'échappement : il prend la couleur du gaz qui y passe, la pièce chauffe avec la ligne.
     const collector = collectorPosition(layout, cylinder.bank);
     const ex = -side * W * c + portY * s;
@@ -799,6 +819,121 @@ export class Engine2D {
     ctx.arc(collector.x, collector.y, bore * 0.18, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
+  }
+
+  /** Un cornet : le tube, et sa bouche qui s'évase. L'air y entre : il garde la couleur de l'admission. */
+  private drawStack(ctx: CanvasRenderingContext2D, stack: { from: number[]; to: number[]; radius: number }, theme: Theme, px: number): void {
+    const dx = stack.to[0] - stack.from[0];
+    const dy = stack.to[1] - stack.from[1];
+    const length = Math.hypot(dx, dy) || 1;
+    const nx = -dy / length;
+    const ny = dx / length;
+    const r = stack.radius;
+    const flareAt = 0.74;
+    const at = (share: number, across: number): [number, number] => [stack.from[0] + dx * share + nx * across, stack.from[1] + dy * share + ny * across];
+    ctx.fillStyle = theme.raised;
+    ctx.strokeStyle = theme.text;
+    ctx.lineWidth = 1.2 * px;
+    ctx.beginPath();
+    ctx.moveTo(...at(0, r));
+    ctx.lineTo(...at(flareAt, r));
+    ctx.quadraticCurveTo(...at(0.93, r), ...at(1, r * 1.95));
+    ctx.lineTo(...at(1, -r * 1.95));
+    ctx.quadraticCurveTo(...at(0.93, -r), ...at(flareAt, -r));
+    ctx.lineTo(...at(0, -r));
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    // L'air qui y passe, dans l'axe.
+    ctx.strokeStyle = theme.cool;
+    ctx.globalAlpha = 0.6;
+    ctx.lineWidth = r * 1.1;
+    ctx.beginPath();
+    ctx.moveTo(...at(0.02, 0));
+    ctx.lineTo(...at(0.98, 0));
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  /** Où est le filtre d'un moteur sans turbo, vu de face : un peu au-dessus du plénum, côté libre. */
+  private filterAt(): { x: number; y: number } {
+    const { bore } = this.layout;
+    const plenum = plenumPosition(this.layout);
+    return { x: plenum.x + (plenum.x < 0 ? -1 : 1) * bore * 0.28, y: plenum.y + bore * 1.05 };
+  }
+
+  private drawNaturalFilter(ctx: CanvasRenderingContext2D, painter: GasPainter, theme: Theme, px: number): void {
+    const layout = this.layout;
+    if (layout.turbo || layout.airFilter === 'stacks') return;
+    const { bore } = layout;
+    const plenum = plenumPosition(layout);
+    const at = this.filterAt();
+    ctx.strokeStyle = painter.airStyle(theme, 293, 1.2);
+    ctx.lineWidth = bore * 0.2;
+    ctx.beginPath();
+    ctx.moveTo(plenum.x, plenum.y);
+    ctx.lineTo(at.x, at.y - bore * 0.2);
+    ctx.stroke();
+    this.drawFilterBody(ctx, at.x, at.y, bore * 0.66, bore * 0.34, theme, px);
+  }
+
+  /** Le filtre lui-même, sa sortie en bas : la boîte et ses plis, le cône, ou la bouche nue. Même dessin avec ou sans turbo. */
+  private drawFilterBody(ctx: CanvasRenderingContext2D, x: number, y: number, hx: number, hy: number, theme: Theme, px: number): void {
+    const filter = this.layout.airFilter;
+    const { bore } = this.layout;
+    ctx.fillStyle = theme.raised;
+    ctx.strokeStyle = theme.text;
+    ctx.lineWidth = 1.2 * px;
+    ctx.beginPath();
+    if (filter === 'cone') {
+      const base = y - hy;
+      const top = y + hy * 1.5;
+      ctx.moveTo(x - bore * 0.14, base);
+      ctx.lineTo(x - hx * 0.82, base + hy * 0.32);
+      ctx.lineTo(x - hx * 0.5, top);
+      ctx.lineTo(x + hx * 0.5, top);
+      ctx.lineTo(x + hx * 0.82, base + hy * 0.32);
+      ctx.lineTo(x + bore * 0.14, base);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.strokeStyle = theme.danger;
+      ctx.lineWidth = 0.9 * px;
+      ctx.beginPath();
+      for (let k = 1; k < 8; k++) {
+        const share = -1 + (2 * k) / 8;
+        ctx.moveTo(x + share * hx * 0.76, base + hy * 0.42);
+        ctx.lineTo(x + share * hx * 0.46, top - hy * 0.06);
+      }
+      ctx.stroke();
+      return;
+    }
+    if (filter === 'stacks') {
+      const base = y - hy;
+      ctx.moveTo(x - bore * 0.13, base);
+      ctx.quadraticCurveTo(x - bore * 0.14, base + hy * 0.7, x - bore * 0.36, base + hy * 0.95);
+      ctx.lineTo(x + bore * 0.36, base + hy * 0.95);
+      ctx.quadraticCurveTo(x + bore * 0.14, base + hy * 0.7, x + bore * 0.13, base);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      return;
+    }
+    ctx.rect(x - hx, y - hy, 2 * hx, 2 * hy);
+    ctx.fill();
+    ctx.stroke();
+    // Les plis de l'élément : ceux d'un panneau sport se voient à sa couleur.
+    ctx.strokeStyle = filter === 'panel' ? theme.danger : theme.lineStrong;
+    ctx.lineWidth = (filter === 'panel' ? 1.1 : 0.75) * px;
+    ctx.beginPath();
+    for (let k = 1; k < 8; k++) {
+      const fx = x - hx + (2 * hx * k) / 8;
+      ctx.moveTo(fx, y - hy * 0.7);
+      ctx.lineTo(fx, y + hy * 0.7);
+    }
+    ctx.stroke();
+    ctx.fillStyle = theme.metal;
+    ctx.fillRect(x - bore * 0.14, y - hy - bore * 0.3, bore * 0.28, bore * 0.16);
   }
 
   /** Une roue vue de face : ses aubes qui tournent, ou un disque flou quand l'œil ne les suit plus. */
@@ -914,24 +1049,7 @@ export class Engine2D {
     const [ahx, ahy] = unit.airboxSize;
     const fresh = painter.airStyle(theme, 293, 1.2);
     stroke([ax, ay - ahy], unit.x + unit.side * bore * 0.6, unit.y + bore * 0.6, [unit.x, unit.y + unit.compressorHousing * 0.2], bore * 0.18, fresh);
-    ctx.fillStyle = theme.raised;
-    ctx.strokeStyle = theme.text;
-    ctx.lineWidth = 1.2 * px;
-    ctx.beginPath();
-    ctx.rect(ax - ahx, ay - ahy, 2 * ahx, 2 * ahy);
-    ctx.fill();
-    ctx.stroke();
-    ctx.strokeStyle = theme.lineStrong;
-    ctx.lineWidth = 0.75 * px;
-    ctx.beginPath();
-    for (let k = 1; k < 8; k++) {
-      const fx = ax - ahx + (2 * ahx * k) / 8;
-      ctx.moveTo(fx, ay - ahy * 0.7);
-      ctx.lineTo(fx, ay + ahy * 0.7);
-    }
-    ctx.stroke();
-    ctx.fillStyle = theme.metal;
-    ctx.fillRect(ax - bore * 0.14, ay - ahy - bore * 0.3, bore * 0.28, bore * 0.16);
+    this.drawFilterBody(ctx, ax, ay, ahx, ahy, theme, px);
     // Le tube chaud, jusqu'à l'échangeur.
     stroke(unit.hotFrom, unit.hotFrom[0] + unit.side * bore * 0.2, unit.hotTo[1], unit.hotTo, bore * 0.2, hot);
     // Le compresseur, derrière la turbine sur le même arbre : on voit sa volute dépasser.

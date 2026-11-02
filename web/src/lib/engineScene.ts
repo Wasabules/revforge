@@ -6,7 +6,7 @@
 import type * as T from 'three';
 import type { Theme } from './canvas';
 import { EVC, EVO, IVC, IVO } from './fluidGas';
-import { bankToFront, chainCircles, chainPath, type ChainPath, collectorPosition, DEG, type Cylinder, type EngineLayout, type EnginePose, lobeNoseDeg, lobeRadius, plenumPosition } from './engineLayout';
+import { bankToFront, chainCircles, chainPath, type ChainPath, collectorPosition, DEG, type Cylinder, type EngineLayout, type EnginePose, lobeNoseDeg, lobeRadius, plenumPosition, stackOf } from './engineLayout';
 import { turboChain } from './turboChain';
 import type { Motion } from './motion';
 import { disposeObject, m34, type Mat34, MeshBuilder, parseColor, type Stage3D, toGeometry } from './render3d';
@@ -381,6 +381,17 @@ function bankPoint(betaDeg: number, x: number, y: number, z: number): P3 {
   return [p[0], p[1], z];
 }
 
+/** Le rayon d'un cône à ce point de sa longueur : large à sa base, un peu moins à son bout. */
+function coneRadiusAt(along: number, radius: number, length: number): number {
+  return radius * (1 - (0.3 * along) / length);
+}
+
+/** Le profil d'un cône de filtre, à faire tourner : sa base sur le conduit, son flanc, sa calotte. */
+function coneProfile(start: number, radius: number, length: number, neck: number): P2[] {
+  const end = coneRadiusAt(length, radius, length);
+  return [[neck, 0], [neck * 1.1, start * 0.7], [radius, start], [end, start + length], [end * 0.7, start + length * 1.03], [0, start + length * 1.05]];
+}
+
 function bankDir(betaDeg: number, x: number, y: number): P3 {
   const p = [0, 0];
   bankToFront(p, betaDeg, x, y);
@@ -415,6 +426,8 @@ interface Dynamic {
   glowTips: T.InstancedMesh | null;
   pinion: T.Mesh;
   butterfly: T.Group;
+  /** Un papillon par cornet : ce qui remplace le corps de papillon quand il n'y a plus de plénum. */
+  stackFlaps: T.Group[];
   accessory: T.InstancedMesh;
 }
 
@@ -818,26 +831,93 @@ export class EngineScene {
     const plenumR = plenum.radius;
     const zFrontAll = Math.max(...layout.cylinders.map((c) => c.z)) + bore * 0.5;
     const zRearAll = Math.min(...layout.cylinders.map((c) => c.z)) - bore * 0.5;
-    alloys.transform(onZ(plenumX, plenumY, (zFrontAll + zRearAll) / 2)).lathe([[0, -(zFrontAll - zRearAll) / 2 - plenumR * 0.5], [plenumR, -(zFrontAll - zRearAll) / 2], [plenumR, (zFrontAll - zRearAll) / 2], [0, (zFrontAll - zRearAll) / 2 + plenumR * 0.5]], 18, 60);
-    extent([plenumX + plenumR, plenumY + plenumR, 0]);
-    for (const cylinder of layout.cylinders) {
-      const from = bankPoint(cylinder.betaDeg, cylinder.intakeSide * W, portY, cylinder.z);
-      const dir = bankDir(cylinder.betaDeg, cylinder.intakeSide, 0.1);
-      const target: P3 = [plenumX, plenumY, cylinder.z];
-      alloys.transform(null).tube(bendPath(from, dir, target, layout.banks === 1 ? [-1, 0, 0] : [from[0] > 0 ? -0.2 : 0.2, 1, 0]), runnerR, 9);
-    }
-    // Le corps de papillon : tube court et, dedans, le volet.
+    // Des cornets sur un moteur sans turbo : plus de plénum, un tube et un papillon par cylindre. Le turbo, lui, garde son plénum.
+    const openStacks = layout.airFilter === 'stacks' && !layout.turbo;
     const throttleZ = zFrontAll + bore * 0.5;
     const throttleR = bore * 0.2;
-    alloys.transform(onZ(plenumX, plenumY, throttleZ)).lathe([[throttleR, -bore * 0.32], [throttleR * 1.2, -bore * 0.2], [throttleR * 1.2, bore * 0.2], [throttleR, bore * 0.32]], 18);
     const butterfly = new THREE.Group();
-    butterfly.position.set(plenumX, plenumY, throttleZ);
-    const flap = new THREE.Mesh(geo(new MeshBuilder().cylinder(throttleR * 0.96, bore * 0.012, 18)), materials.steel);
-    flap.rotation.x = Math.PI / 2;
-    flap.updateMatrix();
-    flap.matrixAutoUpdate = false;
-    butterfly.add(flap);
+    const stackFlaps: T.Group[] = [];
+    // L'élément filtrant, là où il se voit : le coton huilé d'un cône, le cadre d'un panneau.
+    const elements = new MeshBuilder();
+    if (openStacks) {
+      const flapMesh = geo(new MeshBuilder().cylinder(runnerR * 0.94, bore * 0.012, 14));
+      for (const cylinder of layout.cylinders) {
+        const stack = stackOf(layout, cylinder);
+        const path: P3[] = [];
+        const radii: number[] = [];
+        for (let k = 0; k <= 10; k++) {
+          const share = k / 10;
+          const flare = Math.max(share - 0.72, 0) / 0.28;
+          path.push([stack.from[0] + (stack.to[0] - stack.from[0]) * share, stack.from[1] + (stack.to[1] - stack.from[1]) * share, cylinder.z]);
+          radii.push(stack.radius * (1 + 0.85 * flare * flare));
+        }
+        alloys.transform(null).tube(path, radii, 14);
+        extent(path[10]);
+        // Le papillon, tout près de la culasse : son axe dans le plan du tube, sa levée autour de lui.
+        const axis = new THREE.Group();
+        const at = path[3];
+        axis.position.set(at[0], at[1], at[2]);
+        axis.rotation.order = 'ZYX';
+        axis.rotation.set(0, Math.PI / 2, Math.atan2(stack.to[1] - stack.from[1], stack.to[0] - stack.from[0]));
+        const lever = new THREE.Group();
+        const flat = new THREE.Mesh(flapMesh, materials.steel);
+        flat.rotation.x = Math.PI / 2;
+        flat.updateMatrix();
+        flat.matrixAutoUpdate = false;
+        lever.add(flat);
+        axis.add(lever);
+        this.root.add(axis);
+        stackFlaps.push(lever);
+      }
+    } else {
+      alloys.transform(onZ(plenumX, plenumY, (zFrontAll + zRearAll) / 2)).lathe([[0, -(zFrontAll - zRearAll) / 2 - plenumR * 0.5], [plenumR, -(zFrontAll - zRearAll) / 2], [plenumR, (zFrontAll - zRearAll) / 2], [0, (zFrontAll - zRearAll) / 2 + plenumR * 0.5]], 18, 60);
+      extent([plenumX + plenumR, plenumY + plenumR, 0]);
+      for (const cylinder of layout.cylinders) {
+        const from = bankPoint(cylinder.betaDeg, cylinder.intakeSide * W, portY, cylinder.z);
+        const dir = bankDir(cylinder.betaDeg, cylinder.intakeSide, 0.1);
+        const target: P3 = [plenumX, plenumY, cylinder.z];
+        alloys.transform(null).tube(bendPath(from, dir, target, layout.banks === 1 ? [-1, 0, 0] : [from[0] > 0 ? -0.2 : 0.2, 1, 0]), runnerR, 9);
+      }
+      // Le corps de papillon : tube court et, dedans, le volet.
+      alloys.transform(onZ(plenumX, plenumY, throttleZ)).lathe([[throttleR, -bore * 0.32], [throttleR * 1.2, -bore * 0.2], [throttleR * 1.2, bore * 0.2], [throttleR, bore * 0.32]], 18);
+      butterfly.position.set(plenumX, plenumY, throttleZ);
+      const flap = new THREE.Mesh(geo(new MeshBuilder().cylinder(throttleR * 0.96, bore * 0.012, 18)), materials.steel);
+      flap.rotation.x = Math.PI / 2;
+      flap.updateMatrix();
+      flap.matrixAutoUpdate = false;
+      butterfly.add(flap);
+    }
     this.root.add(butterfly);
+
+    // Devant le papillon d'un moteur sans turbo : sa boîte à air, ou son cône à l'air libre.
+    if (!layout.turbo && !openStacks) {
+      const mouthZ = throttleZ + bore * 0.32;
+      if (layout.airFilter === 'cone') {
+        const radius = bore * 0.56;
+        const length = bore * 1.9;
+        blacks.transform(onZ(plenumX, plenumY, mouthZ)).lathe([[throttleR * 1.08, 0], [throttleR * 1.08, bore * 0.18], [radius * 0.5, bore * 0.32]], 18);
+        elements.transform(onZ(plenumX, plenumY, mouthZ)).lathe(coneProfile(bore * 0.3, radius, length, throttleR), 28, 50);
+        for (let k = 1; k < 6; k++) {
+          const along = (length * k) / 6;
+          const r = coneRadiusAt(along, radius, length);
+          steels.transform(onZ(plenumX, plenumY, mouthZ + bore * 0.3 + along)).lathe([[r - bore * 0.012, -bore * 0.012], [r + bore * 0.014, -bore * 0.012], [r + bore * 0.014, bore * 0.012], [r - bore * 0.012, bore * 0.012]], 28);
+        }
+        steels.transform(onZ(plenumX, plenumY, mouthZ + bore * 0.14)).lathe([[throttleR * 1.1, -bore * 0.04], [throttleR * 1.2, -bore * 0.04], [throttleR * 1.2, bore * 0.04], [throttleR * 1.1, bore * 0.04]], 18);
+        extent([plenumX + radius, plenumY + radius, 0]);
+      } else {
+        const hx = bore * 0.74;
+        const hy = bore * 0.34;
+        const hz = bore * 0.46;
+        const boxZ = mouthZ + bore * 0.4 + hz;
+        blacks.transform(onZ(plenumX, plenumY, mouthZ + bore * 0.2)).cylinder(throttleR * 1.05, bore * 0.46, 16);
+        blacks.transform(tr(plenumX, plenumY, boxZ)).box(2 * hx, 2 * hy, 2 * hz);
+        // Le joint entre les deux demi-boîtes : un filet noir sur le papier, le cadre de l'élément sur un panneau sport.
+        (layout.airFilter === 'panel' ? elements : blacks).transform(tr(plenumX, plenumY, boxZ)).box(2 * hx * 1.05, bore * 0.05, 2 * hz * 1.05);
+        // La prise d'air : elle va chercher l'air dehors.
+        blacks.transform(onZ(plenumX + hx * 0.55, plenumY, boxZ + hz + bore * 0.26)).cylinder(bore * 0.13, bore * 0.52, 14);
+        extent([plenumX + hx, plenumY + hy, 0]);
+      }
+    }
 
     // ── L'échappement : un conduit par cylindre, un collecteur par rangée, puis la turbine ──
     for (let bank = 0; bank < layout.banks; bank++) {
@@ -881,15 +961,24 @@ export class EngineScene {
         // La boîte à air : un bloc à arêtes, sa cartouche, et le conduit souple jusqu'à l'œil du compresseur.
         const [ax, ay, az] = unit.airbox;
         const [ahx, ahy, ahz] = unit.airboxSize;
-        blacks.transform(tr(ax, ay, az)).box(2 * ahx, 2 * ahy, 2 * ahz);
-        blacks.transform(tr(ax, ay + ahy + bore * 0.03, az)).box(2 * ahx * 1.05, bore * 0.05, 2 * ahz * 1.05);
+        // Selon le filtre : la boîte, le cône à l'air libre, ou une simple bouche arrondie sur le conduit du compresseur.
+        if (layout.airFilter === 'cone') {
+          elements.transform(tr(ax, ay - ahy, az - ahz * 0.3)).lathe(coneProfile(bore * 0.1, bore * 0.46, 2 * ahy + bore * 0.7, bore * 0.13), 26, 50);
+        } else if (layout.airFilter === 'stacks') {
+          alloys.transform(tr(ax, ay - ahy, az - ahz * 0.3)).lathe([[bore * 0.13, -bore * 0.05], [bore * 0.15, bore * 0.2], [bore * 0.22, bore * 0.34], [bore * 0.36, bore * 0.42]], 22, 60);
+        } else {
+          blacks.transform(tr(ax, ay, az)).box(2 * ahx, 2 * ahy, 2 * ahz);
+          (layout.airFilter === 'panel' ? elements : blacks).transform(tr(ax, ay + ahy + bore * 0.03, az)).box(2 * ahx * 1.05, bore * 0.05, 2 * ahz * 1.05);
+        }
         const eye: P3 = [unit.x, unit.y, unit.compressorZ + bore * 0.3];
         const duct = bendPath([ax, ay - ahy, az - ahz * 0.3], [0, -1, 0], eye, [0, 0, -1], 14);
         blacks.transform(null).tube(duct, bore * 0.13, 10);
-        // Le débitmètre, à la sortie de la boîte : un boîtier sur le conduit.
+        // Le débitmètre, à la sortie de la boîte : un boîtier sur le conduit. Une bouche nue n'en a pas.
         const at = duct[Math.floor(duct.length * 0.2)];
-        steels.transform(tr(at[0], at[1], at[2])).box(bore * 0.34, bore * 0.2, bore * 0.26);
-        this.labelSpots.maf ??= at;
+        if (layout.airFilter !== 'stacks') {
+          steels.transform(tr(at[0], at[1], at[2])).box(bore * 0.34, bore * 0.2, bore * 0.26);
+          this.labelSpots.maf ??= at;
+        }
 
         // Le tube chaud : de la volute à l'échangeur, teinté par l'air qui y passe.
         hotPipes.transform(null).tube(bendPath(unit.hotFrom, [unit.side * 0.2, -1, 0], unit.hotTo, [-unit.side, 0, 0], 14), bore * 0.13, 10);
@@ -1055,6 +1144,7 @@ export class EngineScene {
     add(geo(alloys), materials.alloy);
     add(geo(blacks), materials.rubber);
     add(geo(steels), materials.steel);
+    if (elements.vertexCount > 0) add(geo(elements), stage.surface({ color: 0xb5382a, metalness: 0, roughness: 0.85 }), false);
     if (brasses.vertexCount > 0) add(geo(brasses), materials.brass, false);
     if (porcelain.vertexCount > 0) add(geo(porcelain), whiteMaterial, false);
     add(geo(headers), exhaustMaterial);
@@ -1099,7 +1189,7 @@ export class EngineScene {
       if (stage.software) geometry.dispose();
     }
 
-    this.d = { pistons, rings, pins, rods, valvesIn, valvesEx, springs, retainers, buckets, chain, gas, flame, spark, spray, jets, portsIn, portsEx, glowTips, pinion: pinionMesh, butterfly, accessory };
+    this.d = { pistons, rings, pins, rods, valvesIn, valvesEx, springs, retainers, buckets, chain, gas, flame, spark, spray, jets, portsIn, portsEx, glowTips, pinion: pinionMesh, butterfly, stackFlaps, accessory };
 
     // Les ombres, sur un vrai GPU seulement : les pièces s'en reçoivent les unes des autres.
     this.root.traverse((node) => {
@@ -1146,7 +1236,7 @@ export class EngineScene {
       labelAt('engine.part.turbine', [unit.x, unit.y + unit.turbineHousing, unit.z]);
       labelAt('engine.part.compressor', [unit.x, unit.y + unit.compressorHousing, unit.compressorZ]);
       labelAt('engine.part.shaft', [unit.x, unit.y, (unit.z + unit.compressorZ) / 2]);
-      labelAt('engine.part.airbox', [unit.airbox[0], unit.airbox[1] + unit.airboxSize[1], unit.airbox[2]]);
+      labelAt(layout.airFilter === 'cone' ? 'engine.part.cone' : layout.airFilter === 'stacks' ? 'engine.part.stacks' : 'engine.part.airbox', [unit.airbox[0], unit.airbox[1] + unit.airboxSize[1], unit.airbox[2]]);
       if (this.labelSpots.maf) labelAt('engine.part.maf', this.labelSpots.maf);
       labelAt('engine.part.chargeHot', [(unit.hotFrom[0] + unit.hotTo[0]) / 2, (unit.hotFrom[1] + unit.hotTo[1]) / 2, (unit.hotFrom[2] + unit.hotTo[2]) / 2]);
       labelAt('engine.part.intercooler', [airChain.cooler[0], airChain.cooler[1], airChain.cooler[2] + airChain.coolerSize[2]]);
@@ -1405,6 +1495,7 @@ export class EngineScene {
     // Le papillon : calculé par le gaz quand il tourne.
     const open = viewGas ? net.throttleShare : motion.load;
     d.butterfly.rotation.x = 0.14 + open * 1.32;
+    for (const flap of d.stackFlaps) flap.rotation.x = d.butterfly.rotation.x;
 
     for (let a = 0; a < this.accessoryAt.length; a++) {
       const item = this.accessoryAt[a];

@@ -250,6 +250,8 @@ float rf_turbo_out_c() { return static_cast<float>(g_model->turbo().state().comp
 float rf_turbo_cool_c() { return static_cast<float>(g_model->turbo().state().coolerOutK - 273.15); }
 float rf_turbo_gas_c() { return static_cast<float>(g_model->turbo().state().turbineInK - 273.15); }
 /** Ce que le moteur a choisi : diamètre de la roue (mm), inertie de l'arbre (kg·m²). */
+float rf_intake_air_c(float rpm) { return static_cast<float>(intakeAirK(g_powertrain, static_cast<double>(rpm)) - 273.15); }
+float rf_intake_drop_kpa(float rpm) { return static_cast<float>(intakeDropPa(g_powertrain, static_cast<double>(rpm)) / 1000.0); }
 float rf_turbo_wheel_mm() { return static_cast<float>(turboSpecOf(g_powertrain).wheelDiameterM * 1000.0); }
 float rf_turbo_inertia() { return static_cast<float>(turboSpecOf(g_powertrain).inertia); }
 float rf_torque() { return static_cast<float>(g_model->torqueNm()); }
