@@ -377,10 +377,12 @@ test('aucun débordement horizontal sur téléphone', async ({ page }) => {
 
 /**
  * Le niveau estimé, comme le lit un sonomètre posé : la tête arrivée (elle glisse, à 6 m/s), le ralenti retombé après le démarrage
- * (il redescend de 1200 à 800 tr/min en deux secondes, et le niveau avec lui), puis la moyenne en énergie sur une seconde et demie.
- * Une lecture seule, au « fast » de 125 ms, bat de ±1 dB au ralenti : plus que ce qu'on veut y lire.
+ * (il redescend de 1200 à 800 tr/min en deux secondes, et le niveau avec lui), puis la moyenne en énergie sur `averageMs`. Le
+ * ralenti respire : il bat de ±1,5 % en 2,5 s environ, et le niveau de l'habitacle de ±2 dB avec lui. Une lecture seule, au « fast »
+ * de 125 ms, ou une moyenne plus courte qu'un battement, lisent ce battement plutôt que ce qu'on cherche : pour un écart de quelques
+ * dB, cinq secondes, deux battements.
  */
-async function settledDb(page: Page) {
+async function settledDb(page: Page, averageMs = 1500) {
   const at = () => telemetry(page).then((t) => [t.listenerX, t.listenerY, t.rpm]);
   let before = await at();
   await expect
@@ -399,7 +401,7 @@ async function settledDb(page: Page) {
     .toBe(true);
   let energy = 0;
   let count = 0;
-  for (const end = Date.now() + 1500; Date.now() < end; count++) {
+  for (const end = Date.now() + averageMs; Date.now() < end; count++) {
     energy += 10 ** ((await telemetry(page)).levelDbA / 10);
     await page.waitForTimeout(50);
   }
@@ -496,9 +498,9 @@ test("les vitres ne se proposent qu'à bord, et font entrer le dehors", async ({
   await expect(windows).toHaveCount(0);
   await position(page, 'Habitacle').click();
   await expect(windows).toBeVisible();
-  const closed = await settledDb(page);
+  const closed = await settledDb(page, 5000);
   await windows.getByRole('button', { name: 'Ouvertes' }).click();
-  await expect.poll(() => settledDb(page), { timeout: 8000 }).toBeGreaterThan(closed + 1);
+  expect(await settledDb(page, 5000)).toBeGreaterThan(closed + 1);
 });
 
 test("changer d'échappement se voit sur la fiche : niveau et ce que retient la ligne", async ({ page }) => {
