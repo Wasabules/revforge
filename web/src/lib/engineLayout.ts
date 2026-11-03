@@ -241,7 +241,8 @@ export function engineLayout(config: EngineConfig): EngineLayout {
   const boreCm = bore / 10;
   const strokeReal = ((config.displacementCc / count) / ((Math.PI / 4) * boreCm * boreCm)) * 10;
   // Des réglages extrêmes donnent 5 mm ou un mètre de course : on dessine jusqu'à ces proportions, et la légende le dit.
-  const stroke = Math.min(bore * 1.8, Math.max(bore * 0.4, strokeReal));
+  // Elles couvrent tout ce que le curseur de course atteint : 40 mm sur 110 d'alésage, 130 mm sur 60.
+  const stroke = Math.min(bore * 2.2, Math.max(bore * 0.36, strokeReal));
   const crank = stroke / 2;
   const rod = stroke * 1.6;
   const pistonTop = bore * 0.36;

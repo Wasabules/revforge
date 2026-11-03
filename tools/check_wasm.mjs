@@ -100,6 +100,14 @@ function check(label, wasm, expected) {
   rf.rf_set_manual_rpm(5000);
   check('régime tenu', render(rf, 4, 512), native('--cylinders', '4', '--cc', '1360', '--bore', '75', '--redline', '6200', '--scenario', 'steady', '--rpm', '5000'));
 }
+// La course : `--stroke` ne fait que calculer la cylindrée. 86 mm d'alésage, 110 de course : au-delà de 24 m/s en haut du régime.
+{
+  const rf = load();
+  rf.rf_set_car(BODY.city, 1100, 15, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  rf.rf_set_config(4, LAYOUT.inline, Math.round((Math.PI / 4) * 8.6 * 8.6 * 11 * 4), 86, 7200, EXHAUST.stock, 0, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+  rf.rf_set_mode(3);
+  check('tour, longue course', render(rf, 30, 128), native('--cylinders', '4', '--bore', '86', '--stroke', '110', '--redline', '7200', '--scenario', 'lap', '--seconds', '30'));
+}
 // Tour de 60 s, avec modèle de conduite, et moteur chargé.
 {
   const rf = load();

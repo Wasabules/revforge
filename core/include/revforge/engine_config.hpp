@@ -217,4 +217,10 @@ struct EngineConfig {
 /** Sifflement d'un moteur électrique : pas de cylindres, pas de configuration. */
 EngineProfile electricProfile();
 
+/**
+ * La cylindrée (cm³, entière) qui donne cette course à cet alésage et à ces cylindres : la course n'est pas
+ * stockée, elle se déduit. Même calcul que `displacementFor` dans web/src/lib/stroke.ts.
+ */
+int displacementForStroke(int boreMm, int cylinders, double strokeMm);
+
 }  // namespace revforge

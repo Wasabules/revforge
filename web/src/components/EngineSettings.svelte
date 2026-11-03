@@ -3,6 +3,7 @@
   import Slider from './Slider.svelte';
   import { ASPIRATIONS, CYLINDERS, FUELS, LAYOUTS, LIMITS, RELEASES, TURBO_SIZES, cylinderCc, strokeMm, type EngineConfig } from '../lib/config';
   import { fixed, t } from '../lib/i18n.svelte';
+  import { PISTON_SPEED_LIMIT, moveStroke, pistonSpeed, strokeOutside, strokeRange, strokeShape, strokeThumb, type StrokeAnchor } from '../lib/stroke';
 
   interface Props {
     config: EngineConfig;
@@ -11,6 +12,16 @@
     onlive: (next: Partial<EngineConfig>) => void;
   }
   let { config, shown, onapply, onlive }: Props = $props();
+
+  // Le curseur de course n'écrit que la cylindrée, et se souvient d'où il est parti le temps qu'on revienne.
+  let strokeAnchor: StrokeAnchor | null = null;
+  function strokeMoved(target: number, send: (next: Partial<EngineConfig>) => void) {
+    const moved = moveStroke(shown, target, strokeAnchor);
+    strokeAnchor = moved.anchor;
+    send({ displacementCc: moved.displacementCc });
+  }
+  const stroke = $derived(strokeMm(shown));
+  const redlineSpeed = $derived(pistonSpeed(stroke, shown.redlineRpm));
 </script>
 
 {#if config.electric}
@@ -21,10 +32,23 @@
   </p>
   <Choices label={t('builder.cylinders')} options={CYLINDERS.map((value) => ({ value, label: String(value) }))} value={config.cylinders} onchange={(cylinders) => onapply({ cylinders })} />
   <Choices label={t('builder.layout')} options={LAYOUTS} value={config.layout} onchange={(layout) => onapply({ layout })} />
-  <Slider label={t('builder.displacement')} value={config.displacementCc} {...LIMITS.displacementCc} format={(value) => `${value} ${t('unit.cc')}`}
+  <Slider label={t('builder.displacement')} value={shown.displacementCc} {...LIMITS.displacementCc} format={(value) => `${value} ${t('unit.cc')}`}
     oninput={(displacementCc) => onlive({ displacementCc })} onchange={(displacementCc) => onapply({ displacementCc })} />
-  <Slider label={t('builder.bore')} value={config.boreMm} {...LIMITS.boreMm} format={(value) => `${value} mm`}
+  <Slider label={t('builder.bore')} value={shown.boreMm} {...LIMITS.boreMm} format={(value) => `${value} mm`}
     oninput={(boreMm) => onlive({ boreMm })} onchange={(boreMm) => onapply({ boreMm })} />
+  <div>
+    <!-- Le curseur va de cran en cran, le texte dit la course réelle, même hors plage. -->
+    <Slider label={t('builder.stroke')} value={strokeThumb(shown)} {...strokeRange(shown.boreMm, shown.cylinders)} format={() => `${fixed(stroke, 1)} mm`}
+      oninput={(target) => strokeMoved(target, onlive)} onchange={(target) => strokeMoved(target, onapply)} />
+    <p class="help">{t('builder.stroke.help')}</p>
+    <p class="help" data-testid="stroke-derived">{t('builder.stroke.derived', { ratio: fixed(shown.boreMm / stroke, 2), shape: t(`builder.stroke.shape.${strokeShape(shown.boreMm, stroke)}`), speed: fixed(redlineSpeed, 1) })}</p>
+    {#if redlineSpeed > PISTON_SPEED_LIMIT}
+      <p class="help" data-testid="stroke-fast">{t('builder.stroke.fast', { limit: PISTON_SPEED_LIMIT })}</p>
+    {/if}
+    {#if strokeOutside(shown)}
+      <p class="help" data-testid="stroke-outside">{t('builder.stroke.outside', { min: LIMITS.strokeMm.min, max: LIMITS.strokeMm.max })}</p>
+    {/if}
+  </div>
   <Slider label={t('builder.redline')} value={config.redlineRpm} {...LIMITS.redlineRpm} format={(value) => `${value} ${t('unit.rpm')}`}
     oninput={(redlineRpm) => onlive({ redlineRpm })} onchange={(redlineRpm) => onapply({ redlineRpm })} />
   <Choices label={t('builder.fuel')} options={FUELS} value={config.fuel} onchange={(fuel) => onapply({ fuel })} />

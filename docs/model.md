@@ -335,6 +335,36 @@ diesel. Known limits: the V8 is missing lows below 400 Hz, probably the air pump
 the recordings near 2.6 kHz are not reproduced. The V8 rests on very few recordings, and the 2 L diesel on 3 L recordings. Since
 the sound is mostly noise, its main risk remains "the vacuum cleaner", which only the ear can rule out.
 
+## The stroke
+
+The stroke is not a stored setting: `V = π/4 × bore² × stroke × cylinders` derives it from the displacement and the bore, which remain what the share link keeps. The slider is another way of writing the displacement, as on a real engine: a longer crankshaft on the same bore, a stroker. When it moves, the bore stays and the displacement adjusts, rounded to a whole number; when the displacement, the bore or the number of cylinders moves, it follows. `web/src/lib/stroke.ts` does the sum, and so does the CLI's `--stroke` (`displacementForStroke`).
+
+**Limits.** From 40 mm (a 2.4 L Formula 1 V8, 98 mm bore, so 39.8 mm) to 130 mm (Bugatti Royale, 125 × 130), narrowed so that the displacement stays between 600 and 7000 cc. The 0.5 mm step keeps the round trip exact: on the smallest cylinder, rounding the displacement moves the stroke by less than 0.09 mm, less than half a step. Going back to the starting notch restores the starting displacement, including a preset's. Beyond those limits, a preset, a link or the other two sliders are still allowed: the text gives the real stroke, the slider rests at its end, and nothing is rewritten until you touch it. The views draw to scale everything the slider can reach, from 0.36 to 2.2 bores.
+
+**What the stroke really changes.**
+
+- *Torque*, only through mean piston speed: above 24 m/s, `breathing` loses `0.012 × excess²`, without going below 0.55. It is a good indicator: flow through the valves, whose area follows the bore, reads on piston speed (Taylor's Mach index). A 39.8 mm Formula 1 V8 at 18,000 rpm does 23.9 m/s. Below this limit, at equal displacement, the curve does not move.
+- *The sound*, by two paths that move together at constant displacement, separated by removing each in turn. The stroke sets the length of the pulse (`blowdownBase`, `√stroke`, for the same expelled volume): behind the car, at full throttle, the level loses 1.9 dB from 69 to 110 mm, and with this path removed it no longer moves (89.8 to 89.9 dB(A)); at the end of the pipe, the 8-16 kHz band gains 1.9 dB. The bore sets the block noise (Anderton's law, `60 log10 bore`): in the engine bay, 108.0 dB(A) at 96 mm bore, 102.2 at 76, and 105.2 throughout if it is removed. The mean flow and the line follow the displacement. More treble from a longer pulse is not the expected direction: it follows from the model and has not been checked against real engines.
+- *The drawing and the gas*: the crank, the rod (1.6 strokes), the block height, the volume of each cylinder and the piston area.
+- *The displacement*, if the bore stays: everything that follows from it.
+
+**At 2 L and 4 cylinders, 6800 rpm** (compact body, sport line):
+
+| | Oversquare, 96 × 69.1 | Square, 86 × 86.1 | Long stroke, 76 × 110.2 |
+|---|---|---|---|
+| Peak torque | 173.6 Nm at 4100 rpm | same | same |
+| Peak power | 132 hp at 6250 rpm | same | same |
+| Piston speed at redline | 15.7 m/s | 19.5 m/s | 25.0 m/s |
+| WLTC | 8.85 L/100 km | same | same |
+| 90 km/h | 6.70 L/100 km | same | same |
+| LAeq, full throttle | 90.9 dB(A) | 90.0 dB(A) | 89.0 dB(A) |
+| 8-16 kHz band, full throttle | 17.1 dB | 17.9 dB | 19.0 dB |
+| LAeq, engine bay | 108.0 dB(A) | 105.2 dB(A) | 102.2 dB(A) |
+
+At 8500 rpm, the long stroke reaches 31.2 m/s: 182 hp at 6750 rpm instead of 191 hp at 7800.
+
+**What the stroke does not change, and why.** Three real effects are missing, and adding them would move every fingerprint, since every engine has a stroke: friction (`frictionTorqueNm` follows engine speed, not piston speed), inertia (`engineInertia` follows displacement, not crank radius or piston mass) and the speed of peak torque (a fixed share of redline). Consumption at equal displacement therefore does not depend on the stroke. Adding friction alone to consumption would be no more correct: a long stroke rubs more but loses less heat through its walls and burns faster (Filipi and Assanis, *International Journal of Engine Research* 1(2), 2000, read only through second-hand summaries). The model has neither, and showing only one would give the wrong direction: that balance remains to be done. The 0.55 floor remains a modelling choice: above 30 m/s, no real engine gives a reference.
+
 ## The gearbox
 
 A part you choose and tune (`GearboxConfig`), independent of the engine: the same one can be fitted to two engines, including an
