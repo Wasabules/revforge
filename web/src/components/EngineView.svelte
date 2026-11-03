@@ -10,7 +10,8 @@
   import { Rotary2D, type RotaryLabels } from '../lib/rotary2d';
   import type { RotaryScene } from '../lib/rotaryScene';
   import { fixed, lang, speedLabel, t, type MessageKey } from '../lib/i18n.svelte';
-  import { firingOrder, SLOW_MOTION, type Motion } from '../lib/motion';
+  import { SLOW_MOTION, type Motion } from '../lib/motion';
+  import { firingOrderOf } from '../lib/architecture';
   import { createStage3D, probeWebGL2, type Stage3D } from '../lib/render3d';
 
   interface Props {
@@ -429,12 +430,13 @@
     stopStage();
   });
 
-  const order = $derived(firingOrder(config.cylinders));
+  const order = $derived(firingOrderOf(config));
   const crankNote = $derived.by(() => {
     if (config.electric || isRotary(config)) return '';
     const shape = engineLayout(config);
     const parts = [t('engine.caption.crank', { angles: shape.throwAngles.map((value) => `${value}°`).join(' ') })];
     if (shape.splitDeg > 0) parts.push(t('engine.caption.split', { angle: shape.splitDeg }));
+    if (shape.rowAngleDeg > 0) parts.push(t('engine.caption.rows', { angle: shape.rowAngleDeg, offset: fixed(shape.rowOffsetMm, 1) }));
     if (shape.strokeClamped) parts.push(t('engine.caption.clamped'));
     if (shape.valve.sohc) parts.push(t('engine.caption.sohc', { valves: shape.count * shape.valve.perCylinder }));
     return parts.join(' · ');

@@ -2,7 +2,7 @@
   import Choices from './Choices.svelte';
   import SettingsSection from './SettingsSection.svelte';
   import Slider from './Slider.svelte';
-  import { CYLINDERS, ENGINE_CYCLES, LAYOUTS, LIMITS, ROTOR_COUNTS, coherentConfig, isRotary, strokeMm, type EngineConfig } from '../lib/config';
+  import { CYLINDERS, ENGINE_CYCLES, LAYOUTS, LIMITS, ROTOR_COUNTS, coherentConfig, isRotary, layoutForCylinders, strokeMm, type EngineConfig } from '../lib/config';
   import { fixed, t } from '../lib/i18n.svelte';
   import { PISTON_SPEED_LIMIT, moveStroke, pistonSpeed, strokeOutside, strokeRange, strokeShape, strokeThumb, type StrokeAnchor } from '../lib/stroke';
 
@@ -31,15 +31,23 @@
     const next = coherentConfig({ ...config, layout });
     onapply({ layout, cylinders: next.cylinders, fuel: next.fuel });
   }
+  /** Un nombre de cylindres que la disposition n'a pas (un VR à 8, un six en ligne à 16) : elle devient un V. */
+  function chooseCylinders(cylinders: number) {
+    const layout = layoutForCylinders(config.layout, cylinders);
+    onapply(layout === config.layout ? { cylinders } : { cylinders, layout });
+  }
 </script>
 
 <SettingsSection id="block" title={t('builder.section.block')}>
   {#if rotary}
     <Choices label={t('builder.rotors')} options={ROTOR_COUNTS.map((value) => ({ value, label: String(value) }))} value={config.cylinders} onchange={(cylinders) => onapply({ cylinders })} />
   {:else}
-    <Choices label={t('builder.cylinders')} options={CYLINDERS.map((value) => ({ value, label: String(value) }))} value={config.cylinders} onchange={(cylinders) => onapply({ cylinders })} />
+    <Choices label={t('builder.cylinders')} options={CYLINDERS.map((value) => ({ value, label: String(value) }))} value={config.cylinders} onchange={chooseCylinders} />
   {/if}
   <Choices label={t('builder.layout')} options={LAYOUTS} value={config.layout} onchange={chooseLayout} />
+  {#if config.layout === 'vr' || config.layout === 'w'}
+    <p class="help" data-testid="layout-help">{t(config.layout === 'vr' ? 'layout.vr.help' : 'layout.w.help')}</p>
+  {/if}
   <Slider label={t('builder.displacement')} value={shown.displacementCc} {...LIMITS.displacementCc} format={(value) => `${value} ${t('unit.cc')}`}
     oninput={(displacementCc) => onlive({ displacementCc })} onchange={(displacementCc) => onapply({ displacementCc })} />
   {#if rotary}

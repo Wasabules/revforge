@@ -2,6 +2,7 @@ import presetData from '../../../presets/presets.json';
 import { presetText, t } from './i18n.svelte';
 import { DISPLACEMENT_LIMITS, STROKE_LIMITS, engineStroke } from './stroke';
 import { isRotary, ROTOR_COUNTS } from './rotary';
+import { builtLayout, VR_CYLINDERS, W_CYLINDERS } from './architecture';
 
 export { isRotary } from './rotary';
 
@@ -369,7 +370,8 @@ export const BOX_MODELS: { id: string; label: string; note: string; settings: Pa
   { id: 'hewland_ftr', get label() { return t('boxModel.hewland_ftr'); }, get note() { return t('boxModel.hewland_ftr.note'); },
     settings: { boxKind: 'sequential', boxGears: 6, boxFamily: 'custom', boxRatios: '2.75,2,1.625,1.333,1.13,1', boxFinal: 3.444, boxTeeth: 'spur', boxHelix: 0, boxModule: 0, boxLimit: 325, boxFlywheel: 'single' } },
 ];
-export const CYLINDERS = [2, 3, 4, 5, 6, 8, 10, 12];
+/** 14 et 16 : seulement en V et en W (`coherentConfig`). */
+export const CYLINDERS = [2, 3, 4, 5, 6, 8, 10, 12, 14, 16];
 export { ROTOR_COUNTS } from './rotary';
 export const LIMITS = {
   displacementCc: DISPLACEMENT_LIMITS,
@@ -498,12 +500,30 @@ export function strokeMm(c: EngineConfig): number {
   return engineStroke(c);
 }
 
-/** Un rotatif n'a que 2, 3 ou 4 rotors et ne brûle que de l'essence : tout ce qui change d'architecture ou lit un lien passe par ici. */
+/** Le nombre le plus proche dans une liste, le plus grand à égalité. */
+const nearest = (list: number[], value: number) => list.reduce((best, item) => (Math.abs(item - value) <= Math.abs(best - value) ? item : best), list[0]);
+
+/**
+ * Un rotatif n'a que 2, 3 ou 4 rotors et ne brûle que de l'essence ; un VR a 5 ou 6 cylindres, un W 8, 12 ou 16, et au-delà de
+ * 12 seuls un V et un W existent : tout ce qui change d'architecture ou lit un lien passe par ici. La disposition choisie reste,
+ * le nombre de cylindres va au plus proche qui existe.
+ */
 export function coherentConfig(c: EngineConfig): EngineConfig {
-  if (!isRotary(c) || c.electric) return c;
+  if (c.electric) return c;
+  if (!isRotary(c)) {
+    const counts = c.layout === 'vr' ? VR_CYLINDERS : c.layout === 'w' ? W_CYLINDERS : c.layout === 'v' ? CYLINDERS : CYLINDERS.filter((n) => n <= 12);
+    const cylinders = counts.includes(c.cylinders) ? c.cylinders : nearest(counts, c.cylinders);
+    return cylinders === c.cylinders ? c : { ...c, cylinders };
+  }
   const cylinders = ROTOR_COUNTS.includes(c.cylinders) ? c.cylinders : 2;
   if (cylinders === c.cylinders && c.fuel === 'petrol') return c;
   return { ...c, cylinders, fuel: 'petrol' };
+}
+
+/** Les dispositions qui existent à ce nombre de cylindres : quand on le choisit, une disposition qui n'y existe pas devient un V. */
+export function layoutForCylinders(layout: Layout, cylinders: number): Layout {
+  if (layout === 'rotary') return layout;
+  return builtLayout(layout, cylinders);
 }
 
 const index = (list: { value: string }[], value: string) => list.findIndex((item) => item.value === value);

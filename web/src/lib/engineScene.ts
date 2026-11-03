@@ -622,7 +622,8 @@ export class EngineScene {
     const tilted = new THREE.Matrix4();
     for (const cylinder of layout.cylinders) {
       const base = new THREE.Matrix4().makeRotationZ(-cylinder.betaDeg * DEG);
-      base.multiply(new THREE.Matrix4().makeTranslation(0, 0, cylinder.z));
+      // Un VR ou un W : l'axe du cylindre passe à côté du vilebrequin (désaxage), tout ce qui suit l'axe se déplace avec lui.
+      base.multiply(new THREE.Matrix4().makeTranslation(cylinder.offset, 0, cylinder.z));
       this.cylinderBase.push(base);
       for (const slot of valve.slots) {
         const side = slot.exhaust ? -cylinder.intakeSide : cylinder.intakeSide;
@@ -732,7 +733,8 @@ export class EngineScene {
     const blockLength = blockFront - blockRear;
     const blockZ = (blockFront + blockRear) / 2;
     const swing = Math.max(layout.crank * 1.25 + bore * 0.1, layout.mainRadius * 1.6);
-    const blockHalf = bore * 0.66;
+    // Un VR, un W : le bloc couvre les deux rangées de chaque culasse.
+    const blockHalf = bore * 0.66 + layout.rowSpread;
     const fp = [0, 0];
     const fromBank = (beta: number, x: number, y: number): P2 => {
       bankToFront(fp, beta, x, y);
@@ -802,11 +804,12 @@ export class EngineScene {
       const length = zFrontBank - zRearBank;
       const zMid = (zFrontBank + zRearBank) / 2;
       const base = bankM(beta);
-      const W = bore * 1.04;
+      // Un VR, un W : la culasse couvre ses deux rangées, décalées de part et d'autre de son axe.
+      const W = bore * 1.04 + layout.rowSpread;
       const headTop = valve.headTop;
       // La culasse, puis le couvre-culasse, jusqu'au-dessus des cames.
       heads.transform(chainM(base, tr(0, deck, zMid))).extrude([[-W, 0], [W, 0], [W, bore * 0.85], [W * 0.92, headTop - deck], [-W * 0.92, headTop - deck], [-W, bore * 0.85]], length, 8);
-      const coverW = valve.coverW;
+      const coverW = valve.coverW + layout.rowSpread;
       const coverBottom = headTop - deck;
       const coverTop = valve.coverTop - deck;
       covers.transform(chainM(base, tr(0, deck, zMid))).extrude([[-coverW, coverBottom], [coverW, coverBottom], [coverW, coverTop - bore * 0.14], [coverW - bore * 0.18, coverTop], [-coverW + bore * 0.18, coverTop], [-coverW, coverTop - bore * 0.14]], length, 8);
@@ -821,18 +824,20 @@ export class EngineScene {
         const z = cylinder.z;
         const side = cylinder.intakeSide;
         const i = cylinder.index;
+        // Le repère du cylindre : celui de sa culasse, sauf sur un VR et un W, où chaque rangée a son axe, désaxé.
+        const own = cylinder.betaDeg === beta && cylinder.offset === 0 ? base : chainM(bankM(cylinder.betaDeg), tr(cylinder.offset, 0, 0));
         // La chemise, tube ouvert de la culasse au carter. Son haut est soulevé en un collet bien lisible.
         const liner = deck - layout.stroke - layout.pistonTop - layout.pistonBottom - bore * 0.02;
-        heads.transform(chainM(base, tr(0, 0, z))).lathe([[bore / 2 + bore * 0.015, Math.max(liner, swing * 0.8)], [bore / 2 + bore * 0.015, deck]], 32);
+        heads.transform(chainM(own, tr(0, 0, z))).lathe([[bore / 2 + bore * 0.015, Math.max(liner, swing * 0.8)], [bore / 2 + bore * 0.015, deck]], 32);
         // Le toit de la chambre, en bâtière.
         const roofOutline: P2[] = [[-bore / 2, 0], [bore / 2, 0], [0, valve.roofRise]];
-        dense.transform(chainM(base, tr(0, deck, z))).extrude(roofOutline, bore * 0.94, 5);
+        dense.transform(chainM(own, tr(0, deck, z))).extrude(roofOutline, bore * 0.94, 5);
 
-        const point = bankPoint(beta, 0, plugTipY, z + valve.plugZ);
+        const point = bankPoint(cylinder.betaDeg, cylinder.offset, plugTipY, z + valve.plugZ);
         this.sparkAt[i * 3] = point[0];
         this.sparkAt[i * 3 + 1] = point[1];
         this.sparkAt[i * 3 + 2] = point[2];
-        const local = chainM(base, tr(0, 0, z));
+        const local = chainM(own, tr(0, 0, z));
         // Sur un simple arbre, l'arbre passe au milieu : bougie ou injecteur entrent à côté de lui, penchés vers l'échappement.
         const plugFrame = chainM(local, tr(0, plugTipY, valve.plugZ), rz(side * valve.plugTiltDeg * DEG));
 
@@ -871,6 +876,8 @@ export class EngineScene {
     }
 
     // ── L'admission : un plénum, un conduit par cylindre, le papillon devant ──
+    // Le conduit part de la culasse : de son axe, que la rangée d'un VR ou d'un W n'a pas.
+    const headBeta = (cylinder: Cylinder) => (layout.banks === 1 ? 0 : cylinder.bank === 0 ? -layout.halfDeg : layout.halfDeg);
     const runnerR = bore * 0.15;
     const portY = deck + bore * 0.62;
     const W = bore * 1.04;
@@ -950,8 +957,8 @@ export class EngineScene {
       const throat = (carb.throatM * 1000) / 2;
       const height = bore * 1.0;
       for (const cylinder of layout.cylinders) {
-        const from = bankPoint(cylinder.betaDeg, cylinder.intakeSide * W, portY, cylinder.z);
-        const dir = bankDir(cylinder.betaDeg, cylinder.intakeSide, 0.1);
+        const from = bankPoint(headBeta(cylinder), cylinder.intakeSide * (W + layout.rowSpread), portY, cylinder.z);
+        const dir = bankDir(headBeta(cylinder), cylinder.intakeSide, 0.1);
         const sideways = layout.banks === 1;
         const base: P3 = sideways ? [-bore * 1.65, portY, cylinder.z] : [from[0] * (layout.flat ? 1 : 0.72), plenumY - bore * 0.3, cylinder.z];
         const axis: P3 = sideways ? [-1, 0, 0] : [0, 1, 0];
@@ -976,8 +983,8 @@ export class EngineScene {
       alloys.transform(onZ(plenumX, plenumY, (zFrontAll + zRearAll) / 2)).lathe([[0, -(zFrontAll - zRearAll) / 2 - logR * 0.5], [logR, -(zFrontAll - zRearAll) / 2], [logR, (zFrontAll - zRearAll) / 2], [0, (zFrontAll - zRearAll) / 2 + logR * 0.5]], 18, 60);
       extent([plenumX + plenumR, plenumY + plenumR, 0]);
       for (const cylinder of layout.cylinders) {
-        const from = bankPoint(cylinder.betaDeg, cylinder.intakeSide * W, portY, cylinder.z);
-        const dir = bankDir(cylinder.betaDeg, cylinder.intakeSide, 0.1);
+        const from = bankPoint(headBeta(cylinder), cylinder.intakeSide * (W + layout.rowSpread), portY, cylinder.z);
+        const dir = bankDir(headBeta(cylinder), cylinder.intakeSide, 0.1);
         const target: P3 = [plenumX, plenumY, cylinder.z];
         alloys.transform(null).tube(bendPath(from, dir, target, layout.banks === 1 ? [-1, 0, 0] : [from[0] > 0 ? -0.2 : 0.2, 1, 0]), carb ? Math.min(runnerR, logR * 0.8) : runnerR, 9);
       }

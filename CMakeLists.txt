@@ -43,6 +43,7 @@ add_library(revforge_core STATIC
   core/src/consumption.cpp
   core/src/presets.cpp
   core/src/carburetor.cpp
+  core/src/architecture.cpp
   ${GENERATED_DIR}/presets_data.inc
 )
 target_include_directories(revforge_core PUBLIC core/include PRIVATE core/src ${GENERATED_DIR})
@@ -68,7 +69,7 @@ else()
   target_link_libraries(revforge-render PRIVATE revforge_core)
 
   enable_testing()
-  add_executable(revforge_tests tests/main.cpp tests/engine_sound_test.cpp tests/engine_config_test.cpp tests/driving_model_test.cpp tests/powertrain_test.cpp tests/gearbox_test.cpp tests/acoustics_test.cpp tests/starter_test.cpp tests/shift_modes_test.cpp tests/turbo_test.cpp tests/consumption_test.cpp tests/retro_body_test.cpp tests/air_filter_test.cpp tests/turbo_pipe_test.cpp tests/anti_lag_test.cpp tests/valvetrain_test.cpp tests/supercharger_test.cpp tests/carburetor_test.cpp tests/rotary_test.cpp tests/jonctions_test.cpp)
+  add_executable(revforge_tests tests/main.cpp tests/engine_sound_test.cpp tests/engine_config_test.cpp tests/driving_model_test.cpp tests/powertrain_test.cpp tests/gearbox_test.cpp tests/acoustics_test.cpp tests/starter_test.cpp tests/shift_modes_test.cpp tests/turbo_test.cpp tests/consumption_test.cpp tests/retro_body_test.cpp tests/air_filter_test.cpp tests/turbo_pipe_test.cpp tests/anti_lag_test.cpp tests/valvetrain_test.cpp tests/supercharger_test.cpp tests/carburetor_test.cpp tests/rotary_test.cpp tests/jonctions_test.cpp tests/architecture_test.cpp)
   target_include_directories(revforge_tests PRIVATE tests/vendor core/src)
   target_link_libraries(revforge_tests PRIVATE revforge_core)
   # Avertissement d'un en-tête de la bibliothèque standard inclus par doctest.
@@ -116,4 +117,13 @@ else()
   golden(turbo_pipe_short 3898802e --preset hot_hatch_turbo --scenario turbo --turbo-pipe 150)
   golden(carb_multi 463a064f --preset carb_twin_cam --scenario blips)
   golden(carb_single 4d1f365e --preset hot_hatch_na --carb single --scenario launch --seconds 10)
+  # Les architectures : un VR6 (une culasse), un W16 et un V14 en deux lignes (culasses, intervalles inégaux), un W12 au démarreur.
+  golden(steady_vr6 dc6c1925 --preset vr6_golf --scenario steady --rpm 4000 --seconds 2)
+  golden(steady_w16 ff905d02 --cylinders 16 --layout w --cc 7993 --bore 86 --redline 6400 --exhaust sport --routing dual --scenario steady --rpm 4000 --seconds 2)
+  golden(steady_v14 1ce07227 --cylinders 14 --layout v --cc 7000 --bore 86 --redline 6000 --exhaust sport --routing dual --scenario steady --rpm 3000 --seconds 2)
+  golden(start_w12 f62d0dc4 --cylinders 12 --layout w --cc 5998 --bore 84 --redline 6500 --scenario start)
+  golden(blips_w8 efe03b28 --cylinders 8 --layout w --cc 3999 --bore 84 --redline 6400 --exhaust sport --routing dual --scenario blips)
+  # `--layout` l'emporte sur un préréglage, sur ses cylindres : le V12 en W12, même empreinte que le W12 écrit en entier.
+  golden(layout_preset 14b15d69 --preset v12 --layout w --scenario steady --seconds 1)
+  golden(layout_explicit 14b15d69 --cylinders 12 --layout w --cc 6496 --bore 94 --redline 8900 --exhaust no_muffler --routing dual --body supercar --mass 1650 --rim 21 --drive all --placement mid --insulation light --gearbox dual_clutch --scenario steady --seconds 1)
 endif()

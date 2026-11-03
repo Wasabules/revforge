@@ -15,7 +15,7 @@ import { carburetorOf, type CarbGeometry } from './carburetor';
 import type { EngineConfig, SuperchargerKind } from './config';
 import { TURBO_SCALE } from './exhaustLines';
 import { EVC, EVO, ignitionAdvance, IVC, IVO } from './fluidGas';
-import { firingOrder } from './motion';
+import { architectureOf, type Architecture } from './architecture';
 import { valveSizes } from './valves';
 
 export const DEG = Math.PI / 180;
@@ -35,40 +35,18 @@ interface Placement {
 const span = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => from + i);
 
 /**
- * L'ordre d'allumage de `FIRING_ORDERS` suppose une numérotation précise : celle du Small Block pour le V8,
- * une rangée après l'autre pour les V10 et V12 (BMW S85, Ferrari), en tour de moteur pour les V4, V6 et boxers
- * (VW, Porsche). Avec une numérotation paire/impaire partout, comme `GasNetwork.bank`, ces ordres ne donnent aucun
- * vilebrequin réel : voilà pourquoi la rangée dessinée ne suit pas toujours la parité du numéro.
+ * L'ordre d'allumage suppose une numérotation précise : celle du Small Block pour le V8, une rangée après l'autre pour les
+ * V10, V12, V14 et V16 (BMW S85, Ferrari, Cadillac) et les W (VW, SSP 248), en tour de moteur pour les V4, V6 et boxers
+ * (VW, Porsche), de l'avant vers l'arrière en zigzag pour les VR. Avec une numérotation paire/impaire partout, ces ordres ne
+ * donnent aucun vilebrequin réel : voilà pourquoi la rangée dessinée ne suit pas toujours la parité du numéro. Le placement
+ * vient de l'architecture (`architecture.ts`, recopie du C++) : chaque culasse, de l'avant vers l'arrière.
  */
-function placementOf(layout: EngineConfig['layout'], count: number, order: number[]): Placement {
-  if (layout === 'boxer') {
-    if (count % 2 === 0) {
-      // Deux cylindres opposés, à 360° d'écart dans le cycle : leurs pistons s'écartent et se rapprochent ensemble.
-      const half = count / 2;
-      const rows = span(0, half - 1).map((r) => [order[r], order[r + half]]);
-      if (count === 4) return { halfDeg: 90, a: [1, 2], b: [4, 3] };
-      if (count === 6) return { halfDeg: 90, a: [1, 2, 3], b: [6, 5, 4] };
-      return { halfDeg: 90, a: rows.map((r) => r[0]), b: rows.map((r) => r[1]) };
-    }
-    const front = Math.ceil(count / 2);
-    return { halfDeg: 90, a: span(1, front), b: span(front + 1, count) };
-  }
-  switch (count) {
-    case 2: return { halfDeg: 45, a: [1], b: [2] };
-    case 3: return { halfDeg: 30, a: [1, 2], b: [3] };
-    case 4: return { halfDeg: 30, a: [1, 2], b: [4, 3] };
-    case 5: return { halfDeg: 36, a: [1, 2, 3], b: [4, 5] };
-    case 6: return { halfDeg: 30, a: [1, 2, 3], b: [6, 5, 4] };
-    case 8:
-      // Plat : deux quatre-en-ligne qui alternent (Ferrari). Croisé : les manetons du Small Block, impairs à droite vus de face.
-      return layout === 'cross_plane' ? { halfDeg: 45, a: [2, 4, 6, 8], b: [1, 3, 5, 7] } : { halfDeg: 45, a: [1, 4, 7, 6], b: [8, 3, 2, 5] };
-    case 10: return { halfDeg: 45, a: span(1, 5), b: span(6, 10) };
-    case 12: return { halfDeg: 30, a: span(1, 6), b: span(7, 12) };
-    default: {
-      const front = Math.ceil(count / 2);
-      return { halfDeg: 45, a: span(1, front), b: span(front + 1, count) };
-    }
-  }
+function placementOf(architecture: Architecture): Placement {
+  const { cylinders, head, position } = architecture;
+  const numbers = span(1, cylinders);
+  const byPosition = (which: number) => numbers.filter((n) => head[n - 1] === which).sort((p, q) => position[p - 1] - position[q - 1]);
+  if (architecture.heads === 1) return { halfDeg: 0, a: byPosition(0), b: [] };
+  return { halfDeg: architecture.headAngleDeg / 2, a: byPosition(0), b: byPosition(1) };
 }
 
 export interface Cylinder {
@@ -82,8 +60,17 @@ export interface Cylinder {
   /** Rang dans l'ordre d'allumage, et angle du moteur à son point mort haut d'allumage (0 à 720). */
   slot: number;
   firingDeg: number;
-  /** Inclinaison de l'axe, depuis la verticale, vue de face. */
+  /** Inclinaison de l'axe, depuis la verticale, vue de face. Sur un VR ou un W, celle de sa rangée, pas de sa culasse. */
   betaDeg: number;
+  /** Rangée dans sa culasse (VR, W) : 0 du côté des β décroissants. 0 ailleurs. */
+  narrowRow: number;
+  /**
+   * Désaxage (mm, en travers dans le repère du cylindre) : l'axe passe à côté du vilebrequin, vers l'extérieur de sa culasse.
+   * 0 sauf sur un VR et un W.
+   */
+  offset: number;
+  /** Angle du maneton au point mort haut de ce cylindre : β, plus ce que le désaxage y ajoute. */
+  tdcDeg: number;
   /** Position le long du vilebrequin (mm) ; l'avant est du côté des z positifs. */
   z: number;
   /** Angle du maneton, 0 à 360. */
@@ -117,8 +104,13 @@ export interface EngineLayout {
   /** 1 ou 2 rangées. */
   banks: number;
   rows: number;
-  /** Demi-angle entre les rangées : 0 en ligne, 90 à plat. */
+  /** Demi-angle entre les rangées : 0 en ligne, 90 à plat. Sur un W, entre ses deux culasses. */
   halfDeg: number;
+  /** Angle entre les deux rangées d'une culasse (VR, W) et leur désaxage (mm) : 0 ailleurs. */
+  rowAngleDeg: number;
+  rowOffsetMm: number;
+  /** Demi-écart des deux rangées au plan de joint (mm) : de quoi élargir la culasse qui les couvre. 0 ailleurs. */
+  rowSpread: number;
   flat: boolean;
   fuel: EngineConfig['fuel'];
   /** Le carburateur, à la place du plénum et de l'injection. `null` sans carburateur. */
@@ -251,10 +243,13 @@ export function valveLift(thetaDeg: number, open: number, close: number): number
   return s * s;
 }
 
-/** Distance entre l'axe du vilebrequin et l'axe de piston, à l'angle `alphaDeg` depuis le point mort haut. */
-export function pistonDistance(crank: number, rod: number, alphaDeg: number): number {
+/**
+ * Position de l'axe de piston le long de l'axe du cylindre, depuis le pied de la perpendiculaire au vilebrequin, à l'angle
+ * `alphaDeg` du maneton depuis cet axe. `offset` : le désaxage, l'axe passant à cette distance du vilebrequin (en travers).
+ */
+export function pistonDistance(crank: number, rod: number, alphaDeg: number, offset = 0): number {
   const a = alphaDeg * DEG;
-  const s = crank * Math.sin(a);
+  const s = crank * Math.sin(a) - offset;
   return crank * Math.cos(a) + Math.sqrt(rod * rod - s * s);
 }
 
@@ -435,10 +430,15 @@ function singleCamValves(bore: number, deck: number): ValveGeometry {
 }
 
 export function engineLayout(config: EngineConfig): EngineLayout {
-  const count = config.cylinders;
-  const order = firingOrder(count);
-  const inline = config.layout === 'inline';
-  const flat = config.layout === 'boxer';
+  const architecture = architectureOf(config);
+  const count = architecture.cylinders;
+  const order = architecture.order;
+  const inline = architecture.layout === 'inline';
+  const flat = architecture.layout === 'boxer';
+  // Un VR : une culasse sur deux rangées, chaque cylindre sur sa propre manivelle, en zigzag. Un W : deux VR sur un même
+  // vilebrequin, deux bielles par manivelle comme un V.
+  const zigzag = architecture.layout === 'vr';
+  const narrow = architecture.rowAngleDeg > 0;
   const bore = config.boreMm;
   const boreCm = bore / 10;
   const strokeReal = ((config.displacementCc / count) / ((Math.PI / 4) * boreCm * boreCm)) * 10;
@@ -451,7 +451,7 @@ export function engineLayout(config: EngineConfig): EngineLayout {
   const pistonBottom = bore * 0.3;
   const deck = crank + rod + pistonTop;
 
-  const placement: Placement = inline ? { halfDeg: 0, a: span(1, count), b: [] } : placementOf(config.layout, count, order);
+  const placement: Placement = placementOf(architecture);
   const banks = placement.b.length > 0 ? 2 : 1;
   const rows = Math.max(placement.a.length, placement.b.length);
   const halfDeg = placement.halfDeg;
@@ -470,6 +470,16 @@ export function engineLayout(config: EngineConfig): EngineLayout {
     rowPitch = bore * 1.3;
     mainWidth = bore * 0.18;
     webWidth = bore * 0.12;
+  } else if (zigzag) {
+    // Les cylindres d'un VR s'emboîtent d'une rangée à l'autre : 65 mm d'un cylindre au suivant sur un VR6 de 81 mm d'alésage.
+    rowPitch = bore * 0.8;
+    mainWidth = bore * 0.2;
+    webWidth = bore * 0.1;
+  } else if (narrow) {
+    // Un W : la longueur d'un VR, deux bielles par manivelle (sept paliers pour douze cylindres, SSP 248).
+    rowPitch = bore * 1.0;
+    mainWidth = bore * 0.2;
+    webWidth = bore * 0.12;
   } else {
     rowPitch = bore * 1.22;
     mainWidth = bore * 0.28;
@@ -477,33 +487,53 @@ export function engineLayout(config: EngineConfig): EngineLayout {
   }
   const rowZ = (row: number) => ((rows - 1) / 2 - row) * rowPitch;
 
-  // Le maneton de chaque cylindre. On calcule d'abord, pour savoir qui partage quoi.
-  const pinOf = (bankSign: number, slot: number) => wrap360(bankSign * halfDeg - (slot * 720) / count);
+  // Le maneton de chaque cylindre. On calcule d'abord, pour savoir qui partage quoi : il est au point mort haut de son
+  // cylindre (son axe, plus ce qu'y ajoute le désaxage) à l'angle de son allumage.
   const slotOf = (n: number) => order.indexOf(n);
+  const rowOffset = (n: number) => (narrow ? (architecture.row[n - 1] === 0 ? -1 : 1) * architecture.rowOffsetMm : 0);
+  const tdcOf = (n: number) => {
+    const beta = architecture.axisDeg[n - 1];
+    const offset = rowOffset(n);
+    return offset === 0 ? beta : beta + Math.asin(offset / (rod + crank)) / DEG;
+  };
+  const pinFor = (n: number) => wrap360(tdcOf(n) - architecture.firingDeg[slotOf(n)]);
 
   const throws: CrankThrow[] = [];
   const cylinders: Cylinder[] = new Array(count);
   const place = (n: number, bank: number, row: number, z: number) => {
     const slot = slotOf(n);
-    const beta = banks === 1 ? 0 : (bank === 0 ? -halfDeg : halfDeg);
+    // La culasse : son inclinaison dit de quel côté est l'admission. Celle du cylindre lui-même peut s'en écarter (VR, W).
+    const headBeta = banks === 1 ? 0 : (bank === 0 ? -halfDeg : halfDeg);
     cylinders[n - 1] = {
       index: n - 1,
       number: n,
       bank,
       row,
       slot,
-      firingDeg: (slot * 720) / count,
-      betaDeg: beta,
+      firingDeg: architecture.firingDeg[slot],
+      betaDeg: architecture.axisDeg[n - 1],
+      narrowRow: architecture.row[n - 1],
+      offset: rowOffset(n),
+      tdcDeg: tdcOf(n),
       z,
-      pinDeg: pinOf(beta === 0 ? 0 : Math.sign(beta), slot),
-      // Admission au milieu du V, ou au-dessus d'un boxer ; à gauche d'un moteur en ligne.
-      intakeSide: beta < 0 ? 1 : -1,
+      pinDeg: pinFor(n),
+      // Admission au milieu du V ou du W, ou au-dessus d'un boxer ; à gauche d'un moteur en ligne ou d'un VR.
+      intakeSide: headBeta < 0 ? 1 : -1,
     };
   };
 
   let splitDeg = 0;
   let pinWidth: number;
-  if (inline || flat) {
+  if (zigzag) {
+    // Une manivelle par cylindre, en zigzag d'une rangée à l'autre : sept paliers pour six cylindres.
+    pinWidth = rowPitch - mainWidth - 2 * webWidth;
+    const half = pinWidth / 2 + webWidth;
+    placement.a.forEach((n, row) => {
+      const z = rowZ(row);
+      place(n, 0, row, z);
+      throws.push({ zFront: z + half, zRear: z - half, pins: [{ deg: cylinders[n - 1].pinDeg, z, width: pinWidth }] });
+    });
+  } else if (inline || flat) {
     // Une manivelle par cylindre, un palier entre chacune.
     const throwPitch = inline ? rowPitch : rowPitch / 2;
     pinWidth = throwPitch - mainWidth - 2 * webWidth;
@@ -531,8 +561,8 @@ export function engineLayout(config: EngineConfig): EngineLayout {
         throws.push({ zFront: z + half, zRear: z - half, pins: [{ deg: cylinders[n - 1].pinDeg, z, width: pinWidth }] });
         continue;
       }
-      const degA = pinOf(-1, slotOf(na));
-      const degB = pinOf(1, slotOf(nb));
+      const degA = pinFor(na);
+      const degB = pinFor(nb);
       const offset = Math.abs(((degB - degA + 540) % 360) - 180);
       if (offset < 1) {
         const q = pinWidth / 4;
@@ -586,6 +616,9 @@ export function engineLayout(config: EngineConfig): EngineLayout {
     banks,
     rows,
     halfDeg,
+    rowAngleDeg: architecture.rowAngleDeg,
+    rowOffsetMm: architecture.rowOffsetMm,
+    rowSpread: narrow ? deck * Math.sin((architecture.rowAngleDeg / 2) * DEG) + architecture.rowOffsetMm * Math.cos((architecture.rowAngleDeg / 2) * DEG) : 0,
     flat,
     fuel: config.fuel,
     carb: carburetorOf(config),
@@ -930,13 +963,15 @@ export class EnginePose {
       const theta = wrap720(crankDeg - cylinder.firingDeg);
       const pinDeg = cylinder.pinDeg + crankDeg;
       const alpha = pinDeg - cylinder.betaDeg;
-      const distance = pistonDistance(crank, rod, alpha);
+      const offset = cylinder.offset;
+      const distance = pistonDistance(crank, rod, alpha, offset);
       const pinRad = pinDeg * DEG;
       const betaRad = cylinder.betaDeg * DEG;
       const pinX = crank * Math.sin(pinRad);
       const pinY = crank * Math.cos(pinRad);
-      const wristX = distance * Math.sin(betaRad);
-      const wristY = distance * Math.cos(betaRad);
+      // Un axe désaxé passe à `offset` du vilebrequin, en travers : l'axe de piston y glisse.
+      const wristX = offset === 0 ? distance * Math.sin(betaRad) : offset * Math.cos(betaRad) + distance * Math.sin(betaRad);
+      const wristY = offset === 0 ? distance * Math.cos(betaRad) : -offset * Math.sin(betaRad) + distance * Math.cos(betaRad);
       this.theta[i] = theta;
       this.alpha[i] = alpha;
       this.piston[i] = distance;

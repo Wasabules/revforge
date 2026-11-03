@@ -12,6 +12,7 @@
  * (régime, remplissage, coupure, et sur un turbo le rapport de pression, la sortie du compresseur et les soupapes),
  * il ne le remplace pas et n'agit jamais sur le son. Il n'y a qu'un turbo : celui du C++.
  */
+import { architectureOf, type Architecture } from './architecture';
 import { carburetorOf } from './carburetor';
 import type { EngineConfig, Exhaust, Layout } from './config';
 import { EXHAUST_LINES, TURBO_SCALE } from './exhaustLines';
@@ -236,18 +237,30 @@ const CHARGER_INTAKE: typeof TURBO_INTAKE = [
   { kind: 'cold', length: 0.2, area: 1, drag: 0, wall: 0.1 },
 ];
 
-/** Longueur de chaque collecteur (m) : mêmes ordres de grandeur que `EngineConfig::toProfile`. */
-function headerLength(layout: Layout, cylinder: number): number {
+/**
+ * Longueur de chaque collecteur (m) : mêmes ordres de grandeur que `EngineConfig::toProfile`. Un VR, un W et plus de douze
+ * cylindres passent par leur architecture, comme `applyArchitecture` : la culasse, puis la rangée loin de l'échappement, dont le
+ * conduit traverse la culasse de l'écart des deux rangées au plan de joint (`rowGap`).
+ */
+function headerLength(layout: Layout, cylinder: number, architecture: Architecture | null, rowGap: number): number {
+  if (architecture) {
+    const head = architecture.heads === 2 ? architecture.head[cylinder] : 0;
+    const base = architecture.heads === 2 ? (head === 0 ? 0.55 : 0.72) : 0.62;
+    if (architecture.rowAngleDeg === 0) return base;
+    // L'échappement sort à droite d'une culasse seule, à l'extérieur d'un W.
+    const exhaustSide = architecture.heads === 2 ? (head === 0 ? -1 : 1) : 1;
+    const rowSide = architecture.row[cylinder] === 0 ? -1 : 1;
+    return rowSide === exhaustSide ? base : base + rowGap;
+  }
   switch (layout) {
     // Une lumière par rotor, tout de suite un court tube : `headerM` de `applyRotary`.
     case 'rotary': return 0.42;
     case 'inline': return 0.62;
-    // Socle : un VR et un W comme un V.
-    case 'v':
-    case 'vr':
-    case 'w': return cylinder % 2 === 0 ? 0.55 : 0.72;
+    case 'v': return cylinder % 2 === 0 ? 0.55 : 0.72;
     case 'cross_plane': return cylinder % 2 === 0 ? 0.5 : 0.86;
     case 'boxer': return cylinder % 2 === 0 ? 0.48 : 1.05;
+    case 'vr': return 0.62;
+    case 'w': return cylinder % 2 === 0 ? 0.55 : 0.72;
   }
 }
 
@@ -556,7 +569,11 @@ export class GasNetwork {
     this.diesel = config.fuel === 'diesel' && !rotary;
     this.flutter = config.turboRelease === 'flutter';
     this.boostBar = config.boostBar;
-    this.banks = config.layout !== 'inline' && count >= 4 && !rotary ? 2 : 1;
+    // Les culasses : une en ligne et en VR, deux en V, en W et à plat. Chaque cylindre souffle dans le collecteur de la sienne.
+    const architecture = rotary ? null : architectureOf(config);
+    this.banks = architecture && architecture.heads === 2 && count >= 4 ? 2 : 1;
+    // Un VR, un W, plus de douze cylindres : leurs collecteurs suivent leur architecture (`applyArchitecture`).
+    const own = architecture && (config.layout === 'vr' || config.layout === 'w' || count > 12) ? architecture : null;
     const filter = AIR_FILTER_GAS[config.airFilter ?? 'stock'];
     const engineAt = config.placement ?? (config.body === 'supercar' ? 'mid' : 'front');
     this.inletK = T_AMB + filter.bay * BAY_RISE_K[engineAt];
@@ -618,8 +635,11 @@ export class GasNetwork {
     const runnerArea = base * Math.min(1, 1.15 / Math.sqrt(runners));
     const runnerCells = new Int32Array(runners);
     let cells = 0;
+    // L'écart des deux rangées d'une culasse au plan de joint, comme `applyArchitecture` : bielle de 1,6 course, désaxage compris.
+    const halfRow = own ? (own.rowAngleDeg / 2) * (Math.PI / 180) : 0;
+    const rowGap = own ? 2 * ((2.1 * stroke + 0.36 * bore) * Math.sin(halfRow) + (own.rowOffsetMm / 1000) * Math.cos(halfRow)) : 0;
     for (let i = 0; i < runners; i++) {
-      runnerCells[i] = Math.max(8, Math.round(headerLength(config.layout, i) / CELL_M));
+      runnerCells[i] = Math.max(8, Math.round(headerLength(config.layout, i, own, rowGap) / CELL_M));
       cells += runnerCells[i];
     }
     this.runnerCells = runnerCells;
@@ -832,7 +852,7 @@ export class GasNetwork {
       this.zV[zone] += area * 2.5 * CELL_M;
     };
     for (let i = 0; i < runners; i++) {
-      const b = this.banks === 2 ? i % 2 : 0;
+      const b = this.banks === 2 && architecture ? architecture.head[i] : 0;
       link(runnerFirst[i] + runnerCells[i] - 1, zoneBank[b], 1, runnerArea);
     }
     if (this.banks === 2) {
@@ -929,9 +949,10 @@ export class GasNetwork {
     this.cylArmed = new Uint8Array(count).fill(1);
     this.cylWasOpen = new Uint8Array(count);
     for (let i = 0; i < count; i++) {
-      this.bank[i] = this.banks === 2 ? i % 2 : 0;
-      // Le cylindre au rang s de l'ordre d'allumage passe au point mort haut quand le cycle vaut s/N.
-      this.phase[i] = 1 - order.indexOf(i + 1) / count;
+      this.bank[i] = this.banks === 2 && architecture ? architecture.head[i] : 0;
+      // Le cylindre au rang s de l'ordre d'allumage passe au point mort haut quand le cycle vaut s/N, ou à son angle s'ils sont inégaux.
+      const slot = order.indexOf(i + 1);
+      this.phase[i] = architecture && !architecture.even && slot >= 0 ? 1 - architecture.firingDeg[slot] / 720 : 1 - slot / count;
       if (rotary) {
         // La face k du rotor au rang s explose quand l'arbre vaut s·360/rotors + 360·k, sur un cycle de 1080°.
         const rotor = Math.floor(i / 3);

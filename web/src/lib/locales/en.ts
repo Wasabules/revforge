@@ -868,6 +868,9 @@ export const en = {
   'layout.w': 'W',
   'engine.layout.vr': 'VR',
   'engine.layout.w': 'W',
+  'layout.vr.help': 'VR5 or VR6: one cylinder head over two rows only 15° apart, the cylinders staggered along the crankshaft, each on its own crankpin. As short as an inline four, as even as an inline six.',
+  'layout.w.help': 'W8, W12 or W16: two VR banks side by side on one crankshaft, two connecting rods per crankpin. Each bank has its own exhaust, and on the W8 and W16 its pulses come unevenly.',
+  'engine.caption.rows': 'rows {angle}° apart, offset {offset} mm',
   // ── Two-stroke: cycle and expansion chamber ──
   'builder.cycle': 'Cycle',
   'cycle.four_stroke': 'Four-stroke',

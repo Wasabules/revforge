@@ -101,9 +101,9 @@ test.describe('le calcul, sans navigateur', () => {
   });
 
   test('une cylindrée limite borne le curseur, et un cran demandé au-delà y revient', () => {
-    // 12 cylindres de 110 : 7000 cm³ tombent à 61,4 mm.
-    expect(strokeRange(110, 12).max).toBe(61);
-    expect(moveStroke({ displacementCc: 6000, boreMm: 110, cylinders: 12 }, 130, null).displacementCc).toBe(displacementFor(110, 12, 61));
+    // 12 cylindres de 110 : 8000 cm³ (le W16 de 7993 cm³ y tient) tombent à 70,2 mm.
+    expect(strokeRange(110, 12).max).toBe(70);
+    expect(moveStroke({ displacementCc: 6000, boreMm: 110, cylinders: 12 }, 130, null).displacementCc).toBe(displacementFor(110, 12, 70));
     // 2 cylindres de 60 : 600 cm³ font déjà 106 mm.
     expect(strokeRange(60, 2).min).toBe(106.5);
     // Ce moteur, à sa limite, n'est pas hors plage : seule la grille du curseur le sépare de son vrai réglage.
@@ -311,12 +311,13 @@ test.describe('les trois curseurs', () => {
 
   test('la plage du curseur se resserre pour tenir la cylindrée dans ses limites', async ({ page }) => {
     await open(page, '#m=12.v.6000.110.6800.stock.natural.petrol.0.off.dump_valve~compact.1350.18.front.1');
-    await expect(slider(page, STROKE)).toHaveAttribute('max', '61');
-    await slider(page, STROKE).fill('61');
-    await expect(reading(page, CC)).toHaveText('6956 cm³');
+    // 8000 cm³ au plus : 70,2 mm sur 12 cylindres de 110, 114,8 sur 12 de 86 (au demi-millimètre du curseur).
+    await expect(slider(page, STROKE)).toHaveAttribute('max', '70');
+    await slider(page, STROKE).fill('70');
+    await expect(reading(page, CC)).toHaveText('7983 cm³');
     await slider(page, BORE).fill('86');
-    await expect(slider(page, STROKE)).toHaveAttribute('max', '100');
-    await expect(reading(page, CC)).toHaveText('6956 cm³');
+    await expect(slider(page, STROKE)).toHaveAttribute('max', '114.5');
+    await expect(reading(page, CC)).toHaveText('7983 cm³');
   });
 
   test('une vitesse de piston au-delà de la limite du modèle se dit', async ({ page }) => {

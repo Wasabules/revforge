@@ -1,5 +1,7 @@
 #include "revforge/valvetrain.hpp"
 
+#include "revforge/architecture.hpp"
+
 #include <array>
 #include <cmath>
 
@@ -133,7 +135,8 @@ double sohcFrictionDeltaBar(double strokeMm, double rpm) {
 
 double sohcInertiaDelta(const EngineConfig& e) {
     // Une roue d'acier de deux fois le rayon du pignon de vilebrequin, de 8 mm d'épaisseur, qui tourne à demi-vitesse.
-    const double banks = e.layout == Layout::Inline ? 1.0 : 2.0;
+    // Un arbre par culasse : une seule sur un VR, qui couvre ses deux rangées (voir architecture.hpp).
+    const double banks = e.layout == Layout::Inline ? 1.0 : (e.layout == Layout::Vr ? static_cast<double>(architectureOf(e).heads) : 2.0);
     const double radius = 0.56 * static_cast<double>(e.boreMm) / 1000.0;
     const double r2 = radius * radius;
     const double wheel = 0.5 * 7800.0 * kPi * r2 * r2 * 0.008;

@@ -9,23 +9,13 @@ import type { Telemetry } from './engine';
 import { GasFlow, gasKey } from './fluid';
 import { ANTI_LAG_CODE, GasNetwork, antiLagFires, type GasInputs } from './fluidGas';
 import { GasPainter } from './fluidRender';
+import { architectureOf, firingOrderOf } from './architecture';
 import { firingsPerCycle, isRotary } from './rotary';
 
 export const SLOW_MOTION = 12;
 
-/** Cylindres dans l'ordre où ils s'allument (numérotés à partir de 1). */
-export const FIRING_ORDERS: Record<number, number[]> = {
-  2: [1, 2],
-  3: [1, 3, 2],
-  4: [1, 3, 4, 2],
-  5: [1, 2, 4, 5, 3],
-  6: [1, 5, 3, 6, 2, 4],
-  8: [1, 8, 4, 3, 6, 5, 7, 2],
-  10: [1, 6, 5, 10, 2, 7, 3, 8, 4, 9],
-  12: [1, 7, 5, 11, 3, 9, 6, 12, 2, 8, 4, 10],
-};
-
-export const firingOrder = (cylinders: number) => FIRING_ORDERS[cylinders] ?? FIRING_ORDERS[4];
+/** Les ordres d'allumage : ceux de l'architecture (`architecture.ts`), qui sait aussi ceux d'un VR et d'un W. */
+export { FIRING_ORDERS, firingOrder } from './architecture';
 
 /** Une bouffée qui parcourt la ligne. `burnt` faux : de l'air pompé, sans combustion. */
 export interface Pulse {
@@ -343,7 +333,7 @@ export class Motion {
     if (key !== this.meterKey) {
       this.meterKey = key;
       this.meterNet ??= new GasNetwork();
-      this.meterNet.build(config, firingOrder(config.cylinders));
+      this.meterNet.build(config, firingOrderOf(config));
       if (this.rpm > 300) this.meterNet.prefill(this.heat);
     }
     if (this.rpm <= 20 || seconds <= 0) return;
@@ -357,7 +347,7 @@ export class Motion {
   private advanceGas(seconds: number, before: number, turns: number, config: EngineConfig): void {
     if (config !== this.gasConfig) {
       this.gasConfig = config;
-      this.gas.configure(config, firingOrder(config.cylinders), this.rpm > 300, this.heat);
+      this.gas.configure(config, firingOrderOf(config), this.rpm > 300, this.heat);
     }
     const inputs = this.gasInputs;
     inputs.rpm = this.rpm;
@@ -391,27 +381,44 @@ export class Motion {
   private emit(before: number, turns: number, config: EngineConfig): void {
     // Sur un rotatif, deux explosions par rotor en deux tours : on repasse par l'ordre d'allumage des rotors.
     const count = firingsPerCycle(config);
-    const order = firingOrder(config.cylinders);
-    const banks = config.layout !== 'inline' && !isRotary(config) && count >= 6 ? 2 : 1;
-    const from = Math.floor(before * count);
-    const crossings = Math.floor((before + turns) * count) - from;
-    for (let i = 1; i <= crossings; i++) {
-      const slot = (from + i) % count;
-      const cylinder = order[slot % order.length] - 1;
-      this.lastCylinder = cylinder;
-      this.sinceFiring = 0;
-      const push = 0.3 + 0.7 * this.load + 0.25 * this.boost * config.boostBar;
-      // La coupure de cylindres : au même rythme que le son, certaines explosions manquent.
-      const fires = this.burning && !(this.antiLag && config.antiLag === 'cut' && !antiLagFires(this.antiLagEvent++));
-      this.pulses.push({
-        at: 0,
-        strength: fires ? Math.min(push, 1.4) : 0.18,
-        heat: fires ? 0.3 + 0.7 * this.load : 0,
-        burnt: fires,
-        bank: cylinder % banks,
-      });
+    const rotary = isRotary(config);
+    const architecture = rotary ? null : architectureOf(config);
+    const order = architecture ? architecture.order : firingOrderOf(config);
+    // Deux lignes dessinées sur deux culasses, au-delà de quatre cylindres : chaque bouffée part dans celle de sa culasse.
+    const banks = architecture && architecture.heads === 2 && count >= 6 ? 2 : 1;
+    if (architecture && !architecture.even) {
+      // Des intervalles inégaux (le V14) : chaque rang a son propre instant dans le cycle.
+      for (let slot = 0; slot < count; slot++) {
+        const at = architecture.firingDeg[slot] / 720;
+        const crossings = Math.floor(before + turns - at) - Math.floor(before - at);
+        const cylinder = order[slot] - 1;
+        for (let k = 0; k < crossings; k++) this.pulse(cylinder, banks === 2 ? architecture.head[cylinder] : 0, config);
+      }
+    } else {
+      const from = Math.floor(before * count);
+      const crossings = Math.floor((before + turns) * count) - from;
+      for (let i = 1; i <= crossings; i++) {
+        const slot = (from + i) % count;
+        const cylinder = order[slot % order.length] - 1;
+        this.pulse(cylinder, banks === 2 && architecture ? architecture.head[cylinder] : 0, config);
+      }
     }
     if (this.pulses.length > MAX_PULSES) this.pulses.splice(0, this.pulses.length - MAX_PULSES);
+  }
+
+  private pulse(cylinder: number, bank: number, config: EngineConfig): void {
+    this.lastCylinder = cylinder;
+    this.sinceFiring = 0;
+    const push = 0.3 + 0.7 * this.load + 0.25 * this.boost * config.boostBar;
+    // La coupure de cylindres : au même rythme que le son, certaines explosions manquent.
+    const fires = this.burning && !(this.antiLag && config.antiLag === 'cut' && !antiLagFires(this.antiLagEvent++));
+    this.pulses.push({
+      at: 0,
+      strength: fires ? Math.min(push, 1.4) : 0.18,
+      heat: fires ? 0.3 + 0.7 * this.load : 0,
+      burnt: fires,
+      bank,
+    });
   }
 
   /** La vitesse de l'arbre, calculée par le bilan de puissance du modèle de conduite. */

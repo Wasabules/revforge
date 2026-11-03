@@ -1,5 +1,7 @@
 #include "revforge/driving_model.hpp"
 
+#include "revforge/architecture.hpp"
+
 #include "portable_math.hpp"
 
 #include <algorithm>
@@ -787,11 +789,15 @@ double DrivingModel::compressionLoadNm() const {
     constexpr double kCrankPolytropic = 1.13;
     constexpr double kExpansionReturn = 0.8;
     double load = 0.0;
-    const int count = powertrain_.engine.cylinders;
+    // Un VR, un W, plus de douze cylindres : les compressions tombent aux vrais intervalles, inégaux s'ils le sont.
+    const bool own = ownArchitecture(powertrain_.engine);
+    const Architecture architecture = own ? architectureOf(powertrain_.engine) : Architecture{};
+    const int count = own ? architecture.cylinders : powertrain_.engine.cylinders;
     // Segments, soupapes : aucun cylindre ne comprime tout à fait comme son voisin.
     constexpr double kCylinderSeal[6] = {1.0, 0.88, 1.07, 0.93, 1.1, 0.85};
     for (int i = 0; i < count; ++i) {
-        const double phi = std::fmod(crankAngle_ + 4.0 * kPi * i / count, 4.0 * kPi);
+        const double lead = own ? 4.0 * kPi * (1.0 - architecture.firingDeg[static_cast<std::size_t>((count - i) % count)] / 720.0) : 4.0 * kPi * i / count;
+        const double phi = std::fmod(crankAngle_ + lead, 4.0 * kPi);
         const bool compressing = phi >= 3.0 * kPi;
         if (!compressing && phi >= kPi) continue;
         const double volume = clearance + swept * 0.5 * (1.0 - portable::cos(phi));
