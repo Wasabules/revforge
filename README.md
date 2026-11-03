@@ -13,6 +13,7 @@ There are no audio samples. Everything you hear is computed sample by sample fro
 ## What you can do
 
 - **Build the engine.** Cylinders (2 to 12), layout, displacement, bore and stroke (the slider adjusts the displacement), redline, petrol or diesel, injection or carburetors, a turbo with its size and boost, and an air filter (stock paper, sport panel, open cone, velocity stacks). Power, torque, 0–100 km/h and top speed all follow from these settings; none of them is typed in by hand. Turbo lag comes from a real shaft power balance, and you feel it in the car.
+- **Choose the valvetrain.** Twin cam, single cam or pushrods (cam in the block, hydraulic lifters, rocker arms), with stock or stiff valve springs. The valves float at a speed computed from the moving mass, the cam's deceleration and the spring: beyond it, filling drops, combustion turns ragged and the valves clatter on their seats.
 - **Or a supercharger.** Roots, twin-screw or centrifugal, driven by a belt: pressure from low revs or only near the top, no shaft to spin up, its power taken from the crank, and a whine that follows the engine.
 - **Choose the exhaust.** Comfort, stock, no resonator, sport, muffler delete or straight pipe, with one or two outlets and an H or X pipe on V engines. Each line is computed from its geometry.
 - **Choose the gearbox, independently of the engine.** Synchromesh, dog box, sequential, dual clutch or torque converter; number of gears, ratios built from real tooth counts, final drive, helical or straight-cut gears, single or dual-mass flywheel. A badly matched gearbox has real consequences: you can stall, run out of speed, or break it.
@@ -113,7 +114,8 @@ Known limits:
 - Telling front from back on headphones is weak: the stereo model has no HRTF.
 - The idle of the sporty 4-cylinder scores outside the range of real engines in the comparator, and is too choppy.
 - At full throttle, the limiter narrows the gap between exhaust lines: about 6 dB as played for about 22 dB estimated from stock to straight pipe.
-- The 2D and 3D views simplify some mechanics (schematic automatic, approximate dual clutch, no pushrod valvetrain: twin or single overhead cam only) and have not all been checked on many graphics cards. Without a GPU, 3D falls back to a coarser look and runs slowly; the 2D switch stays smooth.
+- The 2D and 3D views simplify some mechanics (schematic automatic, approximate dual clutch, a pushrod head always drawn as a wedge with its valves in line) and have not all been checked on many graphics cards.
+- Valve float comes from a one-degree-of-freedom valvetrain whose stock springs are sized for the redline with an assumed margin: about 11 % above it on every preset. The pushrod tick and the clatter of floating valves have not been listened to yet. Without a GPU, 3D falls back to a coarser look and runs slowly; the 2D switch stays smooth.
 - Estimated fuel consumption reads about 15 to 25% high against official figures, and oil is an order of magnitude within a factor of three.
 - At equal displacement, the stroke only changes torque above 24 m/s of piston speed, and never changes friction, inertia or consumption.
 - Carburetors are always warm: no choke and no cold start, since nothing computes temperature. Several film and noise constants are assumed.

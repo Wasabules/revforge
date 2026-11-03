@@ -1063,3 +1063,86 @@ such as the Cobra.
 
 The render is bit-identical between native and WebAssembly: calculations in `double` rounded to `float`, frozen order of random draws, no floating-point
 contraction, fixed-step physics. Parity with the original Kotlin version (CANCitroen) was abandoned during this rework. `tools/compare_wav.py` compares two renders.
+
+## Pushrods and valve float
+
+`Camshaft::Ohv` no longer passes for a single cam: one camshaft in the block for the whole engine, hydraulic lifters, pushrods, 1.6 rocker arms and two valves in line under a wedge head. Valve float applies to every valvetrain. Everything lives in `core/src/valve_float.cpp` (pure functions) and `core/src/valvetrain_sound.cpp` (the two noises, each with its own generator). `revforge-render --valves 1` prints the valvetrain of a setting.
+
+**The parts, seen from the valve.** The spring sees the equivalent mass m = m_valve + m_retainer + m_spring/3 + m_bucket + I_rocker/L² + (m_lifter + m_pushrod)/R², R being the rocker ratio: what sits on the cam side moves R times slower. A valve weighs like a solid head 6.5 mm thick (44 g at 33 mm, 103 g at 50.8 mm, the order of real valves, from memory); retainer 18 %, spring 90 % (a third moves), bucket 70 %, single-cam rocker 80 %, stamped rocker 60 %, lifter 85 % of the valve (assumed from common parts). An arm pivoting between its ends gives I/L² = m (R² − R + 1)/(3R²). The pushrod is 2.1 strokes long (183 mm on a small block, 188 on an LS), a tube 0.155 times the head (6 mm at least) bored to 60 %. Stiffnesses add in series, seen from the valve: stem E·A/L, cam and bucket 30 kN/mm, rocker arm 12 kN/mm, the lifter's oil column 40 kN/mm and the pushrod E·A/L, these last two multiplied by R² (assumed orders of magnitude). Hence f_n = √(k/m)/2π:
+
+| 2 L, 86 × 86 | Moving mass | Natural frequency | Spring seated, open |
+|---|---:|---:|---:|
+| Twin cam | 94 g | 2.2 kHz | 231 N, 579 N |
+| Single cam | 117 g | 1.15 kHz | 287 N, 717 N |
+| Pushrods | 147 g | 800 Hz | 361 N, 903 N |
+| LS1, 99 × 92, 6000 rpm | 203 g | 716 Hz | 489 N, 1222 N (110 and 275 lb) |
+| Small block 350, 101.6 × 88.4, 5500 rpm | 215 g | 708 Hz | 445 N, 1113 N (100 and 250 lb) |
+
+Published springs (from memory): 80 and 200 lb on a stock small block, 76 to 85 and 220 to 240 lb on an LS1, 105 and 280 lb on an LS6. The model sits 20 to 25 % above the small block, between the two LS. Published natural frequencies are 2 to 3 kHz for direct acting and 500 to 900 Hz for pushrods.
+
+**Nose deceleration.** The lift law accelerates as a half sine on each flank, then decelerates as a half sine over the middle 60 % of the event (assumed: a road cam decelerates over half to two thirds of its event, less hard than it accelerates). Lift is L = v_max·T·s with s = (1 − f)/4 + f/π, f = 0.6, and the nose deceleration a = π·v_max/(f·T), so a = π·L·ω²/(f·s·D²) ≈ 18·L·ω²/D², D being the duration in crank radians. It follows the square of engine speed. The stock cam lifts 0.12 bore (`valvetrain.cpp`) over 240° (the sound, `kEvo` to `kEvc`): 613 g at the nose at 7200 rpm on an 86 mm bore, the order of road cams.
+
+**The stock spring.** The maker sizes it kinematically for the stock cam: at full lift, F = 1.25·m·a(redline), and the seated force is 2.5 times less (80 and 200 lb, 105 and 280 lb). The valvetrain's compliance is not in it: that is what separates the valvetrains. A higher redline means a stronger spring: the preset describes the engine as its maker revved it.
+
+**Valve float speed.** The valve leaves the cam when inertia, amplified by the valvetrain, exceeds the spring at the nose. To first order, the deceleration seen by the valve is a/(1 − (f_d/f_n)²), f_d = 1/(2·f·T) being the frequency of the deceleration half sine. Hence m·α·N²/(1 − β·N²) = F, so N² = F/(m·α + β·F), with a = α·N² and (f_d/f_n)² = β·N². With the stock spring, N_f = N_r·√(1.25/(1 + 1.25·β·N_r²)): the maker's margin, minus what the valvetrain takes from it. `valveFloatRpm(const EngineConfig&)` gives it; the rev limiter and the cam will read it.
+
+| Preset, stock springs | Redline | Valve float | Margin |
+|---|---:|---:|---:|
+| `city_14` | 6200 | 6921 | +11.6 % |
+| `four_cyl_sport` | 7200 | 8027 | +11.5 % |
+| `three_cyl_turbo` | 6000 | 6698 | +11.6 % |
+| `hot_hatch_turbo` | 6500 | 7252 | +11.6 % |
+| `hot_hatch_na` | 7300 | 8140 | +11.5 % |
+| `five_cyl_turbo` | 7000 | 7807 | +11.5 % |
+| `inline_six` | 8000 | 8913 | +11.4 % |
+| `v6_gt` | 6500 | 7251 | +11.5 % |
+| `flat_six` | 7800 | 8682 | +11.3 % |
+| `boxer_four_turbo` | 6800 | 7578 | +11.4 % |
+| `v8_cross_plane` | 6000 | 6692 | +11.5 % |
+| `v10_open` | 8500 | 9467 | +11.4 % |
+| `v12` | 8900 | 9901 | +11.2 % |
+| `diesel_four` | 4500 | 5026 | +11.7 % |
+| `retro_coupe` (single cam) | 6400 | 7099 | +10.9 % |
+| `v8_supercharged` | 6400 | 7133 | +11.5 % |
+| `carb_twin_cam` | 6400 | 7140 | +11.6 % |
+| `twin_rotor_13`, `electric` | — | no valves | — |
+
+All stay 11 to 12 % above their redline, where the limiter cuts: nothing changes by default, and the 29 fingerprints held. That is the order of known float speeds, 5 to 15 % above the limiter; the LS1 comes out at 6584 rpm for 6000, its stock springs being quoted good to about 6300 to 6500. On pushrods, the valvetrain takes one or two more points of the margin (+7.9 to +10.9 % on the same engines): they can rev high, but with much stronger springs, which rub.
+
+A sharper cam on its stock springs lowers valve float: on `hot_hatch_na`, 12.5 mm of lift over 200° bring it down to 6490 rpm, below the redline; stiff springs raise it back to 7394. The adjustable cam reads these figures through `camLobeOf` (`camLiftMm`, `camDurationDeg`, 0 for stock); the spring stays the one sized for the stock cam.
+
+**Stiff springs.** 30 % more force, seated as open (24 to 50 % on common aftermarket springs): valve float rises by about √1.3, 13 to 14 %. Cam follower friction follows the load, so 30 % more of it: +0.03 bar at 6000 rpm on a 2 L with an 86 mm stroke, 1 to 4 % of total friction, more at idle where the cam weighs most. Like the rest of the valvetrain friction, it is taken from brake torque in `breathing` (against 12 bar of indicated mean pressure, like `sohcBreathingRatio`) and added to `frictionTorqueNm`, which driving and fuel read.
+
+**Beyond valve float.** The force needed exceeds the spring by a ratio ρ = (N/N_f)²·(1 − β·N_f²)/(1 − β·N²). The valve now decelerates at only 1/ρ of what the cam asks: it stays in the air ρ times longer, and the intake closes late by Δθ = f·D·(ρ − 1), capped by the closing flank ((1 − f)·D/2, 48° stock). The piston rises meanwhile and pushes the charge back: the cylinder keeps V(closing + Δθ)/V(closing), with a rod of 1.6 strokes and the stock compression ratio. The valve lands at v_flank·(1 − 1/ρ), v_flank = L·ω/(s·D), instead of the closing ramp speed (0.013 mm per degree, assumed), and bounces: each bounce keeps e = 0.5 of the speed (assumed) and lasts 2·e·m·v/F₀. Bouncing is chaotic: each cycle keeps its charge within ± the mean loss. On `hot_hatch_na`, 10 % beyond: 30° late, 79 % of the charge kept, landing at 1.3 m/s for 0.7 m/s on the ramp. The torque curve dives (`valveFloatShare`, exactly 1 below), and the sound follows.
+
+**Pushrod friction and inertia.** Twin-cam follower friction follows Patton, Nitschke and Heywood (C = 133, see "The single cam"); the single cam has 50 % more. Since the spring is sized on the moving mass, and the cam sees it multiplied by the ratio, pushrods have (m·R)_pushrods/(m·R)_single cam times the single cam's: 2.2 times the twin cam on the 2 L, 0.144 bar at the redline against 0.067 and 0.100. That is 3 to 10 % of total friction, most at idle. One camshaft in the block for the whole engine instead of two per bank: −0.1 to −0.3 % inertia. Lifters and pushrods reciprocate: their energy, referred to the crank, weighs less than 10⁻⁵ kg·m², neglected.
+
+**Pushrod breathing.** Two valves in line along the crankshaft are bounded by the same edge and the same bridge as two valves across the bore: the same section as the single cam, so the same high-rpm drop, the same lower tuning, the same longer blowdown. What really sets a pushrod head apart is not modelled: ports pinched by the pushrods, the wall shrouding in-line valves, the hemispherical head of a Hemi.
+
+| Engine | Valvetrain | Peak torque | Peak power | 0–100 km/h | WLTC | Valve float |
+|---|---|---|---|---|---|---|
+| 2 L, 86 × 86, 6500 rpm, 1200 kg compact | twin | 168.5 Nm at 3900 | 89.9 kW at 5950 | 9.95 s | 8.40 L | 7251 |
+| | single | 166.9 Nm at 3050 | 79.7 kW at 5700 | 10.38 s | 8.48 L | 7205 |
+| | pushrods | 166.2 Nm at 3050 | 79.5 kW at 5700 | 10.40 s | 8.58 L | 7140 |
+| | pushrods, stiff springs | 165.6 Nm at 3100 | 79.2 kW at 5700 | 10.44 s | 8.69 L | 8099 |
+| `hot_hatch_na` | twin | 194.1 Nm at 4500 | 117.8 kW at 6750 | 8.72 s | 9.07 L | 8140 |
+| | pushrods | 188.2 Nm at 3400 | 95.8 kW at 6100 | 9.44 s | 9.16 L | 7985 |
+| | pushrods, stiff springs | 187.5 Nm at 3400 | 95.5 kW at 6100 | 9.46 s | 9.25 L | 9047 |
+| `v8_cross_plane` | twin | 428.9 Nm at 3700 | 214.0 kW at 5550 | 6.95 s | 13.90 L | 6692 |
+| | single | 424.0 Nm at 3000 | 194.5 kW at 5400 | 6.78 s | 14.13 L | 6646 |
+| | pushrods | 422.3 Nm at 3000 | 193.8 kW at 5400 | 6.78 s | 14.35 L | 6592 |
+| | pushrods, stiff springs | 420.7 Nm at 3000 | 193.1 kW at 5400 | 6.78 s | 14.56 L | 7478 |
+
+Against the single cam, pushrods only lose their friction: −0.4 % torque, +1 to +1.6 % on the WLTC. Against the twin cam, the two-valve section costs most. A real pair: the 1992 Corvette's LT1 pushrod V8 (101.6 × 88.4, limiter near 5700), 224 kW at 5000 and 461 Nm at 3600; the ZR-1's twin-cam LT5 (99 × 93, 7000), 280 kW at 5800, later 302 kW (figures from memory). The model gives 208 kW at 5200 and 472 Nm at 2850 for the first, 315 kW at 6450 and 542 Nm at 4350 for the second: a ratio of 1.52 instead of 1.25 to 1.35. The direction is right, the gap too large: the LT5's higher redline also raises its mean pressure (`naturalBmep`), and the LT1 had its own ports and cam. Nothing was tuned to match these figures.
+
+**Lifter noise.** At each opening, the lifter body, pushed by the cam on its ramp, takes up the plunger's leak-down travel and strikes everything above it: pushrod, rocker and valve, seen from the lifter multiplied by R². The impulse is μ·v, μ being the reduced mass of both sides and v the ramp speed divided by the ratio. Against the single cam's rocker taking up its lash on the stem (`kRockerShare`, the only assumed level in this chain), it is 1.79 times stronger on the V8: +5 dB. The blow rings the pushrod in bending, at the second mode of a pinned beam, 4·(π/2L²)·√(EI/ρA): 2.1 kHz on the V8, 1.9 to 2.9 kHz on published engines. It radiates through the valve cover, like the rocker, from its own generator. Measured against the single cam at idle (800 rpm): relief of the blow's band in 1 ms windows +2.6 dB under the hood, −0.04 dB outside, and the 8–16 kHz band against 500–2000 Hz does not move outside (−66.91 dB against −66.91). The blow does not get in front of the exhaust. A mechanical take-up (solid lifters with lash) would strike harder; the model assumes hydraulic lifters, whose oil film is not modelled otherwise.
+
+**The sound of valve float.** Less charge means weaker blowdowns; chaotic bouncing, uneven cycles; a valve landing fast, a seat that clatters. The clatter follows the landing speed (impulse m·v), against the seat's stock tick, set at idle where the valve lands at that speed's ramp velocity, from its own generator; it finishes its bounces when revs drop. Measured on `hot_hatch_na` against the same engine whose valves would never float: 15 % beyond (9361 rpm), −2.4 dB(A) outside and a cycle-to-cycle energy spread of 0.33 instead of 0.18; 25 % beyond, +1.7 dB under the hood between 6 and 12 kHz. Below valve float, the sound is identical to the bit (test). When driving, the limiter stops the engine before stock valve float: it is only heard with a sharper cam, or a downshift that over-revs the engine.
+
+**What other subjects read and what this exposes.** Exposed: `valveFloatRpm(const EngineConfig&)` (0 without valves), and for a given setting `valvetrainParts`, `valveSpringOf`, `noseDecelerationMs2`, `valvetrainProfileOf`, `floatOverload`, `floatTrappedShare`, `valveFloatShare`. Read as parameters: `camLiftMm` and `camDurationDeg` (`camLobeOf`, 0 for stock), from which intake closing follows symmetrically about the cam axis (50° after bottom dead centre stock); `compressionRatio` (0: the starter's rule). A rotary and a two-stroke have no valves (`hasValves`): none of this applies to them.
+
+**What is assumed, and what is missing.** A one-degree-of-freedom valvetrain, amplified to first order: no pushrod bounce, no hydraulic lifter pump-up when the valve floats (it would hold the valve open), no camshaft bending. The 1.25 margin, the lift law, the part shares and the stiffnesses are assumed, set from a few parts known from memory. The lighter exhaust valve is not computed separately: the intake floats first. Residual gas from a late exhaust closing is not counted. The view always draws a wedge head with in-line valves.
+
+**On screen.** `engineLayout` places the cam in the block from the layout: at the bottom of the V, above the counterweights, or on the intake flank of an inline engine (`blockCamPosition`). The rockers reuse the single cam's lever, flipped: the stem leans towards the exhaust, the pushrod rises on the intake side, and the lifter axis aims at the pad at mid-lift. The lifter rises by the lift divided by the ratio (`lifterTop`), the pad follows the rocker's exact angle (`rockerPad`), and the pushrod joins them: its length varies by less than 3 % of the bore over a cycle (`culbuteurs.spec.ts`). The on-screen gas keeps the two-valve section (`twoValves`, `valves.ts`). The valvetrain panel shows the valve float speed, the moving mass and the springs computed by the C++ (`rf_valve_sheet`).
+
+**Listening still to do.** Lifter tick: `revforge-render --out idle_pushrods.wav --preset v8_cross_plane --cam ohv --scenario steady --rpm 800 --listener bay`, against `--cam sohc` and `--cam dohc`, then outside (`--listener outside`). Valve float: `revforge-render --out float.wav --preset hot_hatch_na --cam-lift 12.5 --cam-duration 200 --scenario lap`, against `--springs stiff`, and `--scenario steady --rpm 9000 --listener bay` against 7500.

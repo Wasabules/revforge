@@ -216,6 +216,26 @@ export interface ValveGeometry {
   plugTiltDeg: number;
   /** Les culbuteurs d'un simple arbre, du côté +1 : l'autre côté s'en déduit par un demi-tour. */
   rocker: RockerGeometry | null;
+  /**
+   * Soupapes en ligne (culbuteurs) : les deux d'un cylindre ont la même place en travers, du côté de l'échappement en repère de
+   * rangée, et ne diffèrent que le long du vilebrequin. Voir `valveSide`.
+   */
+  inline: boolean;
+  /** L'arbre dans le bloc, ses poussoirs et ses tiges : `null` sur un arbre en tête. */
+  pushrod: PushrodGeometry | null;
+}
+
+/**
+ * Une distribution à culbuteurs, en repère de rangée et en unités de côté (+1 vers l'échappement, comme `valveSide`) : la came
+ * est dans le bloc (`camX`, `camY`), un poussoir y repose dans son alésage, une tige monte de lui au patin du culbuteur.
+ */
+export interface PushrodGeometry {
+  /** L'axe de l'alésage du poussoir, de la came vers le culbuteur (vecteur unitaire). */
+  axisX: number;
+  axisY: number;
+  lifterRadius: number;
+  lifterLength: number;
+  rodRadius: number;
 }
 
 export interface ValveSlot {
@@ -372,6 +392,8 @@ function twinCamValves(bore: number, deck: number): ValveGeometry {
     plugZ: 0,
     plugTiltDeg: 0,
     rocker: null,
+    inline: false,
+    pushrod: null,
   };
 }
 
@@ -431,7 +453,128 @@ function singleCamValves(bore: number, deck: number): ValveGeometry {
     plugZ: bore * 0.3,
     plugTiltDeg: 30,
     rocker: { pivotX, pivotY, tipArm, padArm, ratio: tipArm / padArm, tipDeg, padDeg, contactDeg, width: bore * 0.09, seatAlong },
+    inline: false,
+    pushrod: null,
   };
+}
+
+/** Le rapport des culbuteurs d'un moteur à tiges : `kOhvRatio` de core/src/valve_float.cpp. */
+export const PUSHROD_ROCKER_RATIO = 1.6;
+
+/**
+ * L'arbre dans le bloc, en repère de rangée et en unités de côté (+1 vers l'échappement) : au fond du V, au-dessus du vilebrequin
+ * (tout un moteur n'en a qu'un, que les deux rangées voient du même point) ; sur le flanc d'admission d'un moteur en ligne, sous
+ * les cylindres. Il laisse passer les manivelles et leurs contrepoids.
+ */
+export function blockCamPosition(bore: number, crank: number, deck: number, stroke: number, banks: number, halfDeg: number): { x: number; y: number; base: number } {
+  const base = bore * 0.15;
+  const lobe = (bore * 0.115) / PUSHROD_ROCKER_RATIO;
+  const swing = Math.max(crank * 1.25 + bore * 0.1, bore * 0.29 * 1.6);
+  const clear = swing + base + lobe + bore * 0.06;
+  if (banks === 2) {
+    const h = halfDeg * DEG;
+    return { x: -clear * Math.sin(h), y: clear * Math.cos(h), base };
+  }
+  // En ligne : à côté des chemises, sous leur bas, sans toucher aux manivelles.
+  const x = bore * 0.62;
+  const linerBottom = deck - stroke - bore * 0.68;
+  const y = Math.max((swing + linerBottom) / 2, Math.sqrt(Math.max(clear * clear - x * x, 0)));
+  return { x: -x, y, base };
+}
+
+/**
+ * Des culbuteurs : un seul arbre dans le bloc, des poussoirs, des tiges, et deux soupapes en ligne sous une culasse en coin. Le
+ * repère est celui du simple arbre, retourné : +x vers l'échappement, où penche la queue ; le culbuteur bascule entre elle et la
+ * tige, qui monte du côté de l'admission. Son rapport est celui du C++ ; ses bras sont perpendiculaires à la queue et à la tige
+ * à mi-levée, comme `singleCamValves`. La position exacte du patin dépend de la direction de la tige, qui dépend du patin :
+ * quelques itérations suffisent.
+ */
+function pushrodValves(bore: number, deck: number, cam: { x: number; y: number; base: number }): ValveGeometry {
+  // Un culbuteur long (0,68 alésage d'un bout à l'autre, 65 mm sur un Small Block) : la tige monte hors de l'alésage, à côté de lui.
+  const tiltDeg = 6;
+  const tilt = tiltDeg * DEG;
+  const valveX = -bore * 0.12;
+  const seatRise = (bore * 0.5 + valveX) * Math.tan(tilt);
+  const stem = bore * 1.15;
+  const lift = bore * 0.115;
+  const sizes = valveSizes('ohv', bore);
+  const tipArm = bore * 0.42;
+  const padArm = tipArm / PUSHROD_ROCKER_RATIO;
+  const halfTurn = Math.asin(lift / 2 / tipArm) / DEG;
+  const tipDeg = -tiltDeg + halfTurn;
+  const tipX = valveX + Math.sin(tilt) * stem;
+  const tipY = deck + seatRise + Math.cos(tilt) * stem;
+  const pivotX = tipX - tipArm * Math.cos(tipDeg * DEG);
+  const pivotY = tipY - tipArm * Math.sin(tipDeg * DEG);
+  let contactDeg = 0;
+  let padDeg = 180 + halfTurn;
+  for (let k = 0; k < 4; k++) {
+    const padX = pivotX + padArm * Math.cos(padDeg * DEG);
+    const padY = pivotY + padArm * Math.sin(padDeg * DEG);
+    contactDeg = Math.atan2(padX - cam.x, padY - cam.y) / DEG;
+    padDeg = 180 - contactDeg + halfTurn;
+  }
+  const padX = pivotX + padArm * Math.cos(padDeg * DEG);
+  const camLift = (lift * padArm) / tipArm;
+  const seatAlong = stem - tipArm * Math.sin(halfTurn * DEG);
+  const reach = Math.max(Math.abs(tipX), Math.abs(padX));
+  return {
+    tiltDeg,
+    x: valveX,
+    // En ligne le long du vilebrequin : les deux têtes, et le pont qui les sépare.
+    zOffset: (sizes.intakeMm + sizes.exhaustMm) / 4 + 2.5,
+    seatRise,
+    radiusIn: sizes.intakeMm / 2,
+    radiusEx: sizes.exhaustMm / 2,
+    stem,
+    stemRadius: bore * 0.032,
+    lift,
+    camBase: cam.base,
+    camFromSeat: stem,
+    camX: cam.x,
+    camY: cam.y,
+    roofRise: bore * 0.5 * Math.tan(tilt),
+    sohc: true,
+    perCylinder: 2,
+    slots: [{ exhaust: false, zSign: 1 }, { exhaust: true, zSign: 1 }],
+    followerDeg: contactDeg + 180,
+    camLift,
+    headTop: deck + Math.max(bore * 0.9, seatRise + stem * 0.62),
+    coverW: reach + bore * 0.2,
+    coverTop: Math.max(pivotY, tipY) + bore * 0.26,
+    plugZ: 0,
+    plugTiltDeg: 35,
+    rocker: { pivotX, pivotY, tipArm, padArm, ratio: PUSHROD_ROCKER_RATIO, tipDeg, padDeg, contactDeg, width: bore * 0.09, seatAlong },
+    inline: true,
+    pushrod: { axisX: Math.sin(contactDeg * DEG), axisY: Math.cos(contactDeg * DEG), lifterRadius: bore * 0.105, lifterLength: bore * 0.42, rodRadius: bore * 0.04 },
+  };
+}
+
+/**
+ * Le côté de la rangée où se trouvent une soupape et sa commande (−1 ou +1) : celui de son conduit sur un arbre en tête ; celui
+ * de l'échappement, pour les deux, sous des culbuteurs (`ValveGeometry.inline`).
+ */
+export function valveSide(valve: ValveGeometry, cylinder: Cylinder, exhaust: boolean): number {
+  if (valve.inline) return -cylinder.intakeSide;
+  return exhaust ? -cylinder.intakeSide : cylinder.intakeSide;
+}
+
+/** Le patin du culbuteur, où appuie la tige, à cet angle de culbuteur (`rockerAngle`, radians) : unités de côté. Écrit dans `out`. */
+export function rockerPad(valve: ValveGeometry, angle: number, out: { [i: number]: number }): void {
+  const rocker = valve.rocker;
+  if (!rocker) return;
+  const a = rocker.padDeg * DEG - angle;
+  out[0] = rocker.pivotX + rocker.padArm * Math.cos(a);
+  out[1] = rocker.pivotY + rocker.padArm * Math.sin(a);
+}
+
+/** Le haut du poussoir, où repose la tige, pour cette part de levée (0 à 1) : unités de côté. Écrit dans `out`. */
+export function lifterTop(valve: ValveGeometry, share: number, out: { [i: number]: number }): void {
+  const pushrod = valve.pushrod;
+  if (!pushrod) return;
+  const along = valve.camBase + share * valve.camLift + pushrod.lifterLength;
+  out[0] = valve.camX + pushrod.axisX * along;
+  out[1] = valve.camY + pushrod.axisY * along;
 }
 
 export function engineLayout(config: EngineConfig): EngineLayout {
@@ -565,9 +708,12 @@ export function engineLayout(config: EngineConfig): EngineLayout {
   const pinionAngle = 205 * DEG;
   const pinionDistance = ringRadius + pinionRadius;
 
-  // ── Distribution : deux arbres à cames en tête, quatre soupapes par cylindre ; ou un seul, deux soupapes et des culbuteurs ──
-  // Socle : les culbuteurs (`ohv`) se dessinent comme le simple arbre.
-  const valve = config.camshaft === 'sohc' || config.camshaft === 'ohv' ? singleCamValves(bore, deck) : twinCamValves(bore, deck);
+  // ── Distribution : deux arbres à cames en tête, quatre soupapes par cylindre ; un seul, deux soupapes et des culbuteurs ; ou un
+  // seul dans le bloc, des poussoirs, des tiges et deux soupapes en ligne ──
+  const pushrods = config.camshaft === 'ohv';
+  const valve = pushrods
+    ? pushrodValves(bore, deck, blockCamPosition(bore, crank, deck, stroke, banks, halfDeg))
+    : config.camshaft === 'sohc' ? singleCamValves(bore, deck) : twinCamValves(bore, deck);
 
   const crankTeeth = 19;
   const camTeeth = 38;
@@ -621,7 +767,8 @@ export function engineLayout(config: EngineConfig): EngineLayout {
     valve,
     ring: { z: ringZ, width: bore * 0.14, teeth: teeth.ring, radius: ringRadius },
     pinion: { teeth: teeth.pinion, radius: pinionRadius, angle: pinionAngle, x: Math.cos(pinionAngle) * pinionDistance, y: Math.sin(pinionAngle) * pinionDistance },
-    sprocket: { crankTeeth, camTeeth, crankRadius: crankSprocket, camRadius: crankSprocket * 2, z: banks === 2 ? [frontZ + bore * 0.3, frontZ + bore * 0.12] : [frontZ + bore * 0.18] },
+    // Un seul arbre dans le bloc : une seule chaîne, courte.
+    sprocket: { crankTeeth, camTeeth, crankRadius: crankSprocket, camRadius: crankSprocket * 2, z: banks === 2 && !pushrods ? [frontZ + bore * 0.3, frontZ + bore * 0.12] : [frontZ + bore * 0.18] },
     pulleyZ: frontZ + bore * 0.62,
   };
 }
@@ -758,7 +905,9 @@ export function chainCircles(layout: EngineLayout, bank: number): [number, numbe
   const beta = layout.banks === 1 ? 0 : bank === 0 ? -layout.halfDeg : layout.halfDeg;
   const out: [number, number, number][] = [[0, 0, layout.sprocket.crankRadius]];
   const p = [0, 0];
-  for (const side of layout.valve.sohc ? [0] : [-1, 1]) {
+  // L'arbre dans le bloc est du côté de l'échappement en unités de côté (`valveSide`) ; celui d'un simple arbre, au milieu.
+  const single = layout.valve.inline ? -layout.byBank[bank][0].intakeSide : 0;
+  for (const side of layout.valve.sohc ? [single] : [-1, 1]) {
     bankToFront(p, beta, side * layout.valve.camX, layout.valve.camY);
     out.push([p[0], p[1], layout.sprocket.camRadius]);
   }

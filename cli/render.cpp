@@ -92,7 +92,7 @@ void printValves(const Powertrain& powertrain) {
     std::printf("Stiffness at the valve %.1f kN/mm, natural frequency %.0f Hz\n", parts.stiffnessNPerM / 1e6, parts.naturalHz);
     std::printf("Cam: %.2f mm over %.0f deg; nose deceleration %.0f m/s^2 at the redline\n", cam.liftMm, cam.durationDeg, noseDecelerationMs2(cam, redline));
     std::printf("Spring: %.0f N seated, %.0f N at full lift, %.1f N/mm\n", spring.preloadN, spring.forceN(cam.liftMm), spring.rateNPerMm);
-    std::printf("Valve float: %.0f rpm, %+.1f %% above the redline\n", floatRpm, (floatRpm / redline - 1.0) * 100.0);
+    std::printf("Valve float: %.0f rpm, %+.1f %% from the redline\n", floatRpm, (floatRpm / redline - 1.0) * 100.0);
     std::printf("Cam friction at the redline: %.3f bar, of which stiff springs %.3f bar\n", followerFrictionBar(e, redline), springFrictionDeltaBar(e, redline));
 }
 

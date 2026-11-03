@@ -223,9 +223,15 @@ TEST_CASE("affolement : au-delà, la charge chute et la soupape retombe vite ; e
     CHECK(floatTrappedShare(v, v.floatRpm * 1.1) < 0.95);
     // Le retard est borné par le flanc de fermeture : la charge ne tombe pas à rien.
     CHECK(floatTrappedShare(v, v.floatRpm * 3.0) > 0.5);
-    // Le couple suit : sous l'affolement rien, au-delà la courbe plonge.
+    // Le couple suit : face au même moteur aux ressorts raides, qui ne s'affole pas encore à ce régime, il perd la charge repoussée,
+    // à ce que les ressorts raides frottent de plus près.
     const Powertrain p = findPreset("hot_hatch_na")->powertrain();
-    CHECK(breathingOf(p, v.floatRpm * 1.1) < breathingOf(p, v.floatRpm * 0.99) * 0.92);
+    Powertrain held = p;
+    held.engine.valveSprings = ValveSprings::Stiff;
+    REQUIRE(valveFloatRpm(held.engine) > v.floatRpm * 1.1);
+    const double kept = floatTrappedShare(v, v.floatRpm * 1.1);
+    CHECK(breathingOf(p, v.floatRpm * 1.1) / breathingOf(held, v.floatRpm * 1.1) == doctest::Approx(kept).epsilon(0.01));
+    CHECK(breathingOf(p, v.floatRpm * 0.99) / breathingOf(held, v.floatRpm * 0.99) > 0.99);
 }
 
 // ── Les culbuteurs ──
