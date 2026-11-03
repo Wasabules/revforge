@@ -128,11 +128,17 @@ export interface Telemetry {
   coldIdleRpm: number;
   coldEnrichment: number;
   warmFrictionNm: number;
+  /** Le cliquetis, quand la combustion n'est plus celle d'origine : avance appliquée et limite (° avant le PMH), avance retirée par le capteur (°), part des cycles qui cliquettent (0-1). Tout à 0 sinon. */
+  sparkAdvance: number;
+  knockLimit: number;
+  knockRetard: number;
+  knockShare: number;
 }
 
 export const IDLE_TELEMETRY: Telemetry = {
   rpm: 0, speed: 0, gear: 0, throttle: 0, load: 0, boost: 0, turbine: 0, turboRelease: 0, turboRpm: 0, turboCharge: 0, turboPlenum: 0, turboOutlet: 0, turboInlet: 0, turboExhaust: 0, turboWastegate: 0, turboBlowoff: 0, turboFlow: 0, turboOutC: 20, turboCoolC: 20, intakeAirC: 20, turboGasC: 20, antiLag: 0, antiLagHeatKw: 0, antiLagAirFlow: 0, antiLagLostNm: 0, chargerRpm: 0, chargerKw: 0, chargerSpill: 0, torque: 0, power: 0, clutch: 0, clutchInputRpm: 0, clutchSlipKw: 0, clutchTorque: 0, wheelRpm: 0, slip: 0, pops: 0, cut: 0, shifting: 0, cranking: 0, stalled: 0, lugging: 0, legKind: 0, legTarget: 0, gradePct: 0, underpowered: 0, levelDbA: 0, listenerX: 0, listenerY: 0, listenerZ: 0, peak: 0, outputRpm: 0, meshed: 0, shiftStep: 0, grinding: 0, overload: 0, boxWear: 0, boxBroken: 0, boxPending: 0, boxConeSlip: 0, boxRattle: 0, boxLoose0: 0, boxLoose1: 0, boxLoose2: 0, boxLoose3: 0, fuelLph: 0, fuelLper100km: 0, fuelTripL: 0, fuelAvgLper100km: 0, tripKm: 0, co2GPerKm: 0, oilGph: 0, oilTripMl: 0, oilMlPer1000km: 0, energyKwhPer100km: 0, energyAvgKwhPer100km: 0, energyTripKwh: 0,
   coolantC: 20, oilC: 20, metalC: 20, thermostat: 0, fan: 0, oilViscosity: 0, coldFrictionNm: 0, coldIdleRpm: 0, coldEnrichment: 0, warmFrictionNm: 0,
+  sparkAdvance: 0, knockLimit: 0, knockRetard: 0, knockShare: 0,
 };
 
 export interface CurvePoint {
@@ -213,6 +219,8 @@ export interface Spec {
   starter: { direct: boolean; kw: number; ring: number; pinion: number; helix: number };
   /** Le carburateur, s'il y en a un : corps, col du venturi, perte de charge à la puissance maximale. */
   carb: { throats: number; throatMm: number; dropKpa: number };
+  /** La combustion : le taux réel, son rendement face au taux d'origine, la plus petite marge au cliquetis à pleine charge (°, négative s'il cliquette) et son régime, le capteur. */
+  combustion: { ratio: number; efficiency: number; marginDeg: number; marginRpm: number; sensor: boolean };
   curve: CurvePoint[];
   box: BoxSpec;
 }
@@ -240,7 +248,7 @@ export interface SoundSheet {
   lineLoss: { hz: number; db: number }[];
 }
 
-export const EMPTY_SPEC: Spec = { idle: 0, redline: 7000, peakTorque: 0, peakTorqueRpm: 0, peakHp: 0, peakHpRpm: 0, gears: 0, ratios: [], turboWheelMm: 0, turboInertia: 0, intakeDropKpa: 0, intakeAirC: 20, chargerRatio: 0, chargerVolume: 0, chargerWheelMm: 0, zeroTo100: 0, topSpeed: 0, starter: { direct: false, kw: 0, ring: 0, pinion: 0, helix: 0 }, carb: { throats: 0, throatMm: 0, dropKpa: 0 }, curve: [], box: EMPTY_BOX };
+export const EMPTY_SPEC: Spec = { idle: 0, redline: 7000, peakTorque: 0, peakTorqueRpm: 0, peakHp: 0, peakHpRpm: 0, gears: 0, ratios: [], turboWheelMm: 0, turboInertia: 0, intakeDropKpa: 0, intakeAirC: 20, chargerRatio: 0, chargerVolume: 0, chargerWheelMm: 0, zeroTo100: 0, topSpeed: 0, starter: { direct: false, kw: 0, ring: 0, pinion: 0, helix: 0 }, carb: { throats: 0, throatMm: 0, dropKpa: 0 }, combustion: { ratio: 0, efficiency: 1, marginDeg: 0, marginRpm: 0, sensor: false }, curve: [], box: EMPTY_BOX };
 
 interface RfExports {
   memory: WebAssembly.Memory;
@@ -305,6 +313,15 @@ interface RfExports {
   rf_carb_throats(): number;
   rf_carb_throat_mm(): number;
   rf_carb_drop_kpa(): number;
+  rf_compression_ratio(): number;
+  rf_compression_efficiency(): number;
+  rf_knock_sensor(): number;
+  rf_knock_margin_deg(): number;
+  rf_knock_margin_rpm(): number;
+  rf_spark_advance(): number;
+  rf_knock_limit(): number;
+  rf_knock_retard(): number;
+  rf_knock_share(): number;
   rf_starter_ring(): number;
   rf_starter_pinion(): number;
   rf_starter_helix(): number;
@@ -624,6 +641,13 @@ export class Engine {
       topSpeed: rf.rf_top_speed(),
       starter: { direct: rf.rf_starter_direct() === 1, kw: rf.rf_starter_kw(), ring: rf.rf_starter_ring(), pinion: rf.rf_starter_pinion(), helix: rf.rf_starter_helix() },
       carb: { throats: rf.rf_carb_throats(), throatMm: rf.rf_carb_throat_mm(), dropKpa: rf.rf_carb_drop_kpa() },
+      combustion: {
+        ratio: rf.rf_compression_ratio(),
+        efficiency: rf.rf_compression_efficiency(),
+        marginDeg: rf.rf_knock_margin_deg(),
+        marginRpm: rf.rf_knock_margin_rpm(),
+        sensor: rf.rf_knock_sensor() === 1,
+      },
       curve,
       box: this.boxSpec(rf, gears, redline),
     };

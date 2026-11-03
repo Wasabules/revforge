@@ -665,4 +665,47 @@ for (const [label, changes, options, pipe] of [
   driveLikeNative(rf, 20);
   checkFigures('thermique, démarrage à froid du V8', rf, nativeFigures(...coldArgs));
 }
+// La combustion : un taux plus haut qui cliquette sans capteur (carburateurs, le son du cliquetis) et avec (injection, l'avance retirée),
+// l'E85 sur un turbo et sa consommation, un diesel et un rotatif plus ou moins comprimés, au démarrage comme en roulant.
+{
+  const carbArgs = ['--cylinders', '4', '--cc', '2000', '--bore', '84', '--redline', '6800', '--exhaust', 'sport', '--body', 'compact', '--mass', '1200', '--rim', '16'];
+  for (const [name, system] of [['multi', FUEL_SYSTEM.multi], ['injection', FUEL_SYSTEM.injection]]) {
+    const rf = load();
+    rf.rf_set_car(BODY.compact, 1200, 16, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+    tune(rf, { compressionRatio: 12.5 });
+    rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6800, EXHAUST.sport, 0, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0, system);
+    check(`cliquetis à 12,5:1, ${name}`, turboStab(rf, 24), native(...carbArgs, '--carb', name === 'multi' ? 'multi' : 'injection', '--compression', '12.5', '--scenario', 'turbo', '--seconds', '24'));
+  }
+  const hotArgs = ['--cylinders', '4', '--cc', '2000', '--bore', '84', '--redline', '6500', '--aspiration', 'turbo', '--boost', '1.3', '--exhaust', 'sport', '--body', 'compact', '--mass', '1400', '--rim', '18', '--compression', '10.5', '--grade', 'e85'];
+  const ethanol = () => {
+    const rf = load();
+    rf.rf_set_car(BODY.compact, 1400, 18, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+    tune(rf, { compressionRatio: 10.5, fuelGrade: GRADE.e85 });
+    rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6500, EXHAUST.sport, 1, 0, 0, 0, 0, 1.3, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+    rf.rf_set_mode(3);
+    return rf;
+  };
+  check('E85 et 10,5:1 sur un turbo', render(ethanol(), 20, 128), native(...hotArgs, '--scenario', 'lap', '--seconds', '20'));
+  const rf = ethanol();
+  driveLikeNative(rf, 20);
+  checkFigures('E85 et 10,5:1, consommation', rf, nativeFigures(...hotArgs, '--scenario', 'lap', '--seconds', '20'));
+}
+{
+  const rf = load();
+  rf.rf_set_car(BODY.van, 1950, 16, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  rf.rf_set_gearbox(BOX.synchro, 0, 0, 0, 0, 0, 0, 0, 1);
+  tune(rf, { compressionRatio: 15 });
+  rf.rf_set_config(4, LAYOUT.inline, 2000, 85, 4500, EXHAUST.stock, 1, 1, 0, 0, 0, 1.8, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+  rf.rf_set_mode(1);
+  rf.rf_crank();
+  check('diesel à 15:1, démarrage', render(rf, 5, 128), native('--preset', 'diesel_four', '--compression', '15', '--scenario', 'start'));
+}
+{
+  const rf = load();
+  rf.rf_set_car(BODY.coupe, 1300, 18, DRIVE.rear, PLACEMENT.front, INSULATION.standard);
+  tune(rf, { compressionRatio: 11 });
+  rf.rf_set_config(2, LAYOUT.rotary, 1308, 84, 9000, EXHAUST.sport, 0, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+  rf.rf_set_mode(3);
+  check('birotor à 11:1', render(rf, 20, 128), native('--layout', 'rotary', '--cylinders', '2', '--cc', '1308', '--redline', '9000', '--exhaust', 'sport', '--body', 'coupe', '--mass', '1300', '--rim', '18', '--drive', 'rear', '--compression', '11', '--scenario', 'lap', '--seconds', '20'));
+}
 process.exit(failed ? 1 : 0);

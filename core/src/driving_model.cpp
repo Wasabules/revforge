@@ -60,6 +60,11 @@ constexpr double kShaftDamping = 60.0;
 constexpr double kAntiLagLiftedPedal = 0.03;
 constexpr double kAntiLagMinShare = 0.27;
 constexpr double kAntiLagHoldShare = 0.95;
+// Le capteur de cliquetis : chaque cliquetis détecté retire 1,5° à son cylindre, l'avance revient de 1° par seconde quand il se tait,
+// sans jamais retirer plus de 20° (ordres de grandeur des calculateurs de série, supposés).
+constexpr double kKnockRetardPerEventDeg = 1.5;
+constexpr double kKnockRecoverDegPerS = 1.0;
+constexpr double kKnockMaxRetardDeg = 20.0;
 
 double approach(double from, double to, double maxStep) {
     const double delta = to - from;
@@ -137,6 +142,20 @@ void DrivingModel::setPowertrain(const Powertrain& powertrain) {
     if (superchargerEngine_) supercharger_.setSpec(superchargerSpecOf(powertrain));
     carbEngine_ = !powertrain.electric && fuelSystemOf(powertrain.engine) != FuelSystem::Injection;
     if (carbEngine_) carb_.configure(carburetorSpecOf(powertrain.engine), powertrain.engine.sweptCcPerTwoTurns() * 1e-6);
+    // Le cliquetis : seulement quand la combustion n'est plus celle d'origine. Sinon la carte d'origine reste sous sa limite, et rien ne tourne.
+    const KnockMap* knock = knockMapOf(powertrain);
+    knockEngine_ = knock != nullptr;
+    if (knockEngine_) {
+        knockMap_ = *knock;
+        // Chaque cylindre a son capteur, en pratique son propre retard : ses combustions par seconde, à chaque tour par minute.
+        const EngineConfig& e = powertrain.engine;
+        knockPerCylinder_ = static_cast<double>(e.firingsPerTwoTurns()) / static_cast<double>(isRotary(e) ? e.rotors() : e.cylinders) / 120.0;
+    } else {
+        knockRetard_ = 0.0;
+        knockAdvance_ = 0.0;
+        knockLimit_ = 0.0;
+        knockDrive_ = KnockDrive{};
+    }
     if (gear_ > gearing_.gears) gear_ = gearing_.gears;
     step_ = ShiftStep::None;
     ignitionCut_ = false;
@@ -894,6 +913,34 @@ void DrivingModel::updateAntiLag(double throttle, double rpmNow, bool off) {
     antiLag_.active = !off && !cut_ && !catching_ && throttle < kAntiLagLiftedPedal && rpmNow >= threshold;
 }
 
+double DrivingModel::stepKnock(double rpmNow) {
+    // La pression de charge, rapportée à la pleine charge stabilisée à ce régime : c'est elle qui comprime les gaz frais.
+    const bool charged = turboEngine_ || superchargerEngine_;
+    const double bar = charged ? static_cast<double>(powertrain_.engine.boostBar) : 0.0;
+    const double full = 1.0 + bar * knockMap_.fullBoost(rpmNow);
+    const double now = std::max(manifold_, 0.0) * (1.0 + bar * std::max(boost_, 0.0));
+    const KnockPoint point = knockMap_.at(rpmNow, now / full);
+    const double wanted = point.stockDeg + knockMap_.advanceOffsetDeg();
+    double applied = wanted - knockRetard_;
+    double share = cut_ ? 0.0 : knockingShare(applied - point.meanLimitDeg);
+    if (knockMap_.sensor()) {
+        // Chaque cliquetis détecté retire de l'avance à son cylindre ; elle revient peu à peu quand il se tait.
+        const double rate = kKnockRetardPerEventDeg * share * knockPerCylinder_ * rpmNow - (knockRetard_ > 0.0 ? kKnockRecoverDegPerS : 0.0);
+        knockRetard_ = clamp(knockRetard_ + rate * kStep, 0.0, kKnockMaxRetardDeg);
+        applied = wanted - knockRetard_;
+        share = cut_ ? 0.0 : knockingShare(applied - point.meanLimitDeg);
+    }
+    knockAdvance_ = applied;
+    knockLimit_ = point.limitDeg;
+    knockDrive_.active = true;
+    knockDrive_.excessDeg = static_cast<float>(cut_ ? -100.0 : applied - point.meanLimitDeg);
+    knockDrive_.spreadDeg = static_cast<float>(kPhaseSpreadDeg);
+    knockDrive_.gasK = static_cast<float>(point.gasK);
+    knockDrive_.share = static_cast<float>(share);
+    // Le même air, brûlé plus tôt ou plus tard que la carte d'origine : le travail des gaz en dépend.
+    return knockMap_.torqueShare(rpmNow, applied, point.stockDeg);
+}
+
 void DrivingModel::stepSupercharger(double rpmNow) {
     SuperchargerInput input;
     input.rpm = rpmNow;
@@ -1048,6 +1095,7 @@ void DrivingModel::updateEngine(double throttle, bool off) {
     else boost_ = 0.0;
 
     double produced = cut_ ? 0.0 : manifold_ * indicated * torqueScale_;
+    if (knockEngine_) produced *= stepKnock(rpmNow);
     antiLagLostNm_ = 0.0;
     if (antiLag_.active) {
         const double kept = produced * antiLagTorqueShare(antiLag_.kind);

@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "revforge/carburetor.hpp"
+#include "revforge/combustion.hpp"
 #include "revforge/consumption.hpp"
 #include "revforge/driver_scenarios.hpp"
 #include "revforge/powertrain.hpp"
@@ -175,6 +176,16 @@ public:
     double coldFrictionNm() const { return coldCoupled_ ? coldFrictionNm_ : 0.0; }
     double coldIdleRpm() const { return coldCoupled_ ? idle_ * coldIdleRise_ : 0.0; }
     double coldEnrichment() const { return coldCoupled_ ? coldEnrichment_ : 0.0; }
+    /**
+     * Le cliquetis, quand la combustion n'est plus celle d'origine : l'avance que le capteur retire (degrés), la part des cycles qui
+     * cliquettent, et ce que le son en reçoit. Tout à zéro sur un moteur d'origine, un diesel ou un électrique.
+     */
+    double knockRetardDeg() const { return knockRetard_; }
+    double knockShare() const { return knockDrive_.share; }
+    /** L'avance appliquée, et la limite de cliquetis à cet instant (degrés avant le point mort haut). 0 sans modèle de cliquetis. */
+    double sparkAdvanceDeg() const { return knockAdvance_; }
+    double knockLimitDeg() const { return knockLimit_; }
+    KnockDrive knockDrive() const { return knockDrive_; }
 
 private:
     enum class Driver { Pilot, Pedal, Neutral, Off };
@@ -227,6 +238,8 @@ private:
     void updateColdEffects();
     // Le radiateur se dimensionne sur `sized` (le montage dans l'air de référence) ; le départ suit l'air du jour de `powertrain`.
     void configureThermal(const Powertrain& powertrain, const Powertrain& sized, double peakPowerRpm, double peakPowerKw);
+    /** Le capteur de cliquetis à ce pas : renvoie la part du couple indiqué que laisse l'avance appliquée. */
+    double stepKnock(double rpmNow);
 
     Powertrain powertrain_;
     Gearing gearing_;
@@ -348,6 +361,14 @@ private:
     double coldFrictionNm_ = 0.0;
     double coldIdleRise_ = 0.0;
     double coldEnrichment_ = 0.0;
+    // Le cliquetis : la carte de ce moteur, gardée tant qu'il ne change pas, et ce que le capteur a retiré.
+    KnockMap knockMap_;
+    bool knockEngine_ = false;
+    double knockRetard_ = 0.0;
+    double knockAdvance_ = 0.0;
+    double knockLimit_ = 0.0;
+    double knockPerCylinder_ = 1.0;
+    KnockDrive knockDrive_;
 
     // Voiture
     double speedMs_ = 0.0;

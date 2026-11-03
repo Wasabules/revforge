@@ -301,6 +301,7 @@ struct Balance {
     double omega = 0.0;
     double turbineInPa = kAtmosphere;
     double flow = 0.0;
+    double coolK = kAmbientK;
 };
 
 /** La vitesse de bout de pale qu'il faut pour cette hauteur, à ce débit. La hauteur croît avec U : une dichotomie suffit. */
@@ -359,6 +360,7 @@ Balance balanceAt(const TurboSpec& spec, double rpm, double breathing, double ch
     b.omega = omega;
     b.turbineInPa = inPa;
     b.flow = flow;
+    b.coolK = coolK;
     return b;
 }
 
@@ -409,6 +411,7 @@ TurboSteady turboSteady(const TurboSpec& spec, double rpm, double breathing) {
     out.shaftRpm = found.omega * 60.0 / (2.0 * kPi);
     out.wastegate = gate;
     out.flow = found.flow;
+    out.coolerOutK = found.coolK;
     return out;
 }
 

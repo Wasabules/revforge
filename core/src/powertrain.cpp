@@ -6,6 +6,7 @@
 #include "revforge/air_filter.hpp"
 #include "revforge/atmosphere.hpp"
 #include "revforge/carburetor.hpp"
+#include "revforge/combustion.hpp"
 #include "revforge/driving_model.hpp"
 #include "revforge/valvetrain.hpp"
 
@@ -402,11 +403,10 @@ double steadyBoost(const Powertrain& p, double rpm) {
     return turboSteady(turboSpecOf(p), rpm, breathing(p.engine, rpm)).boost;
 }
 
-double fullLoadTorqueNm(const Powertrain& p, double rpm, double boost) {
-    if (p.electric) {
-        const double omega = std::max(rpm, 1.0) * 2.0 * kPi / 60.0;
-        return std::min(kElectricTorqueNm, kElectricPowerW / omega);
-    }
+namespace {
+
+/** Le couple que donne l'air admis, brûlé comme le moteur d'origine : taux de compression d'origine, essence de référence. */
+double airTorqueNm(const Powertrain& p, double rpm, double boost) {
     const EngineConfig& e = p.engine;
     // Sous le ralenti, la combustion devient instable : le couple s'effondre.
     const double idle = idleRpmOf(p);
@@ -427,17 +427,40 @@ double fullLoadTorqueNm(const Powertrain& p, double rpm, double boost) {
     return withAmbientAir(p, rpm, e.airFilter == AirFilter::Stock ? charged : withAirFilter(p, rpm, boost, charged), boost);
 }
 
+}  // namespace
+
+double fullLoadTorqueNm(const Powertrain& p, double rpm, double boost) {
+    if (p.electric) {
+        const double omega = std::max(rpm, 1.0) * 2.0 * kPi / 60.0;
+        return std::min(kElectricTorqueNm, kElectricPowerW / omega);
+    }
+    if (combustionStock(p.engine)) return airTorqueNm(p, rpm, boost);
+    // Le même air, brûlé autrement : le taux de compression change le rendement, le carburant l'énergie par kilogramme d'air et la
+    // densité de la charge. Seul le travail des gaz en dépend : les frottements restent. Voir « La combustion » dans docs/modele.md.
+    const double friction = frictionTorqueNm(p, rpm);
+    return (airTorqueNm(p, rpm, boost) + friction) * combustionTorqueShare(p.engine) - friction;
+}
+
 double torqueCurveNm(const Powertrain& p, double rpm) {
-    if (p.electric || p.engine.aspiration == Aspiration::Natural) return fullLoadTorqueNm(p, rpm, 0.0);
+    // Le cliquetis : à pleine charge stabilisée, l'avance que laisse le capteur retire sa part du travail des gaz. Sans réglage de la
+    // combustion, la carte d'origine reste sous sa limite : rien ne change.
+    const KnockMap* knock = p.electric ? nullptr : knockMapOf(p);
+    const auto full = [&](double boost) {
+        const double torque = fullLoadTorqueNm(p, rpm, boost);
+        if (knock == nullptr) return torque;
+        const double friction = frictionTorqueNm(p, rpm);
+        return (torque + friction) * knock->steadyTorqueShare(rpm) - friction;
+    };
+    if (p.electric || p.engine.aspiration == Aspiration::Natural) return full(0.0);
     // Pas d'arbre à lancer : la pression d'équilibre, moins ce que coûte l'entraînement.
     if (p.engine.aspiration == Aspiration::Supercharger) {
         const SuperchargerSteady steady = superchargerSteady(superchargerSpecOf(p), rpm, breathing(p.engine, rpm));
-        return fullLoadTorqueNm(p, rpm, steady.boost) - steady.driveNm;
+        return full(steady.boost) - steady.driveNm;
     }
     // L'arbre stabilisé : la courbe de la fiche ne dit rien du retard. La contre-pression, elle, se paie toujours.
     const TurboSpec spec = turboSpecOf(p);
     const TurboSteady steady = turboSteady(spec, rpm, breathing(p.engine, rpm));
-    return fullLoadTorqueNm(p, rpm, steady.boost) - turboBackPressureNm(spec, steady.chargePa, steady.turbineInPa, steady.flow, 1.0);
+    return full(steady.boost) - turboBackPressureNm(spec, steady.chargePa, steady.turbineInPa, steady.flow, 1.0);
 }
 
 double frictionTorqueNm(const Powertrain& p, double rpm) {
@@ -503,16 +526,20 @@ double roadLoadN(const Powertrain& p, double speedMs) {
 
 Gearing gearingOf(const Powertrain& p) {
     const BodySpec& body = bodySpec(p.car.body);
-    // Changer de filtre ne change pas la boîte : elle reste celle du moteur d'origine. Ni monter en altitude : elle est
-    // choisie dans l'air de référence, pour la puissance et pour la traînée.
+    // Changer de filtre, de taux de compression ou de carburant ne change pas la boîte : elle reste celle du moteur d'origine.
+    // Ni monter en altitude : elle est choisie dans l'air de référence, pour la puissance et pour la traînée.
     Powertrain stock;
     const bool otherFilter = !p.electric && p.engine.airFilter != AirFilter::Stock;
     const bool otherAir = !referenceAirOf(p.engine);
-    if (otherFilter || otherAir) {
+    const bool otherCombustion = !p.electric && !combustionStock(p.engine);
+    const bool otherEngine = otherFilter || otherAir || otherCombustion;
+    if (otherEngine) {
         stock = withReferenceAir(p);
-        if (otherFilter) stock.engine.airFilter = AirFilter::Stock;
+        stock.engine.airFilter = AirFilter::Stock;
+        stock.engine.compressionRatio = 0.0f;
+        stock.engine.fuelGrade = FuelGrade::Ron95;
     }
-    const Powertrain& sized = otherFilter || otherAir ? stock : p;
+    const Powertrain& sized = otherEngine ? stock : p;
     const PowerSummary peak = powerSummary(sized);
     const bool rearOrAll = p.car.drive != Drive::Front;
     const bool allWheels = p.car.drive == Drive::All;

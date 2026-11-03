@@ -55,6 +55,15 @@ export const EVC = 378;
 export const IVO = 342;
 export const IVC = 590;
 
+/**
+ * Le taux de compression du gaz à l'écran : celui d'origine à 0, sinon le réglage, borné à ce qui existe. Recopie `compressionRatioOf`
+ * (combustion.cpp) : un diesel sous 14:1 ne s'allume plus, un rotor n'a plus de creux au-delà de 11,9:1. Une erreur ne change que ce qu'on voit.
+ */
+export function compressionRatioOf(config: EngineConfig, stock: number, low: number, high: number): number {
+  const set = config.compressionRatio ?? 0;
+  return set > 0 ? Math.min(Math.max(set, low), high) : stock;
+}
+
 /** Avance à l'allumage ou à l'injection (degrés avant le point mort haut). */
 export function ignitionAdvance(diesel: boolean, rpm: number): number {
   const rpmShare = Math.min(rpm / 7000, 1.4);
@@ -604,7 +613,7 @@ export class GasNetwork {
     const stroke = cylinderVolume / this.boreArea;
     this.crank = stroke / 2;
     this.rod = stroke * 1.6;
-    const ratio = this.diesel ? 18 : this.airChain ? 9.5 : 10.5;
+    const ratio = compressionRatioOf(config, this.diesel ? 18 : this.airChain ? 9.5 : 10.5, this.diesel ? 14 : 6, 24);
     this.clearance = cylinderVolume / (ratio - 1);
     this.exhaustValve = 0.19 * this.boreArea;
     this.intakeValve = 0.24 * this.boreArea;
@@ -632,7 +641,7 @@ export class GasNetwork {
       this.boreArea = chamber / fakeStroke;
       this.crank = fakeStroke / 2;
       this.rod = fakeStroke * 5000;
-      this.clearance = chamber / (rotaryCompression(config.aspiration) - 1);
+      this.clearance = chamber / (compressionRatioOf(config, rotaryCompression(config.aspiration), 6, 11.9) - 1);
       const across = shape.radius * shape.width * 1e-6;
       this.exhaustValve = EXHAUST_PORT_SHARE * across;
       this.intakeValve = INTAKE_PORT_SHARE * across;

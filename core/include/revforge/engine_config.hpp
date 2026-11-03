@@ -251,6 +251,8 @@ struct EngineProfile {
     int rotors = 0;
     /** Durée de la bouffée, pleine charge : le volume de la chambre à l'ouverture, face à la section de la lumière (s). */
     float blowdownS = 0.0f;
+    /** Diesel : le claquement suit le délai d'auto-inflammation, rapporté à celui du taux d'origine (`dieselKnockScale`). */
+    float dieselKnockScale = 1.0f;
 
     /**
      * Régime simulé pour un régime réel de la voiture. Au ralenti, les deux ralentis
@@ -380,6 +382,8 @@ double rotaryWallRatio(float compressionRatio);
  * forme : la chambre allongée perd plus de chaleur aux parois, et le taux de compression est plus bas.
  */
 double rotaryEfficiencyShare(Aspiration aspiration);
+/** Le rendement du cycle d'un rotatif à ce taux : Otto, moins ce que perd sa chambre allongée. Ne sert qu'à comparer deux taux. */
+double rotaryCycleEfficiency(double compressionRatio);
 
 /** Sifflement d'un moteur électrique : pas de cylindres, pas de configuration. */
 EngineProfile electricProfile();

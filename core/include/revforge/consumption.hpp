@@ -18,6 +18,8 @@ struct FuelSpec {
 };
 
 const FuelSpec& fuelSpecOf(Fuel fuel);
+/** Ce que brûle ce moteur : le carburant choisi, sauf sur un diesel. Pour la consommation en litres. */
+const FuelSpec& fuelSpecOf(const EngineConfig& engine);
 
 /**
  * Ce que dépense ce moteur à chaque instant : un bilan d'énergie, calé sur le couple qu'il donne vraiment.
