@@ -131,7 +131,7 @@
   onMount(() => {
     engine.load().then(() => (loaded = true)).catch((error) => (failure = () => t('error.load', { error })));
     if (import.meta.env.DEV || location.search.includes('test')) {
-      (window as unknown as Record<string, unknown>).__revforge = { engine, telemetry: () => telemetry, spec: () => spec, motion, telemetryLog, readings };
+      (window as unknown as Record<string, unknown>).__revforge = { engine, telemetry: () => telemetry, spec: () => spec, motion, telemetryLog, readings, encodeConfig, decodeConfig, config: () => config };
     }
     const stopGamepad = pollGamepad();
     const stopHeat = followHeat();

@@ -150,7 +150,7 @@ function starterTeeth(rotors: number, displacementCc: number): { ring: number; p
 
 /** Ce qui fait changer les pièces : à clé égale, les mêmes maillages. */
 export function rotaryKey(config: EngineConfig): string {
-  return `rotary|${config.cylinders}|${config.displacementCc}|${config.aspiration}|${config.boxFlywheel}`;
+  return `rotary|${config.cylinders}|${config.displacementCc}|${config.aspiration}|${config.boxFlywheel}|${config.superchargerKind}|${config.airFilter}|${config.fuelSystem}|${config.turboPipeMm}|${config.turboSize}`;
 }
 
 export function rotaryLayout(config: EngineConfig): RotaryLayout {
