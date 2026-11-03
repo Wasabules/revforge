@@ -104,6 +104,8 @@ void DrivingModel::setPowertrain(const Powertrain& powertrain) {
     // monter en altitude ne les change pas. Dans l'air de référence, `sized` est le montage lui-même.
     const Powertrain sized = withReferenceAir(powertrain);
     const PowerSummary peak = powerSummary(sized);
+    // Le radiateur aussi est une pièce, dimensionnée dans l'air de référence ; le moteur garde, lui, l'air du jour.
+    configureThermal(powertrain, sized, peak.peakPowerRpm, peak.peakPowerKw);
     peakTorqueRpm_ = peak.peakTorqueRpm;
     shiftMap_ = buildShiftMap(sized, gearing_);
     clutchCapacity_ = 1.6 * peak.peakTorqueNm;
@@ -336,6 +338,7 @@ void DrivingModel::substep(Driver driver, double pedal, double brakePedal) {
     updateEngine(throttle_, driver == Driver::Off);
     integrate(brake_);
     meterConsumption();
+    if (thermalEngine_) stepThermal();
 }
 
 void DrivingModel::meterConsumption() {
@@ -343,6 +346,67 @@ void DrivingModel::meterConsumption() {
     burnt_.omega = omega_;
     burnt_.speedMs = speedMs_;
     consumption_.step(burnt_, kStep);
+}
+
+void DrivingModel::configureThermal(const Powertrain& p, const Powertrain& sized, double peakPowerRpm, double peakPowerKw) {
+    thermalEngine_ = !p.electric;
+    coldCoupled_ = false;
+    if (!thermalEngine_) {
+        thermalReady_ = false;
+        return;
+    }
+    // L'énergie du carburant à la puissance maximale, par le même bilan que le compteur : l'échelle de ce qui part aux parois.
+    const double omega = toOmega(peakPowerRpm);
+    const double brake = omega > 0.0 ? peakPowerKw * 1000.0 / omega : 0.0;
+    const double friction = frictionTorqueNm(sized, peakPowerRpm);
+    const double fullGross = fullLoadTorqueNm(sized, peakPowerRpm, steadyBoost(sized, peakPowerRpm)) + friction;
+    const ConsumptionModel& model = consumption_.model();
+    thermal_.configure(thermalSpecOf(sized, model.fuelGps(peakPowerRpm, brake, friction, fullGross) * model.fuel().lowerHeatingJPerG));
+    hydroNmPerRpm_ = hydrodynamicNmPerRpm(p.engine);
+    // Un autre départ ou un autre air : le moteur repart de là. Sinon, il garde ses températures, même si on change de ligne.
+    if (!thermalReady_ || p.engine.startTemp != startTemp_ || p.engine.ambientC != ambientC_) {
+        thermal_.reset(p.engine.startTemp, static_cast<double>(p.engine.ambientC));
+        heatFuelW_ = 0.0;
+        heatFrictionW_ = 0.0;
+        heatSteps_ = 0;
+    }
+    thermalReady_ = true;
+    startTemp_ = p.engine.startTemp;
+    ambientC_ = p.engine.ambientC;
+    // Parti chaud, le moteur reste celui de référence : le réseau ne sert qu'aux jauges.
+    coldCoupled_ = p.engine.startTemp == StartTemp::Cold;
+    burnt_.enrichment = 0.0;
+    coldFrictionNm_ = 0.0;
+    updateColdEffects();
+}
+
+void DrivingModel::updateColdEffects() {
+    if (!coldCoupled_) return;
+    viscosityExcess_ = revforge::coldViscosityExcess(thermal_.oilC());
+    coldIdleRise_ = revforge::coldIdleRise(thermal_.coolantC());
+    coldEnrichment_ = revforge::coldEnrichment(powertrain_.engine, thermal_.coolantC());
+}
+
+void DrivingModel::stepThermal() {
+    // Le réseau avance par pas de 10 ms : ses constantes de temps vont de la seconde à l'heure.
+    constexpr int kThermalSteps = 10;
+    heatFrictionW_ += std::max(frictionHeatNm_, 0.0) * omega_;
+    if (burnt_.burning) {
+        const ConsumptionModel& model = consumption_.model();
+        heatFuelW_ += model.fuelGps(burnt_.rpm, burnt_.brakeNm, burnt_.frictionNm, burnt_.fullGrossNm) * model.fuel().lowerHeatingJPerG;
+    }
+    if (++heatSteps_ < kThermalSteps) return;
+    ThermalInput in;
+    in.fuelW = heatFuelW_ / kThermalSteps;
+    in.frictionW = heatFrictionW_ / kThermalSteps;
+    in.rpm = toRpm(omega_);
+    in.speedMs = speedMs_;
+    in.ambientC = static_cast<double>(ambientC_);
+    thermal_.step(in, kThermalSteps * kStep);
+    heatFuelW_ = 0.0;
+    heatFrictionW_ = 0.0;
+    heatSteps_ = 0;
+    updateColdEffects();
 }
 
 void DrivingModel::selectGear(bool wantsToMove) {
@@ -896,7 +960,11 @@ void DrivingModel::updateEngine(double throttle, bool off) {
         const double motorInertia = static_cast<double>(starter_.motorInertia) * reduction * reduction;
         const double total = inertia_ + motorInertia * gear * gear;
         const double driven = pinionTorque * gear * kStarterEfficiency;
-        const double net = driven - compressionLoadNm() - kColdFriction * frictionTorqueNm(powertrain_, rpmNow);
+        double crankFriction = kColdFriction * frictionTorqueNm(powertrain_, rpmNow);
+        // L'huile froide freine aussi le lancement : le démarreur tourne moins vite.
+        if (coldCoupled_) crankFriction += hydroNmPerRpm_ * std::max(rpmNow, 0.0) * viscosityExcess_;
+        frictionHeatNm_ = crankFriction;
+        const double net = driven - compressionLoadNm() - crankFriction;
         const double alpha = net / total;
         // Ce qui passe vraiment par les dents : le couple du moteur, moins ce qu'il faut pour accélérer
         // l'induit. Il s'annule, et change de sens, quand une détente fait filer le vilebrequin.
@@ -915,7 +983,10 @@ void DrivingModel::updateEngine(double throttle, bool off) {
         if (turboEngine_) stepTurbo(rpmNow, false);
         if (superchargerEngine_) stepSupercharger(rpmNow);
         if (carbEngine_) carb_.prime();
-        torque_ = -kColdFriction * frictionTorqueNm(powertrain_, rpmNow) - bmepPumping(rpmNow);
+        double stallFriction = kColdFriction * frictionTorqueNm(powertrain_, rpmNow);
+        if (coldCoupled_) stallFriction += hydroNmPerRpm_ * std::max(rpmNow, 0.0) * viscosityExcess_;
+        frictionHeatNm_ = stallFriction;
+        torque_ = -stallFriction - bmepPumping(rpmNow);
         return;
     }
 
@@ -935,7 +1006,13 @@ void DrivingModel::updateEngine(double throttle, bool off) {
     cut_ = off || limiterCut_ || ignitionCut_;
     if (antiLagEngine_) updateAntiLag(throttle, rpmNow, off);
 
-    const double friction = frictionTorqueNm(powertrain_, rpmNow);
+    double friction = frictionTorqueNm(powertrain_, rpmNow);
+    // Moteur froid : l'huile épaisse ajoute ses frottements hydrodynamiques. La combustion, elle, reste celle du moteur chaud.
+    if (coldCoupled_) {
+        coldFrictionNm_ = hydroNmPerRpm_ * std::max(rpmNow, 0.0) * viscosityExcess_;
+        friction += coldFrictionNm_;
+    }
+    frictionHeatNm_ = friction;
     double indicated = fullLoadTorqueNm(powertrain_, rpmNow, boost_) + frictionTorqueNm(powertrain_, rpmNow);
     // Au démarrage, le calculateur enrichit le mélange : le moteur prend même très bas.
     if (catching_ && rpmNow < idle_) indicated = std::max(indicated, 0.8 * fullLoadTorqueNm(powertrain_, idle_, 0.0));
@@ -945,6 +1022,8 @@ void DrivingModel::updateEngine(double throttle, bool off) {
     const double ripple = 9.0 * portable::sin(clock_ * 2.1) + 4.0 * portable::sin(clock_ * 5.3);
     // Ralenti accéléré : le moteur vient de partir, il redescend en une seconde environ.
     double idleTarget = idle_ * (1.0 + fastIdle_) + ripple;
+    // Moteur froid : le calculateur, ou la came de ralenti accéléré d'un carburateur, vise plus haut tant que l'eau est froide.
+    if (coldCoupled_) idleTarget += idle_ * coldIdleRise_;
     if (catching_) {
         if (rpmNow > idleTarget * 0.98) catching_ = false;
     } else {
@@ -1008,6 +1087,7 @@ void DrivingModel::updateEngine(double throttle, bool off) {
     burnt_.frictionNm = friction + charger;
     burnt_.fullGrossNm = indicated;
     burnt_.load = manifold_;
+    if (coldCoupled_) burnt_.enrichment = coldEnrichment_;
     // Le couple au frein ci-dessus suit l'air, donc le cylindre retardé ou coupé paie déjà son carburant : reste ce qui s'y ajoute.
     // Sur un carburateur, ce surplus est le mélange déjà payé ci-dessus : le compter ici le ferait payer deux fois.
     if (antiLagEngine_) {

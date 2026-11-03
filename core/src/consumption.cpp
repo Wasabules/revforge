@@ -198,6 +198,8 @@ void ConsumptionMeter::step(const ConsumptionInput& in, double dt) {
     }
     batteryW_ = 0.0;
     fuelGps_ = in.burning ? model_.fuelGps(in.rpm, in.brakeNm, in.frictionNm, in.fullGrossNm) : 0.0;
+    // Moteur froid : ce que le calculateur ou le starter ajoute ne donne aucun couple, mais il se paie.
+    if (in.enrichment > 0.0) fuelGps_ *= 1.0 + in.enrichment;
     if (in.pumpGps > 0.0 && in.burning) fuelGps_ += in.pumpGps;
     // L'air ne compte que là où quelque chose brûle : c'est ce qu'on compare au carburant.
     airGps_ = fuelGps_ > 0.0 ? model_.airGps(in.rpm, in.load, in.fullGrossNm) : 0.0;

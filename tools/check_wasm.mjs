@@ -321,7 +321,7 @@ function driveLikeNative(rf, seconds) {
   for (let i = 0; i < Math.ceil((44100 * seconds) / 128); i++) rf.rf_render(128);
 }
 function checkFigures(label, rf, native) {
-  const figures = { fuel_lph: rf.rf_fuel_lph(), fuel_trip_l: rf.rf_fuel_trip_l(), trip_km: rf.rf_trip_km(), oil_trip_ml: rf.rf_oil_trip_ml(), energy_trip_kwh: rf.rf_energy_trip_kwh() };
+  const figures = { fuel_lph: rf.rf_fuel_lph(), fuel_trip_l: rf.rf_fuel_trip_l(), trip_km: rf.rf_trip_km(), oil_trip_ml: rf.rf_oil_trip_ml(), energy_trip_kwh: rf.rf_energy_trip_kwh(), coolant_c: rf.rf_coolant_c(), oil_c: rf.rf_oil_c() };
   for (const [key, value] of Object.entries(figures)) check(`${label}, ${key}`, String(value), String(native[key]));
 }
 {
@@ -647,5 +647,22 @@ for (const [label, changes, options, pipe] of [
   const rf = carb();
   driveLikeNative(rf, 30);
   checkFigures('air du jour, carburateur à 2400 m', rf, nativeFigures(...args));
+}
+// La thermique : un départ à froid par 5 °C, ralenti accéléré et frottements de l'huile froide, au son et aux températures.
+{
+  const coldV8 = () => {
+    const rf = load();
+    rf.rf_set_car(BODY.coupe, 1700, 19, DRIVE.rear, PLACEMENT.front, INSULATION.light);
+    tune(rf, { ambientC: 5, startTemp: START.cold });
+    rf.rf_set_config(8, LAYOUT.cross_plane, 5000, 96, 6000, EXHAUST.sport, 0, 0, 0, 1, 0, 1, ROUTING.dual, TURBO.medium, 0, 0, 400, 0, 0);
+    rf.rf_set_mode(1);
+    rf.rf_crank();
+    return rf;
+  };
+  const coldArgs = ['--preset', 'v8_cross_plane', '--ambient', '5', '--start', 'cold', '--scenario', 'start', '--seconds', '20'];
+  check('thermique, démarrage à froid du V8', render(coldV8(), 20, 128), native(...coldArgs));
+  const rf = coldV8();
+  driveLikeNative(rf, 20);
+  checkFigures('thermique, démarrage à froid du V8', rf, nativeFigures(...coldArgs));
 }
 process.exit(failed ? 1 : 0);

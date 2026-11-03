@@ -86,6 +86,7 @@ struct ConsumptionInput {
     bool burning = false;
     double extraFuelGps = 0.0;  // l'anti-lag : carburant au-delà de ce que demande le cylindre
     double extraAirGps = 0.0;   // l'anti-lag : air qui n'est pas passé par les cylindres
+    double enrichment = 0.0;    // moteur froid : carburant ajouté, en part de celui qui brûle, qui repart imbrûlé
 };
 
 /**

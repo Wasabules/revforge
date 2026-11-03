@@ -710,7 +710,7 @@ puissance du carburant = (couple au frein + frottements + pompage derrière le p
 Cela fait émerger sans réglage : zéro au rupteur, contact coupé, calé, ou pied levé en prise (le couple est aussi négatif que
 celui d'un moteur entraîné), un ralenti non nul, une pleine charge plus chère que le meilleur point, une faible charge bien plus
 chère encore, un gros moteur qui dépense plus à la même vitesse, un rapport court qui dépense plus, et un embrayage ou des pneus
-qui patinent et brûlent pour rien. **Le moteur froid n'est pas simulé :** aucune température ne le justifie dans le modèle.
+qui patinent et brûlent pour rien. **Le moteur froid est dans « La thermique » :** les chiffres ci-dessous sont à chaud.
 
 ### Pourquoi pas le débit d'air, et ce qu'il confirme
 
@@ -785,7 +785,7 @@ le modèle donne 5,8 et 8,3 L/100 km sur la citadine, 7,5 et 9,3 sur la GTI, 10,
 ### Ce qui manque
 
 **Le modèle lit trop haut sur route :** de 15 à 25 % environ en régime établi et en WLTC, sauf l'utilitaire diesel. Les lignes à 77 km/h, 98 km/h et du diesel sur mesure datent d'avant la correction de la résistance au roulement, qui les baisse un peu ; elles n'ont pas été remesurées.
-Les chiffres officiels incluent un départ à froid (qui coûte) et souvent l'arrêt automatique (qui rapporte), absents ici : ils jouent en sens contraires, et je les suppose faibles, sans l'avoir mesuré. Sur la citadine en WLTC, l'écart de 29 % se décompose en :
+Les chiffres officiels incluent un départ à froid (qui coûte) et souvent l'arrêt automatique (qui rapporte), absents ici : ils jouent en sens contraires. Le départ à froid, mesuré depuis avec `--start cold`, coûte ici de 1 à 3 % sur le cycle (voir « La thermique ») ; l'arrêt automatique n'est pas mesuré. Sur la citadine en WLTC, l'écart de 29 % se décompose en :
 
 - un peu d'énergie à fournir, malgré une résistance au roulement ramenée à 0,0095 : le préréglage pèse 1100 kg et perd 7 % dans la boîte, plus sa traînée ;
 - environ 8 % de rendement : 361 g/kWh sur le cycle, pour environ 335 estimés.
@@ -962,7 +962,7 @@ La distribution change de voix, et chaque part est un choix marqué. Sous une t�
 
 Écart de puissance attendu : les BMW 2002 à un carburateur, à deux et à injection annoncent environ 100, 120 et 130 ch, avec une compression et des cames qui diffèrent aussi. Ici, l'écart ne vient que de l'alimentation, et reste donc plus faible. Entre un carburateur et une injection à boucle fermée, la consommation différait historiquement de 10 à 20 % selon les époques et les réglages : un ordre de grandeur, pas une cible.
 
-**Simplifications et limites.** Tout est à chaud : ni starter ni démarrage à froid, puisque rien ne calcule la température. Pas de double corps progressif, de correcteur d'altitude, de niveau de cuve, de givrage, ni d'effet des virages sur la cuve. Le refroidissement de l'air par l'évaporation et le chauffage de la pipe sont supposés se compenser, sans les calculer. Le pauvre et le riche passagers ne changent pas le rendement de la combustion ailleurs que dans `f`. L'air d'un corps par cylindre ne pulse pas dans le film : seule sa dépression le fait. Le gaz à l'écran n'a qu'un conduit : plusieurs corps y sont un seul col, qui garde le rapport de chacun à sa pipe. Il n'y perd que ses changements de section, sans le coefficient de perte du C++ : 2,4 kPa dans le plénum à 6000 tr/min sur un 2 L à carburateur unique, 0,3 kPa avec un corps par cylindre, pour 7 et 3 kPa à la puissance maximale au couple. Les sources sont citées de mémoire : Heywood (*Internal Combustion Engine Fundamentals*, 1988, chapitres 5 et 7), Aquino (SAE 810494), Hires et Overington (SAE 810495), Nelson et Morfey (*J. Sound Vib.*, 1981), Nukiyama et Tanasawa (1939), le manuel de préparation des Weber de Passini pour la règle de 20 √(V N), les fiches Holley. À recouper avant de les citer ailleurs. L'écoute reste à faire.
+**Simplifications et limites.** Le starter et la came de ralenti accéléré sont dans « La thermique » ; le film, lui, reste celui d'un moteur chaud. Pas de double corps progressif, de correcteur d'altitude, de niveau de cuve, de givrage, ni d'effet des virages sur la cuve. Le refroidissement de l'air par l'évaporation et le chauffage de la pipe sont supposés se compenser, sans les calculer. Le pauvre et le riche passagers ne changent pas le rendement de la combustion ailleurs que dans `f`. L'air d'un corps par cylindre ne pulse pas dans le film : seule sa dépression le fait. Le gaz à l'écran n'a qu'un conduit : plusieurs corps y sont un seul col, qui garde le rapport de chacun à sa pipe. Il n'y perd que ses changements de section, sans le coefficient de perte du C++ : 2,4 kPa dans le plénum à 6000 tr/min sur un 2 L à carburateur unique, 0,3 kPa avec un corps par cylindre, pour 7 et 3 kPa à la puissance maximale au couple. Les sources sont citées de mémoire : Heywood (*Internal Combustion Engine Fundamentals*, 1988, chapitres 5 et 7), Aquino (SAE 810494), Hires et Overington (SAE 810495), Nelson et Morfey (*J. Sound Vib.*, 1981), Nukiyama et Tanasawa (1939), le manuel de préparation des Weber de Passini pour la règle de 20 √(V N), les fiches Holley. À recouper avant de les citer ailleurs. L'écoute reste à faire.
 
 **Au contact des autres réglages.** Le filtre à air (`withAirFilter`) et le venturi sont en série : leurs pressions s'ajoutent au premier ordre, car leurs facteurs se multiplient et restent petits. Le souffle du venturi rejoint `Source::Intake` directement : il ne passe pas par la réponse du filtre, et n'en suit donc pas l'emplacement. Avec un filtre « cornets » et un corps par cylindre, la boîte serait retirée deux fois : 6 dB ici, et ce que retire déjà le filtre. Un filtre qui n'a pas de sens sur un corps par cylindre n'est pas interdit.
 
@@ -1305,3 +1305,83 @@ affiche la pression, la masse volumique et la vitesse du son qui en découlent.
 - Les niveaux supposés du sifflement d'un compresseur et des bruits aérodynamiques suivent σ comme le reste, sans mesure.
 - Ni le refroidissement du moteur, ni la détonation, ni le calculateur ne lisent encore l'air du jour : sujets « thermique »,
   « combustion », « calculateur », « pression ». Ils trouvent ici `ambientAirOf`, `trappedAirK` et `TurboSpec::ambientPa`.
+
+## La thermique
+
+Les températures du moteur viennent d'un réseau de quatre capacités (`ThermalNetwork`, `core/src/thermal.cpp`), qu'intègre `DrivingModel` toutes les 10 ms : le métal (culasse, chemises, haut du bloc), l'eau côté moteur, l'eau du radiateur, et l'huile avec ce qu'elle mouille (vilebrequin, bielles, carter, bas du bloc).
+
+```
+C_m dT_m/dt = Q_parois + (1 − a)·P_f − G_me·(T_m − T_e) − G_mh·(T_m − T_h) − G_ma·(T_m − T_air)
+C_e dT_e/dt = G_me·(T_m − T_e) − ṁc·(T_e − T_r)
+C_r dT_r/dt = ṁc·(T_e − T_r) − Q_radiateur
+C_h dT_h/dt = a·P_f + G_mh·(T_m − T_h) − G_ha·(T_h − T_air)
+```
+
+- **Chaleur aux parois.** Q_parois = s·P_carburant, avec s = 0,28·(φ/0,25)^−0,25·(T_g − T_m)/(T_g − 100 °C), où φ est le débit de carburant rapporté à celui de la puissance maximale. La loi d'échelle est celle de Taylor et Toong (Nu ∝ Re^0,75, donc Q ∝ ṁ^0,75) ; le niveau est calé sur le bilan d'énergie de Heywood (*Internal Combustion Engine Fundamentals*, 17 à 26 % à l'eau à pleine charge sur un moteur à essence, de mémoire). s vaut 0,20 à pleine charge et jusqu'à 0,5 au ralenti ; une paroi froide reçoit un peu plus (gaz à 1100 °C en moyenne, supposé). L'énergie du carburant vient de la même fonction pure que le compteur (`ConsumptionModel::fuelGps`), pas du compteur ; l'enrichissement à froid, qui ne brûle pas, ne chauffe rien.
+- **Frottements.** P_f = couple de frottement × ω : a = 45 % à l'huile (paliers, distribution, pompe, environ la part de ces termes chez Patton et al.), le reste aux chemises.
+- **Calorstat à cire.** Il commence à s'ouvrir à 87 °C (l'une des trois valeurs courantes : 82, 87, 92 °C) et il lui faut 8 K pour s'ouvrir en grand, comme celui du Land Rover Freelander 2 (83 à 91 °C, manuel d'atelier, vu cité). Le jeu de la cire le referme 2 K plus bas : c'est l'hystérésis (supposée). L'orifice de purge laisse passer 0,5 % du débit (supposé). La pompe débite 0,25 L/s par litre de cylindrée et par 1000 tr/min (supposé : environ 2 L/s à 6000 tr/min sur un 1,4 L).
+- **Radiateur.** ε-NTU, courants croisés, les deux fluides non brassés : ε = 1 − exp(NTU^0,22/C_r·(exp(−C_r·NTU^0,78) − 1)). L'air traverse le faisceau à 30 % de la vitesse de la voiture, plus 3 m/s au ventilateur et 0,3 m/s de tirage naturel (supposés) ; UA ∝ ṁ_air^0,6 (ailettes à persiennes). Il est dimensionné comme un motoriste le ferait pour son cas le plus dur, ici supposé : 60 % de l'énergie maximale du carburant à 50 km/h, 40 °C dehors, eau à 110 °C en entrée, ε = 0,6. Le ventilateur suit un thermocontact au bas du radiateur : 95 °C en marche, 84 °C à l'arrêt (VW T3, contact simple, catalogue Mecatechnic).
+- **Masses.** Supposées, par litre de cylindrée : 30 kg de métal à 600 J/(kg·K) côté eau, 15 kg à 500 J/(kg·K) côté huile ; 1,2 L + 1 L/L d'eau dans le moteur, 1 L + 0,6 L/L dans le radiateur (eau glycolée, 3,64 kJ/(L·K)) ; 2,5 L + 0,8 L/L d'huile. L'eau ne dépasse pas 129 °C : elle bout sous le bouchon, et le réseau ne suit plus.
+
+### L'huile et les frottements
+
+**Viscosité, loi de Vogel.** μ = a·exp(b/(T + c)), a = 3,477·10⁻⁵ Pa·s, b = 1345,6 K, c = 144,9 °C, ajustée exactement sur trois points de la fiche d'une 5W-30 synthétique (Motorcraft, « Product typicals », lue) : 60 mm²/s à 40 °C, 10,5 mm²/s à 100 °C, 4250 mPa·s à −30 °C (viscosité au démarreur), densité 0,853 et dilatation de 6,5·10⁻⁴/K. À 20 °C, elle est 14 fois plus épaisse qu'à 100 °C ; une revue italienne citée parle de « jusqu'à 15 fois ».
+
+**Frottements hydrodynamiques.** Ceux du modèle de Patton, Nitschke et Heywood (SAE 890836) : paliers 3,03·10⁻⁴·N·D³·L·n_b/(B²·S·n_c) et jupes 294·v̄_p/B, en kPa, mm, tr/min et m/s, avec des paliers de 0,67 × 0,25 alésage (ligne) et 0,56 × 0,22 alésage (bielles). Ces coefficients sont ceux que reproduisent les travaux qui en partent, pas relus dans l'article. Vérification : Petroff (couple = π·μ·ω·D³·L/(4c), jeu radial de 1 ‰ du rayon, huile à 100 °C) donne 5,7 kPa pour les paliers de la citadine à 2000 tr/min, la formule 5,9 kPa. Ils sont proportionnels au régime.
+
+**Mise à l'échelle.** Comme Sandoval et Heywood (SAE 2003-01-0725), les termes hydrodynamiques suivent la viscosité : ici (μ/μ₁₀₀)^0,5. L'exposant est cité de mémoire ; leur résumé, lu, dit que l'huile froide donne « environ deux fois » les frottements du moteur chaud. Ici : 1,57 fois à 20 °C et 2000 tr/min, 2,15 fois à 0 °C (`frictionFactor`). Au-dessus de 100 °C, rien ne change : le modèle de frottement d'origine est calé à chaud, et une huile plus fluide glisse vers le régime mixte (Stribeck), qui compenserait.
+
+### Ce que change un départ à froid
+
+Après un départ à froid (`--start cold`, le réglage `startTemp`), tout part de l'air ambiant, et trois écarts à la référence chaude agissent, tous nuls une fois chaud :
+
+- **Frottements.** L'huile froide ajoute ses frottements au couple, au lancement et moteur calé compris : le démarreur tourne moins vite, le moteur cale plus facilement. La combustion, elle, reste celle du moteur chaud.
+- **Ralenti visé.** Le calculateur de la Saab 9-5 (Trionic, manuel d'atelier en ligne, lu) vise 1200 tr/min à −30 °C d'eau et 825 tr/min une fois chaud : +45 % à −30 °C, en ligne droite jusqu'à 70 °C (fin supposée), donc +23 % à 20 °C. Un carburateur fait la même chose par sa came de ralenti accéléré.
+- **Enrichissement.** Le carburant qui reste liquide sur les parois froides et repart imbrûlé. Supposé : λ ≈ 0,87 à 20 °C d'eau avec un calculateur, 0,77 avec un starter, qui n'a pas de sonde, en ligne droite jusqu'à 70 °C. Il se paie à la consommation, sans couple ni chaleur. Rien sur un diesel, qui n'a ni papillon ni starter.
+
+**Parti chaud, rien n'en revient.** Le réseau tourne quand même, pour les jauges, mais ni le couple, ni la conduite, ni le son ne le lisent, quelle que soit la température qu'il calcule : les 29 empreintes sont les mêmes au bit près, et un test fait diverger les températures (20 °C et −30 °C dehors) sans que rien d'autre ne bouge. La fiche (0 à 100 km/h, vitesse de pointe) se mesure moteur chaud, même après un départ à froid.
+
+**Le son.** Rien n'a été ajouté au son : il suit le régime et la charge réels. Le ralenti part plus haut et redescend à mesure que l'eau chauffe, en une dizaine de minutes au ralenti par 20 °C, en quatre minutes et demie sur le WLTC. Par −10 °C, le ralenti du V8 respire davantage : son niveau varie de 2,4 dB (écart type sur 50 ms) contre 1,3 dB à chaud, la régulation ouvrant plus pour tenir des frottements presque doubles. L'écoute reste à faire.
+
+**Sur l'électrique, rien de tout cela** : pas de réseau, pas de jauge, et les fonctions renvoient l'air ambiant ou zéro.
+
+### Face aux chiffres publiés
+
+Mesuré avec `revforge-render --out none --preset X --scenario wltc|idle --start cold|warm --fuel 1` (et `--seconds 589` pour la première phase), par 20 °C.
+
+| Préréglage | Phase basse, chaud → froid (L/100 km) | WLTC complet, chaud → froid | Eau à 70 °C | Calorstat ouvert | Huile à 80 °C | Ralenti 15 min, chaud → froid (L/h) | Eau à 70 °C au ralenti |
+|---|---|---|---|---|---|---|---|
+| `city_14` | 8,69 → 9,66 (+11 %) | 6,76 → 6,89 (+3 g/km) | 264 s | 373 s | 371 s | 0,56 → 0,67 (+20 %) | 632 s |
+| `hot_hatch_turbo` | 12,80 → 14,09 (+10 %) | 8,90 → 9,08 (+4 g/km) | 219 s | 293 s | 317 s | 0,84 → 1,00 (+19 %) | 582 s |
+| `v8_cross_plane` | 23,98 → 26,83 (+12 %) | 13,90 → 14,28 (+9 g/km) | 277 s | 385 s | 401 s | 1,87 → 2,21 (+18 %) | 605 s |
+| `diesel_four` | 8,56 → 9,15 (+7 %) | 7,58 → 7,66 (+2 g/km) | 289 s | 427 s | 402 s | 0,46 → 0,56 (+20 %) | 725 s |
+| `carb_twin_cam` | 13,51 → 15,22 (+13 %) | 8,94 → 9,17 (+5 g/km) | 232 s | 337 s | 341 s | 0,85 → 1,05 (+23 %) | 573 s |
+
+Sur `diesel_four`, le conducteur relance le moteur une fois pendant le WLTC, à chaud comme à froid (voir « La consommation »). Par −20 °C, la citadine au ralenti met 17 minutes à atteindre 70 °C d'eau, et dépense 48 % de plus que chaude.
+
+| Mesure | Modèle | Publié | Source |
+|---|---|---|---|
+| Ralenti visé, eau à −30 °C | 1,45 fois le ralenti chaud | 1200 tr/min pour 825 | Saab 9-5, Trionic (lu) : le modèle est calé dessus |
+| Ralenti à 20 °C, `city_14` | 985 tr/min pour 815 à chaud (1,21), 1105 juste après le démarrage | 1100 pour 950 à 20 °C (1,16) dans un exemple de réglage ; « de 1200 à 1800 » au démarrage | HP Academy, engineerfix.com (vus cités) |
+| Durée du ralenti accéléré, au point mort par 20 °C | 9,5 à 12 min, le temps que l'eau atteigne 70 °C | « une à deux minutes » pour le pic ; chauffe du catalyseur pendant jusqu'à 5000 allumages, environ 2 min | engineerfix.com (vu cité), Saab WIS (lu) |
+| Eau à 70 °C, WLTC froid | 3,7 à 4,8 min | la période froide des essais en conduite réelle (RDE) finit à 70 °C d'eau, et dure 5 min au plus | règlement (UE) 2017/1151 (vu cité) |
+| Huile après l'eau | environ 6 K derrière l'eau pendant la mise en température du WLTC, puis au-dessus | « environ 10 °C de retard » sur un diesel de poids lourd | *Applied Sciences* 2020 (MDPI, vu cité) |
+| Surcoût, première phase | +7 % (diesel) à +13 % (carburateurs) sur 589 s | +20 % sur la phase froide de la FTP (505 s) face à la phase chaude, par 24 °C ; +40 à +80 % par −6,7 °C | Taylor et Stewart, SAE 2001-01-0221 (résumé lu) |
+| Surcoût, WLTC complet | +2 à +9 g/km de CO₂ (+1 à +3 %) | +6,1 g/km en moyenne sur 20 voitures | Tsokolis et al., *Applied Energy* 2016, JRC102610 (résumé lu) |
+| Frottements à froid | ×1,57 à 20 °C, ×2,15 à 0 °C, à 2000 tr/min | « environ deux fois » | Sandoval et Heywood, SAE 2003-01-0725 (résumé vu cité) |
+
+« Lu » : la page ou le document lui-même. « Vu cité » : un extrait de recherche ou une reprise. Le ralenti accéléré du modèle dure plus que le pic que décrivent les conducteurs, qui est la chauffe du catalyseur : le modèle ne la simule pas, et garde le ralenti du calculateur selon l'eau, qui redescend avec elle.
+
+### Ce qui manque
+
+- **Le surcoût d'un départ à froid lit environ moitié moins que les chiffres publiés.** Le modèle ne compte que le moteur : ni l'huile de boîte et de pont, ni les pneus froids, ni la chauffe du catalyseur (allumage retardé vers 10° après le point mort haut chez Saab, pendant jusqu'à 5000 allumages), ni la combustion moins bonne sur des parois froides (de l'ordre de 1 à 2 %), ni le chauffage. Rien n'a été réglé pour rattraper cet écart.
+- **Supposés** : la fin du ralenti accéléré et de l'enrichissement à 70 °C, l'enrichissement lui-même, les masses, les conductances, le cas de dimensionnement du radiateur, les vitesses d'air, la part des frottements qui va à l'huile, la température moyenne des gaz.
+- **Pas d'échangeur eau-huile** : l'huile monte à 115-120 °C sur la fin du WLTC, et vers 140 °C en tirant une remorque par 45 °C.
+- **La surchauffe** : avec un ventilateur qui marche, le ralenti par 45 °C ne surchauffe pas (l'eau tient vers 97 °C) ; ni le condenseur de climatisation, ni l'air chaud qui revient sous le capot ne sont simulés. Ventilateur en panne, l'eau dépasse 115 °C (test). Au-delà de 129 °C, l'eau bout : ni perte de liquide, ni protection du calculateur.
+- **Parti chaud, le réseau ne fait que les jauges** : un moteur chaud qui tourne une heure au ralenti par −30 °C refroidit à l'écran sans que ses frottements changent.
+- Le rotatif n'a que ses paliers dans les frottements hydrodynamiques (pas de jupes), au même quart de moins que ses frottements (supposé). Le gaz à l'écran et la chaleur de la page (`Motion.heat`) ne lisent pas ce réseau, et la vapeur d'un échappement froid n'est pas dessinée.
+- L'air du radiateur est à 101 325 Pa : l'altitude n'y est pas encore.
+
+### Ce que lisent et exposent les autres sujets
+
+Lu : la température ambiante (`EngineConfig::ambientC`, 20 °C par défaut). Exposé, en fonctions pures : `oilViscosityPaS`, `hydrodynamicNmPerRpm`, `coldFrictionNm`, `frictionFactor`, `coldIdleRise`, `coldEnrichment`, `wallHeatShare` ; et dans `DrivingModel::thermal()` : `coolantC`, `oilC`, `metalC`, avec `coldIdleRpm`, `coldEnrichment`, `coldFrictionNm` de ce qui agit. Pour qu'un moteur parti chaud reste au bit près, un effet branché sur ces températures passe, comme ici, par un écart à la référence chaude (`kWarmCoolantC`, `kWarmOilC`) qui n'agit qu'après un départ à froid (`thermalCoupled()`).

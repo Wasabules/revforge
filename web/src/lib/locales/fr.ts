@@ -1026,8 +1026,19 @@ export const fr: Record<MessageKey, string> = {
   'startTemp.warm': 'Chaud',
   'startTemp.warm.help': "L'eau et l'huile déjà à leur température de fonctionnement.",
   'startTemp.cold': 'Froid',
-  'startTemp.cold.help': "Tout à la température extérieure : huile épaisse, ralenti accéléré et mélange enrichi jusqu'à ce qu'il chauffe.",
+  'startTemp.cold.help': "Tout à la température extérieure : huile épaisse et plus de frottements, ralenti accéléré et essence en plus (le starter sur un carburateur) jusqu'à 70 °C d'eau. Parti chaud, le moteur reste celui de référence : ses températures ne servent qu'aux jauges.",
   'summary.coldStart': 'départ à froid',
+  'gauge.coolant': "Température d'eau",
+  'gauge.coolant.note': "L'eau à la sortie du moteur, dans le réseau thermique : chaleur des parois, calorstat, radiateur et ventilateur, calculés à chaque pas du modèle. Repère : le moteur chaud de référence.",
+  'gauge.coolant.sub': 'Calorstat {lift} %',
+  'gauge.coolant.fan': ' · ventilateur',
+  'gauge.coolant.idle': ' · ralenti +{rpm}',
+  'gauge.coolant.rich': ' · essence +{pct} %',
+  'gauge.oil': "Température d'huile",
+  'gauge.oil.note': "L'huile et ce qu'elle mouille, dans le réseau thermique. Sa viscosité suit la loi de Vogel ; froide, elle ajoute des frottements hydrodynamiques. Repère : le moteur chaud de référence.",
+  'gauge.oil.sub': '{mpas} mPa·s',
+  'gauge.oil.idle': 'Viscosité —',
+  'gauge.oil.friction': ' · frottements +{pct} %',
 };
 
 /** Les préréglages en français, par identifiant : l'anglais est dans `presets/presets.json`, qui reste la source unique. */
