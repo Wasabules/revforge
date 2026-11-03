@@ -484,7 +484,10 @@ Gearing gearingOf(const Powertrain& p) {
 Performance measurePerformance(const Powertrain& p) {
     Performance out;
     constexpr double kStep = 0.01;
-    DrivingModel model(p);
+    // La fiche se mesure moteur chaud, comme une homologation : un départ à froid ne change pas la voiture.
+    Powertrain warm = p;
+    warm.engine.startTemp = StartTemp::Warm;
+    DrivingModel model(warm);
     // Le chronomètre part une fois la première engagée, embrayage au point de patinage.
     for (int i = 0; i < 100 && !model.meshed(); ++i) model.stepPedal(kStep, 1.0, 0.0);
     for (int i = 0; i < 40 * 100; ++i) {

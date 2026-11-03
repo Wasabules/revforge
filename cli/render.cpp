@@ -66,6 +66,7 @@ void usage() {
         "          --db 1: also print the estimated A-weighted level\n"
         "          --fuel 1: also print the estimated fuel, oil or energy used, and the best of the engine's fuel map\n"
         "          --trace FILE: write the turbo, its anti-lag and the fuel as CSV, one line per slice\n"
+        "          --thermal FILE: write the engine temperatures and what a cold engine changes as CSV, one line per 0.1 s\n"
         "          --walk 1: the head walks through the car at 1.2 m/s (with lap)");
 }
 
@@ -149,6 +150,41 @@ void traceLine(const DrivingModel& model, const EngineSound& sound, double t) {
                  model.consumption().fuelGps(), model.torqueNm(), model.antiLagLostNm(), model.antiLagActive() ? 1 : 0, model.speedKmh(), s.compressorFlow, s.blowOff, s.wastegate, s.chargePa / 1e5 - 1.01325, s.turbineInPa / 1e5 - 1.01325, model.consumption().fuelTripL(), static_cast<unsigned>(sound.pops()));
 }
 
+/** `--thermal` : les températures et ce que le moteur froid change, pour mesurer la mise en température sans rien écouter. */
+std::FILE* g_thermal = nullptr;
+double g_thermalNext = 0.0;
+
+/** Les instants de la mise en température : le premier passage de chaque seuil (s), -1 tant qu'il n'est pas atteint. */
+struct WarmUp {
+    double thermostatS = -1.0;
+    double coolant70S = -1.0;
+    double oil80S = -1.0;
+    double idleWarmS = -1.0;
+    double peakCoolantC = -1000.0;
+    double peakOilC = -1000.0;
+    double fanS = 0.0;
+    bool active = false;  // rien de tout cela sur l'électrique
+
+    void track(const DrivingModel& model, double t, double dt) {
+        if (!active) return;
+        const ThermalNetwork& th = model.thermal();
+        if (thermostatS < 0.0 && th.thermostat() > 0.01) thermostatS = t;
+        if (coolant70S < 0.0 && th.coolantC() >= 70.0) coolant70S = t;
+        if (oil80S < 0.0 && th.oilC() >= 80.0) oil80S = t;
+        if (idleWarmS < 0.0 && model.thermalCoupled() && model.coldIdleRpm() <= 0.0) idleWarmS = t;
+        peakCoolantC = std::max(peakCoolantC, th.coolantC());
+        peakOilC = std::max(peakOilC, th.oilC());
+        if (th.fan()) fanS += dt;
+    }
+};
+WarmUp g_warmUp;
+
+void thermalLine(const DrivingModel& model, double t) {
+    const ThermalNetwork& th = model.thermal();
+    std::fprintf(g_thermal, "%.1f,%.1f,%.2f,%.2f,%.2f,%.2f,%.2f,%.3f,%d,%.3f,%.3f,%.1f,%.3f,%.5f,%.0f,%.0f\n", t, model.rpm(), model.speedKmh(), th.coolantC(), th.oilC(), th.metalC(), th.radiatorC(),
+                 th.thermostat(), th.fan() ? 1 : 0, th.radiatorW() / 1000.0, model.coldFrictionNm(), model.coldIdleRpm(), model.coldEnrichment(), model.consumption().fuelTripL(), th.wallW(), model.torqueNm());
+}
+
 /** Le modèle de conduite pilote le son : chaque tranche est une pédale, ou le pilote automatique. */
 template <typename Drive>
 void play(EngineSound& sound, DrivingModel& model, Output& out, int rate, Drive drive, int tick = 0) {
@@ -159,6 +195,11 @@ void play(EngineSound& sound, DrivingModel& model, Output& out, int rate, Drive 
     while (done < out.frames()) {
         drive(step++, dt);
         if (g_trace != nullptr) traceLine(model, sound, static_cast<double>(step) * dt);
+        g_warmUp.track(model, static_cast<double>(step) * dt, dt);
+        if (g_thermal != nullptr && static_cast<double>(step) * dt >= g_thermalNext) {
+            thermalLine(model, static_cast<double>(step) * dt);
+            g_thermalNext += 0.1;
+        }
         sound.setTargetRpm(static_cast<float>(model.rpm()));
         sound.setDrive(static_cast<float>(model.load()), static_cast<float>(model.boost()), model.cut(), model.cranking(), static_cast<float>(model.throttle()));
         sound.setTurbo(model.turboDrive());
@@ -467,6 +508,13 @@ void printFuel(const DrivingModel& model, const Powertrain& powertrain, double s
         std::printf("Fuel (estimate): %.4f L in %.0f s, %.2f L/h, %.2f L/100 km over %.2f km, %.0f g CO2/km, average lambda %.2f\n", c.fuelTripL(), seconds, c.fuelTripL() / hours, c.fuelAvgLper100km(), c.tripKm(), c.co2GPerKm(), c.lambdaAverage());
         std::printf("Fuel map: best %.0f g/kWh at %.0f rpm, %.1f bar; %.0f g/kWh at peak power\n", best.bestGPerKwh, best.bestRpm, best.bestBmepBar, best.peakPowerGPerKwh);
         std::printf("Oil (order of magnitude, within a factor of three): %.2f mL, %.1f g/h, %.0f mL/1000 km\n", c.oilTripMl(), c.oilTripMl() * 0.85 / hours, c.oilMlPer1000km());
+        const ThermalNetwork& th = model.thermal();
+        const WarmUp& w = g_warmUp;
+        std::printf("Temperatures (%s start): coolant %.1f C (peak %.1f), oil %.1f C (peak %.1f), metal %.1f C, thermostat %.0f %%, fan %.0f s\n",
+                    model.thermalCoupled() ? "cold" : "warm", th.coolantC(), w.peakCoolantC, th.oilC(), w.peakOilC, th.metalC(), th.thermostat() * 100.0, w.fanS);
+        if (model.thermalCoupled()) {
+            std::printf("Warm-up: thermostat opens at %.0f s, coolant 70 C at %.0f s, oil 80 C at %.0f s, fast idle over at %.0f s (-1: not reached)\n", w.thermostatS, w.coolant70S, w.oil80S, w.idleWarmS);
+        }
     }
     const PowerSummary peak = powerSummary(powertrain);
     std::printf("Engine: %.1f Nm at %.0f rpm, %.1f kW at %.0f rpm, 0-100 km/h in %.2f s\n", peak.peakTorqueNm, peak.peakTorqueRpm, peak.peakPowerKw, peak.peakPowerRpm, measurePerformance(powertrain).zeroTo100S);
@@ -575,6 +623,14 @@ int main(int argc, char** argv) {
                 return 2;
             }
             traceHeader();
+        }
+        else if (arg == "--thermal") {
+            g_thermal = std::fopen(value.c_str(), "w");
+            if (g_thermal == nullptr) {
+                std::fprintf(stderr, "Cannot write: %s\n", value.c_str());
+                return 2;
+            }
+            std::fputs("t,rpm,kmh,coolant_c,oil_c,metal_c,radiator_c,thermostat,fan,radiator_kw,cold_friction_nm,cold_idle_rpm,enrichment,trip_l,wall_w,torque_nm\n", g_thermal);
         }
         else if (arg == "--kmh") kmh = std::atof(value.c_str());
         else if (arg == "--walk") walk = value != "0";
@@ -711,6 +767,7 @@ int main(int argc, char** argv) {
     if (customBox) powertrain.gearbox = box;
     const EngineProfile profile = powertrain.profile();
     DrivingModel model(powertrain);
+    g_warmUp.active = !powertrain.electric;
     model.setShiftMode(shiftMode);
     model.setDriveScenario(driveScenario);
 

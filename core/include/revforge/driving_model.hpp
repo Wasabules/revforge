@@ -7,6 +7,7 @@
 #include "revforge/driver_scenarios.hpp"
 #include "revforge/powertrain.hpp"
 #include "revforge/shift_logic.hpp"
+#include "revforge/thermal.hpp"
 
 namespace revforge {
 
@@ -164,6 +165,17 @@ public:
     const ConsumptionMeter& consumption() const { return consumption_; }
     void resetTrip() { consumption_.resetTrip(); }
 
+    /**
+     * Les températures du moteur : le réseau tourne toujours, pour les jauges. Il n'agit sur le moteur qu'après un départ à
+     * froid (`StartTemp::Cold`) : un moteur parti chaud reste le moteur de référence, au bit près. Rien sur l'électrique.
+     */
+    const ThermalNetwork& thermal() const { return thermal_; }
+    bool thermalCoupled() const { return coldCoupled_; }
+    /** Ce que le moteur froid change en ce moment : frottements en plus (Nm), ralenti visé en plus (tr/min), carburant en plus (part). */
+    double coldFrictionNm() const { return coldCoupled_ ? coldFrictionNm_ : 0.0; }
+    double coldIdleRpm() const { return coldCoupled_ ? idle_ * coldIdleRise_ : 0.0; }
+    double coldEnrichment() const { return coldCoupled_ ? coldEnrichment_ : 0.0; }
+
 private:
     enum class Driver { Pilot, Pedal, Neutral, Off };
     enum class ShiftStep { None, Declutch, PullOut, Flight, Sync, Engage, Reclutch, Handover };
@@ -211,6 +223,9 @@ private:
     double bmepPumping(double rpm) const;
     double wheelSpeedMs() const { return wheelOmega_ * radius_; }
     void meterConsumption();
+    void stepThermal();
+    void updateColdEffects();
+    void configureThermal(const Powertrain& powertrain, double peakPowerRpm, double peakPowerKw);
 
     Powertrain powertrain_;
     Gearing gearing_;
@@ -315,6 +330,23 @@ private:
     // Consommation : ce que la combustion a demandé à ce pas, et le compteur qui l'intègre.
     ConsumptionMeter consumption_;
     ConsumptionInput burnt_;
+
+    // Thermique : le réseau, ce qu'il reçoit entre deux de ses pas, et ce que le moteur froid change (départ à froid seulement).
+    ThermalNetwork thermal_;
+    bool thermalEngine_ = false;
+    bool thermalReady_ = false;
+    bool coldCoupled_ = false;
+    StartTemp startTemp_ = StartTemp::Warm;
+    float ambientC_ = 20.0f;
+    double hydroNmPerRpm_ = 0.0;
+    double heatFuelW_ = 0.0;
+    double heatFrictionW_ = 0.0;
+    double frictionHeatNm_ = 0.0;
+    int heatSteps_ = 0;
+    double viscosityExcess_ = 0.0;
+    double coldFrictionNm_ = 0.0;
+    double coldIdleRise_ = 0.0;
+    double coldEnrichment_ = 0.0;
 
     // Voiture
     double speedMs_ = 0.0;
