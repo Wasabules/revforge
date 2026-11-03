@@ -616,16 +616,17 @@
         const i0 = part.first - net.intakeFirst;
         const x0 = Math.min(view.intakeX[i0], view.intakeX[i0 + part.count]);
         const x1 = Math.max(view.intakeX[i0], view.intakeX[i0 + part.count]);
-        const pinch = Math.max(1.5, (tall - view.partTall[p]) / 2);
-        ctx.fillStyle = theme.metal;
+        const pinch = Math.max(3, (tall - view.partTall[p]) / 2);
+        ctx.fillStyle = theme.text;
         ctx.beginPath();
-        ctx.moveTo(x0 - 3, top);
+        ctx.moveTo(x0 - 5, top - 1);
         ctx.lineTo((x0 + x1) / 2, top + pinch);
-        ctx.lineTo(x1 + 3, top);
-        ctx.moveTo(x0 - 3, top + tall);
+        ctx.lineTo(x1 + 5, top - 1);
+        ctx.moveTo(x0 - 5, top + tall + 1);
         ctx.lineTo((x0 + x1) / 2, top + tall - pinch);
-        ctx.lineTo(x1 + 3, top + tall);
+        ctx.lineTo(x1 + 5, top + tall + 1);
         ctx.fill();
+        label(ctx, theme, t('engine.part.carburetor'), (x0 + x1) / 2, top - 6);
       }
       // Parois du conduit.
       ctx.strokeStyle = theme.metal;

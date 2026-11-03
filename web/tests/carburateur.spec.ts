@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { carburetorOf } from '../src/lib/carburetor';
 import type { EngineConfig } from '../src/lib/config';
 import { engineLayout, EnginePose, type PoseClock } from '../src/lib/engineLayout';
+import { gasKey } from '../src/lib/fluid';
 import { GasNetwork, type GasInputs } from '../src/lib/fluidGas';
 import { ouvrir, voir } from './aide';
 
@@ -72,6 +73,8 @@ test.describe('le carburateur, dans le calcul', () => {
     const net = new GasNetwork();
     net.build(BASE, ORDER4);
     expect(net.intakeParts.map((part) => part.kind)).toEqual(['duct']);
+    // Changer d'alimentation reconstruit le réseau : sinon le col n'apparaît qu'au prochain rechargement.
+    expect(gasKey({ ...BASE, fuelSystem: 'single' })).not.toBe(gasKey(BASE));
     net.build({ ...BASE, fuelSystem: 'single' }, ORDER4);
     expect(net.intakeParts.map((part) => part.kind)).toEqual(['duct', 'venturi', 'duct']);
     const single = net.intakeParts[1].area;
@@ -178,6 +181,7 @@ test.describe('le carburateur, sur le site', () => {
         await voir(page, 'gas');
         await page.waitForTimeout(1000);
         await page.screenshot({ path: `${SHOTS}/gaz_${name}_${engine}.png` });
+        await voir(page, 'engine');
         await page.setViewportSize({ width: 360, height: 760 });
         await page.waitForTimeout(600);
         await page.screenshot({ path: `${SHOTS}/tel_${name}_${engine}.png` });
