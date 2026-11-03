@@ -137,6 +137,44 @@ export interface GasInputs {
   turnsTotal?: number;
 }
 
+/**
+ * Les entrées d'une image, recopiées une fois dans un objet de forme fixe : les pas de calcul les relisent une centaine
+ * de fois par image. Lu directement sur des objets de formes diverses, chaque nombre était recopié dans un neuf :
+ * 3 ko par image de plus, dès que l'appelant avait passé quelques formes différentes.
+ */
+class FrameInputs implements GasInputs {
+  rpm = 0;
+  load = 0;
+  boost = 0;
+  release = 0;
+  burning = false;
+  heat = 0;
+  compressorRatio: number | undefined = undefined;
+  compressorOutK: number | undefined = undefined;
+  wastegate: number | undefined = undefined;
+  antiLag: number | undefined = undefined;
+  antiLagHeatW: number | undefined = undefined;
+  antiLagAirFlow: number | undefined = undefined;
+  turnsTotal: number | undefined = undefined;
+
+  copy(from: GasInputs): this {
+    this.rpm = from.rpm;
+    this.load = from.load;
+    this.boost = from.boost;
+    this.release = from.release;
+    this.burning = from.burning;
+    this.heat = from.heat;
+    this.compressorRatio = from.compressorRatio;
+    this.compressorOutK = from.compressorOutK;
+    this.wastegate = from.wastegate;
+    this.antiLag = from.antiLag;
+    this.antiLagHeatW = from.antiLagHeatW;
+    this.antiLagAirFlow = from.antiLagAirFlow;
+    this.turnsTotal = from.turnsTotal;
+    return this;
+  }
+}
+
 /** Le même ordre que `AntiLag` en C++. */
 export const ANTI_LAG_CODE = { off: 0, retard: 1, air: 2, cut: 3 } as const;
 /** Allumage après le point mort haut (degrés), comme en C++ : 55° et 40° de retard sur un allumage normal, autour de 20° avant. */
@@ -489,6 +527,8 @@ export class GasNetwork {
   lastSteps = 0;
   /** Temps physique simulé depuis la dernière construction (s). */
   time = 0;
+  /** Les entrées de l'image en cours : voir `FrameInputs`. */
+  private readonly frame = new FrameInputs();
 
   /** (Re)construit le réseau pour ce moteur. `order` : ordre d'allumage, cylindres numérotés depuis 1. */
   build(config: EngineConfig, order: number[]): void {
@@ -1021,8 +1061,9 @@ export class GasNetwork {
   }
 
   /** Avance de `seconds` de temps physique. Le cycle va de `cycle` à `cycle + turns` : c'est l'horloge de `Motion`. */
-  advance(seconds: number, cycle: number, turns: number, inputs: GasInputs): void {
+  advance(seconds: number, cycle: number, turns: number, given: GasInputs): void {
     if (this.n === 0) return;
+    const inputs = this.frame.copy(given);
     this.setWalls(inputs.heat);
     let left = seconds;
     let steps = 0;

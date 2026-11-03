@@ -110,9 +110,9 @@ test.describe('le tube du turbo, sans navigateur', () => {
   });
 
   test('trois mètres de tube n\'allouent rien, et tiennent dans une image', () => {
-    // Le tas d'une image dépend de ce que les tests précédents ont fait compiler : sur `main` comme ici, le même réseau passe
-    // de 2,2 ko par image à froid à 4,5 ko après des réglages variés, tube ou pas. Le seuil absolu reste celui
-    // d'`interface.spec.ts`, qui passe tôt ; ici, on compare le tube à son absence, dans le même état, lot après lot.
+    // Le tas d'une image dépend aussi de ce que les tests précédents ont fait compiler : avant `FrameInputs`, le même
+    // réseau passait de 2,2 ko par image à 4,5 ko, tube ou pas. Le seuil absolu reste celui d'`interface.spec.ts` ;
+    // ici, on compare le tube à son absence, dans le même état, lot après lot.
     const flows = [400, 3000].map((turboPipeMm) => {
       const gas = new GasFlow();
       gas.configure({ ...BASE, turboPipeMm }, ORDER4);
