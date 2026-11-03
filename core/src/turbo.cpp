@@ -452,6 +452,15 @@ TurboDrive TurboCharger::drive() const {
     d.wastegate = static_cast<float>(state_.wastegate);
     const double passage = spec_.turbineK + spec_.wastegateK * state_.wastegate;
     d.wastegateFlowShare = static_cast<float>(state_.engineFlow / rated * spec_.wastegateK * state_.wastegate / passage);
+    if (antiLagOn_) {
+        d.antiLag.active = true;
+        d.antiLag.kind = antiLagKind_;
+        d.antiLag.evoRatio = static_cast<float>(antiLag_.evoRatio);
+        d.antiLag.heatShare = static_cast<float>(antiLag_.collectorHeatW / (rated * kPetrolFuelPerAir * kPetrolHeatValue));
+        d.antiLag.heatW = static_cast<float>(antiLag_.collectorHeatW);
+        d.antiLag.ignition = static_cast<float>(antiLagIgnition(state_.turbineInK));
+        d.antiLag.exhaustM3s = static_cast<float>(lastGas_ * kAirR * state_.turbineInK / kAtmosphere);
+    }
     return d;
 }
 
@@ -460,6 +469,8 @@ void TurboCharger::step(double dt, const TurboInput& input) {
     const TurboSpec& spec = spec_;
     const double rpm = input.rpm > 0.0 ? input.rpm : 0.0;
     const double fill = clamp(input.fill, 0.0, 1.0);
+    antiLagOn_ = input.antiLag.active;
+    antiLagKind_ = input.antiLag.kind;
 
     // ── L'air : du compresseur au papillon ──
     const double tip = s.shaftOmega * 0.5 * spec.wheelDiameterM;
@@ -501,6 +512,11 @@ void TurboCharger::step(double dt, const TurboInput& input) {
         if (vacuum <= 0.0 || (s.blowOff > 0.5 && s.blowOffFlow < 0.05 * spec.ratedFlow)) valveHeld_ = false;
         if (valveHeld_) wantedValve = vacuum;
     }
+    // L'anti-lag retient l'air : il tient la soupape fermée, sans quoi la pression qu'il protège s'en irait par là.
+    if (input.antiLag.active) {
+        wantedValve = 0.0;
+        valveHeld_ = false;
+    }
     s.blowOff += (wantedValve - s.blowOff) * (dt / kBlowOffS < 1.0 ? dt / kBlowOffS : 1.0);
     double valveFlow = 0.0;
     const double across = s.chargePa - kAtmosphere;
@@ -515,6 +531,7 @@ void TurboCharger::step(double dt, const TurboInput& input) {
     const double gain = kAirR * coolK / spec.chargeVolumeM3;
     const double chargeBefore = s.chargePa;
     s.chargePa += gain * (flowNext - throughThrottle - valveFlow) * dt;
+    if (antiLag_.airFlow > 0.0) s.chargePa -= gain * antiLag_.airFlow * dt;
     if (s.chargePa < 0.5 * kAtmosphere) s.chargePa = 0.5 * kAtmosphere;
 
     // ── Les températures ──
@@ -532,8 +549,23 @@ void TurboCharger::step(double dt, const TurboInput& input) {
 
     // ── L'échappement : ce que le moteur a avalé, plus le carburant, à la température de la combustion ──
     const double fuel = fuelPerAir(spec, fill, input.burning);
-    const double gas = engine * (1.0 + fuel);
-    const double hotTarget = rpm > 50.0 ? exhaustTemperature(spec, coolK, rpm, fill, fuel) : kAmbientK;
+    double gas = engine * (1.0 + fuel);
+    double hotTarget = rpm > 50.0 ? exhaustTemperature(spec, coolK, rpm, fill, fuel) : kAmbientK;
+    if (input.antiLag.kind != AntiLag::Off) {
+        AntiLagExhaust exhaust;
+        exhaust.command = input.antiLag;
+        exhaust.dt = dt;
+        exhaust.engineAir = engine;
+        exhaust.fuelPerAir = kPetrolFuelPerAir;
+        exhaust.heatValue = kPetrolHeatValue;
+        exhaust.gasCp = kGasCp;
+        exhaust.heatRiseK = kPetrolHeatValue * kPetrolFuelPerAir / (1.0 + kPetrolFuelPerAir) / kGasCp;
+        antiLagExhaust(exhaust, gas, hotTarget);
+        lastGas_ = gas;
+    } else {
+        // Le réglage retiré en marche : la vanne ne reste pas ouverte derrière lui.
+        antiLag_ = AntiLagState{};
+    }
     if (spec.pipe.active) {
         s.turbineInK = pipe_.stepHeat(spec.pipe, dt, gas, hotTarget, s.turbineInPa, kHeatUpS, kCoolDownS);
     } else {

@@ -53,6 +53,10 @@ constexpr double kWearRefS = 30.0;
 // Les arbres de roue et le pneu, en série (Nm/rad et Nm·s/rad, vus à la roue).
 constexpr double kShaftStiffness = 6000.0;
 constexpr double kShaftDamping = 60.0;
+// L'anti-lag : pied vraiment levé, et moteur assez lancé. Plus bas, le ralenti reprend la main (ordre de grandeur).
+constexpr double kAntiLagLiftedPedal = 0.03;
+constexpr double kAntiLagMinShare = 0.27;
+constexpr double kAntiLagHoldShare = 0.95;
 
 double approach(double from, double to, double maxStep) {
     const double delta = to - from;
@@ -115,6 +119,11 @@ void DrivingModel::setPowertrain(const Powertrain& powertrain) {
     starter_ = powertrain.profile().starter;
     turboEngine_ = !powertrain.electric && powertrain.engine.aspiration == Aspiration::Turbo;
     if (turboEngine_) turbo_.setSpec(turboSpecOf(powertrain));
+    // Un diesel n'a ni papillon à entrouvrir, ni étincelle à retarder : voir docs/modele.md.
+    antiLagEngine_ = turboEngine_ && powertrain.engine.fuel == Fuel::Petrol && powertrain.engine.antiLag != AntiLag::Off;
+    antiLag_.kind = antiLagEngine_ ? powertrain.engine.antiLag : AntiLag::Off;
+    antiLag_.active = false;
+    antiLagLostNm_ = 0.0;
     if (gear_ > gearing_.gears) gear_ = gearing_.gears;
     step_ = ShiftStep::None;
     ignitionCut_ = false;
@@ -763,13 +772,26 @@ void DrivingModel::stepTurbo(double rpmNow, bool burning) {
     input.fill = manifold_;
     input.breathing = breathingOf(powertrain_, rpmNow);
     input.burning = burning;
+    input.antiLag = antiLag_;
     turbo_.step(kStep, input);
     boost_ = std::max(turbo_.boost(), 0.0);
+}
+
+void DrivingModel::updateAntiLag(double throttle, double rpmNow, bool off) {
+    const double threshold = kAntiLagMinShare * redline_ * (antiLag_.active ? kAntiLagHoldShare : 1.0);
+    antiLag_.active = !off && !cut_ && !catching_ && throttle < kAntiLagLiftedPedal && rpmNow >= threshold;
 }
 
 void DrivingModel::updateEngine(double throttle, bool off) {
     const double rpmNow = toRpm(omega_);
     burnt_.burning = false;
+    // Le démarreur et le calage quittent cette fonction sans repasser par l'anti-lag : il s'arrête d'abord.
+    if (antiLagEngine_) {
+        antiLag_.active = false;
+        antiLagLostNm_ = 0.0;
+        burnt_.extraFuelGps = 0.0;
+        burnt_.extraAirGps = 0.0;
+    }
     if (powertrain_.electric) {
         manifold_ = throttle;
         cut_ = off;
@@ -850,6 +872,7 @@ void DrivingModel::updateEngine(double throttle, bool off) {
         limiterDrop_ = kLimiterDropShare * (0.65 + 0.7 * draw);
     }
     cut_ = off || limiterCut_ || ignitionCut_;
+    if (antiLagEngine_) updateAntiLag(throttle, rpmNow, off);
 
     const double friction = frictionTorqueNm(powertrain_, rpmNow);
     double indicated = fullLoadTorqueNm(powertrain_, rpmNow, boost_) + frictionTorqueNm(powertrain_, rpmNow);
@@ -873,14 +896,21 @@ void DrivingModel::updateEngine(double throttle, bool off) {
     const double fraction = clamp(rpmNow / redline_, 0.0, 1.0);
     const double softness = 0.15 + 0.6 * fraction;
     const double opened = throttle * (1.0 + softness) / (throttle + softness);
-    const double wantedManifold = std::max(opened, idleOpen);
+    double wantedManifold = std::max(opened, idleOpen);
+    if (antiLag_.active) wantedManifold = std::max(wantedManifold, antiLagOpening(antiLag_.kind));
     manifold_ += (wantedManifold - manifold_) * std::min(1.0, kStep / manifoldTau_);
 
     // Turbine : tout est dans `TurboCharger`. Le moteur lui donne ce qu'il rejette, et reçoit la pression qui en résulte.
     if (turboEngine_) stepTurbo(rpmNow, !cut_);
     else boost_ = 0.0;
 
-    const double produced = cut_ ? 0.0 : manifold_ * indicated * torqueScale_;
+    double produced = cut_ ? 0.0 : manifold_ * indicated * torqueScale_;
+    antiLagLostNm_ = 0.0;
+    if (antiLag_.active) {
+        const double kept = produced * antiLagTorqueShare(antiLag_.kind);
+        antiLagLostNm_ = produced - kept;
+        produced = kept;
+    }
     // Rupteur : le papillon reste ouvert, donc peu de pompage. Le moteur ne redescend que sur ses frottements.
     // Sur un turbo, s'y ajoute le gaz à pousser contre la turbine.
     const double pumping = pumpingTorqueNm(powertrain_, rpmNow, manifold_) + (turboEngine_ ? turbo_.backPressureNm(manifold_) : 0.0);
@@ -892,6 +922,11 @@ void DrivingModel::updateEngine(double throttle, bool off) {
     burnt_.frictionNm = friction;
     burnt_.fullGrossNm = indicated;
     burnt_.load = manifold_;
+    // Le couple au frein ci-dessus suit l'air, donc le cylindre retardé ou coupé paie déjà son carburant : reste ce qui s'y ajoute.
+    if (antiLagEngine_) {
+        burnt_.extraFuelGps = turbo_.antiLag().surplusFuel * 1000.0;
+        burnt_.extraAirGps = turbo_.antiLag().airFlow * 1000.0;
+    }
     lugging_ = manual_ && gear_ != 0 && meshed_ && locked_ && rpmNow < idle_ * 1.3 && speedMs_ > 0.5;
     // Trop bas en prise : chaque explosion donne un à-coup que rien n'amortit, ça broute.
     if (lugging_) {
@@ -1127,8 +1162,13 @@ GearboxDrive DrivingModel::gearboxDrive() const {
     if (d.running && (locked_ || clutch_ > 0.7) && box.kind != GearboxKind::Converter) {
         // Ce que chaque explosion impose au primaire : le couple rapporté au volant, passé par l'amortisseur du disque.
         // Résonance de 40 à 80 Hz sous charge (LuK), plus bas avec le pré-amortisseur au point mort.
-        const double firesHz = toRpm(omega_) / 120.0 * powertrain_.engine.cylinders;
-        const double swing = (rippleIdleNm_ + rippleNm_ * manifold_) / inertia_;
+        double firesHz = toRpm(omega_) / 120.0 * powertrain_.engine.cylinders;
+        double swing = (rippleIdleNm_ + rippleNm_ * manifold_) / inertia_;
+        // Des explosions manquent : moins de coups, plus espacés, et le volant a plus de temps pour ralentir entre deux.
+        if (antiLag_.active && antiLag_.kind == AntiLag::CylinderCut) {
+            firesHz *= kAntiLagFiredShare;
+            swing /= kAntiLagFiredShare;
+        }
         const double resonance = driving ? 55.0 : 22.0;
         const double r = firesHz / resonance;
         const double damping = 2.0 * 0.15 * r;

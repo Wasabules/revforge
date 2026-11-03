@@ -50,6 +50,7 @@ void usage() {
         "          --stereo 1: two ears (otherwise one microphone at the centre of the head)\n"
         "          --db 1: also print the estimated A-weighted level\n"
         "          --fuel 1: also print the estimated fuel, oil or energy used, and the best of the engine's fuel map\n"
+        "          --trace FILE: write the turbo, its anti-lag and the fuel as CSV, one line per slice\n"
         "          --walk 1: the head walks through the car at 1.2 m/s (with lap)");
 }
 
@@ -118,6 +119,21 @@ struct Output {
     }
 };
 
+/** `--trace` : le turbo et ce qu'il coûte, tranche par tranche, pour mesurer sans rien écouter. */
+std::FILE* g_trace = nullptr;
+
+void traceHeader() {
+    std::fputs("t,rpm,throttle,gear,boost,shaft_rpm,t3_c,turbine_kw,compressor_kw,air_g_s,heat_kw,fuel_g_s,torque_nm,lost_nm,antilag,kmh,flow_kg_s,blowoff,wastegate,charge_bar,exhaust_bar,trip_l,pops\n", g_trace);
+}
+
+void traceLine(const DrivingModel& model, const EngineSound& sound, double t) {
+    const TurboState& s = model.turbo().state();
+    const AntiLagState& a = model.turbo().antiLag();
+    std::fprintf(g_trace, "%.4f,%.1f,%.3f,%d,%.4f,%.0f,%.1f,%.3f,%.3f,%.3f,%.3f,%.4f,%.2f,%.2f,%d,%.2f,%.4f,%.3f,%.3f,%.4f,%.4f,%.6f,%u\n", t, model.rpm(), model.throttle(), model.gear(), model.boost(),
+                 s.shaftOmega * 60.0 / (2.0 * 3.141592653589793), s.turbineInK - 273.15, s.turbinePowerW / 1000.0, s.compressorPowerW / 1000.0, a.airFlow * 1000.0, a.collectorHeatW / 1000.0,
+                 model.consumption().fuelGps(), model.torqueNm(), model.antiLagLostNm(), model.antiLagActive() ? 1 : 0, model.speedKmh(), s.compressorFlow, s.blowOff, s.wastegate, s.chargePa / 1e5 - 1.01325, s.turbineInPa / 1e5 - 1.01325, model.consumption().fuelTripL(), static_cast<unsigned>(sound.pops()));
+}
+
 /** Le modèle de conduite pilote le son : chaque tranche est une pédale, ou le pilote automatique. */
 template <typename Drive>
 void play(EngineSound& sound, DrivingModel& model, Output& out, int rate, Drive drive, int tick = 0) {
@@ -127,6 +143,7 @@ void play(EngineSound& sound, DrivingModel& model, Output& out, int rate, Drive 
     int step = 0;
     while (done < out.frames()) {
         drive(step++, dt);
+        if (g_trace != nullptr) traceLine(model, sound, static_cast<double>(step) * dt);
         sound.setTargetRpm(static_cast<float>(model.rpm()));
         sound.setDrive(static_cast<float>(model.load()), static_cast<float>(model.boost()), model.cut(), model.cranking(), static_cast<float>(model.throttle()));
         sound.setTurbo(model.turboDrive());
@@ -488,6 +505,14 @@ int main(int argc, char** argv) {
         else if (arg == "--stereo") stereo = value != "0";
         else if (arg == "--db") showDb = value != "0";
         else if (arg == "--fuel") showFuel = value != "0";
+        else if (arg == "--trace") {
+            g_trace = std::fopen(value.c_str(), "w");
+            if (g_trace == nullptr) {
+                std::fprintf(stderr, "Cannot write: %s\n", value.c_str());
+                return 2;
+            }
+            traceHeader();
+        }
         else if (arg == "--kmh") kmh = std::atof(value.c_str());
         else if (arg == "--walk") walk = value != "0";
         else if (arg == "--placement") { car.placement = pick<EnginePlacement>(value, {{"front", EnginePlacement::Front}, {"mid", EnginePlacement::Mid}, {"rear", EnginePlacement::Rear}}); customCar = true; }

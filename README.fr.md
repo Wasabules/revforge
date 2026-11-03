@@ -99,6 +99,7 @@ Limites connues :
 - À cylindrée égale, la course ne change le couple qu'au-delà de 24 m/s de vitesse de piston, et ne change jamais le frottement, l'inertie ni la consommation.
 - La voiture ne recule jamais (démarrage en côte avec maintien supposé), toutes les voitures ont la même adhérence, et les trajets sont réglés en durée, pas en distance.
 - En automatique, un diesel peut parfois caler à très faible vitesse ; le site propose alors de le relancer.
+- L'anti-lag n'use rien : rien ne calcule l'usure, donc aucune pièce ne casse et aucune durée n'est limitée, et ses détonations restent supposées tant que personne ne les a écoutées.
 - Le claquement de boîte n'a aucun vrai enregistrement isolé pour comparaison, et plusieurs paramètres de boîte (module, angle d'hélice, jeu, vitesse d'usure) sont supposés.
 - La longueur du tube du turbo change son retard, son gaz et ses vues, mais le sifflement vient toujours du compartiment moteur, même sur un turbo déporté à l'arrière, et les réflexions d'onde dans ce tube ne sont pas dans le son.
 - La vue du gaz suit le modèle de conduite sans agir sur lui : ses pressions ne recoupent donc pas exactement le couple affiché.

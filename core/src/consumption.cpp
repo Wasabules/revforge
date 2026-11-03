@@ -162,6 +162,11 @@ void ConsumptionMeter::step(const ConsumptionInput& in, double dt) {
     // L'air ne compte que là où quelque chose brûle : c'est ce qu'on compare au carburant.
     airGps_ = fuelGps_ > 0.0 ? model_.airGps(in.rpm, in.load, in.fullGrossNm) : 0.0;
     // Tant que le moteur tourne, l'huile passe, même pied levé : c'est la seule chose qui ne se coupe pas.
+    // L'anti-lag brûle hors du cylindre : ce carburant-là ne donne aucun couple, mais il compte, et l'air qu'il trouve aussi.
+    if (in.extraFuelGps > 0.0 || in.extraAirGps > 0.0) {
+        fuelGps_ += in.extraFuelGps;
+        airGps_ += in.extraAirGps;
+    }
     oilGps_ = model_.oilGps(in.rpm, in.burning ? in.brakeNm : 0.0);
     fuelG_ += fuelGps_ * dt;
     airG_ += airGps_ * dt;

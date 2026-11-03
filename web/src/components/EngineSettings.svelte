@@ -1,7 +1,7 @@
 <script lang="ts">
   import Choices from './Choices.svelte';
   import Slider from './Slider.svelte';
-  import { AIR_FILTERS, ASPIRATIONS, CYLINDERS, FUELS, LAYOUTS, LIMITS, RELEASES, TURBO_SIZES, cylinderCc, strokeMm, type EngineConfig } from '../lib/config';
+  import { AIR_FILTERS, ASPIRATIONS, CYLINDERS, FUELS, LAYOUTS, LIMITS, RELEASES, TURBO_SIZES, cylinderCc, strokeMm, type EngineConfig, ANTI_LAGS } from '../lib/config';
   import type { Spec } from '../lib/engine';
   import { fixed, t } from '../lib/i18n.svelte';
   import { PISTON_SPEED_LIMIT, moveStroke, pistonSpeed, strokeOutside, strokeRange, strokeShape, strokeThumb, type StrokeAnchor } from '../lib/stroke';
@@ -71,6 +71,12 @@
         oninput={(turboPipeMm) => onlive({ turboPipeMm })} onchange={(turboPipeMm) => onapply({ turboPipeMm })} />
       <p class="help" data-testid="turbo-pipe-help">{t('builder.turboPipe.help')}</p>
     </div>
+    {#if config.fuel === 'petrol'}
+      <div>
+        <Choices label={t('builder.antiLag')} options={ANTI_LAGS} value={config.antiLag} onchange={(antiLag) => onapply({ antiLag })} />
+        <p class="help" data-testid="antilag-help">{ANTI_LAGS.find((item) => item.value === config.antiLag)?.help}</p>
+      </div>
+    {/if}
   {/if}
   <div>
     <Choices label={t('builder.airFilter')} options={AIR_FILTERS} value={config.airFilter} onchange={(airFilter) => onapply({ airFilter })} />

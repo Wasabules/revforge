@@ -117,6 +117,7 @@ Known limits:
 - At equal displacement, the stroke only changes torque above 24 m/s of piston speed, and never changes friction, inertia or consumption.
 - The car never rolls backwards (hill starts assume hill hold), all cars share one tyre grip, and journeys are timed rather than distance-based.
 - With an automatic, a diesel can occasionally stall at very low speed; the site then offers a restart.
+- Anti-lag wears nothing out: nothing computes wear, so no part breaks and no time limit applies, and its bangs are assumed until someone listens.
 - Gear rattle has no isolated real recording to compare against, and several gearbox parameters (module, helix angle, backlash, wear rate) are assumed.
 - The gas view follows the driving model without feeding back into it, so its pressures do not exactly match the displayed torque.
 - The turbo's pipe length changes its lag, its gas and its views, but the whine still comes from the engine bay, even on a rear-mounted turbo, and the pipe's own wave reflections are not in the sound.

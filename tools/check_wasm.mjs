@@ -425,4 +425,12 @@ for (const mm of [150, 2500]) {
   rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6500, EXHAUST.sport, 1, 0, 0, 0, 0, 1.3, ROUTING.single, TURBO.medium, 0, 0, mm, 0, 0);
   check(`retard du turbo, tube de ${mm} mm`, turboStab(rf, 24), native(...turboArgs, '--turbo', 'medium', '--release', 'dump_valve', '--turbo-pipe', String(mm)));
 }
+// L'anti-lag : chaque système, le long du même retard du turbo, au son comme à la consommation.
+const ANTI_LAG = { retard: 1, air: 2, cut: 3 };
+for (const [name, code] of Object.entries(ANTI_LAG)) {
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1400, 18, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6500, EXHAUST.sport, 1, 0, 0, 0, 0, 1.3, ROUTING.single, TURBO.medium, 0, code, 400, 0, 0);
+  check(`anti-lag, ${name}`, turboStab(rf, 24), native(...turboArgs, '--turbo', 'medium', '--release', 'dump_valve', '--antilag', name));
+}
 process.exit(failed ? 1 : 0);

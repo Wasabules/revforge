@@ -73,6 +73,8 @@ struct ConsumptionInput {
     double load = 0.0;         // remplissage du modèle
     double motorNm = 0.0;      // électrique : couple de la machine, avant ses frottements
     bool burning = false;
+    double extraFuelGps = 0.0;  // l'anti-lag : carburant au-delà de ce que demande le cylindre
+    double extraAirGps = 0.0;   // l'anti-lag : air qui n'est pas passé par les cylindres
 };
 
 /**

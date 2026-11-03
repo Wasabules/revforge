@@ -85,6 +85,20 @@ constexpr float kPopBody = 2.2f;
 constexpr float kPopBodyHigh = 0.5f;
 constexpr float kPopBlast = 0.2f;
 constexpr float kPopInPipe = 0.12f;
+// L'anti-lag. Une chance par ouverture de soupape que ce qui arrive imbrûlé parte d'un coup, et la part de la chaleur qui part ainsi
+// (supposés : l'écoute tranche). Le retard brûle surtout dans le cylindre ; un cylindre coupé envoie toute sa charge ; une flamme continue laisse peu de poches.
+constexpr float kAntiLagBangRetard = 0.05f;
+constexpr float kAntiLagSlugRetard = 0.15f;
+constexpr float kAntiLagBangAir = 0.015f;
+constexpr float kAntiLagSlugAir = 0.1f;
+constexpr float kAntiLagBangCut = 0.45f;
+constexpr float kAntiLagSlugCut = 1.0f;
+// La force d'une détonation ordinaire, et son énergie (`POP_JOULES` à l'écran, ligne sport) : l'amplitude suit la racine de l'énergie.
+constexpr float kAntiLagBangForce = 0.75f;
+constexpr float kAntiLagPopJoules = 90.0f;
+// La flamme au collecteur : du bruit de combustion, grave, qui traverse la ligne comme le reste du gaz.
+constexpr float kAntiLagFlameHz = 380.0f;
+constexpr float kAntiLagFlameInPipe = 0.5f;
 constexpr float kTurboSpoolS = 0.75f;
 constexpr float kTurboFallS = 0.22f;
 constexpr float kTurboHoldS = 2.5f;
@@ -382,6 +396,13 @@ struct EngineSound::State {
     bool poppedThisLift = false;
     Svf popBlast, popBody, popBodyHigh;
 
+    // ── Anti-lag : rien de tout cela ne tourne sans lui, et son tirage est à part ──
+    bool antiLagOn = false;
+    std::uint32_t antiLagRng = 0x85EBCA6B;
+    std::uint32_t antiLagEvent = 0;
+    float antiLagFlame = 0.0f;
+    Svf antiLagFlameBand;
+
     State(int sampleRate, std::int32_t seed)
         : sr(static_cast<float>(sampleRate)),
           rng(seed == 0 ? 1u : static_cast<std::uint32_t>(seed)),
@@ -436,6 +457,7 @@ struct EngineSound::State {
         valveBand.set(3600.0f, 1.1f, sr);
         valveBandHigh.set(7400.0f, 1.4f, sr);
         knockBand.set(1000.0f, 0.5f, sr);
+        antiLagFlameBand.set(kAntiLagFlameHz, 0.7f, sr);
         whistleBand.set(1900.0f, 16.0f, sr);
         whistleLow.set(1000.0f, 16.0f, sr);
         releaseCoef = 1.0f - km::exp(-1.0f / (kReleaseFollowS * sr));
@@ -585,6 +607,15 @@ struct EngineSound::State {
         return static_cast<float>(static_cast<std::int32_t>(x)) * 4.656613e-10f;
     }
 
+    float antiLagRandom() {
+        std::uint32_t x = antiLagRng;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        antiLagRng = x;
+        return static_cast<float>(static_cast<std::int32_t>(x)) * 4.656613e-10f;
+    }
+
     float turboRandom() {
         std::uint32_t x = turboRng;
         x ^= x << 13;
@@ -688,7 +719,9 @@ struct EngineSound::State {
         // Pied levé, moteur lancé : l'injection se coupe, le moteur n'est plus qu'une pompe.
         // Un filet de gaz brûle encore : tenir un régime à vide ou rouler pied léger, ce n'est pas lever le pied.
         const bool lifted = driven && driveThrottle >= 0.0f ? driveThrottle < kLiftedThrottle : wantedLoad < kFuelCutLoad;
-        const bool cutting = engineOn && lifted && rpm > a.idleRpm * kOverrunMinIdleRatio;
+        // L'anti-lag n'est pas un lever de pied : il brûle, et rien ne se coupe.
+        antiLagOn = turboDriven && driven && turboIn.antiLag.active;
+        const bool cutting = engineOn && lifted && !antiLagOn && rpm > a.idleRpm * kOverrunMinIdleRatio;
         overrunSeconds = cutting ? overrunSeconds + controlDt : 0.0f;
         if (!cutting) poppedThisLift = false;
         const float overrunTarget = overrunSeconds > kOverrunDelayS ? 1.0f : 0.0f;
@@ -699,6 +732,13 @@ struct EngineSound::State {
         const float boostFill = driven ? 0.4f * driveBoost * km::coerceIn(a.boostBar, 0.3f, 2.5f) : 0.0f;
         const float fill = 0.2f + 0.8f * load * load + boostFill;
         openPressure = fill * (1.0f - kOverrunPressureDrop * overrun);
+        // Le gaz finit de brûler pendant la détente : la soupape s'ouvre sur autant de pression de plus qu'il reste de chaleur.
+        if (antiLagOn) openPressure *= turboIn.antiLag.evoRatio;
+        if (antiLagOn || antiLagFlame > 0.0f) {
+            const float flameWanted = antiLagOn ? km::sqrt(km::max(turboIn.antiLag.heatShare, 0.0f)) : 0.0f;
+            antiLagFlame += (flameWanted - antiLagFlame) * smoothing(0.03f);
+            if (antiLagFlame < 1e-4f && !antiLagOn) antiLagFlame = 0.0f;
+        }
         // Le piston continue de pomper de l'air, combustion ou non.
         pumpLevel += (km::max(openPressure, 0.25f) - pumpLevel) * smoothing(0.004f);
         // Rupteur : la combustion s'arrête net, explosion par explosion. Le papillon, lui, reste ouvert,
@@ -815,7 +855,9 @@ struct EngineSound::State {
         const float displacement = 0.7854f * a.boreM * a.boreM * a.strokeM * static_cast<float>(a.cylinders);
         const float fillNow = 0.1f + 0.85f * load + (a.turbo ? 0.5f * boost * a.boostBar : 0.0f);
         const float hot = 1.6f + 1.0f * load;
-        const float flowNow = displacement * rpmNow / 120.0f * fillNow * hot;
+        float flowNow = displacement * rpmNow / 120.0f * fillNow * hot;
+        // L'anti-lag envoie plus de gaz, et plus chaud, que le remplissage ne le dit : le calcul le donne.
+        if (antiLagOn) flowNow = turboIn.antiLag.exhaustM3s;
         const float paths = (twoPaths || a.routing != ExhaustRouting::Single) ? 2.0f : 1.0f;
         const float radius = a.car.outletRadiusM;
         outletArea = static_cast<float>(km::kPi) * radius * radius;
@@ -866,7 +908,8 @@ struct EngineSound::State {
         whistleLow.set(km::coerceIn(turboIn.shaftHz, 100.0f, top), 16.0f, sr);
         whistleFlow += (km::min(turboIn.flowShare, 1.0f) - whistleFlow) * smoothing(0.05f);
         wastegate += (km::min(2.0f * turboIn.wastegateFlowShare, 1.0f) - wastegate) * smoothing(0.05f);
-        const bool flutter = active.turboRelease == TurboRelease::Flutter;
+        // La soupape tenue fermée par l'anti-lag, l'air ne peut revenir que par la roue, sauf quand il part au collecteur.
+        const bool flutter = active.turboRelease == TurboRelease::Flutter || antiLagOn;
         releaseGoal = km::min(flutter ? kBackflowLevel * turboIn.backflowShare : turboIn.blowOffShare, 1.5f);
         releaseBand.set(flutter ? 1250.0f : 1800.0f + 2000.0f * km::min(releaseEnv, 1.0f), 0.8f, sr);
     }
@@ -897,6 +940,31 @@ struct EngineSound::State {
         popHeat = km::min(popHeat + 0.5f, 1.0f);
         ++popCount;
         popCooldown = kPopMinGapS;
+    }
+
+    /** Ce qui arrive imbrûlé au collecteur peut partir d'un coup, s'il y fait assez chaud. Même chemin que les détonations. */
+    void maybeAntiLagPop(bool fires) {
+        const AntiLag kind = turboIn.antiLag.kind;
+        const bool cutting = kind == AntiLag::CylinderCut;
+        const float chance = cutting ? (fires ? 0.0f : kAntiLagBangCut) : (kind == AntiLag::Retard ? kAntiLagBangRetard : kAntiLagBangAir);
+        // La chaleur du collecteur, ouverture par ouverture : seuls les cylindres coupés portent cette charge.
+        const float eventsPerSecond = km::max(rpm / 120.0f * static_cast<float>(cylinders), 1.0f) * (cutting ? 1.0f - static_cast<float>(kAntiLagFiredShare) : 1.0f);
+        const float slug = cutting ? kAntiLagSlugCut : (kind == AntiLag::Retard ? kAntiLagSlugRetard : kAntiLagSlugAir);
+        const float size = km::sqrt(km::max(turboIn.antiLag.heatW, 0.0f) / eventsPerSecond * slug / kAntiLagPopJoules);
+        const float roll = antiLagRandom() * 0.5f + 0.5f;
+        const float draw = antiLagRandom() * 0.5f + 0.5f;
+        if (popCooldown > 0.0f || roll >= chance * turboIn.antiLag.ignition) return;
+        popEnv = (0.55f + 0.45f * draw * draw) * kAntiLagBangForce * size * active.popForce;
+        popAttack = 0.0f;
+        popDecay = km::exp(-1.0f / ((spec.popDecayS * (0.7f + 0.6f * draw)) * sr));
+        ++popCount;
+        popCooldown = kPopMinGapS;
+    }
+
+    /** La flamme du collecteur : un grondement, sans rythme propre. */
+    float antiLagFlameSample() {
+        antiLagFlameBand.process(antiLagRandom());
+        return antiLagFlameBand.bp * antiLagFlame * kAntiLagFlameInPipe;
     }
 
     void popOnRecovery() {
@@ -1020,8 +1088,15 @@ struct EngineSound::State {
                     gust = 0.75f + 0.5f * gustDraw * gustDraw;
                     nextTiming[c] = random() * (kTimingSpread + kPathJitterS * km::max(rpm, 300.0f) / 120.0f);
                     maybePop();
+                    // La coupure de cylindres : sans explosion, ni pression à l'ouverture, ni coup dans la structure.
+                    bool fires = true;
+                    if (antiLagOn) {
+                        if (turboIn.antiLag.kind == AntiLag::CylinderCut) fires = antiLagFires(antiLagEvent++);
+                        if (!fires) pressure[c] = km::max(pressure[c] * (1.0f - kOverrunPressureDrop), 0.02f);
+                        maybeAntiLagPop(fires);
+                    }
                     // La combustion frappe la structure : le bloc rayonne un coup à chaque explosion.
-                    blockEnv = km::max(blockEnv, spread);
+                    if (fires) blockEnv = km::max(blockEnv, spread);
                     if (p.diesel) knockEnv = km::max(knockEnv, spread);
                 }
                 // La soupape s'ouvre vite : la bouffée a un front raide, loin d'une arche arrondie. Mais la came
@@ -1059,7 +1134,8 @@ struct EngineSound::State {
             headerSlot[c] = next;
         }
 
-        const float detonation = popSample();
+        float detonation = popSample();
+        if (antiLagFlame > 0.0f) detonation += antiLagFlameSample();
         float waves[2] = {collector[0], collector[1]};
         if (twoPaths && crossover > 0.0f) {
             // Un pont entre les rangées : chacune reçoit une part des bouffées de l'autre.

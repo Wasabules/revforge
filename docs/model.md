@@ -67,7 +67,7 @@ J·ω·dω/dt = P_turbine − P_compressor − P_bearings
 
 **What is assumed:** the wheel diameter of the engine Chung and Lee measured (they do not give it; we take what this calculation gives a 2.0 L at 1.3 bar); the share of gas through the turbine at rated (half, 70% on a diesel); the shape of the speed line; peak efficiencies (0.74 and 0.68); the slowness of the manifold walls; bearing friction (800 W for a 49 mm wheel at rated); the wheels' speed limit (520 m/s).
 
-**What is not modelled:** the detail of pulses in the turbine (only their mean energy counts), variable geometry (a diesel would gain much: this one behaves like a fixed turbo), sequential twin turbos, anti-lag. The large turbo surges slightly at very low revs under full load: a real fault of an oversized turbo, but its level has not been compared with a measurement. On a V, the sound model and the gas see one equivalent turbo, even though the views draw two.
+**What is not modelled:** the detail of pulses in the turbine (only their mean energy counts), variable geometry (a diesel would gain much: this one behaves like a fixed turbo), sequential twin turbos. The large turbo surges slightly at very low revs under full load: a real fault of an oversized turbo, but its level has not been compared with a measurement. On a V, the sound model and the gas see one equivalent turbo, even though the views draw two.
 
 ### Lag, engine by engine
 
@@ -156,6 +156,68 @@ In the gas, a remote pipe has its own cells and one more volume before the turbi
 ### The sound
 
 It changes through what already drove it, without one more line in `EngineSound`: the whistle follows the shaft, its pitch and level rise later; pressure delays `boost`, hence the turbine's muffling; flutter follows surge, slower. Measured on `--scenario turbo`, from 400 to 3000 mm: the 4 and 8 kHz bands lose 2 dB, the rest 1 dB at most (`tools/analyze_sound.py`), and the scenario shifts in time. Nothing was added for the pulsation: the pulse filter holds below a few tens of hertz, where the pipe is shorter than the wave; above that, it is a waveguide that passes almost everything, and its reflections off the turbine would need a model of that reflection and a recording we don't have. The whistle's position doesn't change either: it stays in the intake source, even on a turbo remote at the rear. Listening is still to be done.
+
+## Anti-lag
+
+Off the throttle, an ordinary turbo loses its gas: the fuel is cut, the valve vents the pressure, the shaft falls. Anti-lag (`core/src/anti_lag.cpp`, the `--antilag` setting) keeps sending energy to the turbine. No system has a time constant or a pressure target: each changes what reaches the turbine, and the power balance of `TurboCharger` does the rest.
+
+It works when the pedal is lifted (under 3%) and the engine is above 27% of its maximum speed, outside the limiter and shift cuts. The ECU holds the blow-off valve shut, as real builds do: otherwise the pressure would leave that way. Air pushing against a nearly closed throttle comes back through the wheel: the surge already computed, around 17 Hz here, becomes the audible "chatter", valve fitted or not.
+
+- **Ignition retard.** Throttle at 30%, spark 55° after best torque, so 35° after top dead centre. Torque follows a parabola, `1 − (Δ/68°)²`, 0.35 here: the shape of ECU "torque ratio" tables. The work the piston does not receive goes into the gas, less 20% into the walls: `T3` climbs towards 1090 °C. Lambda 0.9: this surplus does not burn, for lack of oxygen, and it counts.
+- **Air injection.** A valve, 17 mm on a 2 L, links the cold pipe to the manifold. Its flow is an orifice law between the charge pressure and the pressure before the turbine, solved by bisection at each step (explicitly, it would chatter); a check valve stops it if the manifold pushes harder. The ECU adds the matching fuel, up to λ 0.65 in the cylinder, and 70% of this surplus burns in the manifold, if it is hot enough. The heat arrives without going through the cycle. On the 2.0 L at 4400 rpm, compressor, flame and turbine sustain one another like a gas turbine: pressure holds at 1.3 bar, turbine valve open, without any value asking for it, until the speed falls to around 3500 rpm, when it drops to 0.3 of the pressure. Throttle at 25%, 40° of retard: less open (15%), it lacks the air to carry the surplus, and the system stays much weaker.
+- **Cylinder cut.** Two firings out of five, in firing order (F C C F C): the pattern thus moves from one cylinder to the next on 4 or 6 cylinders. Throttle at 35%. The mixture of the cut cylinders passes through unburnt, and 45% ignites in the manifold if the gas there exceeds 800 K (all of it at 1100 K): cold, it does not light, and the manifold cools further, as seen around 1900 rpm (260 °C), where the system no longer does anything.
+
+Nothing regulates the torque that remains. Pedal lifted, the engine brakes far less, and on the 5-cylinder air injection even gives 4 Nm more than its losses in fourth. In neutral, every petrol turbo tried finds idle again (tested).
+
+**The diesel is left out, by choice.** No throttle to crack, no spark to retard, no prepared mixture to pass through unburnt. A post-injection into oxygen-rich gas exists to regenerate a filter, at 600 °C: no figure was found to make an anti-lag of it. The site hides the choice, and everything stays identical to the bit (tested).
+
+### The four choices, measured
+
+`hot_hatch_turbo` (2.0 L, 1.3 bar) on `--scenario turbo --seconds 32`, read with `--trace`, except the catch after a 3 s lift. The mean runs from 0.3 to 3 s after the last lift.
+
+| | Off | Retard | Air | Cut |
+|---|---|---|---|---|
+| Shaft, 1 s after the lift (rpm) | 54,000 | 109,000 | 149,000 | 110,000 |
+| Shaft, 3 s after | 22,000 | 97,000 | 149,000 | 99,000 |
+| Pressure at 3 s (share of 1.3 bar) | 0.01 | 0.29 | 0.99 | 0.34 |
+| 90% of the pressure, after a 0.35 s lift | 0.40 s | 0.21 s | 0.21 s | 0.15 s |
+| 90% of the pressure, stab from 1800 rpm | 2.20 s | 1.62 s | 1.92 s | 2.00 s |
+| 90% of the pressure, after a 3 s lift (test, in fourth) | 0.97 s | 0.53 s | 0.51 s | 0.54 s |
+| Peak `T3` | 789 °C | 1090 °C | 1094 °C | 937 °C |
+| Crankshaft torque, pedal lifted | −80 Nm | −36 Nm | −4 Nm | −24 Nm |
+| Torque taken from this air charge | 0 | 54 Nm | 34 Nm | 59 Nm |
+| Air sent to the manifold | 0 | 0 | 27 g/s | 0 |
+| Fuel, pedal lifted | 0 | 2.08 g/s | 3.66 g/s | 2.30 g/s |
+| Fuel over the 32 s | 0.136 L | 0.163 L | 0.178 L | 0.166 L |
+| WLTC, L/100 km and g CO₂/km | 8.90 and 210 | 9.48 and 224 | 9.39 and 222 | 9.54 and 225 |
+| 0-100 km/h | 6.86 s | 6.64 s | 6.66 s | 6.68 s |
+
+The differences have their cause. Retard heats without depending on the manifold temperature, but at a low flow. Air injection alone raises the flow through the turbine, hence the pressure it holds, and it is the dearest in fuel. The cut burns less well what it sends, but keeps its reserve: after a 0.35 s lift it catches fastest, on a still-hot manifold. Lower in the revs it goes out, and air injection is cooled by fresh air: around 1800 rpm, only retard clearly wins.
+
+### Consumption
+
+The brake torque given to `ConsumptionMeter` follows the admitted air, not the torque delivered: a retarded or cut cylinder thus already pays for all its fuel. To this are added `extraFuelGps`, the surplus of retard and air injection, and `extraAirGps`, the air of the valve. CO₂ follows the fuel and lambda both. None of this goes back to the physics.
+
+### The sound
+
+Everything goes through `setTurbo` (`TurboDrive::antiLag`), with its own generator. Without anti-lag, none of this code runs: no fingerprint moves.
+
+- The fuel is not cut: no `overrun`, no pressure drop of a lift. The pressure when the valve opens is multiplied by the extra heat retard leaves (`evoRatio`).
+- The cut acts on the firing forces: a cut cylinder opens on 28% of the pressure and does not strike the block. Against retard, the firing line loses 8 dB (140 Hz), and the sub-harmonics of the pattern (21 to 35 Hz) gain 6 to 18: the sound is chopped by the cause, not by an envelope.
+- The bangs leave by the same path as `pops`. One chance per valve opening, depending on whether the manifold can ignite what arrives: 8 per second on the cut, 4 on retard and 1 on air injection. Their amplitude follows the square root of the energy per opening, against an ordinary 90 J bang: about 360 J for a cut cylinder.
+- The flame is a low noise, around 380 Hz, at the square root of the heat released, which crosses the line like the rest. The 8-16 kHz band does not rise above that of the same turbo at full throttle (−69 dB against −64 dB).
+- The outlet jet follows the real flow, at the computed temperature.
+
+**Listening still to do.** Nothing could be listened to or compared with a recording: the chances, the heat shares and the flame level are assumed, and only listening will decide.
+
+### What is assumed, and what is missing
+
+Sources, seen through a search and not read in full: [Antilag system, Wikipedia](https://en.wikipedia.org/wiki/Antilag_system), [Car Throttle](https://www.carthrottle.com/news/anti-lag-blogpost) and [TorqueCars](https://www.torquecars.com/tuning/anti-lag-systems.php) for the principles and orders of magnitude (spark 30 to 45° after top dead centre, over 1000 °C), enthusiast sources none of whose figures has been confirmed by a published measurement. **Assumed:** the torque parabola (the shape is known, its zero at 68° is an order of magnitude), the throttle openings, the 20% to the walls, the shares that burn in the manifold (45 and 70%), the 800 to 1100 K of ignition, the valve section, the 27% threshold.
+
+**Not modelled:**
+- **Wear and breakage.** Nothing computes them, so nothing breaks: a real system quickly wears the manifold, turbine and valves, and real ECUs limit duration and temperature. Here that time has no limit, and `T3` can stay above 1000 °C. The site's help says so.
+- **Torque firing by firing.** `DrivingModel` keeps a mean torque; only the sound and the acyclism passed to the gearbox see the pattern, and their counters are not in phase.
+- **The car and engine views.** Only the gas view draws the air valve and fires the spark late (`fluidGas.ts`); `CarStage` and `EngineView` do not show it.
 
 ## What is simulated in the sound
 

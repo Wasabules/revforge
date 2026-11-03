@@ -7,7 +7,7 @@ import { activeClutch, advanceRace, bearingTouches, type RaceState } from './clu
 import type { EngineConfig, Exhaust } from './config';
 import type { Telemetry } from './engine';
 import { GasFlow, gasKey } from './fluid';
-import { GasNetwork, type GasInputs } from './fluidGas';
+import { ANTI_LAG_CODE, GasNetwork, antiLagFires, type GasInputs } from './fluidGas';
 import { GasPainter } from './fluidRender';
 
 export const SLOW_MOTION = 12;
@@ -111,6 +111,11 @@ export class Motion {
   compressorRatio = 1;
   compressorOutK = 293;
   coolerOutK = 293;
+  /** L'anti-lag, tel que le modèle de conduite le dit : en marche, chaleur au collecteur (W), air qu'il y envoie (kg/s). */
+  antiLag = false;
+  antiLagHeatW = 0;
+  antiLagAirFlow = 0;
+  private antiLagEvent = 0;
   /** Au-delà de quelques tours par seconde, l'œil ne suit plus les aubes : un disque flou, 0 à 1. */
   turbineBlur = 0;
   wheelRpm = 0;
@@ -163,7 +168,7 @@ export class Motion {
   reduced = !wantsAnimations();
   /** Facteur de ralenti de toutes les vues et du gaz : 1, c'est le temps réel. */
   slow = storedSpeed();
-  private gasInputs: GasInputs = { rpm: 0, load: 0, boost: 0, release: 0, burning: false, heat: 0, compressorRatio: 1, compressorOutK: 293, wastegate: 0 };
+  private gasInputs: GasInputs = { rpm: 0, load: 0, boost: 0, release: 0, burning: false, heat: 0, compressorRatio: 1, compressorOutK: 293, wastegate: 0, antiLag: 0, antiLagHeatW: 0, antiLagAirFlow: 0 };
   private gasConfig: EngineConfig | null = null;
   // Ce qu'il reste à faire avancer au gaz pour l'image en cours : une jauge sans gaz peut passer la première.
   private gasDue = false;
@@ -211,6 +216,9 @@ export class Motion {
     this.compressorRatio += ((1.01325 + t.turboOutlet) / Math.max(1.01325 + t.turboInlet, 0.5) - this.compressorRatio) * glide;
     this.compressorOutK += (t.turboOutC + 273.15 - this.compressorOutK) * glide;
     this.coolerOutK += (t.turboCoolC + 273.15 - this.coolerOutK) * glide;
+    this.antiLag = t.antiLag > 0;
+    this.antiLagHeatW += (t.antiLagHeatKw * 1000 - this.antiLagHeatW) * glide;
+    this.antiLagAirFlow += (t.antiLagAirFlow - this.antiLagAirFlow) * glide;
     this.wheelRpm += (t.wheelRpm - this.wheelRpm) * glide;
     this.slip += (t.slip - this.slip) * glide;
     this.clutchShare += (t.clutch - this.clutchShare) * glide;
@@ -252,7 +260,9 @@ export class Motion {
     const flow = rpmShare * (0.2 + 0.8 * this.load);
 
     // Le gaz chauffe sous charge et à haut régime ; il faut bien plus longtemps pour refroidir.
-    const wantedHeat = t.rpm > 150 && !config.electric ? 0.25 + 0.75 * flow : 0;
+    let wantedHeat = t.rpm > 150 && !config.electric ? 0.25 + 0.75 * flow : 0;
+    // Pied levé, l'anti-lag garde la ligne brûlante : c'est la température que le modèle calcule avant la turbine qui compte.
+    if (this.antiLag) wantedHeat = Math.max(wantedHeat, Math.min(t.turboGasC / 1000, 1));
     const heatTau = wantedHeat > this.heat ? 5 : 16;
     this.heat += (wantedHeat - this.heat) * (1 - Math.exp(-seconds / heatTau));
 
@@ -344,6 +354,9 @@ export class Motion {
     inputs.wastegate = this.wastegate;
     inputs.burning = this.burning;
     inputs.heat = this.heat;
+    inputs.antiLag = this.antiLag ? ANTI_LAG_CODE[config.antiLag ?? 'off'] : 0;
+    inputs.antiLagHeatW = this.antiLagHeatW;
+    inputs.antiLagAirFlow = this.antiLagAirFlow;
     if (this.reduced) {
       this.gas.active = false;
       if (this.meterWanted) this.advanceMeters(seconds, config, inputs);
@@ -370,11 +383,13 @@ export class Motion {
       this.lastCylinder = cylinder;
       this.sinceFiring = 0;
       const push = 0.3 + 0.7 * this.load + 0.25 * this.boost * config.boostBar;
+      // La coupure de cylindres : au même rythme que le son, certaines explosions manquent.
+      const fires = this.burning && !(this.antiLag && config.antiLag === 'cut' && !antiLagFires(this.antiLagEvent++));
       this.pulses.push({
         at: 0,
-        strength: this.burning ? Math.min(push, 1.4) : 0.18,
-        heat: this.burning ? 0.3 + 0.7 * this.load : 0,
-        burnt: this.burning,
+        strength: fires ? Math.min(push, 1.4) : 0.18,
+        heat: fires ? 0.3 + 0.7 * this.load : 0,
+        burnt: fires,
         bank: cylinder % banks,
       });
     }
