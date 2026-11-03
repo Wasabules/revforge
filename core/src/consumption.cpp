@@ -114,7 +114,9 @@ void ConsumptionModel::configure(const Powertrain& p) {
     lambdaRatio_ = 1.0;
     if (ecuMap_) {
         fullRichness_ = 1.0 / fullLoadLambdaOf(p.engine);
-        sparkEfficiency_ = sparkTorqueShare(mapRetardDeg(p.engine));
+        // Sur un quatre-temps à étincelle, le décalage d'avance passe par la carte du cliquetis, après l'air (`stepKnock`) : le couple
+        // que l'air paie ici ne l'a pas encore vu, et le carburant suit cet air. Le compter aussi au rendement le paierait deux fois.
+        sparkEfficiency_ = ecuAdvanceInKnockMap(p.engine) ? 1.0 : sparkTorqueShare(mapRetardDeg(p.engine));
         lambdaRatio_ = lambdaFullLoadRatio(p.engine);
     }
     peakNaturalNm_ = 1.0;
@@ -348,22 +350,38 @@ double ConsumptionMeter::lambdaNow() const {
     return airGps_ / fuelGps_ / model_.fuel().stoichiometricAfr;
 }
 
+namespace {
+
+/**
+ * Le décalage d'avance d'un quatre-temps à étincelle passe par la carte du cliquetis, après l'air : à ce couple au frein, l'air (donc
+ * le carburant) est celui d'un couple plus grand, de la part que l'étincelle décalée n'a pas tirée. 1 sans décalage.
+ */
+double advanceShareOf(const Powertrain& p, double rpm) {
+    if (p.electric || !ecuAdvanceInKnockMap(p.engine)) return 1.0;
+    const KnockMap* map = knockMapOf(p);
+    return map != nullptr ? std::max(map->steadyTorqueShare(rpm), 0.05) : 1.0;
+}
+
+}  // namespace
+
 double brakeSpecificFuel(const Powertrain& p, double rpm, double brakeNm) {
     if (p.electric || brakeNm <= 0.0) return 0.0;
     ConsumptionModel model;
     model.configure(p);
     const double friction = frictionTorqueNm(p, rpm);
+    // Le carburant suit l'air : le couple que cet air donnerait à l'avance d'origine. La puissance, elle, reste celle demandée.
+    const double airBrakeNm = (brakeNm + friction) / advanceShareOf(p, rpm) - friction;
     const double fullGross = fullLoadTorqueNm(p, rpm, steadyBoost(p, rpm)) + friction;
     const double kw = brakeNm * rpm * 2.0 * kPi / 60.0 / 1000.0;
     // Le compresseur prend sa part aux pistons avant le frein : à cette charge, soupape ouverte ou non.
-    double charger = p.engine.aspiration == Aspiration::Supercharger ? superchargerDriveNm(p, rpm, (brakeNm + friction + superchargerDriveNm(p, rpm, 1.0)) / fullGross) : 0.0;
+    double charger = p.engine.aspiration == Aspiration::Supercharger ? superchargerDriveNm(p, rpm, (airBrakeNm + friction + superchargerDriveNm(p, rpm, 1.0)) / fullGross) : 0.0;
     // La pompe haute pression et le filtre à particules, à sa suie moyenne : la combustion les paie aussi.
     if (directInjected(p.engine) || particulateFiltered(p.engine)) {
-        const double share = std::min((brakeNm + friction) / fullGross, 1.0);
+        const double share = std::min((airBrakeNm + friction) / fullGross, 1.0);
         const double boost = steadyBoost(p, rpm);
         charger += directPumpTorqueNm(p, rpm, share, boost) + filterPumpingTorqueNm(p, rpm, share, boost, meanSootG(p));
     }
-    return model.fuelGps(rpm, brakeNm, friction + charger, fullGross) * 3600.0 / kw;
+    return model.fuelGps(rpm, airBrakeNm, friction + charger, fullGross) * 3600.0 / kw;
 }
 
 FuelMapSummary fuelMapSummary(const Powertrain& p) {
@@ -378,15 +396,19 @@ FuelMapSummary fuelMapSummary(const Powertrain& p) {
         const double friction = frictionTorqueNm(p, rpm);
         const double full = fullLoadTorqueNm(p, rpm, steadyBoost(p, rpm));
         const double kw = rpm * 2.0 * kPi / 60.0 / 1000.0;
+        // `full` suit l'air : le décalage d'avance de la carte du cliquetis n'y est pas, il retire sa part au frein, pas à l'air.
+        const double advance = advanceShareOf(p, rpm);
         for (double share = 0.05; share <= 1.0001; share += 0.05) {
             const double charger = p.engine.aspiration == Aspiration::Supercharger ? superchargerDriveNm(p, rpm, share) : 0.0;
             const double brake = share * full - charger;
             if (brake <= 0.0) continue;
-            const double gPerKwh = model.fuelGps(rpm, brake, friction + charger, full + friction) * 3600.0 / (brake * kw);
+            const double delivered = advance == 1.0 ? brake : (brake + charger + friction) * advance - friction - charger;
+            if (delivered <= 0.0) continue;
+            const double gPerKwh = model.fuelGps(rpm, brake, friction + charger, full + friction) * 3600.0 / (delivered * kw);
             if (out.bestGPerKwh == 0.0 || gPerKwh < out.bestGPerKwh) {
                 out.bestGPerKwh = gPerKwh;
                 out.bestRpm = rpm;
-                out.bestBmepBar = brake / perBar;
+                out.bestBmepBar = delivered / perBar;
             }
         }
     }
