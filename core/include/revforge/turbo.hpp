@@ -79,6 +79,7 @@ struct TurboInput {
     double breathing = 1.0; // respiration du moteur à ce régime, 1 au pic de couple
     bool burning = false;
     AntiLagCommand antiLag;
+    double carbRichness = 0.0;  // 1/λ imposé par un carburateur, qui ne dose pas sur commande. 0 : un calculateur qui dose.
 };
 
 /** Le point d'équilibre à pleine charge : ce que donnent les courbes de la fiche. */
@@ -127,6 +128,7 @@ private:
         double heatValue = 0.0;   // J/kg de carburant
         double gasCp = 0.0;
         double heatRiseK = 0.0;   // échauffement du gaz si tout le carburant lui revenait
+        double carbRichness = 0.0;  // voir `TurboInput`
     };
     /** Le gaz et sa température quand l'anti-lag s'en mêle : anti_lag.cpp. */
     void antiLagExhaust(const AntiLagExhaust& in, double& gas, double& hotTarget);

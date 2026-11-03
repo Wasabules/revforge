@@ -129,13 +129,15 @@ void TurboCharger::antiLagExhaust(const AntiLagExhaust& in, double& gas, double&
     const double intake = s.coolerOutK;
     const double share = (hotTarget - intake) / in.heatRiseK;
     const double ignition = antiLagIgnition(s.turbineInK);
+    // Un carburateur ne dose pas sur commande : le seul surplus est celui du mélange qu'il débite déjà. -1 : un calculateur qui dose.
+    const double carbSurplus = in.carbRichness > 0.0 ? burntFuel * (in.carbRichness > 1.0 ? in.carbRichness - 1.0 : 0.0) : -1.0;
 
     switch (kind) {
         case AntiLag::Retard: {
             // Le gaz sort avant d'avoir fini de brûler : le travail que le piston n'a pas reçu part vers la turbine.
             const double gain = retardGain(kind);
             a.evoRatio = (share + gain) / share;
-            a.surplusFuel = burntFuel * (1.0 / kRetardLambda - 1.0);
+            a.surplusFuel = carbSurplus >= 0.0 ? carbSurplus : burntFuel * (1.0 / kRetardLambda - 1.0);
             a.collectorHeatW = burntFuel * in.heatValue * gain;
             hotTarget = intake + (share + gain) * in.heatRiseK;
             gas = m + burntFuel + a.surplusFuel;
@@ -152,7 +154,7 @@ void TurboCharger::antiLagExhaust(const AntiLagExhaust& in, double& gas, double&
             // Le cylindre brûle riche, et ce surplus trouve l'air frais dans le collecteur : une flamme continue, hors du cycle.
             const double gain = retardGain(kind);
             a.evoRatio = (share + gain) / share;
-            const double most = burntFuel * (1.0 / kRichestLambda - 1.0);
+            const double most = carbSurplus >= 0.0 ? carbSurplus : burntFuel * (1.0 / kRichestLambda - 1.0);
             const double matched = air * in.fuelPerAir;
             a.surplusFuel = matched < most ? matched : most;
             const double heat = a.surplusFuel * in.heatValue * kAirBurnShare * ignition;

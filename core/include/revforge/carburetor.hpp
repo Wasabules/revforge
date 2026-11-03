@@ -77,6 +77,7 @@ public:
     double lambda() const { return lambda_; }
     double filmG() const { return film_; }
     double pumpGps() const { return pumpGps_; }
+    const CarburetorSpec& spec() const { return spec_; }
 
 private:
     CarburetorSpec spec_;

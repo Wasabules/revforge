@@ -176,3 +176,115 @@ TEST_CASE("jonction carburateur et suralimentation : une seule perte, la même p
     MESSAGE("film soufflé / atmosphérique : " << ratio);
     CHECK(ratio > 1.3);
 }
+
+namespace {
+
+double shaftRpmOf(const DrivingModel& model) { return model.turbo().state().shaftOmega * 60.0 / (2.0 * kPi); }
+
+/** En quatrième, plein gaz le temps que la pression s'établisse. */
+void pullInFourth(DrivingModel& model) {
+    model.setManual(true);
+    model.requestShift(1);
+    for (int i = 0; i < 6000 && (model.gear() < 4 || model.shifting()); ++i) {
+        model.stepPedal(0.01, 0.6, 0.0);
+        if (!model.shifting() && model.rpm() > 3500.0 && model.gear() < 4) model.requestShift(1);
+    }
+    for (int i = 0; i < 300; ++i) model.stepPedal(0.01, 1.0, 0.0);
+}
+
+struct Lifted {
+    double fuelGps = 0.0, surplusGps = 0.0, shaftAt3s = 0.0, hottest = 0.0, reprise = 30.0;
+    bool active = false;
+};
+
+/** Trois secondes pied levé en quatrième, puis la reprise. */
+Lifted liftOf(const Powertrain& p) {
+    DrivingModel model(p);
+    pullInFourth(model);
+    Lifted out;
+    int counted = 0;
+    for (int i = 0; i < 300; ++i) {
+        model.stepPedal(0.01, 0.0, 0.0);
+        if (i < 30) continue;
+        ++counted;
+        out.fuelGps += model.consumption().fuelGps();
+        out.surplusGps += model.turbo().antiLag().surplusFuel * 1000.0;
+        out.hottest = std::max(out.hottest, model.turbo().state().turbineInK);
+        out.active = model.antiLagActive();
+    }
+    out.fuelGps /= counted;
+    out.surplusGps /= counted;
+    out.shaftAt3s = shaftRpmOf(model);
+    for (int i = 0; i < 1500; ++i) {
+        model.stepPedal(0.01, 1.0, 0.0);
+        if (model.boost() >= 0.9) {
+            out.reprise = static_cast<double>(i) * 0.01;
+            break;
+        }
+    }
+    return out;
+}
+
+Powertrain antiLagged(AntiLag kind, FuelSystem system = FuelSystem::Injection, int pipeMm = 400) {
+    Powertrain p = findPreset("hot_hatch_turbo")->powertrain();
+    p.engine.antiLag = kind;
+    p.engine.fuelSystem = system;
+    p.engine.turboPipeMm = pipeMm;
+    return p;
+}
+
+constexpr AntiLag kAntiLags[] = {AntiLag::Retard, AntiLag::AirInjection, AntiLag::CylinderCut};
+
+}  // namespace
+
+TEST_CASE("jonction carburateur et anti-lag : le surplus de carburant n'est payé qu'une fois") {
+    const Lifted plainCarb = liftOf(antiLagged(AntiLag::Off, FuelSystem::Carburetor));
+    CHECK_FALSE(plainCarb.active);
+    for (const AntiLag kind : {AntiLag::Retard, AntiLag::AirInjection}) {
+        const Lifted injected = liftOf(antiLagged(kind));
+        const Lifted carb = liftOf(antiLagged(kind, FuelSystem::Carburetor));
+        MESSAGE(static_cast<int>(kind) << " : carburant pied levé " << injected.fuelGps << " g/s en injection, " << carb.fuelGps << " sur carburateur ; surplus " << injected.surplusGps << " et " << carb.surplusGps);
+        CHECK(carb.active);
+        // Le mélange du carburateur (λ 0,93) est moins riche que ce que commande le calculateur : payé deux fois, il passerait devant.
+        CHECK(carb.surplusGps < injected.surplusGps);
+        CHECK(carb.fuelGps < injected.fuelGps);
+        const double richness = 1.0 / carburetorSpecOf(antiLagged(kind, FuelSystem::Carburetor).engine).partLambda;
+        CHECK(carb.fuelGps < (injected.fuelGps - injected.surplusGps) * richness);
+        // Le circuit de ralenti reste un plancher : il ne s'ajoute pas à ce que brûle l'anti-lag.
+        CHECK(carb.fuelGps > plainCarb.fuelGps);
+    }
+    // Sans dosage sur commande, l'injection d'air n'a presque rien à brûler dans le collecteur : c'est la cause, pas un malus.
+    const Lifted airInjected = liftOf(antiLagged(AntiLag::AirInjection));
+    const Lifted airCarb = liftOf(antiLagged(AntiLag::AirInjection, FuelSystem::Carburetor));
+    CHECK(airCarb.surplusGps < 0.6 * airInjected.surplusGps);
+    CHECK(airCarb.hottest < airInjected.hottest);
+    // La coupure ne demande aucun surplus : elle marche pareil.
+    CHECK(liftOf(antiLagged(AntiLag::CylinderCut, FuelSystem::Carburetor)).surplusGps == 0.0);
+}
+
+TEST_CASE("jonction carburateur et anti-lag : le mélange qui brûle encore ne réécrit pas la pression d'ouverture") {
+    const auto liftedSound = [](const Powertrain& p) {
+        DrivingModel model(p);
+        pullInFourth(model);
+        for (int i = 0; i < 100; ++i) model.stepPedal(0.01, 0.0, 0.0);
+        EngineSound sound(test::kRate);
+        sound.setProfile(p.profile());
+        test::Samples out(static_cast<std::size_t>(test::kRate));
+        constexpr int kSlice = 256;
+        for (std::size_t at = 0; at + kSlice <= out.size(); at += kSlice) {
+            model.stepPedal(static_cast<double>(kSlice) / test::kRate, 0.0, 0.0);
+            sound.setTargetRpm(static_cast<float>(model.rpm()));
+            sound.setDrive(static_cast<float>(model.load()), static_cast<float>(model.boost()), model.cut(), model.cranking(), static_cast<float>(model.throttle()));
+            sound.setTurbo(model.turboDrive());
+            sound.render(out.data() + at, kSlice);
+        }
+        return bandDb(test::slice(out, out.size() / 2, out.size()), 80.0, 800.0);
+    };
+    // Les deux gardent la chaleur du retard : même pression à l'ouverture, à ce qu'apporte le souffle près.
+    const double carb = liftedSound(antiLagged(AntiLag::Retard, FuelSystem::Carburetor));
+    const double injected = liftedSound(antiLagged(AntiLag::Retard));
+    const double off = liftedSound(antiLagged(AntiLag::Off, FuelSystem::Carburetor));
+    MESSAGE("médiums pied levé : retard sur carburateur " << carb << " dB, retard en injection " << injected << " dB, carburateur sans anti-lag " << off << " dB");
+    CHECK(carb == doctest::Approx(injected).epsilon(0.05));
+    CHECK(carb > off + 3.0);
+}

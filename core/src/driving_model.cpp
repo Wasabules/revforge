@@ -809,6 +809,7 @@ void DrivingModel::stepTurbo(double rpmNow, bool burning) {
     input.breathing = breathingOf(powertrain_, rpmNow);
     input.burning = burning;
     input.antiLag = antiLag_;
+    if (carbEngine_ && antiLag_.active) input.carbRichness = carburetorRichness(carb_.spec(), manifold_, rpmNow);
     turbo_.step(kStep, input);
     boost_ = std::max(turbo_.boost(), 0.0);
 }
@@ -996,8 +997,9 @@ void DrivingModel::updateEngine(double throttle, bool off) {
     burnt_.fullGrossNm = indicated;
     burnt_.load = manifold_;
     // Le couple au frein ci-dessus suit l'air, donc le cylindre retardé ou coupé paie déjà son carburant : reste ce qui s'y ajoute.
+    // Sur un carburateur, ce surplus est le mélange déjà payé ci-dessus : le compter ici le ferait payer deux fois.
     if (antiLagEngine_) {
-        burnt_.extraFuelGps = turbo_.antiLag().surplusFuel * 1000.0;
+        burnt_.extraFuelGps = carbEngine_ ? 0.0 : turbo_.antiLag().surplusFuel * 1000.0;
         burnt_.extraAirGps = turbo_.antiLag().airFlow * 1000.0;
     }
     lugging_ = manual_ && gear_ != 0 && meshed_ && locked_ && rpmNow < idle_ * 1.3 && speedMs_ > 0.5;

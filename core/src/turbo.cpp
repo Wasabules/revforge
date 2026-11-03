@@ -561,6 +561,7 @@ void TurboCharger::step(double dt, const TurboInput& input) {
         exhaust.heatValue = kPetrolHeatValue;
         exhaust.gasCp = kGasCp;
         exhaust.heatRiseK = kPetrolHeatValue * kPetrolFuelPerAir / (1.0 + kPetrolFuelPerAir) / kGasCp;
+        exhaust.carbRichness = input.carbRichness;
         antiLagExhaust(exhaust, gas, hotTarget);
         lastGas_ = gas;
     } else {
