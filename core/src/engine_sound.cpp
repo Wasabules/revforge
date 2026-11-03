@@ -402,6 +402,7 @@ struct EngineSound::State {
     std::uint32_t carbRng = 0x7A3D9C15;
     bool carbActive = false;
     bool carbMulti = false;
+    bool carbOpensBox = false;
     bool carbTuned = false;
     Svf carbBand;
     float carbTop = 0.0f;
@@ -661,6 +662,8 @@ struct EngineSound::State {
         if (p.supercharged) supercharger.setup(p);
         carbActive = !p.electric && p.fuelSystem != FuelSystem::Injection;
         carbMulti = carbActive && p.fuelSystem == FuelSystem::MultiCarb;
+        // Des cônes ou des cornets ont déjà retiré la boîte, et leur réponse le compte : elle ne se retire pas deux fois.
+        carbOpensBox = carbMulti && !airFilterSpec(p.airFilter).underBonnet;
         if (carbActive) applyCarburetor(p);
         if (carbTuned && !carbMulti) {
             inletTone.set(220.0f, 1.3f, sr);
@@ -1093,7 +1096,7 @@ struct EngineSound::State {
         const float kept = km::sqrt(static_cast<float>(km::kPi) * hz * kCarbQ / sr);
         carbNorm = kNoiseRmsInverse / kept;
         // Sur un corps par cylindre, plus de boîte entre les cornets et l'air : l'aspiration sort presque entière.
-        if (carbMulti) inletLevel *= kCarbOpenInlet;
+        if (carbOpensBox) inletLevel *= kCarbOpenInlet;
     }
 
     /** Pression : monte avec retard sous charge. Turbine : continue sur son élan pied levé. */
@@ -1513,9 +1516,20 @@ struct EngineSound::State {
         stem(Source::ExhaustB) += twoOutlets ? (gasB + tail * 0.7f) * gain + pops * 0.5f : 0.0f;
         // Le compresseur et sa décharge sont sur le conduit d'admission : ils sortent avec lui.
         const float inletStem = (inducted * cutGate * kIntakePa + inletTone.bp * inletLevel * cutGate) * gain + turboBus * kTurboPa * eventGain;
-        if (otherFilter) stem(intakeOut) += intakeResponse.process(inletStem);
-        else stem(Source::Intake) += inletStem;
-        if (carbActive) stem(Source::Intake) += carburetorSample(intake, carbSixth) * gain;
+        const float carbHiss = carbActive ? carburetorSample(intake, carbSixth) * gain : 0.0f;
+        if (otherFilter) {
+            // Le col d'un carburateur unique est derrière le filtre : son souffle remonte le même chemin que l'aspiration. Chaque corps
+            // d'un carburateur par cylindre a sa bouche à lui : son souffle n'a que l'air devant lui, et sort là où ces bouches s'ouvrent.
+            if (carbActive && !carbMulti) {
+                stem(intakeOut) += intakeResponse.process(inletStem + carbHiss);
+            } else {
+                stem(intakeOut) += intakeResponse.process(inletStem);
+                if (carbActive) stem(intakeOut) += carbHiss;
+            }
+        } else {
+            stem(Source::Intake) += inletStem;
+            if (carbActive) stem(Source::Intake) += carbHiss;
+        }
         float engineNoise = (mechanical * (0.4f + 0.6f * cutGate) * kMechanicalPa + block) * blockLevel * gain;
         if (sohc) {
             // Le couvre-culasse rayonne ce choc comme le bloc : peu au-dessus de 4 à 5 kHz.
