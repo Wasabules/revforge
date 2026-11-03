@@ -5,6 +5,7 @@
 #include <complex>
 
 #include "kotlin_math.hpp"
+#include "revforge/atmosphere.hpp"
 
 namespace revforge::acoustics {
 
@@ -442,6 +443,10 @@ SoundField::SoundField(float rate) : rate_(rate) {
 
 void SoundField::setCar(const CarAcoustics& car, bool hasExhaust) {
     car_ = car;
+    // L'air du jour porte le son : sa vitesse fait les retards et la bouche du tube, sa température et sa pression l'absorption.
+    // Dans l'air de référence, exactement les valeurs du constructeur.
+    soundSpeed_ = car.air.soundSpeedMs;
+    airPerMetre8k_ = static_cast<float>(airAbsorptionDbPerM(8000.0, car.air.celsius, kReferenceHumidityPercent, car.air.kilopascal));
     for (int i = 0; i < kSources; ++i) {
         Emitter& emitter = emitters_[static_cast<std::size_t>(i)];
         emitter.place = car.sources[static_cast<std::size_t>(i)];
@@ -572,7 +577,7 @@ void SoundField::updateEmitter(Emitter& e, int index, int controlSamples, bool s
     if (source == Source::ExhaustA || source == Source::ExhaustB) {
         // L'axe de la sortie pointe vers l'arrière : l'angle entre lui et la tête.
         const float degrees = acosClamped(tx / centre) * 180.0f / static_cast<float>(kPi);
-        const float ka1 = kSoundSpeed / (2.0f * static_cast<float>(kPi) * car_.outletRadiusM);
+        const float ka1 = soundSpeed_ / (2.0f * static_cast<float>(kPi) * car_.outletRadiusM);
         e.directivity.setPoleZero(ka1 / km::max(interpolate(kOutletAngles, kOutletInversePole, degrees), 1e-3f),
                                   ka1 / km::max(interpolate(kOutletAngles, kOutletInverseZero, degrees), 1e-3f), rate_);
         e.flowCos = tx / centre;
@@ -582,7 +587,7 @@ void SoundField::updateEmitter(Emitter& e, int index, int controlSamples, bool s
     // Les pneus sont aux quatre coins, et le plancher rayonne par ses côtés : la caisse ne les cache pas.
     const float excess = source == Source::Road || source == Source::Underfloor ? 0.0f : pathExcessM(from, head_, car_);
     if (excess > 1e-3f) {
-        const float fc = kSoundSpeed / (40.0f * excess);
+        const float fc = soundSpeed_ / (40.0f * excess);
         e.maskLow.set(fc * 1.2f, 0.32f, rate_);
         // Une source basse passe aussi sous la voiture : le masquage plafonne.
         if (from.z < kUnderCarHeight) e.maskHigh.bypass();
@@ -599,7 +604,7 @@ void SoundField::updateEmitter(Emitter& e, int index, int controlSamples, bool s
     const float excessPower = km::max(km::pow(10.0f, airDb / 10.0f) - 1.0f, 1e-6f);
     float airHz = 8000.0f / km::sqrt(excessPower);
     // Au-delà du mode plan (ka ≈ 3,8), le jet chaud et la couche de mélange diffusent les aigus : la bouche ne concentre plus rien.
-    if (source == Source::ExhaustA || source == Source::ExhaustB) airHz = km::min(airHz, kOutletTopKa * kSoundSpeed / (2.0f * static_cast<float>(kPi) * car_.outletRadiusM));
+    if (source == Source::ExhaustA || source == Source::ExhaustB) airHz = km::min(airHz, kOutletTopKa * soundSpeed_ / (2.0f * static_cast<float>(kPi) * car_.outletRadiusM));
     e.airCoef = 1.0f - poleOf(airHz, rate_);
 
     const float mirrorZ = -from.z;
@@ -615,7 +620,7 @@ void SoundField::updateEmitter(Emitter& e, int index, int controlSamples, bool s
     // Une source muette ne suit pas ses rampes : ses valeurs sautent directement, sans que rien ne s'entende.
     const bool jump = snap || e.idle > mask_;
     const auto setPath = [&](Path& path, float metres, float gain) {
-        const float delay = km::coerceIn(km::min(metres, kMaxDistanceM) / kSoundSpeed * rate_, kMinDelaySamples, kMaxDelayS * rate_);
+        const float delay = km::coerceIn(km::min(metres, kMaxDistanceM) / soundSpeed_ * rate_, kMinDelaySamples, kMaxDelayS * rate_);
         if (jump) {
             path.delay = delay;
             path.gain = gain;
@@ -685,7 +690,7 @@ void SoundField::process(const std::array<float, kSources>& in, float& left, flo
         if (!e.enabled) continue;
         float raw = in[static_cast<std::size_t>(i)];
         // L'écoulement porte le son vers l'aval : un dipôle s'ajoute au monopôle, en M·cos θ (Masovic et al., 2017).
-        if (i <= static_cast<int>(Source::ExhaustB)) raw *= 1.0f + jetSpeed_ / kSoundSpeed * e.flowCos;
+        if (i <= static_cast<int>(Source::ExhaustB)) raw *= 1.0f + jetSpeed_ / soundSpeed_ * e.flowCos;
         // Une source muette depuis longtemps ne coûte rien : tout son état est à zéro.
         if (raw == 0.0f) {
             if (e.idle > mask_) continue;
@@ -823,9 +828,9 @@ void CabinPath::setCar(const CarAcoustics& car) {
     // Les modes de la caisse : c/2L dans chaque direction, plus francs quand rien n'absorbe.
     const float depth = car.cabinBackM + car.cabinFrontM;
     const float q = spec.absorption < 0.1 ? 14.0f : (spec.absorption < 0.3 ? 9.0f : 6.0f);
-    modes_[0].set(kSoundSpeed / (2.0f * depth), q, rate_);
-    modes_[1].set(kSoundSpeed / (2.0f * (car.widthM - 0.3f)), q, rate_);
-    modes_[2].set(kSoundSpeed / (2.0f * (car.heightM - 0.45f)), q, rate_);
+    modes_[0].set(car.air.soundSpeedMs / (2.0f * depth), q, rate_);
+    modes_[1].set(car.air.soundSpeedMs / (2.0f * (car.widthM - 0.3f)), q, rate_);
+    modes_[2].set(car.air.soundSpeedMs / (2.0f * (car.heightM - 0.45f)), q, rate_);
     const float strength = spec.absorption < 0.1 ? 0.5f : (spec.absorption < 0.3 ? 0.35f : 0.22f);
     modeGain_ = {strength, strength * 0.6f, strength * 0.4f};
     roomMix_ = spec.absorption < 0.1 ? 0.6f : (spec.absorption < 0.3 ? 0.45f : 0.35f);

@@ -21,6 +21,7 @@ struct TurboPipeSpec {
     double wallJPerK = 1.0;          // masse thermique de la paroi ajoutée
     double frictionDrop = 0.0;       // perte de charge en plus, Pa par (kg/s)² ; négative sur un tube plus court
     double headShare = 1.0;          // chaleur à prendre avant la turbine, rapportée à la référence : sous 1 sur un tube plus court
+    double ambientK = 293.0;         // l'air autour du tube, où va la chaleur qu'il perd : celui du jour (atmosphere.hpp)
 };
 
 /** Ce que le tube garde d'une milliseconde à l'autre. */

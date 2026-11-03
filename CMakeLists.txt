@@ -43,6 +43,7 @@ add_library(revforge_core STATIC
   core/src/consumption.cpp
   core/src/presets.cpp
   core/src/carburetor.cpp
+  core/src/atmosphere.cpp
   ${GENERATED_DIR}/presets_data.inc
 )
 target_include_directories(revforge_core PUBLIC core/include PRIVATE core/src ${GENERATED_DIR})
@@ -68,7 +69,7 @@ else()
   target_link_libraries(revforge-render PRIVATE revforge_core)
 
   enable_testing()
-  add_executable(revforge_tests tests/main.cpp tests/engine_sound_test.cpp tests/engine_config_test.cpp tests/driving_model_test.cpp tests/powertrain_test.cpp tests/gearbox_test.cpp tests/acoustics_test.cpp tests/starter_test.cpp tests/shift_modes_test.cpp tests/turbo_test.cpp tests/consumption_test.cpp tests/retro_body_test.cpp tests/air_filter_test.cpp tests/turbo_pipe_test.cpp tests/anti_lag_test.cpp tests/valvetrain_test.cpp tests/supercharger_test.cpp tests/carburetor_test.cpp tests/rotary_test.cpp tests/jonctions_test.cpp)
+  add_executable(revforge_tests tests/main.cpp tests/engine_sound_test.cpp tests/engine_config_test.cpp tests/driving_model_test.cpp tests/powertrain_test.cpp tests/gearbox_test.cpp tests/acoustics_test.cpp tests/starter_test.cpp tests/shift_modes_test.cpp tests/turbo_test.cpp tests/consumption_test.cpp tests/retro_body_test.cpp tests/air_filter_test.cpp tests/turbo_pipe_test.cpp tests/anti_lag_test.cpp tests/valvetrain_test.cpp tests/supercharger_test.cpp tests/carburetor_test.cpp tests/rotary_test.cpp tests/jonctions_test.cpp tests/atmosphere_test.cpp)
   target_include_directories(revforge_tests PRIVATE tests/vendor core/src)
   target_link_libraries(revforge_tests PRIVATE revforge_core)
   # Avertissement d'un en-tête de la bibliothèque standard inclus par doctest.
@@ -116,4 +117,9 @@ else()
   golden(turbo_pipe_short 3898802e --preset hot_hatch_turbo --scenario turbo --turbo-pipe 150)
   golden(carb_multi 463a064f --preset carb_twin_cam --scenario blips)
   golden(carb_single 4d1f365e --preset hot_hatch_na --carb single --scenario launch --seconds 10)
+  # L'air du jour : un turbo à 3000 m, une citadine par grand froid, un carburateur qui s'enrichit en altitude, l'électrique.
+  golden(altitude_turbo 31d03535 --preset hot_hatch_turbo --scenario turbo --altitude 3000)
+  golden(ambient_cold_lap 054e6de4 --preset city_14 --scenario lap --seconds 20 --ambient -20)
+  golden(altitude_carb d84f8e06 --preset carb_twin_cam --scenario blips --altitude 2500)
+  golden(ambient_electric d0299648 --preset electric --scenario lap --seconds 20 --ambient 45 --altitude 1500)
 endif()

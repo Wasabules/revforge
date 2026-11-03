@@ -10,7 +10,6 @@ namespace {
 
 constexpr double kPi = 3.141592653589793;
 constexpr double kReferenceM = 0.4;
-constexpr double kAmbientK = 293.0;
 constexpr double kGasCp = 1150.0;
 constexpr double kGasR = 287.0;
 constexpr double kGasGamma = 4.0 / 3.0;
@@ -106,9 +105,9 @@ double turboPipeSteadyK(const TurboPipeSpec& pipe, double gas, double inletK) {
     const double wall = steadyWallShare(pipe, flow, exchanged);
     // Sortie du tube : une paroi à `wall`, et ce que le gaz garde de l'écart avec elle.
     const double kept = wall + (1.0 - exchanged) * (1.0 - wall);
-    if (pipe.extraM > 0.0) return kAmbientK + (inletK - kAmbientK) * kept;
+    if (pipe.extraM > 0.0) return pipe.ambientK + (inletK - pipe.ambientK) * kept;
     // La calibration compte déjà 400 mm : les retirer rend au gaz ce qu'il y aurait perdu.
-    return kAmbientK + (inletK - kAmbientK) / kept;
+    return pipe.ambientK + (inletK - pipe.ambientK) / kept;
 }
 
 double turboPipePulseShare(const TurboPipeSpec& pipe, double rpm, double inPa, double outPa, double gasK, double passage) {
@@ -122,13 +121,13 @@ void TurboPipeState::adopt(const TurboPipeSpec& pipe, double gas, double gasK) {
     portK = gasK;
     outK = gasK;
     const double flow = gas > kMinFlow ? gas : kMinFlow;
-    wallK = pipe.extraM > 0.0 ? kAmbientK + (gasK - kAmbientK) * steadyWallShare(pipe, flow, exchangedShare(pipe, flow)) : kAmbientK;
+    wallK = pipe.extraM > 0.0 ? pipe.ambientK + (gasK - pipe.ambientK) * steadyWallShare(pipe, flow, exchangedShare(pipe, flow)) : pipe.ambientK;
 }
 
 double TurboPipeState::stepHeat(const TurboPipeSpec& pipe, double dt, double gas, double targetK, double pressurePa, double tauUpS, double tauDownS) {
     const double flow = gas > kMinFlow ? gas : kMinFlow;
     if (pipe.extraM <= 0.0) {
-        const double wanted = targetK > kAmbientK ? turboPipeSteadyK(pipe, flow, targetK) : targetK;
+        const double wanted = targetK > pipe.ambientK ? turboPipeSteadyK(pipe, flow, targetK) : targetK;
         outK += (wanted - outK) * dt / ((wanted > outK ? tauUpS : tauDownS) * pipe.headShare);
         return outK;
     }
@@ -137,7 +136,7 @@ double TurboPipeState::stepHeat(const TurboPipeSpec& pipe, double dt, double gas
     const double exchanged = exchangedShare(pipe, flow);
     const double leaving = wallK + (portK - wallK) * (1.0 - exchanged);
     const double fromGas = flow * kGasCp * (portK - leaving);
-    const double toOutside = kOutsideWPerM2K * pipe.surfaceM2 * (wallK - kAmbientK);
+    const double toOutside = kOutsideWPerM2K * pipe.surfaceM2 * (wallK - pipe.ambientK);
     wallK += (fromGas - toOutside) * dt / pipe.wallJPerK;
     // Le temps de parcours : la masse de gaz que contient le tube, renouvelée par le débit.
     const double residence = pressurePa * pipe.extraVolumeM3 / (kGasR * outK) / flow;

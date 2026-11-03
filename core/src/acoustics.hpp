@@ -18,7 +18,8 @@
  */
 namespace revforge::acoustics {
 
-inline constexpr float kSoundSpeed = 343.0f;  // air à 20 °C
+// L'air de référence, 20 °C au niveau de la mer. Celui du jour arrive par `CarAcoustics::air` (atmosphere.hpp).
+inline constexpr float kSoundSpeed = 343.0f;
 inline constexpr float kAirDensity = 1.204f;
 inline constexpr float kHeadRadius = 0.0875f;
 inline constexpr double kReferencePressure = 20e-6;
@@ -207,6 +208,8 @@ private:
     float inside_ = 0.0f;
     float bayOpen_ = 0.0f;
     float airPerMetre8k_ = 0.0f;
+    /** La vitesse du son de l'air du jour (`CarAcoustics::air`). */
+    float soundSpeed_ = kSoundSpeed;
     std::array<dsp::AllPass, 3> ambientLeft_, ambientRight_;
     float ambient_ = 0.0f;
     float outsideGain_ = 1.0f;

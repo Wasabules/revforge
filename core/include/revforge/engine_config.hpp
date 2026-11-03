@@ -138,7 +138,22 @@ struct SourcePlace {
     bool operator==(const SourcePlace&) const = default;
 };
 
-/** Ce que le son doit savoir de la voiture : ses dimensions, ses sources, sa caisse. */
+/**
+ * L'air autour de la voiture, pour le son : il porte les retards, les modes de l'habitacle, le rayonnement et l'absorption.
+ * Par défaut, l'air de référence (20 °C, 0 m) : voir `airAcousticsOf` (atmosphere.hpp).
+ */
+struct AirAcoustics {
+    float soundSpeedMs = 343.0f;
+    /** √θ et σ = ρ/ρ₀ : exactement 1 dans l'air de référence. */
+    float soundSpeedRatio = 1.0f;
+    float densityRatio = 1.0f;
+    double celsius = 20.0;
+    double kilopascal = 101.325;
+
+    bool operator==(const AirAcoustics&) const = default;
+};
+
+/** Ce que le son doit savoir de la voiture : ses dimensions, ses sources, sa caisse, et l'air qui l'entoure. */
 struct CarAcoustics {
     float lengthM = 4.3f;
     float widthM = 1.8f;
@@ -155,6 +170,7 @@ struct CarAcoustics {
     EnginePlacement placement = EnginePlacement::Front;
     Insulation insulation = Insulation::Standard;
     bool windowsOpen = false;
+    AirAcoustics air;
 
     bool operator==(const CarAcoustics&) const = default;
 };

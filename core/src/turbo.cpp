@@ -3,6 +3,7 @@
 #include <cmath>
 
 #include "revforge/air_filter.hpp"
+#include "revforge/atmosphere.hpp"
 
 namespace revforge {
 
@@ -127,7 +128,7 @@ double compressorEta(double x) {
 /** Hauteur isentropique (J/kg) pour ce débit et cette vitesse de bout de pale. Négative : la roue n'est plus qu'une perte. */
 double compressorHead(const TurboSpec& spec, double inletK, double flow, double tipSpeed, double* xOut = nullptr) {
     const double D2 = spec.wheelDiameterM * spec.wheelDiameterM;
-    const double rho = kAtmosphere / (kAirR * inletK);
+    const double rho = spec.ambientPa / (kAirR * inletK);
     const double u = tipSpeed < kMinTipSpeed ? kMinTipSpeed : tipSpeed;
     const double unit = rho * kFlowCoefficient * u * D2;
     const double x = flow / unit;
@@ -148,8 +149,8 @@ double compressorHead(const TurboSpec& spec, double inletK, double flow, double 
 
 /** La température à l'entrée du compresseur : l'air extérieur, sauf si le filtre respire sous le capot. */
 double inletTemperature(const TurboSpec& spec, double rpm) {
-    if (spec.inletFilter == AirFilter::Stock) return kAmbientK;
-    return kAmbientK + airFilterRiseK(spec.inletFilter, spec.inletPlacement, rpm / (kRatedShare * spec.redlineRpm));
+    if (spec.inletFilter == AirFilter::Stock) return spec.ambientK;
+    return spec.ambientK + airFilterRiseK(spec.inletFilter, spec.inletPlacement, rpm / (kRatedShare * spec.redlineRpm));
 }
 
 double pressureRatio(double head, double inletK) {
@@ -172,10 +173,11 @@ double exhaustTemperature(const TurboSpec& spec, double intakeK, double rpm, dou
     return intakeK + share * value * fuel / (1.0 + fuel) / kGasCp;
 }
 
-double coolerOutlet(double hotK, double flow, double rated) {
+/** L'échangeur rend à l'air de charge une part de son écart avec l'air extérieur, `ambientK`. */
+double coolerOutlet(double hotK, double flow, double rated, double ambientK) {
     const double share = clamp(flow / rated, 0.0, 1.5);
     const double effect = kCoolerEffectLow - kCoolerEffectFall * share;
-    return hotK - effect * (hotK - kAmbientK);
+    return hotK - effect * (hotK - ambientK);
 }
 
 /**
@@ -203,7 +205,7 @@ double bearingPower(const TurboSpec& spec, double omega) {
 }
 
 double windagePower(const TurboSpec& spec, double tipSpeed) {
-    const double rho = kAtmosphere / (kAirR * kAmbientK);
+    const double rho = spec.ambientPa / (kAirR * spec.ambientK);
     return kWindage * rho * tipSpeed * tipSpeed * tipSpeed * spec.wheelDiameterM * spec.wheelDiameterM;
 }
 
@@ -317,9 +319,9 @@ double tipSpeedFor(const TurboSpec& spec, double inletK, double flow, double hea
 Balance balanceAt(const TurboSpec& spec, double rpm, double breathing, double chargePa, double gate) {
     Balance b;
     // Point fixe sur la température : l'air chauffe avec la compression, et sa densité en dépend. Deux passes suffisent.
-    double coolK = kAmbientK;
+    double coolK = spec.ambientK;
     double flow = 0.0;
-    double inletPa = kAtmosphere;
+    double inletPa = spec.ambientPa;
     double outletPa = chargePa;
     double head = 0.0;
     double tip = kMinTipSpeed;
@@ -328,20 +330,20 @@ Balance balanceAt(const TurboSpec& spec, double rpm, double breathing, double ch
     for (int pass = 0; pass < 2; ++pass) {
         const double rho = chargePa / (kAirR * coolK);
         flow = kVolumetric * breathing * rho * spec.displacementM3 * rpm / 120.0;
-        inletPa = kAtmosphere - spec.filterDrop * flow * flow;
+        inletPa = spec.ambientPa - spec.filterDrop * flow * flow;
         // Mêmes pertes qu'à chaque pas : celles de l'échangeur, et celles du conduit, plafonnées.
         outletPa = chargePa + spec.coolerDrop * flow * flow / rho + kDuctLossAtRated / spec.ratedFlow * (flow < kDuctDampedShare * spec.ratedFlow ? flow : kDuctDampedShare * spec.ratedFlow);
         head = kAirCp * inletK * (powerTwoSevenths(outletPa / inletPa) - 1.0);
         tip = tipSpeedFor(spec, inletK, flow, head);
         compressorHead(spec, inletK, flow, tip, &x);
         const double outK = inletK + (head > 0.0 ? head : 0.0) / compressorEta(x) / kAirCp;
-        coolK = coolerOutlet(outK, flow, spec.ratedFlow);
+        coolK = coolerOutlet(outK, flow, spec.ratedFlow, spec.ambientK);
     }
     const double fuel = fuelPerAir(spec, 1.0, true);
     const double gas = flow * (1.0 + fuel);
     const double burntK = exhaustTemperature(spec, coolK, rpm, 1.0, fuel);
     const double hotK = spec.pipe.active ? turboPipeSteadyK(spec.pipe, gas, burntK) : burntK;
-    const double outPa = kAtmosphere + spec.lineDrop * gas * gas;
+    const double outPa = spec.ambientPa + spec.lineDrop * gas * gas;
     const double passage = spec.turbineK + spec.wastegateK * gate;
     const double inPa = std::sqrt(outPa * outPa + gas * gas * hotK / (passage * passage));
     const double omega = tip / (0.5 * spec.wheelDiameterM);
@@ -364,7 +366,7 @@ Balance balanceAt(const TurboSpec& spec, double rpm, double breathing, double ch
 
 TurboSteady turboSteady(const TurboSpec& spec, double rpm, double breathing) {
     TurboSteady out;
-    const double target = kAtmosphere + spec.targetBar * 1e5;
+    const double target = spec.ambientPa + spec.targetBar * 1e5;
     // Le régime n'y fait rien : sans gaz, pas de pression.
     if (rpm <= 0.0 || breathing <= 0.0) return out;
     const Balance atTarget = balanceAt(spec, rpm, breathing, target, 0.0);
@@ -387,11 +389,11 @@ TurboSteady turboSteady(const TurboSpec& spec, double rpm, double breathing) {
         found = balanceAt(spec, rpm, breathing, target, gate);
     } else {
         // Sinon, l'arbre s'équilibre plus bas. Sans rien à l'atmosphère, il reste à l'arrêt ou presque.
-        double low = kAtmosphere;
+        double low = spec.ambientPa;
         double high = target;
         found = balanceAt(spec, rpm, breathing, low, 0.0);
         if (found.surplusW <= 0.0) {
-            chargePa = kAtmosphere;
+            chargePa = spec.ambientPa;
         } else {
             for (int i = 0; i < 12; ++i) {
                 const double middle = 0.5 * (low + high);
@@ -402,7 +404,7 @@ TurboSteady turboSteady(const TurboSpec& spec, double rpm, double breathing) {
         }
     }
     out.chargePa = chargePa;
-    out.boost = clamp((chargePa - kAtmosphere) / (spec.targetBar * 1e5), 0.0, 1.0);
+    out.boost = clamp((chargePa - spec.ambientPa) / (spec.targetBar * 1e5), 0.0, 1.0);
     out.turbineInPa = found.turbineInPa;
     out.shaftRpm = found.omega * 60.0 / (2.0 * kPi);
     out.wastegate = gate;
@@ -434,10 +436,24 @@ double turboChargeDensityShare(double boostBar, double boost, double inletRiseK,
     const double ratio = 1.0 + boostBar * (boost > 0.0 ? boost : 0.0);
     // L'air qui entre plus chaud sort du compresseur plus chaud encore, à rapport de pression égal, et l'échangeur n'en retire qu'une part.
     const double compression = 1.0 + (powerTwoSevenths(ratio) - 1.0) / kCompressorEta;
-    return coolerOutlet(kAmbientK * compression, flowShare, 1.0) / coolerOutlet((kAmbientK + inletRiseK) * compression, flowShare, 1.0);
+    return coolerOutlet(kAmbientK * compression, flowShare, 1.0, kAmbientK) / coolerOutlet((kAmbientK + inletRiseK) * compression, flowShare, 1.0, kAmbientK);
 }
 
-double TurboCharger::boost() const { return (state_.chargePa - kAtmosphere) / (spec_.targetBar * 1e5); }
+double turboAmbientChargeShare(double boostBar, double boost, double inletRiseK, double flowShare, double ambientPa, double ambientK) {
+    if (ambientPa == kAtmosphere && ambientK == kAmbientK) return 1.0;
+    // La soupape à ressort tient une pression relative : en altitude, la charge vaut l'atmosphère plus cette pression.
+    const double gauge = boostBar * 1e5 * (boost > 0.0 ? boost : 0.0);
+    // L'air piégé pour une atmosphère : la pression de charge, sur sa température après le compresseur, l'échangeur et les parois.
+    const auto trapped = [gauge, inletRiseK, flowShare](double ambientPa, double ambientK) {
+        const double chargePa = ambientPa + gauge;
+        const double compression = 1.0 + (powerTwoSevenths(chargePa / ambientPa) - 1.0) / kCompressorEta;
+        const double coolK = coolerOutlet((ambientK + inletRiseK) * compression, flowShare, 1.0, ambientK);
+        return chargePa / trappedAirK(coolK);
+    };
+    return trapped(ambientPa, ambientK) / trapped(kAtmosphere, kAmbientK);
+}
+
+double TurboCharger::boost() const { return (state_.chargePa - spec_.ambientPa) / (spec_.targetBar * 1e5); }
 
 double TurboCharger::backPressureNm(double fill) const { return turboBackPressureNm(spec_, state_.chargePa, state_.turbineInPa, state_.engineFlow, fill); }
 
@@ -448,7 +464,7 @@ TurboDrive TurboCharger::drive() const {
     d.shaftShare = static_cast<float>(state_.shaftShare);
     d.flowShare = static_cast<float>(state_.compressorFlow > 0.0 ? state_.compressorFlow / rated : 0.0);
     // Ce qui s'entend, c'est le débit et la pression qu'il perd : puissance du jet en ṁ·Δp, amplitude en racine de la pression.
-    const double gauge = (state_.chargePa - kAtmosphere) / (spec_.targetBar * 1e5);
+    const double gauge = (state_.chargePa - spec_.ambientPa) / (spec_.targetBar * 1e5);
     const double pressure = std::sqrt(gauge > 0.0 ? gauge : 0.0);
     d.blowOffShare = static_cast<float>(state_.blowOffFlow / rated * pressure);
     d.backflowShare = static_cast<float>((state_.compressorFlow < 0.0 ? -state_.compressorFlow / rated : 0.0) * pressure);
@@ -462,7 +478,7 @@ TurboDrive TurboCharger::drive() const {
         d.antiLag.heatShare = static_cast<float>(antiLag_.collectorHeatW / (rated * kPetrolFuelPerAir * kPetrolHeatValue));
         d.antiLag.heatW = static_cast<float>(antiLag_.collectorHeatW);
         d.antiLag.ignition = static_cast<float>(antiLagIgnition(collectorK()));
-        d.antiLag.exhaustM3s = static_cast<float>(lastGas_ * kAirR * state_.turbineInK / kAtmosphere);
+        d.antiLag.exhaustM3s = static_cast<float>(lastGas_ * kAirR * state_.turbineInK / spec_.ambientPa);
     }
     return d;
 }
@@ -478,7 +494,7 @@ void TurboCharger::step(double dt, const TurboInput& input) {
     // ── L'air : du compresseur au papillon ──
     const double tip = s.shaftOmega * 0.5 * spec.wheelDiameterM;
     const double flowNow = s.compressorFlow;
-    s.inletPa = kAtmosphere - spec.filterDrop * flowNow * flowNow;
+    s.inletPa = spec.ambientPa - spec.filterDrop * flowNow * flowNow;
     const double coolK = s.coolerOutK;
     const double chargeRho = s.chargePa / (kAirR * coolK);
     s.outletPa = s.chargePa + spec.coolerDrop * flowNow * (flowNow < 0.0 ? -flowNow : flowNow) / chargeRho;
@@ -509,8 +525,10 @@ void TurboCharger::step(double dt, const TurboInput& input) {
     // La soupape de décharge : le vide du collecteur l'ouvre, et elle reste ouverte tant qu'il y a quelque chose à vider.
     double wantedValve = 0.0;
     if (spec.blowOffValve && !spec.diesel) {
-        const double vacuum = clamp((kBlowOffVacuumPa - s.plenumPa) / kBlowOffVacuumSpanPa, 0.0, 1.0);
-        const double gauge = s.chargePa - kAtmosphere;
+        // Le vide se compte sous l'atmosphère du jour : en altitude, le collecteur à pleine charge est déjà sous 80 kPa.
+        const double opensBelowPa = kBlowOffVacuumPa - (kAtmosphere - spec.ambientPa);
+        const double vacuum = clamp((opensBelowPa - s.plenumPa) / kBlowOffVacuumSpanPa, 0.0, 1.0);
+        const double gauge = s.chargePa - spec.ambientPa;
         if (vacuum > 0.0 && gauge > kBlowOffOpensAbovePa) valveHeld_ = true;
         if (vacuum <= 0.0 || (s.blowOff > 0.5 && s.blowOffFlow < 0.05 * spec.ratedFlow)) valveHeld_ = false;
         if (valveHeld_) wantedValve = vacuum;
@@ -522,7 +540,7 @@ void TurboCharger::step(double dt, const TurboInput& input) {
     }
     s.blowOff += (wantedValve - s.blowOff) * (dt / kBlowOffS < 1.0 ? dt / kBlowOffS : 1.0);
     double valveFlow = 0.0;
-    const double across = s.chargePa - kAtmosphere;
+    const double across = s.chargePa - spec.ambientPa;
     if (s.blowOff > 1e-4 && across > 0.0) {
         // Plus de 1,9 fois la pression d'aval, le col serait sonique : le débit suit encore p, pas √Δp. Ici, une simple loi d'orifice régularisée.
         valveFlow = kBlowOffDischarge * spec.blowOffArea * s.blowOff * std::sqrt(2.0 * chargeRho) * across / std::sqrt(across + 500.0);
@@ -535,7 +553,7 @@ void TurboCharger::step(double dt, const TurboInput& input) {
     const double chargeBefore = s.chargePa;
     s.chargePa += gain * (flowNext - throughThrottle - valveFlow) * dt;
     if (antiLag_.airFlow > 0.0) s.chargePa -= gain * antiLag_.airFlow * dt;
-    if (s.chargePa < 0.5 * kAtmosphere) s.chargePa = 0.5 * kAtmosphere;
+    if (s.chargePa < 0.5 * spec.ambientPa) s.chargePa = 0.5 * spec.ambientPa;
 
     // ── Les températures ──
     const double headNew = compressorHead(spec, inletK, flowNext, tip, &x);
@@ -545,15 +563,15 @@ void TurboCharger::step(double dt, const TurboInput& input) {
     s.compressorOutK += (outTarget - s.compressorOutK) * dt / kOutletS;
     const double outK = s.compressorOutK;
     if (flowNext > 0.02 * spec.ratedFlow) {
-        s.coolerOutK += (coolerOutlet(outK, flowNext, spec.ratedFlow) - s.coolerOutK) * dt / kCoolerMassS;
+        s.coolerOutK += (coolerOutlet(outK, flowNext, spec.ratedFlow, spec.ambientK) - s.coolerOutK) * dt / kCoolerMassS;
     } else {
-        s.coolerOutK += (kAmbientK - s.coolerOutK) * dt / kCoolerRestS;
+        s.coolerOutK += (spec.ambientK - s.coolerOutK) * dt / kCoolerRestS;
     }
 
     // ── L'échappement : ce que le moteur a avalé, plus le carburant, à la température de la combustion ──
     const double fuel = fuelPerAir(spec, fill, input.burning);
     double gas = engine * (1.0 + fuel);
-    double hotTarget = rpm > 50.0 ? exhaustTemperature(spec, coolK, rpm, fill, fuel) : kAmbientK;
+    double hotTarget = rpm > 50.0 ? exhaustTemperature(spec, coolK, rpm, fill, fuel) : spec.ambientK;
     if (input.antiLag.kind != AntiLag::Off) {
         AntiLagExhaust exhaust;
         exhaust.command = input.antiLag;
@@ -580,14 +598,14 @@ void TurboCharger::step(double dt, const TurboInput& input) {
     // La soupape de décharge de la turbine : un ressort et une membrane, qui s'ouvrent à la pression demandée.
     // Le calculateur anticipe : la pression qui monte vite ouvre plus tôt. Sans cela, l'arbre et la soupape se renvoient la balle.
     const double anticipated = s.chargePa + kWastegateLeadS * (s.chargePa - chargeBefore) / dt;
-    const double overBar = (anticipated - (kAtmosphere + (1.0 - 0.2 * kWastegateBand) * spec.targetBar * 1e5)) / (kWastegateBand * spec.targetBar * 1e5);
+    const double overBar = (anticipated - (spec.ambientPa + (1.0 - 0.2 * kWastegateBand) * spec.targetBar * 1e5)) / (kWastegateBand * spec.targetBar * 1e5);
     // Le calculateur ouvre aussi pour protéger les roues : un petit turbo à bout de débit y arrive avant la pression demandée.
     const double overSpeed = (tip - spec.tipLimit) / (0.02 * spec.tipLimit);
     const double wantedGate = clamp(overBar > overSpeed ? overBar : overSpeed, 0.0, 1.0);
     s.wastegate += (wantedGate - s.wastegate) * dt / kWastegateS;
 
     const double passage = spec.turbineK + spec.wastegateK * s.wastegate;
-    const double outPa = kAtmosphere + spec.lineDrop * gas * gas;
+    const double outPa = spec.ambientPa + spec.lineDrop * gas * gas;
     const double ellipsePa = std::sqrt(outPa * outPa + gas * gas * s.turbineInK / (passage * passage));
     // Avec un tube de plus, la pression n'y est pas d'un coup : ce qui sort de ce volume par la turbine n'est pas encore ce qui y entre.
     s.turbineInPa = spec.pipe.active ? pipe_.stepPressure(spec.pipe, dt, s.turbineInPa, ellipsePa, outPa, s.turbineInK, passage) : ellipsePa;

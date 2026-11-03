@@ -31,6 +31,12 @@ struct CarburetorSpec {
     /** Ce que la pompe de reprise injecte sur une course complète du papillon (g). */
     double pumpG = 0.0;
     double redlineRpm = 6000.0;
+    /**
+     * L'air du jour, rapporté à l'air de référence où les gicleurs ont été choisis : σ = ρ/ρ₀ et θ = T/T₀. Le carburant passe
+     * en √(ρ_carburant·Δp) et l'air en √(ρ_air·Δp) : le mélange s'enrichit en 1/√σ en altitude (voir atmosphere.hpp).
+     */
+    double airDensityShare = 1.0;
+    double airTemperatureShare = 1.0;
 };
 
 /** Pas de carburateur sur un diesel : le réglage y est sans effet. */

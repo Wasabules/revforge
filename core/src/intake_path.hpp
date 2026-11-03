@@ -12,6 +12,9 @@ struct IntakeGeometry {
     double displacementM3 = 0.002;
     double stackM = 0.27;  // longueur d'un cornet, de la soupape à la bouche
     double stackRadiusM = 0.021;
+    /** L'air admis : celui du jour, exactement 343 m/s et 1,2 kg/m³ dans l'air de référence (atmosphere.hpp). */
+    double soundSpeedMs = 343.0;
+    double densityKgM3 = 1.2;
 };
 
 /**

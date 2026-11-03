@@ -37,6 +37,12 @@ struct TurboSpec {
     AirFilter inletFilter = AirFilter::Stock;  // ce qui fixe la température à l'entrée du compresseur
     EnginePlacement inletPlacement = EnginePlacement::Front;
     TurboPipeSpec pipe;             // le tube avant la turbine : inactif à la longueur de référence
+    /**
+     * L'air du jour, où le compresseur aspire, où la ligne débouche, et contre lequel la soupape à ressort tient sa pression
+     * (`targetBar` reste relative). Le dimensionnement, lui, est fait dans l'air de référence : ces deux champs n'y entrent pas.
+     */
+    double ambientPa = 101325.0;
+    double ambientK = 293.0;
 };
 
 /** Ce qui change d'une milliseconde à l'autre, en unités physiques. */
@@ -155,5 +161,11 @@ TurboSteady turboSteady(const TurboSpec& spec, double rpm, double breathing);
 double turboBackPressureNm(const TurboSpec& spec, double chargePa, double turbineInPa, double flow, double fill);
 /** La densité de la charge, à pression égale, quand l'air arrive au compresseur plus chaud de `inletRiseK` (1 : rien ne change). */
 double turboChargeDensityShare(double boostBar, double boost, double inletRiseK, double flowShare);
+/**
+ * L'air piégé dans cet air du jour, rapporté à celui de l'air de référence, à même part `boost` de la pression demandée
+ * `boostBar` : la pression de charge (l'atmosphère plus la pression relative), et sa température après le compresseur,
+ * l'échangeur et les parois. Exactement 1 dans l'air de référence.
+ */
+double turboAmbientChargeShare(double boostBar, double boost, double inletRiseK, double flowShare, double ambientPa, double ambientK);
 
 }  // namespace revforge

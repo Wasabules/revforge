@@ -1,6 +1,7 @@
 #include "revforge/driving_model.hpp"
 
 #include "portable_math.hpp"
+#include "revforge/atmosphere.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -97,16 +98,19 @@ void DrivingModel::setPowertrain(const Powertrain& powertrain) {
     idle_ = idleRpmOf(powertrain);
     redline_ = redlineRpmOf(powertrain);
     inertia_ = engineInertia(powertrain);
-    const PowerSummary peak = powerSummary(powertrain);
+    // L'embrayage, le convertisseur et la carte de passage sont des pièces et un étalonnage, faits dans l'air de référence :
+    // monter en altitude ne les change pas. Dans l'air de référence, `sized` est le montage lui-même.
+    const Powertrain sized = withReferenceAir(powertrain);
+    const PowerSummary peak = powerSummary(sized);
     peakTorqueRpm_ = peak.peakTorqueRpm;
-    shiftMap_ = buildShiftMap(powertrain, gearing_);
+    shiftMap_ = buildShiftMap(sized, gearing_);
     clutchCapacity_ = 1.6 * peak.peakTorqueNm;
     // Le robot change d'autant plus vite que la voiture est sportive ; sur une boîte à crabots, c'est le barillet qui décide.
     shiftPace_ = bodySpec(powertrain.car.body).shiftSeconds;
     const double litres = static_cast<double>(powertrain.engine.displacementCc) / 1000.0;
     // Le convertisseur est dimensionné pour caler vers 45 % du régime maximal à pleine charge.
     const double stallOmega = toOmega(0.4 * redline_);
-    converterK_ = stallOmega / std::sqrt(std::max(fullLoadTorqueNm(powertrain, 0.4 * redline_, 1.0), 1.0));
+    converterK_ = stallOmega / std::sqrt(std::max(fullLoadTorqueNm(sized, 0.4 * redline_, 1.0), 1.0));
     // Couple de chaque explosion : gaz et compression, un cylindre à la fois, une fois les autres retranchés.
     const double firings = static_cast<double>(powertrain.engine.firingsPerTwoTurns());
     const double overlap = firings <= 4.0 ? 1.0 : (firings <= 5.0 ? 0.8 : (firings <= 6.0 ? 0.55 : (firings <= 8.0 ? 0.35 : (firings <= 10.0 ? 0.25 : 0.15))));
@@ -461,7 +465,7 @@ double DrivingModel::roadExtraN() const {
     const double carKg = static_cast<double>(powertrain_.car.massKg);
     double force = (carKg + trailerKg_) * kGravity * slopeShare();
     if (trailerKg_ > 0.0 && speedMs_ > 0.1) {
-        force += kTrailerRolling * trailerKg_ * kGravity + 0.5 * kAirDensity * kTrailerDragArea * speedMs_ * speedMs_;
+        force += kTrailerRolling * trailerKg_ * kGravity + 0.5 * (kAirDensity * airDensityRatioOf(powertrain_.engine)) * kTrailerDragArea * speedMs_ * speedMs_;
     }
     if (cornerRadius_ > 0.0) force += kCorneringDragShare * carKg * speedMs_ * speedMs_ / cornerRadius_;
     return force;
@@ -753,7 +757,8 @@ double DrivingModel::rotaryCompressionLoadNm() const {
     const double ratio = static_cast<double>(starter_.compressionRatio);
     const double clearance = swept / (ratio - 1.0);
     const double full = clearance + swept;
-    constexpr double kAtmosphere = 1e5;
+    // L'air enfermé part de l'atmosphère du jour : moins de compression à lancer en altitude.
+    const double atmosphere = 1e5 * ambientAirOf(powertrain_.engine).pressureRatio;
     // Les segments d'apex fuient à bas régime : de l'ordre de 8,5 bar à 250 tr/min, contre 13 à 14 sur un moteur à pistons.
     constexpr double kCrankPolytropic = 0.96;
     constexpr double kExpansionReturn = 0.8;
@@ -766,8 +771,8 @@ double DrivingModel::rotaryCompressionLoadNm() const {
             const bool compressing = phi >= 3.0 * kPi;
             if (!compressing && phi >= kPi) continue;
             const double volume = clearance + swept * 0.5 * (1.0 - portable::cos(phi));
-            const double pressure = kAtmosphere * portable::pow(full / volume, kCrankPolytropic);
-            const double push = (pressure - kAtmosphere) * swept * 0.5 * kShare * -std::sin(phi);
+            const double pressure = atmosphere * portable::pow(full / volume, kCrankPolytropic);
+            const double push = (pressure - atmosphere) * swept * 0.5 * kShare * -std::sin(phi);
             load += compressing ? push : kExpansionReturn * push;
         }
     }
@@ -781,7 +786,7 @@ double DrivingModel::compressionLoadNm() const {
     const double ratio = static_cast<double>(starter_.compressionRatio);
     const double clearance = swept / (ratio - 1.0);
     const double full = clearance + swept;
-    constexpr double kAtmosphere = 1e5;
+    const double atmosphere = 1e5 * ambientAirOf(powertrain_.engine).pressureRatio;
     // À 250 tr/min, le gaz a le temps de fuir et de refroidir : 13 à 14 bar en essence, 25 à 30 en diesel,
     // au lieu des 21 et 42 qu'une compression sans perte donnerait.
     constexpr double kCrankPolytropic = 1.13;
@@ -795,8 +800,8 @@ double DrivingModel::compressionLoadNm() const {
         const bool compressing = phi >= 3.0 * kPi;
         if (!compressing && phi >= kPi) continue;
         const double volume = clearance + swept * 0.5 * (1.0 - portable::cos(phi));
-        const double pressure = kAtmosphere * portable::pow(full / volume, kCrankPolytropic);
-        const double push = kCylinderSeal[i % 6] * (pressure - kAtmosphere) * swept * 0.5 * -std::sin(phi);
+        const double pressure = atmosphere * portable::pow(full / volume, kCrankPolytropic);
+        const double push = kCylinderSeal[i % 6] * (pressure - atmosphere) * swept * 0.5 * -std::sin(phi);
         load += compressing ? push : kExpansionReturn * push;
     }
     return load;
@@ -971,7 +976,8 @@ void DrivingModel::updateEngine(double throttle, bool off) {
         in.fill = manifold_;
         in.fillRate = (manifold_ - fillBefore) / kStep;
         in.throttle = throttle;
-        in.density = turboEngine_ || superchargerEngine_ ? 1.0 + boost_ * static_cast<double>(powertrain_.engine.boostBar) : 1.0;
+        // En part de l'air de référence : l'air du jour, puis ce que la suralimentation y ajoute.
+        in.density = (turboEngine_ || superchargerEngine_ ? 1.0 + boost_ * static_cast<double>(powertrain_.engine.boostBar) : 1.0) * airDensityRatioOf(powertrain_.engine);
         carb_.step(in, kStep);
         // Le moteur qui prend a son propre enrichissement : le film ne compte qu'ensuite.
         if (catching_) carb_.prime();
