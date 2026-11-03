@@ -1118,7 +1118,7 @@ The bench gain matches, within 25 %, the one given by two neighbouring `turboSte
 | Spring, `three_cyl_turbo` 3300 / 5520 rpm | +2.0 % / +3.3 % | 0.48 s / 0.43 s | < 0.1 % |
 | Electronic, same | −0.01 % / −0.002 % | 0.40 s / 0.34 s | 2.7 % / 5.3 % |
 
-No more creep, a 10 to 20 % shorter rise (the solenoid valve keeps the wastegate shut until the end, where the spring starts opening at 97.6 %), but an overshoot: 1 to 6 % above 3000 rpm, 9 % at 2500 rpm. In the car, in fourth from 1800 rpm (`--scenario turbo`), rpm rising: a +5.9 % crest on `hot_hatch_turbo`, +8.4 % on `three_cyl_turbo`, against +1.8 and +2.5 % for the spring, which are its creep. Without anti-windup: +137 % at 2500 rpm, +102 % at 3500, and still 1 to 3 % too high after 12 s.
+No more creep, a 6 to 21 % shorter rise (the solenoid valve keeps the wastegate shut until the end, where the spring starts opening at 97.6 %), but an overshoot: 1 to 6 % above 3000 rpm, 9 % at 2500 rpm. In the car, in fourth from 1800 rpm (`--scenario turbo`), rpm rising: a +5.9 % crest on `hot_hatch_turbo`, +8.4 % on `three_cyl_turbo`, against +1.8 and +2.5 % for the spring, which are its creep. Without anti-windup: +137 % at 2500 rpm, +102 % at 3500, and still 1 to 3 % too high after 12 s.
 
 **Dead zones.** When the wastegate has almost nothing to dump, at the bottom of the range where the target becomes reachable, the wanted opening falls between 0 and 12.5 %, which the valve cannot hold: it alternates between both ends, and the pressure oscillates by ±2 % around 2.7 Hz (`five_cyl_turbo` and `diesel_four` around 2500 rpm). This is the limit of a pulsed solenoid valve; a lower frequency or a faster valve reduces it.
 
