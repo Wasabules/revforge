@@ -248,6 +248,7 @@ static void advance(int frames) {
         g_sound->setStarter(g_model->starterPowered(), g_model->starterMeshed(), static_cast<float>(g_model->starterLoad()));
         g_sound->setRoad(static_cast<float>(g_model->speedKmh() / 3.6), static_cast<float>(g_model->wheelSlip()));
         g_sound->setGearbox(g_model->box(), g_model->gearboxDrive());
+        g_sound->setCam(g_model->camDrive());
         if (g_mode == kOff && g_powertrain.electric) target = 0.0f;
     }
     // Régime imposé de l'extérieur : plus de voiture, donc plus de boîte qui tourne.

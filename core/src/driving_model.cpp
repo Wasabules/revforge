@@ -151,6 +151,13 @@ void DrivingModel::setPowertrain(const Powertrain& powertrain) {
     }
     omega_ = std::min(omega_, toOmega(redline_));
     if (!turboEngine_ && !superchargerEngine_) boost_ = 0.0;
+    // La distribution variable : rien de cela ne tourne sur une came fixe.
+    camTwoStep_ = !powertrain.electric && camTwoStep(powertrain.engine);
+    camPhased_ = !powertrain.electric && camPhased(powertrain.engine);
+    camVariable_ = camTwoStep_ || camPhased_;
+    camSwitchRpm_ = camTwoStep_ ? revforge::camSwitchRpm(powertrain.engine) : 0.0;
+    camDrive_ = CamDrive{};
+    if (camPhased_) camDrive_.phaserDeg = static_cast<float>(-kCamPhaserAuthorityDeg);
 }
 
 double DrivingModel::rpm() const {
@@ -950,6 +957,7 @@ void DrivingModel::updateEngine(double throttle, bool off) {
     if (antiLag_.active) wantedManifold = std::max(wantedManifold, antiLagOpening(antiLag_.kind));
     const double fillBefore = manifold_;
     manifold_ += (wantedManifold - manifold_) * std::min(1.0, kStep / manifoldTau_);
+    if (camVariable_) stepCam(rpmNow);
 
     // Turbine : tout est dans `TurboCharger`. Le moteur lui donne ce qu'il rejette, et reçoit la pression qui en résulte.
     // Le compresseur, lui, ne demande rien aux gaz : il tourne avec le vilebrequin.
@@ -1007,6 +1015,27 @@ void DrivingModel::updateEngine(double throttle, bool off) {
     if (lugging_) {
         const double beat = clock_ * 2.0 * kPi * rpmNow / 120.0 * powertrain_.engine.firingsPerTwoTurns();
         torque_ += 0.5 * std::fabs(produced) * portable::sin(beat);
+    }
+}
+
+void DrivingModel::stepCam(double rpmNow) {
+    if (camTwoStep_) {
+        // Le second profil n'entre qu'en charge, au-delà du régime où les courbes se croisent, et ne sort qu'en dessous de
+        // lui moins l'hystérésis : à ce régime, les deux profils donnent le même couple, et la bascule ne se sent pas.
+        const bool loaded = manifold_ >= kCamSwitchLoad && !cut_;
+        if (!camDrive_.high) {
+            camDrive_.high = loaded && camSwitchRpm_ > 0.0 && rpmNow > camSwitchRpm_ * (1.0 + kCamSwitchHysteresis);
+        } else if (rpmNow < camSwitchRpm_ * (1.0 - kCamSwitchHysteresis) || manifold_ < kCamSwitchLoad - kCamSwitchLoadHysteresis) {
+            camDrive_.high = false;
+        }
+    }
+    if (camPhased_) {
+        // Pleine charge : le meilleur calage du calcul. Pied levé et au ralenti : en butée retard, le moins de croisement possible.
+        // Entre les deux, selon le remplissage. La palette tourne à vitesse finie.
+        const double best = camPhaserTargetDeg(powertrain_.engine, rpmNow, camDrive_.high);
+        const double share = clamp((manifold_ - kCamPhaserPartLoad) / (1.0 - kCamPhaserPartLoad), 0.0, 1.0);
+        const double target = -kCamPhaserAuthorityDeg + (best + kCamPhaserAuthorityDeg) * share;
+        camDrive_.phaserDeg = static_cast<float>(approach(static_cast<double>(camDrive_.phaserDeg), target, kCamPhaserDegPerS * kStep));
     }
 }
 

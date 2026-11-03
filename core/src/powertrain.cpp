@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "revforge/air_filter.hpp"
+#include "revforge/cam.hpp"
 #include "revforge/carburetor.hpp"
 #include "revforge/driving_model.hpp"
 #include "revforge/valvetrain.hpp"
@@ -73,6 +74,18 @@ double carburetorBrakeShare(const EngineConfig& e, double rpm, double shape) {
     return std::max(((brake + friction) * (1.0 - drop) - friction - drop) / brake, 0.3);
 }
 
+/**
+ * La came change la pression moyenne indiquée (voir cam.hpp) ; les frottements restent. Le même calcul que pour le
+ * carburateur, sur l'indiqué : ce que le cycle gagne ou perd, moins ce qui frotte toujours.
+ */
+double camBrakeShare(const EngineConfig& e, double rpm, double shape) {
+    const double ratio = camTorqueRatio(e, rpm);
+    const double k = rpm / 1000.0;
+    const double friction = (0.9 + 0.12 * k + 0.03 * k * k + (e.burnsDiesel() ? 0.3 : 0.0)) * (isRotary(e) ? kRotaryFrictionShare : 1.0);
+    const double brake = naturalBmep(e) * shape;
+    return std::max(((brake + friction) * ratio - friction) / brake, 0.1);
+}
+
 /** La respiration selon le régime : 1 au pic de couple. */
 double breathing(const EngineConfig& e, double rpm) {
     const double redline = static_cast<double>(e.redlineRpm);
@@ -109,7 +122,25 @@ double breathing(const EngineConfig& e, double rpm) {
         case Exhaust::Quiet: shape *= 0.95 - 0.05 * fraction; break;
     }
     if (fuelSystemOf(e) != FuelSystem::Injection) shape *= carburetorBrakeShare(e, rpm, shape);
+    if (!camIsStock(e)) shape *= camBrakeShare(e, rpm, shape);
     return shape;
+}
+
+/** Le même moteur avec sa came d'origine : le turbo, le compresseur et la boîte restent ceux qu'il avait. */
+EngineConfig withStockCam(const EngineConfig& e) {
+    EngineConfig stock = e;
+    stock.camDurationDeg = 0;
+    stock.camLiftMm = 0.0f;
+    stock.lobeSeparationDeg = 0;
+    stock.valveTiming = ValveTiming::Fixed;
+    return stock;
+}
+
+/** La came d'origine, ou celle-ci : à ne calculer qu'une fois s'il n'y a rien à changer. */
+const EngineConfig& sizedEngine(const EngineConfig& e, EngineConfig& scratch) {
+    if (camIsStock(e)) return e;
+    scratch = withStockCam(e);
+    return scratch;
 }
 
 }  // namespace
@@ -259,7 +290,9 @@ Powertrain referencePowertrain() {
 }
 
 TurboSpec turboSpecOf(const Powertrain& p) {
-    TurboSpec spec = turboSpecFor(p.engine, breathing(p.engine, 0.88 * static_cast<double>(p.engine.redlineRpm)));
+    // Comme pour le filtre : une autre came ne change pas le turbo, dimensionné sur la came d'origine.
+    EngineConfig scratch;
+    TurboSpec spec = turboSpecFor(p.engine, breathing(sizedEngine(p.engine, scratch), 0.88 * static_cast<double>(p.engine.redlineRpm)));
     // Le turbo reste le même, dimensionné sur la voiture d'origine : seul change l'air qu'il reçoit.
     if (p.engine.airFilter != AirFilter::Stock) {
         spec.filterDrop *= airFilterDropShare(p.engine.airFilter);
@@ -328,7 +361,9 @@ double breathingOf(const Powertrain& p, double rpm) { return breathing(p.engine,
 
 SuperchargerSpec superchargerSpecOf(const Powertrain& p) {
     const double redline = static_cast<double>(p.engine.redlineRpm);
-    SuperchargerSpec spec = superchargerSpecFor(p.engine, breathing(p.engine, kVolumetricSizingShare * redline), breathing(p.engine, kSuperchargerRatedShare * redline));
+    EngineConfig scratch;
+    const EngineConfig& sized = sizedEngine(p.engine, scratch);
+    SuperchargerSpec spec = superchargerSpecFor(p.engine, breathing(sized, kVolumetricSizingShare * redline), breathing(sized, kSuperchargerRatedShare * redline));
     // Comme le turbo : le compresseur reste celui du papier d'origine, seul change l'air qu'il reçoit.
     if (p.engine.airFilter != AirFilter::Stock) {
         spec.filterDrop *= airFilterDropShare(p.engine.airFilter);
@@ -445,11 +480,14 @@ double roadLoadN(const Powertrain& p, double speedMs) {
 Gearing gearingOf(const Powertrain& p) {
     const BodySpec& body = bodySpec(p.car.body);
     // Changer de filtre ne change pas la boîte : elle reste celle du moteur d'origine.
+    // Ni une autre came : la boîte et le pont restent ceux du moteur d'origine.
     Powertrain stock;
-    const bool otherFilter = !p.electric && p.engine.airFilter != AirFilter::Stock;
+    const bool otherCam = !p.electric && !camIsStock(p.engine);
+    const bool otherFilter = (!p.electric && p.engine.airFilter != AirFilter::Stock) || otherCam;
     if (otherFilter) {
         stock = p;
         stock.engine.airFilter = AirFilter::Stock;
+        if (otherCam) stock.engine = withStockCam(stock.engine);
     }
     const PowerSummary peak = powerSummary(otherFilter ? stock : p);
     const bool rearOrAll = p.car.drive != Drive::Front;

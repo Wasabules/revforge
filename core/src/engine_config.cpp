@@ -6,6 +6,7 @@
 #include "revforge/air_filter.hpp"
 #include "revforge/supercharger.hpp"
 #include "revforge/carburetor.hpp"
+#include "revforge/cam.hpp"
 #include "portable_math.hpp"
 
 namespace revforge {
@@ -328,6 +329,8 @@ EngineProfile EngineConfig::toProfile() const {
     if (layout == Layout::Rotary) applyRotary(*this, p);
     // Après le rotatif : les explosions inégales d'une pipe commune se posent sur les siennes.
     if (fuelSystemOf(*this) != FuelSystem::Injection) applyCarburetor(*this, p);
+    // La came, si ce n'est pas celle d'origine : son calage, sa bouffée, ses gaz résiduels.
+    if (!camIsStock(*this)) applyCam(*this, p);
     return p;
 }
 
