@@ -5,6 +5,7 @@
 #include <memory>
 #include <vector>
 
+#include "revforge/ecu.hpp"
 #include "revforge/engine_config.hpp"
 #include "revforge/gearbox.hpp"
 #include "revforge/supercharger.hpp"
@@ -61,6 +62,12 @@ public:
     void setTurbo(const TurboDrive& drive);
     /** Le vrai compresseur, quand il y en a un : sa vitesse et l'écart de pression font son sifflement. */
     void setSupercharger(const SuperchargerDrive& drive);
+    /**
+     * Le calculateur, quand il agit : l'étincelle retardée ouvre les cylindres sur plus de pression, les cylindres coupés
+     * n'explosent pas, et le mélange d'un cylindre dont seule l'étincelle est coupée peut détoner dans la ligne. Inactif, ou
+     * sans cet appel, rien ne change au son.
+     */
+    void setEcu(const EcuDrive& drive);
     /** Le démarreur : alimenté ; pignon engagé dans la couronne. Le contact des dents fait le son. */
     void setStarter(bool powered, bool meshed, float load = 0.5f);
     /** Vitesse de la voiture et glissement des pneus : vent, roulement, crissement. */

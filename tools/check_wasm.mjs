@@ -595,4 +595,73 @@ for (const [name, system] of [['single', 1], ['multi', 2]]) {
   rf.rf_set_mode(3);
   check('socle moteur, électrique', render(rf, 20, 128), native('--preset', 'electric', '--ambient', '40', '--altitude', '1500', '--traction', 'full', '--scenario', 'lap', '--seconds', '20'));
 }
+// Le calculateur, actif : chaque réglage change le rendu, par un chemin que les autres cas ne prennent pas.
+// Les coups de gaz au point mort de `blips` : le rupteur progressif, l'avance et la richesse réglées, sur un atmosphérique.
+{
+  const rf = load();
+  rf.rf_set_car(BODY.city, 1100, 15, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  tune(rf, { ignitionOffsetDeg: 6, fullLoadLambda: 0.95, revLimiter: LIMITER.soft });
+  rf.rf_set_config(4, LAYOUT.inline, 2000, 86, 7200, EXHAUST.sport, 0, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+  rf.rf_set_mode(FRESH);
+  rf.rf_set_mode(1);
+  const hash = render(rf, 14, 128, (step) => {
+    const t = step * TICK_S - 1;
+    const inBlip = t - 4 * Math.floor(t / 4);
+    rf.rf_set_controls(t >= 0 && inBlip < 1.2 ? 1 : 0, 0, 0);
+  });
+  check('calculateur, rupteur progressif', hash, native('--cylinders', '4', '--cc', '2000', '--bore', '86', '--redline', '7200', '--exhaust', 'sport', '--advance', '6', '--lambda', '0.95', '--limiter', 'soft', '--scenario', 'blips'));
+}
+// Le même, à coupure d'allumage : l'essence passe, et ses détonations ont leur propre tirage.
+{
+  const rf = load();
+  rf.rf_set_car(BODY.city, 1100, 15, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  tune(rf, { ignitionOffsetDeg: -5, revLimiter: LIMITER.ignition_cut });
+  rf.rf_set_config(4, LAYOUT.inline, 2000, 86, 7200, EXHAUST.sport, 0, 0, 0, 2, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+  rf.rf_set_mode(FRESH);
+  rf.rf_set_mode(1);
+  const hash = render(rf, 14, 128, (step) => {
+    const t = step * TICK_S - 1;
+    const inBlip = t - 4 * Math.floor(t / 4);
+    rf.rf_set_controls(t >= 0 && inBlip < 1.2 ? 1 : 0, 0, 0);
+  });
+  check('calculateur, coupure d\'allumage', hash, native('--cylinders', '4', '--cc', '2000', '--bore', '86', '--redline', '7200', '--exhaust', 'sport', '--pops', 'strong', '--advance', '-5', '--limiter', 'ignition_cut', '--scenario', 'blips'));
+}
+// Le départ de `launch_control` sur un turbo : launch control au frein, puis passage à fond et antipatinage, au son comme à la consommation.
+{
+  const carArgs = ['--cylinders', '4', '--cc', '2000', '--bore', '84', '--redline', '6500', '--aspiration', 'turbo', '--boost', '1.3', '--exhaust', 'sport', '--body', 'compact', '--mass', '1400', '--rim', '18'];
+  const ecuArgs = ['--advance', '-3', '--lambda', '0.85', '--limiter', 'ignition_cut', '--launch', '4500', '--flat-shift', '1', '--traction', 'sport', '--scenario', 'launch_control', '--seconds', '16'];
+  const start = () => {
+    const rf = load();
+    rf.rf_set_car(BODY.compact, 1400, 18, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+    tune(rf, { ignitionOffsetDeg: -3, fullLoadLambda: 0.85, revLimiter: LIMITER.ignition_cut, launchRpm: 4500, flatShift: 1, tractionControl: TRACTION.sport });
+    rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6500, EXHAUST.sport, 1, 0, 0, 0, 0, 1.3, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+    rf.rf_set_mode(FRESH);
+    rf.rf_set_mode(2);
+    return rf;
+  };
+  // Le rendu natif écrit son 0-100 avant l'empreinte : seule la dernière ligne compte.
+  const controls = (rf) => (step) => {
+    const t = step * TICK_S;
+    rf.rf_set_controls(t >= 1 ? 1 : 0, t >= 1 && t < 4 ? 1 : 0, 0);
+  };
+  const rf = start();
+  check('calculateur, launch control', render(rf, 16, 128, controls(rf)), native(...carArgs, ...ecuArgs).split('\n').pop());
+  const figures = start();
+  for (let i = 0; i < Math.ceil((44100 * 16) / 128); i++) {
+    controls(figures)(i);
+    figures.rf_render(128);
+  }
+  checkFigures('calculateur, consommation', figures, nativeFigures(...carArgs, ...ecuArgs));
+}
+// L'antipatinage d'une voiture électrique : le couple du moteur, directement.
+{
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1800, 19, DRIVE.rear, PLACEMENT.front, INSULATION.standard);
+  tune(rf, { tractionControl: TRACTION.full });
+  rf.rf_set_electric();
+  rf.rf_set_mode(FRESH);
+  rf.rf_set_mode(2);
+  const hash = render(rf, 10, 128, (step) => rf.rf_set_controls(step * TICK_S >= 1 ? 1 : 0, 0, 0));
+  check('calculateur, électrique', hash, native('--preset', 'electric', '--traction', 'full', '--scenario', 'launch', '--seconds', '10'));
+}
 process.exit(failed ? 1 : 0);

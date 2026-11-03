@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "revforge/ecu.hpp"
 #include "revforge/powertrain.hpp"
 
 namespace revforge {
@@ -75,6 +76,15 @@ void ConsumptionModel::configure(const Powertrain& p) {
     if (isRotary(p.engine)) baseEfficiency_ *= rotaryEfficiencyShare(p.engine.aspiration);
     fullRichness_ = diesel_ ? 1.0 : 1.0 / (boosted ? kFullLoadLambdaTurbo : kFullLoadLambda);
     throttlingNm_ = diesel_ ? 0.0 : kThrottlingBar * kAtmosphere * litres_ * 1e-3 / (4.0 * kPi);
+    // La carte du calculateur : la richesse réglée, et ce que l'avance et la richesse font du carburant (ecu.cpp).
+    ecuMap_ = !electric_ && ecuMapTuned(p.engine);
+    sparkEfficiency_ = 1.0;
+    lambdaRatio_ = 1.0;
+    if (ecuMap_) {
+        fullRichness_ = 1.0 / fullLoadLambdaOf(p.engine);
+        sparkEfficiency_ = sparkTorqueShare(mapRetardDeg(p.engine));
+        lambdaRatio_ = lambdaFullLoadRatio(p.engine);
+    }
     peakNaturalNm_ = 1.0;
     peakGrossW_ = 1.0;
     if (electric_) return;
@@ -133,7 +143,13 @@ double ConsumptionModel::fuelGps(double rpm, double brakeNm, double frictionNm, 
 
     const double slow = 1.0 - std::min(rpm / kHeatLossBelowRpm, 1.0);
     const double lowFill = (1.0 - fill) * (1.0 - fill);
-    const double efficiency = baseEfficiency_ * (1.0 - kHeatLossShare * slow * slow) * (1.0 - (diesel_ ? kLowFillLossDiesel : kLowFillLossPetrol) * lowFill);
+    double efficiency = baseEfficiency_ * (1.0 - kHeatLossShare * slow * slow) * (1.0 - (diesel_ ? kLowFillLossDiesel : kLowFillLossPetrol) * lowFill);
+    // Le couple qui arrive ici suit déjà la carte : l'étincelle décalée tire moins de chaque gramme, la richesse plus ou moins
+    // de chaque gramme d'air. C'est l'air, donc le carburant, qui ne change pas.
+    if (ecuMap_) {
+        const double enriched = clamp((gross / std::max(fullGrossNm, 1.0) - kEnrichFromShare) / (1.0 - kEnrichFromShare), 0.0, 1.0);
+        efficiency *= sparkEfficiency_ * (1.0 + (lambdaRatio_ - 1.0) * enriched);
+    }
 
     const double omega = rpm * 2.0 * kPi / 60.0;
     double richness = 1.0;
@@ -141,7 +157,8 @@ double ConsumptionModel::fuelGps(double rpm, double brakeNm, double frictionNm, 
         const double mixture = carburetorRichness(carbSpec_, gross / fullGross, rpm);
         return std::max(gross * omega / efficiency * mixture / fuel_->lowerHeatingJPerG, idleCircuit);
     }
-    if (fullRichness_ > 1.0) {
+    // Une carte réglée pauvre à pleine charge (λ au-dessus de 1) suit la même rampe, dans l'autre sens.
+    if (fullRichness_ != 1.0) {
         const double nearFull = clamp((gross / fullGross - kEnrichFromShare) / (1.0 - kEnrichFromShare), 0.0, 1.0);
         const double heat = clamp(gross * omega / peakGrossW_, 0.0, 1.0);
         richness = 1.0 + (fullRichness_ - 1.0) * nearFull * (kEnrichAtAnyPower + (1.0 - kEnrichAtAnyPower) * heat);
@@ -192,6 +209,8 @@ void ConsumptionMeter::step(const ConsumptionInput& in, double dt) {
     batteryW_ = 0.0;
     fuelGps_ = in.burning ? model_.fuelGps(in.rpm, in.brakeNm, in.frictionNm, in.fullGrossNm) : 0.0;
     if (in.pumpGps > 0.0 && in.burning) fuelGps_ += in.pumpGps;
+    // Le calculateur coupe l'injection de certains cylindres : leur air passe, leur carburant non.
+    if (in.fuelShare != 1.0) fuelGps_ *= in.fuelShare;
     // L'air ne compte que là où quelque chose brûle : c'est ce qu'on compare au carburant.
     airGps_ = fuelGps_ > 0.0 ? model_.airGps(in.rpm, in.load, in.fullGrossNm) : 0.0;
     // Tant que le moteur tourne, l'huile passe, même pied levé : c'est la seule chose qui ne se coupe pas.

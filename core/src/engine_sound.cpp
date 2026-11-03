@@ -491,6 +491,12 @@ struct EngineSound::State {
     float antiLagFlame = 0.0f;
     Svf antiLagFlameBand;
 
+    // ── Le calculateur : rien de tout cela ne tourne quand il n'agit pas, et son tirage est à part ──
+    EcuDrive ecuIn;
+    bool ecuOn = false;
+    std::uint32_t ecuRng = 0x27D4EB2F;
+    float ecuFiring = 0.0f;
+
     State(int sampleRate, std::int32_t seed)
         : sr(static_cast<float>(sampleRate)),
           rng(seed == 0 ? 1u : static_cast<std::uint32_t>(seed)),
@@ -793,6 +799,15 @@ struct EngineSound::State {
         return static_cast<float>(static_cast<std::int32_t>(x)) * 4.656613e-10f;
     }
 
+    float ecuRandom() {
+        std::uint32_t x = ecuRng;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        ecuRng = x;
+        return static_cast<float>(static_cast<std::int32_t>(x)) * 4.656613e-10f;
+    }
+
     float turboRandom() {
         std::uint32_t x = turboRng;
         x ^= x << 13;
@@ -941,6 +956,9 @@ struct EngineSound::State {
         if (a.overrunFuel > 0.0f) openPressure = fill * (1.0f - kOverrunPressureDrop * (1.0f - a.overrunFuel) * overrun);
         // Le gaz finit de brûler pendant la détente : la soupape s'ouvre sur autant de pression de plus qu'il reste de chaleur.
         if (antiLagOn) openPressure *= turboIn.antiLag.evoRatio;
+        // Le calculateur qui retarde l'étincelle fait de même, au chiffre de son propre bilan (ecu.cpp).
+        ecuOn = driven && ecuIn.active && !antiLagOn;
+        if (ecuOn) openPressure *= ecuIn.evoRatio;
         if (antiLagOn || antiLagFlame > 0.0f) {
             const float flameWanted = antiLagOn ? km::sqrt(km::max(turboIn.antiLag.heatShare, 0.0f)) : 0.0f;
             antiLagFlame += (flameWanted - antiLagFlame) * smoothing(0.03f);
@@ -1212,6 +1230,22 @@ struct EngineSound::State {
         popCooldown = kPopMinGapS;
     }
 
+    /**
+     * Le mélange d'un cylindre dont le calculateur n'a coupé que l'étincelle arrive au collecteur : même chemin et mêmes
+     * chiffres qu'un cylindre coupé par l'anti-lag, à l'énergie que le modèle donne pour cette ouverture.
+     */
+    void maybeEcuPop() {
+        const float roll = ecuRandom() * 0.5f + 0.5f;
+        const float draw = ecuRandom() * 0.5f + 0.5f;
+        if (popCooldown > 0.0f || roll >= kAntiLagBangCut * ecuIn.ignition) return;
+        const float size = km::sqrt(km::max(ecuIn.unburntJoules * ecuIn.ignition, 0.0f) * kAntiLagSlugCut / kAntiLagPopJoules);
+        popEnv = (0.55f + 0.45f * draw * draw) * kAntiLagBangForce * size * active.popForce;
+        popAttack = 0.0f;
+        popDecay = km::exp(-1.0f / ((spec.popDecayS * (0.7f + 0.6f * draw)) * sr));
+        ++popCount;
+        popCooldown = kPopMinGapS;
+    }
+
     /** La flamme du collecteur : un grondement, sans rythme propre. */
     float antiLagFlameSample() {
         antiLagFlameBand.process(antiLagRandom());
@@ -1356,6 +1390,18 @@ struct EngineSound::State {
                         if (turboIn.antiLag.kind == AntiLag::CylinderCut) fires = antiLagFires(antiLagEvent++);
                         if (!fires) pressure[c] = km::max(pressure[c] * (1.0f - kOverrunPressureDrop), 0.02f);
                         maybeAntiLagPop(fires);
+                    } else if (ecuOn) {
+                        // Le calculateur coupe : franchement (le rupteur, `setDrive`), ou une explosion sur quelques-unes,
+                        // dans l'ordre d'allumage, à la part qu'il demande.
+                        if (wasCut) {
+                            fires = false;
+                        } else {
+                            ecuFiring += ecuIn.firedShare;
+                            fires = ecuFiring >= 1.0f;
+                            if (fires) ecuFiring -= 1.0f;
+                            if (!fires) pressure[c] = km::max(pressure[c] * (1.0f - kOverrunPressureDrop), 0.02f);
+                        }
+                        if (!fires && ecuIn.fuelOnCut) maybeEcuPop();
                     }
                     // La combustion frappe la structure : le bloc rayonne un coup à chaque explosion.
                     if (fires) blockEnv = km::max(blockEnv, spread);
@@ -1767,6 +1813,8 @@ void EngineSound::setSupercharger(const SuperchargerDrive& drive) {
     s_->superchargerDriven = true;
     s_->superchargerIn = drive;
 }
+
+void EngineSound::setEcu(const EcuDrive& drive) { s_->ecuIn = drive; }
 
 void EngineSound::setStarter(bool powered, bool meshed, float load) {
     s_->starter.setState(powered, meshed, load);

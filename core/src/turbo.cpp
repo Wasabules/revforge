@@ -172,6 +172,12 @@ double exhaustTemperature(const TurboSpec& spec, double intakeK, double rpm, dou
     return intakeK + share * value * fuel / (1.0 + fuel) / kGasCp;
 }
 
+/** L'échauffement du gaz si toute l'énergie de ce carburant lui revenait (K). */
+double heatRiseOf(const TurboSpec& spec, double fuel) {
+    const double value = spec.diesel ? kDieselHeatValue : kPetrolHeatValue;
+    return value * fuel / (1.0 + fuel) / kGasCp;
+}
+
 double coolerOutlet(double hotK, double flow, double rated) {
     const double share = clamp(flow / rated, 0.0, 1.5);
     const double effect = kCoolerEffectLow - kCoolerEffectFall * share;
@@ -339,7 +345,9 @@ Balance balanceAt(const TurboSpec& spec, double rpm, double breathing, double ch
     }
     const double fuel = fuelPerAir(spec, 1.0, true);
     const double gas = flow * (1.0 + fuel);
-    const double burntK = exhaustTemperature(spec, coolK, rpm, 1.0, fuel);
+    double burntK = exhaustTemperature(spec, coolK, rpm, 1.0, fuel);
+    // La carte du calculateur : l'avance et la richesse changent ce que le gaz emporte. Rien de cela à l'origine.
+    if (spec.ecu.active()) burntK = ecuExhaustK(spec.ecu, coolK, burntK, heatRiseOf(spec, fuel), 1.0, 1.0);
     const double hotK = spec.pipe.active ? turboPipeSteadyK(spec.pipe, gas, burntK) : burntK;
     const double outPa = kAtmosphere + spec.lineDrop * gas * gas;
     const double passage = spec.turbineK + spec.wastegateK * gate;
@@ -435,6 +443,20 @@ double turboChargeDensityShare(double boostBar, double boost, double inletRiseK,
     // L'air qui entre plus chaud sort du compresseur plus chaud encore, à rapport de pression égal, et l'échangeur n'en retire qu'une part.
     const double compression = 1.0 + (powerTwoSevenths(ratio) - 1.0) / kCompressorEta;
     return coolerOutlet(kAmbientK * compression, flowShare, 1.0) / coolerOutlet((kAmbientK + inletRiseK) * compression, flowShare, 1.0);
+}
+
+double exhaustHeatShare(bool diesel, double redlineRpm, double rpm, double fill) {
+    TurboSpec spec;
+    spec.diesel = diesel;
+    spec.redlineRpm = redlineRpm;
+    const double fuel = fuelPerAir(spec, fill, true);
+    return (exhaustTemperature(spec, 0.0, rpm, fill, fuel) - 0.0) / heatRiseOf(spec, fuel);
+}
+
+double exhaustHeatRiseK(bool diesel, double fill) {
+    TurboSpec spec;
+    spec.diesel = diesel;
+    return heatRiseOf(spec, fuelPerAir(spec, fill, true));
 }
 
 double TurboCharger::boost() const { return (state_.chargePa - kAtmosphere) / (spec_.targetBar * 1e5); }
@@ -569,6 +591,14 @@ void TurboCharger::step(double dt, const TurboInput& input) {
     } else {
         // Le réglage retiré en marche : la vanne ne reste pas ouverte derrière lui.
         antiLag_ = AntiLagState{};
+    }
+    // Le calculateur : sa carte, puis ce qu'il retarde ou coupe à ce pas (ecu.cpp). Rien de cela à l'origine.
+    if (rpm > 50.0 && !input.antiLag.active && (spec.ecu.active() || input.ecu.active())) {
+        EcuExhaust ecu = spec.ecu;
+        ecu.retardDeg = input.ecu.retardDeg;
+        ecu.firedShare = input.ecu.firedShare;
+        ecu.fuelOnCut = input.ecu.fuelOnCut;
+        hotTarget = ecuExhaustK(ecu, coolK, hotTarget, heatRiseOf(spec, fuel > 0.0 ? fuel : fuelPerAir(spec, fill, true)), fill, antiLagIgnition(collectorK()));
     }
     if (spec.pipe.active) {
         s.turbineInK = pipe_.stepHeat(spec.pipe, dt, gas, hotTarget, s.turbineInPa, kHeatUpS, kCoolDownS);

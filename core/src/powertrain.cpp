@@ -6,6 +6,7 @@
 #include "revforge/air_filter.hpp"
 #include "revforge/carburetor.hpp"
 #include "revforge/driving_model.hpp"
+#include "revforge/ecu.hpp"
 #include "revforge/valvetrain.hpp"
 
 namespace revforge {
@@ -266,6 +267,8 @@ TurboSpec turboSpecOf(const Powertrain& p) {
         spec.inletFilter = p.engine.airFilter;
         spec.inletPlacement = placementOf(p.car);
     }
+    // De même pour la carte du calculateur : elle ne change que le gaz qu'il reçoit.
+    spec.ecu = ecuMapExhaust(p.engine);
     return spec;
 }
 
@@ -349,7 +352,10 @@ double steadyBoost(const Powertrain& p, double rpm) {
     return turboSteady(turboSpecOf(p), rpm, breathing(p.engine, rpm)).boost;
 }
 
-double fullLoadTorqueNm(const Powertrain& p, double rpm, double boost) {
+namespace {
+
+/** La pleine charge, à la carte d'origine du calculateur. */
+double stockMapTorqueNm(const Powertrain& p, double rpm, double boost) {
     if (p.electric) {
         const double omega = std::max(rpm, 1.0) * 2.0 * kPi / 60.0;
         return std::min(kElectricTorqueNm, kElectricPowerW / omega);
@@ -371,6 +377,16 @@ double fullLoadTorqueNm(const Powertrain& p, double rpm, double boost) {
     const double gain = kBoostEfficiency * static_cast<double>(e.boostBar);
     const double charged = std::min(base * breathing(e, rpm) * (1.0 + gain * boost), base * (1.0 + gain) * kPlateauShare) * under;
     return e.airFilter == AirFilter::Stock ? charged : withAirFilter(p, rpm, boost, charged);
+}
+
+}  // namespace
+
+double fullLoadTorqueNm(const Powertrain& p, double rpm, double boost) {
+    const double stock = stockMapTorqueNm(p, rpm, boost);
+    // La carte du calculateur (ecu.cpp) : l'avance et la richesse changent le travail des gaz, pas les frottements.
+    if (p.electric || !ecuMapTuned(p.engine)) return stock;
+    const double friction = frictionTorqueNm(p, rpm);
+    return (stock + friction) * ecuFullLoadShare(p.engine) - friction;
 }
 
 double torqueCurveNm(const Powertrain& p, double rpm) {
@@ -485,6 +501,11 @@ Performance measurePerformance(const Powertrain& p) {
     Performance out;
     constexpr double kStep = 0.01;
     DrivingModel model(p);
+    // Avec le launch control, on part comme sur une piste : pied sur le frein et au plancher, le temps que le régime et la
+    // pression montent ; le chronomètre part au lâcher du frein.
+    if (!p.electric && p.engine.launchRpm > 0) {
+        for (int i = 0; i < static_cast<int>(kLaunchStageS / kStep); ++i) model.stepPedal(kStep, 1.0, 1.0);
+    }
     // Le chronomètre part une fois la première engagée, embrayage au point de patinage.
     for (int i = 0; i < 100 && !model.meshed(); ++i) model.stepPedal(kStep, 1.0, 0.0);
     for (int i = 0; i < 40 * 100; ++i) {

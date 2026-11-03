@@ -68,6 +68,11 @@ private:
     double idleCircuitGps_ = 0.0;
     double idleRpm_ = 1.0;
     double carbAirShare_ = 1.0;
+    // La carte du calculateur, si elle s'écarte de l'origine (ecu.hpp) : l'avance change ce que chaque gramme donne au piston,
+    // la richesse ce qu'il en faut par gramme d'air.
+    bool ecuMap_ = false;
+    double sparkEfficiency_ = 1.0;
+    double lambdaRatio_ = 1.0;
 };
 
 /** L'état du moteur à ce pas, tel que `DrivingModel` le donne. */
@@ -84,6 +89,7 @@ struct ConsumptionInput {
     bool burning = false;
     double extraFuelGps = 0.0;  // l'anti-lag : carburant au-delà de ce que demande le cylindre
     double extraAirGps = 0.0;   // l'anti-lag : air qui n'est pas passé par les cylindres
+    double fuelShare = 1.0;     // le calculateur : part des cylindres qui reçoivent leur carburant (coupure d'injection partielle)
 };
 
 /**
