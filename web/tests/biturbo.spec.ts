@@ -183,13 +183,17 @@ test.describe('deux turbos, sur la page', () => {
     expect(errors).toEqual([]);
   });
 
-  test('en séquence et en twincharger : l\'étape, l\'embrayage et les aubes se lisent', async ({ page }) => {
+  // Un démarrage par test : trois dans un même test dépassaient ses 60 s sur une machine saturée.
+  test('en séquence : le primaire seul au ralenti, clapet du secondaire fermé', async ({ page }) => {
     const errors = await start(page, link('turbos=twin_sequential'));
-    expect((await tele(page)).twinStage).toBe(0);
-    await page.keyboard.down('Space');
-    await page.waitForTimeout(1500);
-    await page.keyboard.up('Space');
-    await start(page, link('turbos=twincharger'));
+    const idle = await tele(page);
+    expect(idle.twinStage).toBe(0);
+    expect(idle.twinOnline).toBe(0);
+    expect(errors).toEqual([]);
+  });
+
+  test('en twincharger : l\'embrayage se ferme et les rotors tournent', async ({ page }) => {
+    const errors = await start(page, link('turbos=twincharger'));
     await page.keyboard.down('Space');
     // Au point mort, le moteur traverse en une fraction de seconde la plage où le compresseur est embrayé : on regarde de près.
     const seen = await page.evaluate(async () => {
@@ -209,7 +213,11 @@ test.describe('deux turbos, sur la page', () => {
     await page.waitForTimeout(800);
     await shot(page, 'twincharger-gaz');
     await page.keyboard.up('Space');
-    await start(page, link('vgt=1'));
+    expect(errors).toEqual([]);
+  });
+
+  test('à aubes : leur ouverture se lit, sans soupape', async ({ page }) => {
+    const errors = await start(page, link('vgt=1'));
     await page.keyboard.down('Space');
     await page.waitForTimeout(1500);
     const vanes = await tele(page);
