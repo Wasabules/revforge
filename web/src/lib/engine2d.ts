@@ -5,7 +5,7 @@
  * construction ; dessiner une image n'alloue rien.
  */
 import { mix, type Theme } from './canvas';
-import { collectorPosition, DEG, type Cylinder, type EngineLayout, type EnginePose, lobeNoseDeg, lobeRadius, plenumPosition, stackOf } from './engineLayout';
+import { collectorPosition, DEG, type Cylinder, type EngineLayout, type EnginePose, lobeNoseDeg, lobeRadius, plenumPosition, stackOf, rockerOutline } from './engineLayout';
 import { turboChain, type TurboChain, type TurboUnit } from './turboChain';
 import { EVC, EVO, IVC, IVO } from './fluidGas';
 import { heatColors } from './heat';
@@ -45,6 +45,8 @@ export interface Labels2D {
   pan: string;
   head: string;
   block: string;
+  /** Le culbuteur d'un simple arbre. */
+  rocker?: string;
   /** Les pièces du turbo : absentes sur un moteur qui n'en a pas. */
   compressor?: string;
   turbine?: string;
@@ -80,6 +82,7 @@ export class Engine2D {
   private hatchTheme: Theme | null = null;
   private readonly frontBounds: { xMin: number; xMax: number; yMin: number; yMax: number };
   private readonly chainDash: number[];
+  private readonly rockerPath: Path2D | null;
   private readonly bankList: readonly number[];
   private readonly signList: readonly number[];
 
@@ -123,11 +126,12 @@ export class Engine2D {
 
     // Ce qui est coupé, hachuré : la culasse, et le bloc avec ses chemises.
     const W = bore * 1.04;
-    const topY = valve.camY + valve.camBase * 0.2;
+    const topY = valve.headTop;
     const headPath: P2[] = [[-W, deck], [W, deck], [W, deck + bore * 0.85], [W * 0.92, topY], [-W * 0.92, topY], [-W, deck + bore * 0.85]];
     this.head = polyPath(headPath);
-    const coverW = valve.camX + valve.camBase + bore * 0.06;
-    const coverTop = valve.camY + valve.camBase + valve.lift + bore * 0.1;
+    const coverW = valve.coverW;
+    const coverTop = valve.coverTop;
+    this.rockerPath = valve.rocker ? polyPath(rockerOutline(valve.rocker, bore)) : null;
     this.cover = polyPath([[-coverW, topY], [coverW, topY], [coverW, coverTop - bore * 0.14], [coverW - bore * 0.18, coverTop], [-coverW + bore * 0.18, coverTop], [-coverW, coverTop - bore * 0.14]]);
 
     const half = bore * 0.66;
@@ -190,11 +194,11 @@ export class Engine2D {
         const side = exhaust ? -cylinder.intakeSide : cylinder.intakeSide;
         const open = exhaust ? EVO : IVO;
         const close = exhaust ? EVC : IVC;
-        const nose = lobeNoseDeg(cylinder, valve.tiltDeg, side, open, close);
+        const nose = lobeNoseDeg(cylinder, valve.followerDeg, side, open, close);
         const points: P2[] = [];
         for (let k = 0; k < 44; k++) {
           const a = (k / 44) * 360;
-          const r = lobeRadius(valve.camBase, valve.lift, a - nose, open, close);
+          const r = lobeRadius(valve.camBase, valve.camLift, a - nose, open, close);
           points.push([Math.sin(a * DEG) * r, Math.cos(a * DEG) * r]);
         }
         (exhaust ? this.lobesEx : this.lobesIn)[cylinder.index] = polyPath(points);
@@ -464,6 +468,14 @@ export class Engine2D {
       labelAt(labels.flywheel, ring.radius * 0.72, -ring.radius * 0.72);
       labelAt(labels.pan, 0, -ring.radius * 0.88);
       labelAt(labels.head, 0, layout.deck + bore * 2.08);
+      if (labels.rocker && layout.valve.rocker) {
+        // Au-dessus du culbuteur d'admission de la première rangée.
+        const first = layout.byBank[0][0];
+        const b = first.betaDeg * DEG;
+        const x = first.intakeSide * layout.valve.rocker.pivotX;
+        const y = layout.valve.coverTop + bore * 0.08;
+        labelAt(labels.rocker, x * Math.cos(b) + y * Math.sin(b), -x * Math.sin(b) + y * Math.cos(b));
+      }
       labelAt(labels.crank, -layout.crank * 1.8, -layout.crank * 0.1);
     }
     ctx.textAlign = 'left';
@@ -622,8 +634,14 @@ export class Engine2D {
     this.drawValve(ctx, cylinder, side, valve.radiusIn, pose.liftIn[i] * valve.lift, theme.metal, theme, px, false, pose);
     this.drawValve(ctx, cylinder, -side, valve.radiusEx, pose.liftEx[i] * valve.lift, theme.text, theme, px, true, pose);
 
-    // L'allumage.
+    // L'allumage. Sur un simple arbre, l'arbre occupe le milieu : bougie ou injecteur entrent à côté, penchés vers l'échappement.
     const tip = deck + roof - bore * 0.03;
+    if (valve.plugTiltDeg !== 0) {
+      ctx.save();
+      ctx.translate(0, tip);
+      ctx.rotate(side * valve.plugTiltDeg * DEG);
+      ctx.translate(0, -tip);
+    }
     if (layout.fuel === 'diesel') {
       // Injecteur au milieu, bougie de préchauffage à côté, dont la pointe rougit.
       ctx.fillStyle = theme.metal;
@@ -670,6 +688,7 @@ export class Engine2D {
         ctx.globalAlpha = 1;
       }
     }
+    if (valve.plugTiltDeg !== 0) ctx.restore();
 
     // Les jets aux soupapes.
     const jetIn = pose.jetIn[i];
@@ -740,11 +759,32 @@ export class Engine2D {
     ctx.fillStyle = theme.metal;
     ctx.strokeStyle = theme.text;
     ctx.lineWidth = px;
-    ctx.beginPath();
-    ctx.rect(-bore * 0.105, valve.stem, bore * 0.21, bore * 0.05);
-    ctx.fill();
-    ctx.stroke();
+    if (!valve.rocker) {
+      ctx.beginPath();
+      ctx.rect(-bore * 0.105, valve.stem, bore * 0.21, bore * 0.05);
+      ctx.fill();
+      ctx.stroke();
+    }
     ctx.restore();
+
+    if (valve.rocker && this.rockerPath) {
+      // Le culbuteur : dessiné du côté +1, en miroir de l'autre. Il bascule autour de son axe.
+      ctx.save();
+      ctx.translate(side * valve.rocker.pivotX, valve.rocker.pivotY);
+      ctx.scale(side, 1);
+      ctx.rotate(-(exhaust ? pose.rockerEx[cylinder.index] : pose.rockerIn[cylinder.index]));
+      ctx.fillStyle = theme.raised;
+      ctx.strokeStyle = theme.text;
+      ctx.lineWidth = px;
+      ctx.fill(this.rockerPath);
+      ctx.stroke(this.rockerPath);
+      ctx.fillStyle = theme.metal;
+      ctx.beginPath();
+      ctx.arc(0, 0, bore * 0.04, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
 
     // La came, à sa place sur la culasse, qui tourne à demi-vitesse.
     const camX = side * valve.camX;
@@ -1549,44 +1589,59 @@ export class Engine2D {
     ctx.beginPath();
     ctx.arc(u, s, bore * 0.1, 0, Math.PI * 2);
     ctx.fill();
-    // Une paire de soupapes d'admission, vues dans le plan. La coupe les montre devant le conduit.
-    for (const dz of [-valve.zOffset, valve.zOffset]) {
-      const lift = pose.liftIn[i] * valve.lift;
+    // Double arbre : une paire de soupapes d'admission, vues dans le plan. La coupe les montre devant le conduit.
+    // Simple arbre : l'admission et l'échappement, côte à côte, chacune sous son bossage et son culbuteur.
+    for (let v = 0; v < valve.perCylinder; v++) {
+      const slot = valve.slots[v];
+      if (!valve.sohc && slot.exhaust) continue;
+      const exhaust = slot.exhaust;
+      const side = exhaust ? -cylinder.intakeSide : cylinder.intakeSide;
+      const dz = valve.sohc ? side * valve.zOffset : slot.zSign * valve.zOffset;
+      const radius = exhaust ? valve.radiusEx : valve.radiusIn;
+      const open = exhaust ? EVO : IVO;
+      const close = exhaust ? EVC : IVC;
+      const share = exhaust ? pose.liftEx[i] : pose.liftIn[i];
+      const lift = share * valve.lift;
       const stemTop = deck + valve.seatRise + Math.cos(valve.tiltDeg * DEG) * valve.stem;
       const seat = deck + valve.seatRise - lift;
       ctx.fillStyle = theme.metal;
-      ctx.fillRect(u + dz - valve.radiusIn, seat, valve.radiusIn * 2, bore * 0.03);
+      // Sur un simple arbre, les têtes se chevauchent vues de côté : chacune est décalée, on n'en montre que la moitié de la coupe.
+      const shownRadius = valve.sohc ? Math.min(radius, bore * 0.17) : radius;
+      ctx.fillRect(u + dz - shownRadius, seat, shownRadius * 2, bore * 0.03);
       ctx.fillRect(u + dz - valve.stemRadius, seat, valve.stemRadius * 2, stemTop - lift - seat);
       ctx.fillStyle = theme.raised;
-      ctx.fillRect(u + dz - bore * 0.105, stemTop - lift, bore * 0.21, bore * 0.05);
-      ctx.strokeRect(u + dz - bore * 0.105, stemTop - lift, bore * 0.21, bore * 0.05);
+      const cap = valve.sohc ? bore * 0.05 : bore * 0.105;
+      ctx.fillRect(u + dz - cap, stemTop - lift, cap * 2, bore * 0.05);
+      ctx.strokeRect(u + dz - cap, stemTop - lift, cap * 2, bore * 0.05);
       // La came : la hauteur vue de côté suit le bossage, vers la soupape et à l'opposé.
-      const fromNose = ((IVO + IVC) / 2 - pose.theta[i]) / 2;
-      const down = valve.camBase + lift;
-      const up = lobeRadius(valve.camBase, valve.lift, fromNose + 180, IVO, IVC);
+      const fromNose = ((open + close) / 2 - pose.theta[i]) / 2;
+      const down = valve.camBase + share * valve.camLift;
+      const up = lobeRadius(valve.camBase, valve.camLift, fromNose + 180, open, close);
       ctx.fillStyle = theme.text;
-      ctx.fillRect(u + dz - bore * 0.075, valve.camY - down, bore * 0.15, down + up);
+      const lobeHalf = valve.sohc ? bore * 0.065 : bore * 0.075;
+      ctx.fillRect(u + dz - lobeHalf, valve.camY - down, lobeHalf * 2, down + up);
     }
-    // L'allumage, au milieu.
+    // L'allumage, au milieu ; à côté de l'arbre sur un simple arbre.
+    const plugU = u + valve.plugZ;
     const tip = deck + valve.roofRise - bore * 0.03;
     if (layout.fuel === 'diesel') {
       ctx.fillStyle = theme.dim;
-      ctx.fillRect(u - bore * 0.05, tip, bore * 0.1, bore * 1.3);
+      ctx.fillRect(plugU - bore * 0.05, tip, bore * 0.1, bore * 1.3);
       const g = pose.glow;
       if (g > 0.05) {
         ctx.fillStyle = GLOW_STYLES[Math.round(g * 16)];
-        ctx.fillRect(u + bore * 0.1, tip - bore * 0.14, bore * 0.04, bore * 0.2);
+        ctx.fillRect(plugU + bore * 0.1, tip - bore * 0.14, bore * 0.04, bore * 0.2);
       }
     } else {
       ctx.fillStyle = theme.dim;
-      ctx.fillRect(u - bore * 0.08, tip + bore * 0.5, bore * 0.16, bore * 1);
+      ctx.fillRect(plugU - bore * 0.08, tip + bore * 0.5, bore * 0.16, bore * 1);
       ctx.fillStyle = '#e9e6dd';
-      ctx.fillRect(u - bore * 0.04, tip + bore * 0.2, bore * 0.08, bore * 0.3);
+      ctx.fillRect(plugU - bore * 0.04, tip + bore * 0.2, bore * 0.08, bore * 0.3);
       if (pose.spark[i] > 0) {
         ctx.fillStyle = '#ffffff';
         ctx.globalAlpha = 0.4 + 0.6 * pose.spark[i];
         ctx.beginPath();
-        ctx.arc(u, tip - bore * 0.03, bore * (0.04 + 0.06 * pose.spark[i]), 0, Math.PI * 2);
+        ctx.arc(plugU, tip - bore * 0.03, bore * (0.04 + 0.06 * pose.spark[i]), 0, Math.PI * 2);
         ctx.fill();
         ctx.globalAlpha = 1;
       }

@@ -15,6 +15,7 @@
 import type { EngineConfig, Exhaust, Layout } from './config';
 import { EXHAUST_LINES, TURBO_SCALE } from './exhaustLines';
 import { WALL_RISE_K } from './heat';
+import { sohcSectionShare } from './valves';
 
 export const GAMMA = 1.36;
 const G1 = GAMMA - 1;
@@ -478,6 +479,12 @@ export class GasNetwork {
     this.clearance = cylinderVolume / (ratio - 1);
     this.exhaustValve = 0.19 * this.boreArea;
     this.intakeValve = 0.24 * this.boreArea;
+    if (config.camshaft === 'sohc') {
+      // Deux soupapes au lieu de quatre : le même calcul de section que le C++ (`valves.ts`).
+      const share = sohcSectionShare(config.boreMm);
+      this.exhaustValve *= share.exhaust;
+      this.intakeValve *= share.intake;
+    }
 
     // Collecteurs : un tube par cylindre, plus fins que la ligne qu'ils alimentent.
     const runnerArea = base * Math.min(1, 1.15 / Math.sqrt(count));

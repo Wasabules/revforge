@@ -169,6 +169,8 @@ struct EngineProfile {
     AirFilter airFilter = AirFilter::Stock;
     float stackM = 0.0f;
     float stackRadiusM = 0.0f;
+    /** Deux soupapes par cylindre au lieu de quatre : la bouffée s'allonge, la distribution change de voix. */
+    Camshaft camshaft = Camshaft::Dohc;
 
     /**
      * Régime simulé pour un régime réel de la voiture. Au ralenti, les deux ralentis

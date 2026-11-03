@@ -433,4 +433,20 @@ for (const [name, code] of Object.entries(ANTI_LAG)) {
   rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6500, EXHAUST.sport, 1, 0, 0, 0, 0, 1.3, ROUTING.single, TURBO.medium, 0, code, 400, 0, 0);
   check(`anti-lag, ${name}`, turboStab(rf, 24), native(...turboArgs, '--turbo', 'medium', '--release', 'dump_valve', '--antilag', name));
 }
+// Simple arbre : le son à régime tenu, puis le tour complet, où le couple change aussi. Deux rangées, deux lignes.
+{
+  const rf = load();
+  rf.rf_set_car(BODY.city, 1100, 15, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  rf.rf_set_config(4, LAYOUT.inline, 1360, 75, 6200, EXHAUST.stock, 0, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 1, 0);
+  rf.rf_set_mode(4);
+  rf.rf_set_manual_rpm(5000);
+  check('simple arbre, régime tenu', render(rf, 4, 512), native('--cylinders', '4', '--cc', '1360', '--bore', '75', '--redline', '6200', '--scenario', 'steady', '--rpm', '5000', '--cam', 'sohc'));
+}
+{
+  const rf = load();
+  rf.rf_set_car(BODY.coupe, 1700, 19, DRIVE.rear, PLACEMENT.front, INSULATION.light);
+  rf.rf_set_config(8, LAYOUT.cross_plane, 5000, 96, 6000, EXHAUST.sport, 0, 0, 0, 1, 0, 1, ROUTING.dual, TURBO.medium, 0, 0, 400, 1, 0);
+  rf.rf_set_mode(3);
+  check('simple arbre, tour de V8', render(rf, 60, 128), native('--preset', 'v8_cross_plane', '--cam', 'sohc', '--scenario', 'lap'));
+}
 process.exit(failed ? 1 : 0);

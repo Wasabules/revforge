@@ -15,6 +15,7 @@ import type { EngineConfig } from './config';
 import { TURBO_SCALE } from './exhaustLines';
 import { EVC, EVO, ignitionAdvance, IVC, IVO } from './fluidGas';
 import { firingOrder } from './motion';
+import { valveSizes } from './valves';
 
 export const DEG = Math.PI / 180;
 
@@ -189,6 +190,50 @@ export interface ValveGeometry {
   camY: number;
   /** Sommet du toit de la chambre, au-dessus du plan de joint. */
   roofRise: number;
+  /** Un seul arbre par rangée, deux soupapes par cylindre et des culbuteurs. */
+  sohc: boolean;
+  perCylinder: number;
+  /**
+   * Les soupapes d'un cylindre, dans l'ordre des instances. La position le long du vilebrequin vaut `zSign × côté × zOffset` :
+   * ainsi une culasse tournée d'un demi-tour autour de l'axe du cylindre reste la même pièce.
+   */
+  slots: readonly ValveSlot[];
+  /** L'angle de ce qui appuie sur la came, à donner à `lobeNoseDeg`. Double arbre : l'inclinaison de la soupape. */
+  followerDeg: number;
+  /** Hauteur du bossage : la levée de la soupape, divisée par le rapport du culbuteur. */
+  camLift: number;
+  /** Haut de la culasse, demi-largeur et haut du couvre-culasse, en repère de rangée. */
+  headTop: number;
+  coverW: number;
+  coverTop: number;
+  /** La bougie (ou l'injecteur) : décalée le long du vilebrequin et inclinée vers l'échappement, pour éviter l'arbre central. */
+  plugZ: number;
+  plugTiltDeg: number;
+  /** Les culbuteurs d'un simple arbre, du côté +1 : l'autre côté s'en déduit par un demi-tour. */
+  rocker: RockerGeometry | null;
+}
+
+export interface ValveSlot {
+  exhaust: boolean;
+  zSign: number;
+}
+
+/** Un levier du premier genre : la came pousse un bras vers le haut, l'axe est au milieu, l'autre bras pousse la queue de soupape. */
+export interface RockerGeometry {
+  pivotX: number;
+  pivotY: number;
+  /** Longueur du bras côté soupape, du bras côté came, et leur rapport. */
+  tipArm: number;
+  padArm: number;
+  ratio: number;
+  /** Directions des deux bras, soupape fermée (degrés, sens trigonométrique depuis +x). */
+  tipDeg: number;
+  padDeg: number;
+  /** Direction de la came vers le patin, depuis l'axe du cylindre (degrés). */
+  contactDeg: number;
+  width: number;
+  /** De quoi résoudre la position du culbuteur : voir `rockerAngle`. */
+  seatAlong: number;
 }
 
 const wrap360 = (deg: number) => ((deg % 360) + 360) % 360;
@@ -223,6 +268,39 @@ export function lobeNoseDeg(cylinder: Cylinder, tiltDeg: number, side: number, o
   return wrap360(valveAxis + 180 - ((open + close) / 2 + cylinder.firingDeg) / 2);
 }
 
+/**
+ * De combien le culbuteur a tourné (radians, sens horaire vu du côté +1) pour une levée de soupape : son bras reste posé
+ * sur la queue, qui coulisse sur son axe. Résolu exactement : l'angle n'est pas petit, une vingtaine de degrés à pleine levée.
+ */
+export function rockerAngle(valve: ValveGeometry, liftMm: number): number {
+  const rocker = valve.rocker;
+  if (!rocker) return 0;
+  const tilt = valve.tiltDeg * DEG;
+  const share = (valve.stem - liftMm - rocker.seatAlong) / rocker.tipArm;
+  return rocker.tipDeg * DEG - (Math.asin(share) - tilt);
+}
+
+/** Le culbuteur en coupe, axe à l'origine et soupape fermée : `+x` vers la soupape. Les arêtes du bas portent sur la came et la queue. */
+export function rockerOutline(rocker: RockerGeometry, bore: number): [number, number][] {
+  const at = (deg: number, length: number, up = 0): [number, number] => [Math.cos(deg * DEG) * length, Math.sin(deg * DEG) * length + up];
+  const body = bore * 0.075;
+  const boss = bore * 0.075;
+  return [
+    at(rocker.padDeg, rocker.padArm + bore * 0.02),
+    at(rocker.padDeg, rocker.padArm),
+    at(rocker.padDeg, rocker.padArm * 0.45, -bore * 0.012),
+    [-boss * 0.5, -boss],
+    [boss * 0.5, -boss],
+    at(rocker.tipDeg, rocker.tipArm * 0.6, -bore * 0.012),
+    at(rocker.tipDeg, rocker.tipArm),
+    at(rocker.tipDeg, rocker.tipArm + bore * 0.025, bore * 0.02),
+    at(rocker.tipDeg, rocker.tipArm, body),
+    [boss * 0.5, boss],
+    [-boss * 0.5, boss],
+    at(rocker.padDeg, rocker.padArm + bore * 0.02, body),
+  ];
+}
+
 /** Les dents du démarreur et de la couronne : recopie de `EngineConfig::toProfile`. */
 export function starterTeeth(cylinders: number, displacementCc: number): { ring: number; pinion: number } {
   const litres = displacementCc / 1000;
@@ -243,7 +321,107 @@ export function layoutKey(config: EngineConfig): string {
   if (config.electric) return 'electric';
   // La longueur des cornets dépend du régime qu'on vise : eux seuls font reconstruire le moteur quand il change.
   const filter = config.airFilter === 'stacks' ? `stacks${config.redlineRpm}` : config.airFilter ?? 'stock';
-  return `${config.cylinders}|${config.layout}|${config.displacementCc}|${config.boreMm}|${config.fuel}|${config.aspiration}|${config.turboSize}|${config.turboRelease}|${config.boxFlywheel}|${filter}|${config.turboPipeMm}`;
+  return `${config.cylinders}|${config.layout}|${config.displacementCc}|${config.boreMm}|${config.fuel}|${config.aspiration}|${config.turboSize}|${config.turboRelease}|${config.boxFlywheel}|${filter}|${config.turboPipeMm}|${config.camshaft ?? 'dohc'}`;
+}
+
+/** Deux arbres, chacun au-dessus de ses soupapes, qu'il attaque directement par un poussoir. */
+function twinCamValves(bore: number, deck: number): ValveGeometry {
+  const tiltDeg = 20;
+  const tilt = tiltDeg * DEG;
+  const valveX = bore * 0.24;
+  const seatRise = (bore * 0.5 - valveX) * Math.tan(tilt);
+  const stem = bore * 1.2;
+  const camBase = bore * 0.17;
+  const camFromSeat = stem + bore * 0.05 + camBase;
+  const lift = bore * 0.115;
+  const camX = valveX + Math.sin(tilt) * camFromSeat;
+  const camY = deck + seatRise + Math.cos(tilt) * camFromSeat;
+  return {
+    tiltDeg,
+    x: valveX,
+    zOffset: bore * 0.24,
+    seatRise,
+    radiusIn: bore * 0.19,
+    radiusEx: bore * 0.16,
+    stem,
+    stemRadius: bore * 0.028,
+    lift,
+    camBase,
+    camFromSeat,
+    camX,
+    camY,
+    roofRise: bore * 0.5 * Math.tan(tilt),
+    sohc: false,
+    perCylinder: 4,
+    slots: [{ exhaust: false, zSign: 1 }, { exhaust: false, zSign: -1 }, { exhaust: true, zSign: 1 }, { exhaust: true, zSign: -1 }],
+    followerDeg: tiltDeg,
+    camLift: lift,
+    headTop: camY + camBase * 0.2,
+    coverW: camX + camBase + bore * 0.06,
+    coverTop: camY + camBase + lift + bore * 0.1,
+    plugZ: 0,
+    plugTiltDeg: 0,
+    rocker: null,
+  };
+}
+
+/**
+ * Un seul arbre, au milieu de la culasse, et deux soupapes en travers : leurs têtes ont la taille que donne `valveSizes`.
+ * Chaque culbuteur a son axe entre l'arbre et la soupape. Tout se déduit de la queue de soupape : le bras est perpendiculaire
+ * à la queue à mi-levée, pour glisser le moins possible, et le patin est perpendiculaire au rayon de came à mi-levée.
+ */
+function singleCamValves(bore: number, deck: number): ValveGeometry {
+  const tiltDeg = 20;
+  const tilt = tiltDeg * DEG;
+  const valveX = bore * 0.25;
+  const seatRise = (bore * 0.5 - valveX) * Math.tan(tilt);
+  const stem = bore * 1.1;
+  const lift = bore * 0.115;
+  const sizes = valveSizes('sohc', bore);
+  const tipArm = bore * 0.33;
+  const padArm = bore * 0.2357;
+  const contactDeg = 35;
+  const halfTurn = Math.asin(lift / 2 / tipArm) / DEG;
+  const tipDeg = -tiltDeg + halfTurn;
+  const padDeg = 180 - contactDeg + halfTurn;
+  const tipX = valveX + Math.sin(tilt) * stem;
+  const tipY = deck + seatRise + Math.cos(tilt) * stem;
+  const pivotX = tipX - tipArm * Math.cos(tipDeg * DEG);
+  const pivotY = tipY - tipArm * Math.sin(tipDeg * DEG);
+  const padX = pivotX + padArm * Math.cos(padDeg * DEG);
+  const padY = pivotY + padArm * Math.sin(padDeg * DEG);
+  const camBase = padX / Math.sin(contactDeg * DEG);
+  const camY = padY - camBase * Math.cos(contactDeg * DEG);
+  const camLift = (lift * padArm) / tipArm;
+  // Ce qui reste à la queue, le long de son axe, depuis l'assise : `rockerAngle` en a besoin pour résoudre l'angle exact.
+  const seatAlong = stem - tipArm * Math.sin(halfTurn * DEG);
+  return {
+    tiltDeg,
+    x: valveX,
+    zOffset: bore * 0.085,
+    seatRise,
+    radiusIn: sizes.intakeMm / 2,
+    radiusEx: sizes.exhaustMm / 2,
+    stem,
+    stemRadius: bore * 0.03,
+    lift,
+    camBase,
+    camFromSeat: stem,
+    camX: 0,
+    camY,
+    roofRise: bore * 0.5 * Math.tan(tilt),
+    sohc: true,
+    perCylinder: 2,
+    slots: [{ exhaust: false, zSign: 1 }, { exhaust: true, zSign: 1 }],
+    followerDeg: contactDeg + 180,
+    camLift,
+    headTop: camY + camBase * 0.2,
+    coverW: tipX + bore * 0.14,
+    coverTop: camY + camBase + camLift + bore * 0.18,
+    plugZ: bore * 0.3,
+    plugTiltDeg: 30,
+    rocker: { pivotX, pivotY, tipArm, padArm, ratio: tipArm / padArm, tipDeg, padDeg, contactDeg, width: bore * 0.09, seatAlong },
+  };
 }
 
 export function engineLayout(config: EngineConfig): EngineLayout {
@@ -377,30 +555,8 @@ export function engineLayout(config: EngineConfig): EngineLayout {
   const pinionAngle = 205 * DEG;
   const pinionDistance = ringRadius + pinionRadius;
 
-  // ── Distribution : deux arbres à cames en tête, quatre soupapes par cylindre ──
-  const tiltDeg = 20;
-  const tilt = tiltDeg * DEG;
-  const valveX = bore * 0.24;
-  const seatRise = (bore * 0.5 - valveX) * Math.tan(tilt);
-  const stem = bore * 1.2;
-  const camBase = bore * 0.17;
-  const camFromSeat = stem + bore * 0.05 + camBase;
-  const valve: ValveGeometry = {
-    tiltDeg,
-    x: valveX,
-    zOffset: bore * 0.24,
-    seatRise,
-    radiusIn: bore * 0.19,
-    radiusEx: bore * 0.16,
-    stem,
-    stemRadius: bore * 0.028,
-    lift: bore * 0.115,
-    camBase,
-    camFromSeat,
-    camX: valveX + Math.sin(tilt) * camFromSeat,
-    camY: deck + seatRise + Math.cos(tilt) * camFromSeat,
-    roofRise: bore * 0.5 * Math.tan(tilt),
-  };
+  // ── Distribution : deux arbres à cames en tête, quatre soupapes par cylindre ; ou un seul, deux soupapes et des culbuteurs ──
+  const valve = config.camshaft === 'sohc' ? singleCamValves(bore, deck) : twinCamValves(bore, deck);
 
   const crankTeeth = 19;
   const camTeeth = 38;
@@ -584,12 +740,12 @@ export function chainPath(circles: readonly (readonly [number, number, number])[
   return { length: total, x, y, angle, step, links, pitch: total / links };
 }
 
-/** Les pignons d'une chaîne sur une rangée : le vilebrequin, puis les deux cames. */
+/** Les pignons d'une chaîne sur une rangée : le vilebrequin, puis les deux cames, ou la seule. */
 export function chainCircles(layout: EngineLayout, bank: number): [number, number, number][] {
   const beta = layout.banks === 1 ? 0 : bank === 0 ? -layout.halfDeg : layout.halfDeg;
   const out: [number, number, number][] = [[0, 0, layout.sprocket.crankRadius]];
   const p = [0, 0];
-  for (const side of [-1, 1]) {
+  for (const side of layout.valve.sohc ? [0] : [-1, 1]) {
     bankToFront(p, beta, side * layout.valve.camX, layout.valve.camY);
     out.push([p[0], p[1], layout.sprocket.camRadius]);
   }
@@ -687,6 +843,9 @@ export class EnginePose {
   rodAngle: Float64Array;
   liftIn: Float64Array;
   liftEx: Float64Array;
+  /** L'angle de chaque culbuteur (radians), s'il y en a : voir `rockerAngle`. */
+  rockerIn: Float64Array;
+  rockerEx: Float64Array;
   /** Étincelle et jet de carburant, 1 à leur début puis ils s'éteignent. */
   spark: Float64Array;
   spray: Float64Array;
@@ -730,6 +889,8 @@ export class EnginePose {
     this.rodAngle = array();
     this.liftIn = array();
     this.liftEx = array();
+    this.rockerIn = array();
+    this.rockerEx = array();
     this.spark = array();
     this.spray = array();
     this.gasT = array().fill(293);
@@ -768,6 +929,10 @@ export class EnginePose {
       this.rodAngle[i] = Math.atan2(wristX - pinX, wristY - pinY);
       this.liftIn[i] = valveLift(theta, IVO, IVC);
       this.liftEx[i] = valveLift(theta, EVO, EVC);
+      if (layout.valve.sohc) {
+        this.rockerIn[i] = rockerAngle(layout.valve, this.liftIn[i] * layout.valve.lift);
+        this.rockerEx[i] = rockerAngle(layout.valve, this.liftEx[i] * layout.valve.lift);
+      }
     }
     const ring = layout.ring;
     const pinion = layout.pinion;

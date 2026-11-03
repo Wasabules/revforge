@@ -140,6 +140,7 @@ EngineProfile EngineConfig::toProfile() const {
         p.stackM = static_cast<float>(stackLengthM(*this));
         p.stackRadiusM = static_cast<float>(revforge::stackRadiusM(*this));
     }
+    p.camshaft = camshaft;
 
     // Le démarreur dépend de ce qu'il doit lancer : la puissance suit la cylindrée et la compression.
     const float litres = static_cast<float>(displacementCc) / 1000.0f;

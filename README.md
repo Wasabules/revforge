@@ -112,7 +112,7 @@ Known limits:
 - Telling front from back on headphones is weak: the stereo model has no HRTF.
 - The idle of the sporty 4-cylinder scores outside the range of real engines in the comparator, and is too choppy.
 - At full throttle, the limiter narrows the gap between exhaust lines: about 6 dB as played for about 22 dB estimated from stock to straight pipe.
-- The 2D and 3D views simplify some mechanics (schematic automatic, approximate dual clutch, DOHC valvetrain everywhere) and have not all been checked on many graphics cards. Without a GPU, 3D falls back to a coarser look and runs slowly; the 2D switch stays smooth.
+- The 2D and 3D views simplify some mechanics (schematic automatic, approximate dual clutch, no pushrod valvetrain: twin or single overhead cam only) and have not all been checked on many graphics cards. Without a GPU, 3D falls back to a coarser look and runs slowly; the 2D switch stays smooth.
 - Estimated fuel consumption reads about 15 to 25% high against official figures, and oil is an order of magnitude within a factor of three.
 - At equal displacement, the stroke only changes torque above 24 m/s of piston speed, and never changes friction, inertia or consumption.
 - The car never rolls backwards (hill starts assume hill hold), all cars share one tyre grip, and journeys are timed rather than distance-based.

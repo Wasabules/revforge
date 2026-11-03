@@ -34,6 +34,7 @@ add_library(revforge_core STATIC
   core/src/shift_logic.cpp
   core/src/driver_scenarios.cpp
   core/src/powertrain.cpp
+  core/src/valvetrain.cpp
   core/src/turbo.cpp
   core/src/turbo_pipe.cpp
   core/src/anti_lag.cpp
@@ -64,7 +65,7 @@ else()
   target_link_libraries(revforge-render PRIVATE revforge_core)
 
   enable_testing()
-  add_executable(revforge_tests tests/main.cpp tests/engine_sound_test.cpp tests/engine_config_test.cpp tests/driving_model_test.cpp tests/powertrain_test.cpp tests/gearbox_test.cpp tests/acoustics_test.cpp tests/starter_test.cpp tests/shift_modes_test.cpp tests/turbo_test.cpp tests/consumption_test.cpp tests/retro_body_test.cpp tests/air_filter_test.cpp tests/turbo_pipe_test.cpp tests/anti_lag_test.cpp)
+  add_executable(revforge_tests tests/main.cpp tests/engine_sound_test.cpp tests/engine_config_test.cpp tests/driving_model_test.cpp tests/powertrain_test.cpp tests/gearbox_test.cpp tests/acoustics_test.cpp tests/starter_test.cpp tests/shift_modes_test.cpp tests/turbo_test.cpp tests/consumption_test.cpp tests/retro_body_test.cpp tests/air_filter_test.cpp tests/turbo_pipe_test.cpp tests/anti_lag_test.cpp tests/valvetrain_test.cpp)
   target_include_directories(revforge_tests PRIVATE tests/vendor core/src)
   target_link_libraries(revforge_tests PRIVATE revforge_core)
   # Avertissement d'un en-tête de la bibliothèque standard inclus par doctest.

@@ -6,7 +6,7 @@
 import type * as T from 'three';
 import type { Theme } from './canvas';
 import { EVC, EVO, IVC, IVO } from './fluidGas';
-import { bankToFront, chainCircles, chainPath, type ChainPath, collectorPosition, DEG, type Cylinder, type EngineLayout, type EnginePose, lobeNoseDeg, lobeRadius, plenumPosition, stackOf } from './engineLayout';
+import { bankToFront, chainCircles, chainPath, type ChainPath, collectorPosition, DEG, type Cylinder, type EngineLayout, type EnginePose, lobeNoseDeg, lobeRadius, plenumPosition, stackOf, rockerOutline } from './engineLayout';
 import { turboChain } from './turboChain';
 import type { Motion } from './motion';
 import { disposeObject, m34, type Mat34, MeshBuilder, parseColor, type Stage3D, toGeometry } from './render3d';
@@ -302,24 +302,44 @@ function buildRetainer(layout: EngineLayout): MeshBuilder {
   return new MeshBuilder().lathe([[b * 0.03, -b * 0.022], [b * 0.095, 0], [b * 0.095, b * 0.012], [b * 0.028, b * 0.012]], seg(12));
 }
 
-/** Un arbre à cames : un bossage par soupape, calé pour ce cylindre, et son pignon. Axe sur Z, centré sur l'origine. */
-function buildCam(layout: EngineLayout, bank: number, side: number, exhaust: boolean): { shaft: MeshBuilder; sprocket: MeshBuilder } {
+/** Le contour d'un bossage, dans le repère de la vue de face. */
+function lobeOutline(layout: EngineLayout, cylinder: Cylinder, side: number, exhaust: boolean): P2[] {
+  const { valve } = layout;
+  const open = exhaust ? EVO : IVO;
+  const close = exhaust ? EVC : IVC;
+  const nose = lobeNoseDeg(cylinder, valve.followerDeg, side, open, close);
+  const outline: P2[] = [];
+  const points = seg(44, 24);
+  for (let k = 0; k < points; k++) {
+    // Sens trigonométrique : l'angle horaire décroît.
+    const a = -(k / points) * 360;
+    const radius = lobeRadius(valve.camBase, valve.camLift, a - nose, open, close);
+    outline.push([Math.sin(a * DEG) * radius, Math.cos(a * DEG) * radius]);
+  }
+  return outline;
+}
+
+/**
+ * Un arbre à cames : un bossage par soupape, calé pour ce cylindre, et son pignon. Axe sur Z, centré sur l'origine.
+ * `exhaust` nul : le seul arbre d'un simple arbre, qui porte l'admission et l'échappement.
+ */
+function buildCam(layout: EngineLayout, bank: number, side: number, exhaust: boolean | null): { shaft: MeshBuilder; sprocket: MeshBuilder } {
   const { valve, bore, sprocket } = layout;
   const cylinders = layout.byBank[bank];
   const shaft = new MeshBuilder();
-  const open = exhaust ? EVO : IVO;
-  const close = exhaust ? EVC : IVC;
-  const lobeWidth = bore * 0.15;
+  const lobeWidth = valve.sohc ? bore * 0.13 : bore * 0.15;
   for (const cylinder of cylinders) {
-    const nose = lobeNoseDeg(cylinder, valve.tiltDeg, side, open, close);
-    const outline: P2[] = [];
-    const points = seg(44, 24);
-    for (let k = 0; k < points; k++) {
-      // Sens trigonométrique : l'angle horaire décroît.
-      const a = -(k / points) * 360;
-      const radius = lobeRadius(valve.camBase, valve.lift, a - nose, open, close);
-      outline.push([Math.sin(a * DEG) * radius, Math.cos(a * DEG) * radius]);
+    if (exhaust === null) {
+      // Chaque bossage en face de son culbuteur : l'admission d'un côté, l'échappement de l'autre.
+      for (const lobeSide of [-1, 1]) {
+        const lobe = lobeOutline(layout, cylinder, lobeSide, lobeSide !== cylinder.intakeSide);
+        shaft.transform(tr(0, 0, cylinder.z + lobeSide * valve.zOffset)).extrude(lobe, lobeWidth, 35);
+      }
+      // Le palier, de l'autre côté de la bougie.
+      shaft.transform(onZ(0, 0, cylinder.z - bore * 0.32)).cylinder(valve.camBase * 0.95, bore * 0.14, 16);
+      continue;
     }
+    const outline = lobeOutline(layout, cylinder, side, exhaust);
     for (const offset of [-valve.zOffset, valve.zOffset]) {
       shaft.transform(tr(0, 0, cylinder.z + offset)).extrude(outline, lobeWidth, 35);
     }
@@ -333,6 +353,14 @@ function buildCam(layout: EngineLayout, bank: number, side: number, exhaust: boo
   const wheel = new MeshBuilder();
   wheel.transform(tr(0, 0, zFront)).gear(sprocket.camTeeth, sprocket.camRadius - module * 0.55, sprocket.camRadius + module * 0.55, bore * 0.09, valve.camBase * 0.5);
   return { shaft, sprocket: wheel };
+}
+
+/** Un culbuteur : axe à l'origine, soupape fermée, le bras vers +x. Le demi-tour de l'instance l'envoie de l'autre côté. */
+function buildRocker(layout: EngineLayout): MeshBuilder {
+  const rocker = layout.valve.rocker!;
+  const b = new MeshBuilder();
+  b.extrude(rockerOutline(rocker, layout.bore), rocker.width, 40);
+  return b;
 }
 
 function buildChainLink(layout: EngineLayout, pitch: number): MeshBuilder {
@@ -414,7 +442,9 @@ interface Dynamic {
   valvesEx: T.InstancedMesh;
   springs: T.InstancedMesh;
   retainers: T.InstancedMesh;
-  buckets: T.InstancedMesh;
+  /** Double arbre : un poussoir sous chaque came. Simple arbre : un culbuteur par soupape. */
+  buckets: T.InstancedMesh | null;
+  rockers: T.InstancedMesh | null;
   chain: T.InstancedMesh;
   gas: T.InstancedMesh;
   flame: T.InstancedMesh;
@@ -464,6 +494,7 @@ export class EngineScene {
   /** Matrices de base : cylindre (rangée puis z), soupape à l'assise, ressort posé. */
   private readonly cylinderBase: T.Matrix4[] = [];
   private readonly valveBase: T.Matrix4[] = [];
+  private readonly rockerBase: T.Matrix4[] = [];
   private readonly sparkAt: Float64Array;
   private readonly accessoryAt: { x: number; y: number; z: number; ratio: number; scale: number }[] = [];
   private readonly M: T.Matrix4;
@@ -578,12 +609,13 @@ export class EngineScene {
     this.springHeight = springHeight;
     this.retainerY = retainerY;
     this.bucketY = valve.stem + bore * 0.05;
-    const valves = count * 4;
-    const valvesIn = instanced(geo(buildValve(layout, valve.radiusIn)), materials.steel, count * 2);
-    const valvesEx = instanced(geo(buildValve(layout, valve.radiusEx)), materials.forged, count * 2);
+    const valves = count * valve.perCylinder;
+    const valvesIn = instanced(geo(buildValve(layout, valve.radiusIn)), materials.steel, valves / 2);
+    const valvesEx = instanced(geo(buildValve(layout, valve.radiusEx)), materials.forged, valves / 2);
     const springs = instanced(geo(buildSpring(layout, springHeight)), materials.steel, valves, false);
     const retainers = instanced(geo(buildRetainer(layout)), materials.forged, valves, false);
-    const buckets = instanced(geo(buildBucket(layout)), materials.alloy, valves, false);
+    const buckets = valve.sohc ? null : instanced(geo(buildBucket(layout)), materials.alloy, valves, false);
+    const rockers = valve.sohc ? instanced(geo(buildRocker(layout)), materials.forged, valves) : null;
 
     const THREE_rz = new THREE.Matrix4();
     const tilted = new THREE.Matrix4();
@@ -591,13 +623,19 @@ export class EngineScene {
       const base = new THREE.Matrix4().makeRotationZ(-cylinder.betaDeg * DEG);
       base.multiply(new THREE.Matrix4().makeTranslation(0, 0, cylinder.z));
       this.cylinderBase.push(base);
-      for (const exhaust of [false, true]) {
-        const side = exhaust ? -cylinder.intakeSide : cylinder.intakeSide;
-        for (const dz of [valve.zOffset, -valve.zOffset]) {
-          const m = base.clone();
-          m.multiply(tilted.makeTranslation(side * valve.x, deck + valve.seatRise, dz));
-          m.multiply(THREE_rz.makeRotationZ(-side * valve.tiltDeg * DEG));
-          this.valveBase.push(m);
+      for (const slot of valve.slots) {
+        const side = slot.exhaust ? -cylinder.intakeSide : cylinder.intakeSide;
+        const dz = slot.zSign * side * valve.zOffset;
+        const m = base.clone();
+        m.multiply(tilted.makeTranslation(side * valve.x, deck + valve.seatRise, dz));
+        m.multiply(THREE_rz.makeRotationZ(-side * valve.tiltDeg * DEG));
+        this.valveBase.push(m);
+        if (valve.rocker) {
+          // Le culbuteur est dessiné vers +x : un demi-tour autour de l'axe du cylindre le met de l'autre côté, sans miroir.
+          const r = base.clone();
+          r.multiply(tilted.makeTranslation(side * valve.rocker.pivotX, valve.rocker.pivotY, dz));
+          if (side < 0) r.multiply(THREE_rz.makeRotationY(Math.PI));
+          this.rockerBase.push(r);
         }
       }
     }
@@ -606,7 +644,7 @@ export class EngineScene {
     for (let bank = 0; bank < layout.banks; bank++) {
       const beta = layout.banks === 1 ? 0 : bank === 0 ? -layout.halfDeg : layout.halfDeg;
       const intakeSide = layout.byBank[bank][0].intakeSide;
-      for (const exhaust of [false, true]) {
+      for (const exhaust of valve.sohc ? [null] : [false, true]) {
         const side = exhaust ? -intakeSide : intakeSide;
         const built = buildCam(layout, bank, side, exhaust);
         const group = new THREE.Group();
@@ -669,7 +707,7 @@ export class EngineScene {
     const spray = instanced(geo(sprayShape), glowMaterial(), count, false);
     // Les jets aux soupapes : un cône qui descend, à l'échelle du débit.
     const jetShape = new MeshBuilder().lathe([[0, -1], [0.55, -0.15], [0.42, 0]], 10, 80);
-    const jets = instanced(geo(jetShape), glowMaterial(), count * 4, false);
+    const jets = instanced(geo(jetShape), glowMaterial(), valves, false);
 
     // ── Les conduits : une fourche par cylindre, vers le côté de la culasse ──
     const portsIn = instanced(geo(this.buildPort(valve.radiusIn * 0.68)), stage.surface({ metalness: 0.15, roughness: 0.55 }), count, false);
@@ -764,13 +802,19 @@ export class EngineScene {
       const zMid = (zFrontBank + zRearBank) / 2;
       const base = bankM(beta);
       const W = bore * 1.04;
-      const headTop = valve.camY + valve.camBase * 0.2;
+      const headTop = valve.headTop;
       // La culasse, puis le couvre-culasse, jusqu'au-dessus des cames.
       heads.transform(chainM(base, tr(0, deck, zMid))).extrude([[-W, 0], [W, 0], [W, bore * 0.85], [W * 0.92, headTop - deck], [-W * 0.92, headTop - deck], [-W, bore * 0.85]], length, 8);
-      const coverW = valve.camX + valve.camBase + bore * 0.06;
+      const coverW = valve.coverW;
       const coverBottom = headTop - deck;
-      const coverTop = valve.camY - deck + valve.camBase + valve.lift + bore * 0.1;
+      const coverTop = valve.coverTop - deck;
       covers.transform(chainM(base, tr(0, deck, zMid))).extrude([[-coverW, coverBottom], [coverW, coverBottom], [coverW, coverTop - bore * 0.14], [coverW - bore * 0.18, coverTop], [-coverW + bore * 0.18, coverTop], [-coverW, coverTop - bore * 0.14]], length, 8);
+      if (valve.rocker) {
+        // Les deux axes de culbuteurs, de bout en bout de la culasse.
+        for (const axle of [-1, 1]) {
+          steels.transform(chainM(base, onZ(axle * valve.rocker.pivotX, valve.rocker.pivotY, zMid))).cylinder(bore * 0.04, length - bore * 0.1, 12);
+        }
+      }
 
       for (const cylinder of cylinders) {
         const z = cylinder.z;
@@ -783,31 +827,35 @@ export class EngineScene {
         const roofOutline: P2[] = [[-bore / 2, 0], [bore / 2, 0], [0, valve.roofRise]];
         dense.transform(chainM(base, tr(0, deck, z))).extrude(roofOutline, bore * 0.94, 5);
 
-        const point = bankPoint(beta, 0, plugTipY, z);
+        const point = bankPoint(beta, 0, plugTipY, z + valve.plugZ);
         this.sparkAt[i * 3] = point[0];
         this.sparkAt[i * 3 + 1] = point[1];
         this.sparkAt[i * 3 + 2] = point[2];
         const local = chainM(base, tr(0, 0, z));
+        // Sur un simple arbre, l'arbre passe au milieu : bougie ou injecteur entrent à côté de lui, penchés vers l'échappement.
+        const plugFrame = chainM(local, tr(0, plugTipY, valve.plugZ), rz(side * valve.plugTiltDeg * DEG));
 
         if (diesel) {
           // Injecteur au centre, sa rampe commune, et la bougie de préchauffage à côté de lui, inclinée.
-          steels.transform(chainM(local, tr(0, plugTipY + bore * 0.02, 0))).lathe([
+          steels.transform(chainM(plugFrame, tr(0, bore * 0.02, 0))).lathe([
             [0, -bore * 0.04], [bore * 0.03, -bore * 0.03], [bore * 0.045, bore * 0.2], [bore * 0.075, bore * 0.5], [bore * 0.075, bore * 1.2], [bore * 0.05, bore * 1.26], [0, bore * 1.26],
           ], 12);
-          blacks.transform(chainM(local, tr(0, plugTipY + bore * 1.34, 0))).box(bore * 0.12, bore * 0.16, bore * 0.2);
-          const glow = chainM(local, tr(0, plugTipY, bore * 0.18), rz(-side * 0.0), rx(0.26));
+          blacks.transform(chainM(plugFrame, tr(0, bore * 1.34, 0))).box(bore * 0.12, bore * 0.16, bore * 0.2);
+          const glow = valve.sohc
+            ? chainM(local, tr(side * bore * 0.12, plugTipY, valve.plugZ), rz(-side * valve.plugTiltDeg * DEG))
+            : chainM(local, tr(0, plugTipY, bore * 0.18), rz(-side * 0.0), rx(0.26));
           glowBase.transform(glow).lathe([[bore * 0.018, bore * 0.04], [bore * 0.038, bore * 0.5], [bore * 0.038, bore * 0.92], [bore * 0.06, bore * 0.92], [bore * 0.06, bore * 1.02], [0, bore * 1.02]], 10);
           blacks.transform(chainM(glow, tr(0, bore * 1.09, 0))).cylinder(bore * 0.035, bore * 0.12, 8);
         } else {
           // Bougie : électrode, culot fileté, six-pans, isolant, et la bobine crayon par-dessus.
-          steels.transform(chainM(local, tr(0, plugTipY, 0))).lathe([
+          steels.transform(plugFrame).lathe([
             [bore * 0.03, bore * 0.04], [bore * 0.075, bore * 0.04], [bore * 0.075, bore * 0.27], [bore * 0.105, bore * 0.27], [bore * 0.105, bore * 0.37], [bore * 0.06, bore * 0.37],
           ], 6, 5);
-          brasses.transform(chainM(local, tr(0, plugTipY, 0))).lathe([[0, -bore * 0.012], [bore * 0.012, -bore * 0.012], [bore * 0.012, bore * 0.06], [0, bore * 0.06]], 6);
-          brasses.transform(chainM(local, tr(bore * 0.026, plugTipY + bore * 0.01, 0))).box(bore * 0.012, bore * 0.06, bore * 0.018);
-          porcelain.transform(chainM(local, tr(0, plugTipY, 0))).lathe([[bore * 0.02, bore * 0.05], [bore * 0.055, bore * 0.37], [bore * 0.05, bore * 0.72], [bore * 0.028, bore * 0.72]], 10);
-          blacks.transform(chainM(local, tr(0, plugTipY, 0))).lathe([[bore * 0.058, bore * 0.5], [bore * 0.08, bore * 0.74], [bore * 0.08, bore * 1.3], [bore * 0.11, bore * 1.32], [bore * 0.11, bore * 1.56], [0, bore * 1.56]], 12);
-          blacks.transform(chainM(local, tr(side * bore * 0.12, plugTipY + bore * 1.46, 0))).box(bore * 0.2, bore * 0.14, bore * 0.2);
+          brasses.transform(plugFrame).lathe([[0, -bore * 0.012], [bore * 0.012, -bore * 0.012], [bore * 0.012, bore * 0.06], [0, bore * 0.06]], 6);
+          brasses.transform(chainM(plugFrame, tr(bore * 0.026, bore * 0.01, 0))).box(bore * 0.012, bore * 0.06, bore * 0.018);
+          porcelain.transform(plugFrame).lathe([[bore * 0.02, bore * 0.05], [bore * 0.055, bore * 0.37], [bore * 0.05, bore * 0.72], [bore * 0.028, bore * 0.72]], 10);
+          blacks.transform(plugFrame).lathe([[bore * 0.058, bore * 0.5], [bore * 0.08, bore * 0.74], [bore * 0.08, bore * 1.3], [bore * 0.11, bore * 1.32], [bore * 0.11, bore * 1.56], [0, bore * 1.56]], 12);
+          blacks.transform(chainM(plugFrame, tr(side * bore * 0.12, bore * 1.46, 0))).box(bore * 0.2, bore * 0.14, bore * 0.2);
           // L'injecteur d'essence, sous le conduit d'admission, plonge dans la chambre.
           const injector = chainM(local, tr(side * bore * 0.42, deck + bore * 0.06, 0), rz(-side * 1.05));
           steels.transform(chainM(injector, tr(0, 0, 0))).lathe([[bore * 0.015, 0], [bore * 0.03, bore * 0.08], [bore * 0.04, bore * 0.48], [0, bore * 0.5]], 8);
@@ -1119,14 +1167,19 @@ export class EngineScene {
       for (let bank = 0; bank < layout.banks; bank++) {
         const beta = layout.banks === 1 ? 0 : bank === 0 ? -halfDeg : halfDeg;
         const cylinders = layout.byBank[bank];
-        const y = deck + bore * 1.86;
-        const railSide = bore * 0.24 * -cylinders[0].intakeSide;
-        const a = bankPoint(beta, railSide, y, cylinders[0].z + bore * 0.4);
-        const b = bankPoint(beta, railSide, y, cylinders[cylinders.length - 1].z - bore * 0.4);
+        // Le haut de l'injecteur : droit sur l'axe, ou penché vers l'échappement.
+        const lean = valve.plugTiltDeg * DEG;
+        const out = -cylinders[0].intakeSide;
+        const injectorX = out * Math.sin(lean) * bore * 1.42;
+        const injectorY = valve.sohc ? plugTipY + Math.cos(lean) * bore * 1.42 : deck + bore * 1.42;
+        const y = valve.sohc ? injectorY + bore * 0.34 : deck + bore * 1.86;
+        const railSide = injectorX + bore * 0.24 * out;
+        const a = bankPoint(beta, railSide, y, cylinders[0].z + bore * 0.4 + valve.plugZ);
+        const b = bankPoint(beta, railSide, y, cylinders[cylinders.length - 1].z - bore * 0.4 + valve.plugZ);
         steels.transform(null).tube([a, b], bore * 0.045, 10);
         for (const cylinder of cylinders) {
-          const from = bankPoint(beta, railSide, y, cylinder.z);
-          const to = bankPoint(beta, 0, deck + bore * 1.42, cylinder.z);
+          const from = bankPoint(beta, railSide, y, cylinder.z + valve.plugZ);
+          const to = bankPoint(beta, injectorX, injectorY, cylinder.z + valve.plugZ);
           steels.transform(null).tube(bendPath(from, bankDir(beta, -Math.sign(railSide), 0), to, bankDir(beta, 0, -1), 5), bore * 0.016, 6);
         }
         extent(a);
@@ -1191,7 +1244,7 @@ export class EngineScene {
       if (stage.software) geometry.dispose();
     }
 
-    this.d = { pistons, rings, pins, rods, valvesIn, valvesEx, springs, retainers, buckets, chain, gas, flame, spark, spray, jets, portsIn, portsEx, glowTips, pinion: pinionMesh, butterfly, stackFlaps, accessory };
+    this.d = { pistons, rings, pins, rods, valvesIn, valvesEx, springs, retainers, buckets, rockers, chain, gas, flame, spark, spray, jets, portsIn, portsEx, glowTips, pinion: pinionMesh, butterfly, stackFlaps, accessory };
 
     // Les ombres, sur un vrai GPU seulement : les pièces s'en reçoivent les unes des autres.
     this.root.traverse((node) => {
@@ -1226,7 +1279,8 @@ export class EngineScene {
     labelAt('engine.part.rod', bankPoint(fb, 0, layout.rod * 0.55, first.z));
     labelAt('engine.part.cam', [...bankPoint(fb, first.intakeSide * valve.camX, valve.camY, first.z - bore * 0.1)]);
     labelAt('engine.part.valve', bankPoint(fb, -first.intakeSide * valve.x, deck + bore * 0.55, first.z + valve.zOffset));
-    labelAt('engine.part.chain', bankPoint(fb, valve.camX, valve.camY * 0.6, layout.sprocket.z[0]));
+    if (valve.rocker) labelAt('engine.part.rocker', bankPoint(fb, first.intakeSide * valve.rocker.pivotX, valve.rocker.pivotY + bore * 0.1, first.z + first.intakeSide * valve.zOffset));
+    labelAt('engine.part.chain', bankPoint(fb, valve.sohc ? layout.sprocket.camRadius * 0.8 : valve.camX, valve.camY * 0.6, layout.sprocket.z[0]));
     labelAt(diesel ? 'engine.part.injector' : 'engine.part.coil', bankPoint(fb, 0, deck + bore * 1.4, first.z));
     if (diesel) labelAt('engine.part.glow', bankPoint(fb, 0, deck + bore * 0.9, first.z + bore * 0.3));
     else labelAt('engine.part.plug', bankPoint(fb, 0, deck + bore * 0.45, first.z));
@@ -1257,7 +1311,7 @@ export class EngineScene {
     const rise = valve.seatRise;
     const portY = bore * 0.62;
     const tiltDir: P3 = [Math.sin(valve.tiltDeg * DEG), Math.cos(valve.tiltDeg * DEG), 0];
-    for (const dz of [valve.zOffset, -valve.zOffset]) {
+    for (const dz of valve.sohc ? [valve.zOffset] : [valve.zOffset, -valve.zOffset]) {
       const seat: P3 = [valve.x, rise + radius * 0.3, dz];
       b.tube(bendPath([W, portY, 0], [-1, -0.05, 0], [seat[0] + tiltDir[0] * bore * 0.1, seat[1] + tiltDir[1] * bore * 0.1, seat[2]], [-tiltDir[0], -tiltDir[1], 0], 8), radius, 9);
     }
@@ -1385,8 +1439,16 @@ export class EngineScene {
 
       if (d.glowTips) {
         // Du rouge sombre à l'orange vif : la bougie suit le courant, lentement.
-        M.copy(base).multiply(N.makeTranslation(0, layout.deck + valve.roofRise - bore * 0.2, bore * 0.18));
-        M.multiply(N.makeRotationX(0.26));
+        if (valve.sohc) {
+          const lean = valve.plugTiltDeg * DEG;
+          const back = bore * 0.17;
+          const plugSide = cylinder.intakeSide;
+          M.copy(base).multiply(N.makeTranslation(plugSide * (bore * 0.12 - Math.sin(lean) * back), layout.deck + valve.roofRise - bore * 0.03 - Math.cos(lean) * back, valve.plugZ));
+          M.multiply(N.makeRotationZ(-plugSide * lean));
+        } else {
+          M.copy(base).multiply(N.makeTranslation(0, layout.deck + valve.roofRise - bore * 0.2, bore * 0.18));
+          M.multiply(N.makeRotationX(0.26));
+        }
         d.glowTips.setMatrixAt(glows, M);
         const g = pose.glow;
         C.setRGB(0.1 + 0.9 * g, 0.08 + 0.5 * g * g, 0.08 + 0.16 * g * g * g);
@@ -1394,13 +1456,15 @@ export class EngineScene {
         glows++;
       }
 
-      // Les soupapes de ce cylindre, deux admissions puis deux échappements : même ordre que la construction.
-      const k0 = i * 4;
-      for (let v = 0; v < 4; v++) {
-        const exhaust = v >= 2;
+      // Les soupapes de ce cylindre, les admissions puis les échappements : même ordre que la construction.
+      const perCylinder = valve.perCylinder;
+      const perKind = perCylinder >> 1;
+      const k0 = i * perCylinder;
+      for (let v = 0; v < perCylinder; v++) {
+        const exhaust = v >= perKind;
         const lift = (exhaust ? pose.liftEx[i] : pose.liftIn[i]) * valve.lift;
         const k = k0 + v;
-        const valveIndex = i * 2 + (v & 1);
+        const valveIndex = i * perKind + (v % perKind);
         M.copy(valveBase[k]).multiply(N.makeTranslation(0, -lift, 0));
         if (exhaust) d.valvesEx.setMatrixAt(valveIndex, M);
         else d.valvesIn.setMatrixAt(valveIndex, M);
@@ -1410,8 +1474,15 @@ export class EngineScene {
         d.springs.setMatrixAt(k, M);
         M.copy(valveBase[k]).multiply(N.makeTranslation(0, this.retainerY - lift, 0));
         d.retainers.setMatrixAt(k, M);
-        M.copy(valveBase[k]).multiply(N.makeTranslation(0, this.bucketY - lift, 0));
-        d.buckets.setMatrixAt(k, M);
+        if (d.buckets) {
+          M.copy(valveBase[k]).multiply(N.makeTranslation(0, this.bucketY - lift, 0));
+          d.buckets.setMatrixAt(k, M);
+        }
+        if (d.rockers) {
+          // Le culbuteur bascule autour de son axe : côté soupape il descend, côté came il monte.
+          M.copy(this.rockerBase[k]).multiply(N.makeRotationZ(-(exhaust ? pose.rockerEx[i] : pose.rockerIn[i])));
+          d.rockers.setMatrixAt(k, M);
+        }
         // Les jets : le débit calculé à chaque soupape.
         const flow = exhaust ? pose.jetEx[i] : pose.jetIn[i];
         const amount = flow < 0 ? -flow : flow;
@@ -1443,7 +1514,8 @@ export class EngineScene {
     d.valvesEx.instanceMatrix.needsUpdate = true;
     d.springs.instanceMatrix.needsUpdate = true;
     d.retainers.instanceMatrix.needsUpdate = true;
-    d.buckets.instanceMatrix.needsUpdate = true;
+    if (d.buckets) d.buckets.instanceMatrix.needsUpdate = true;
+    if (d.rockers) d.rockers.instanceMatrix.needsUpdate = true;
     d.gas.instanceMatrix.needsUpdate = true;
     d.portsIn.instanceMatrix.needsUpdate = true;
     d.portsEx.instanceMatrix.needsUpdate = true;

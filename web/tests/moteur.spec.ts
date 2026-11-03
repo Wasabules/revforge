@@ -2,9 +2,11 @@ import { readFileSync } from 'node:fs';
 import { expect, test, type Page } from '@playwright/test';
 import { ouvrir, voir } from './aide';
 import type { EngineConfig } from '../src/lib/config';
-import { chainCircles, chainPath, DEG, engineLayout, EnginePose, engineState, firingAllowed, glowWanted, lobeNoseDeg, lobeRadius, pistonDistance, sparkThetaDeg, starterTeeth, valveLift, type PoseClock, type PoseTelemetry } from '../src/lib/engineLayout';
+import { chainCircles, chainPath, DEG, engineLayout, EnginePose, engineState, firingAllowed, glowWanted, layoutKey, lobeNoseDeg, lobeRadius, pistonDistance, rockerAngle, sparkThetaDeg, starterTeeth, valveLift, type PoseClock, type PoseTelemetry } from '../src/lib/engineLayout';
+import { gasKey } from '../src/lib/fluid';
 import { EVC, EVO, GasNetwork, ignitionAdvance, IVC, IVO, type GasInputs } from '../src/lib/fluidGas';
 import { firingOrder } from '../src/lib/motion';
+import { sohcSectionShare, VALVE_BRIDGE_FOUR_MM, VALVE_BRIDGE_TWO_MM, VALVE_DISCHARGE, VALVE_EDGE_MM, VALVE_EXHAUST_REACH, VALVE_EXHAUST_SHARE, VALVE_INTAKE_REACH, VALVE_LIFT_PER_BORE, VALVE_THROAT_PER_HEAD, valveSizes } from '../src/lib/valves';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -176,31 +178,183 @@ test.describe('mécanique', () => {
   });
 
   test('l\'arbre à cames tourne à demi-vitesse, et son bossage appuie exactement de la levée de la soupape', () => {
-    for (const family of FAMILIES) {
-      const layout = engineLayout(make(family));
-      const pose = new EnginePose(layout);
-      const { valve } = layout;
-      pose.solve(0);
-      const before = pose.camDeg;
-      pose.solve(100);
-      expect(pose.camDeg - before).toBeCloseTo(50, 8);
-      for (let crankDeg = 0; crankDeg < 720; crankDeg += 17) {
-        pose.solve(crankDeg);
-        for (const cylinder of layout.cylinders) {
-          for (const exhaust of [false, true]) {
-            const side = exhaust ? -cylinder.intakeSide : cylinder.intakeSide;
-            const open = exhaust ? EVO : IVO;
-            const close = exhaust ? EVC : IVC;
-            const nose = lobeNoseDeg(cylinder, valve.tiltDeg, side, open, close);
-            // Le rayon de la came, dans la direction de la soupape, après `camDeg` de rotation.
-            const towardsValve = cylinder.betaDeg + side * valve.tiltDeg + 180 - pose.camDeg;
-            const radius = lobeRadius(valve.camBase, valve.lift, towardsValve - nose, open, close);
-            const lift = exhaust ? pose.liftEx[cylinder.index] : pose.liftIn[cylinder.index];
-            expect(radius).toBeCloseTo(valve.camBase + valve.lift * lift, 6);
+    for (const camshaft of ['dohc', 'sohc'] as const) {
+      for (const family of FAMILIES) {
+        const layout = engineLayout(make({ ...family, camshaft }));
+        const pose = new EnginePose(layout);
+        const { valve } = layout;
+        pose.solve(0);
+        const before = pose.camDeg;
+        pose.solve(100);
+        expect(pose.camDeg - before).toBeCloseTo(50, 8);
+        for (let crankDeg = 0; crankDeg < 720; crankDeg += 17) {
+          pose.solve(crankDeg);
+          for (const cylinder of layout.cylinders) {
+            for (const exhaust of [false, true]) {
+              const side = exhaust ? -cylinder.intakeSide : cylinder.intakeSide;
+              const open = exhaust ? EVO : IVO;
+              const close = exhaust ? EVC : IVC;
+              const nose = lobeNoseDeg(cylinder, valve.followerDeg, side, open, close);
+              // Le rayon de la came, dans la direction de ce qui appuie dessus, après `camDeg` de rotation.
+              const towardsFollower = cylinder.betaDeg + side * valve.followerDeg + 180 - pose.camDeg;
+              const radius = lobeRadius(valve.camBase, valve.camLift, towardsFollower - nose, open, close);
+              const lift = exhaust ? pose.liftEx[cylinder.index] : pose.liftIn[cylinder.index];
+              expect(radius).toBeCloseTo(valve.camBase + valve.camLift * lift, 6);
+            }
           }
         }
       }
     }
+  });
+
+  test('un simple arbre : un arbre et une roue par rangée, deux soupapes par cylindre, et la chaîne qui passe par elle', () => {
+    for (const family of FAMILIES) {
+      const twin = engineLayout(make({ ...family, camshaft: 'dohc' }));
+      const single = engineLayout(make({ ...family, camshaft: 'sohc' }));
+      expect(twin.valve.sohc).toBe(false);
+      expect(twin.valve.perCylinder).toBe(4);
+      expect(single.valve.sohc).toBe(true);
+      expect(single.valve.perCylinder).toBe(2);
+      expect(single.valve.slots.filter((slot) => slot.exhaust).length).toBe(1);
+      expect(single.valve.camX).toBe(0);
+      // Choisir la distribution change les pièces : la vue doit se reconstruire.
+      expect(layoutKey(make({ ...family, camshaft: 'sohc' }))).not.toBe(layoutKey(make({ ...family, camshaft: 'dohc' })));
+      for (let bank = 0; bank < single.banks; bank++) {
+        const circles = chainCircles(single, bank);
+        // Le vilebrequin et une seule came, sur l'axe de la rangée ; deux cames sur le double arbre.
+        expect(circles.length).toBe(2);
+        expect(chainCircles(twin, bank).length).toBe(3);
+        const beta = single.banks === 1 ? 0 : bank === 0 ? -single.halfDeg : single.halfDeg;
+        expect(Math.hypot(circles[1][0], circles[1][1])).toBeCloseTo(single.valve.camY, 6);
+        expect(Math.atan2(circles[1][0], circles[1][1]) / DEG).toBeCloseTo(beta, 6);
+        const path = chainPath(circles, (single.sprocket.crankRadius * 2 * Math.PI) / single.sprocket.crankTeeth);
+        expect(path.links % 2).toBe(0);
+        // La chaîne fait moins de chemin qu'autour de deux cames.
+        const longer = chainPath(chainCircles(twin, bank), (twin.sprocket.crankRadius * 2 * Math.PI) / twin.sprocket.crankTeeth);
+        expect(path.length).toBeLessThan(longer.length);
+      }
+      // La culasse d'un simple arbre est plus basse : il n'y a plus de came au-dessus de chaque soupape.
+      expect(single.valve.coverTop).toBeLessThan(twin.valve.coverTop);
+    }
+  });
+
+  test('un culbuteur reste posé sur sa queue de soupape et sur sa came, à tout angle, en ligne, en V et à plat', () => {
+    for (const family of [{ cylinders: 4 }, { cylinders: 6, layout: 'v' }, { cylinders: 8, layout: 'cross_plane' }, { cylinders: 4, layout: 'boxer' }, { cylinders: 6, layout: 'boxer' }] as Partial<EngineConfig>[]) {
+      for (const boreMm of [70, 84, 100]) {
+        const layout = engineLayout(make({ ...family, camshaft: 'sohc', boreMm, displacementCc: 2000 * (family.cylinders ?? 4) / 4 }));
+        const pose = new EnginePose(layout);
+        const { valve } = layout;
+        const rocker = valve.rocker!;
+        expect(rocker.ratio).toBeGreaterThan(1.2);
+        expect(rocker.ratio).toBeLessThan(1.7);
+        expect(valve.camLift * rocker.ratio).toBeCloseTo(valve.lift, 6);
+        const tilt = valve.tiltDeg * DEG;
+        let swing = 0;
+        for (let crankDeg = 0; crankDeg < 720; crankDeg += 7) {
+          pose.solve(crankDeg);
+          for (const cylinder of layout.cylinders) {
+            for (const exhaust of [false, true]) {
+              const lift = (exhaust ? pose.liftEx[cylinder.index] : pose.liftIn[cylinder.index]) * valve.lift;
+              const turned = rockerAngle(valve, lift);
+              expect(exhaust ? pose.rockerEx[cylinder.index] : pose.rockerIn[cylinder.index]).toBeCloseTo(turned, 9);
+              swing = Math.max(swing, turned);
+              // Le bout du culbuteur, vu du côté +1, par rapport à la queue qui coulisse sur son axe.
+              const tip = (rocker.tipDeg * DEG) - turned;
+              const tipX = rocker.pivotX + rocker.tipArm * Math.cos(tip);
+              const tipY = rocker.pivotY + rocker.tipArm * Math.sin(tip);
+              const seatX = valve.x;
+              const seatY = layout.deck + valve.seatRise;
+              const along = (tipX - seatX) * Math.sin(tilt) + (tipY - seatY) * Math.cos(tilt);
+              const across = (tipX - seatX) * Math.cos(tilt) - (tipY - seatY) * Math.sin(tilt);
+              expect(along).toBeCloseTo(valve.stem - lift, 6);
+              // Il glisse à peine sur le bout de la queue.
+              expect(Math.abs(across)).toBeLessThan(boreMm * 0.03);
+              // Le patin : à moins de 2 % de l'alésage de la surface de la came, à cette levée.
+              const pad = rocker.padDeg * DEG - turned;
+              const padX = rocker.pivotX + rocker.padArm * Math.cos(pad);
+              const padY = rocker.pivotY + rocker.padArm * Math.sin(pad);
+              const wanted = valve.camBase + (valve.camLift * lift) / valve.lift;
+              expect(Math.abs(Math.hypot(padX - valve.camX, padY - valve.camY) - wanted)).toBeLessThan(boreMm * 0.02);
+            }
+          }
+        }
+        // Une vingtaine de degrés à pleine levée : il bascule, et dans le bon sens.
+        expect(swing).toBeGreaterThan(15 * DEG);
+        expect(swing).toBeLessThan(25 * DEG);
+      }
+    }
+  });
+
+  test('les soupapes d\'un simple arbre sont plus grandes, et moins de section au total : le même calcul que le C++', () => {
+    const source = readFileSync(new URL('../../core/src/valvetrain.cpp', import.meta.url), 'utf-8');
+    const constant = (name: string) => Number(new RegExp(`constexpr double ${name} = ([\\d.]+);`).exec(source)![1]);
+    expect(VALVE_EDGE_MM).toBe(constant('kEdgeMm'));
+    expect(VALVE_BRIDGE_TWO_MM).toBe(constant('kBridgeTwoValvesMm'));
+    expect(VALVE_BRIDGE_FOUR_MM).toBe(constant('kBridgeFourValvesMm'));
+    expect(VALVE_EXHAUST_SHARE).toBe(constant('kExhaustShare'));
+    expect(VALVE_INTAKE_REACH).toBe(constant('kIntakeReach'));
+    expect(VALVE_EXHAUST_REACH).toBe(constant('kExhaustReach'));
+    expect(VALVE_LIFT_PER_BORE).toBe(constant('kLiftPerBore'));
+    expect(VALVE_THROAT_PER_HEAD).toBe(constant('kThroatPerHead'));
+    expect(VALVE_DISCHARGE).toBe(constant('kDischarge'));
+    for (const bore of [60, 75, 86, 100, 110]) {
+      const two = valveSizes('sohc', bore);
+      const four = valveSizes('dohc', bore);
+      expect(two.intakeMm).toBeGreaterThan(four.intakeMm);
+      expect(two.intakeAreaMm2).toBeLessThan(four.intakeAreaMm2);
+      expect(two.exhaustAreaMm2).toBeLessThan(four.exhaustAreaMm2);
+      const share = sohcSectionShare(bore);
+      expect(share.intake).toBeGreaterThan(0.6);
+      expect(share.intake).toBeLessThan(0.8);
+    }
+    // 86 mm d'alésage : les soupapes de vrais moteurs (C20NE, 41,8/36,5 ; C20XE, 32/29, supposés de mémoire) à 10 % près.
+    expect(valveSizes('sohc', 86).intakeMm).toBeCloseTo(41.5, 0);
+    expect(valveSizes('dohc', 86).intakeMm).toBeCloseTo(32.9, 0);
+    // Elles sont dessinées à cette taille.
+    expect(engineLayout(make({ camshaft: 'sohc', boreMm: 86 })).valve.radiusIn).toBeCloseTo(valveSizes('sohc', 86).intakeMm / 2, 6);
+  });
+
+  test('moins de section, moins de gaz en haut : le gaz à l\'écran sent les deux soupapes, sans toucher au double arbre', () => {
+    const run = (camshaft: 'dohc' | 'sohc', rpm: number) => {
+      const config = make({ camshaft, displacementCc: 2000, boreMm: 84 });
+      const net = new GasNetwork();
+      net.build(config, firingOrder(4));
+      const inputs: GasInputs = { rpm, load: 1, boost: 0, release: 0, burning: true, heat: 0.5 };
+      const seconds = 120 / rpm / 240;
+      const turns = (rpm / 120) * seconds;
+      let cycle = 0;
+      let mass = 0;
+      let samples = 0;
+      let pushed = 0;
+      let pushes = 0;
+      for (let step = 0; step < 240 * 14; step++) {
+        net.advance(seconds, cycle, turns, inputs);
+        cycle = (cycle + turns) % 1;
+        if (step >= 240 * 8) {
+          // Le gaz enfermé au moment où l'admission se ferme : ce que le cylindre a réussi à avaler.
+          if (net.cylLiftIn[0] < 1e-6 && net.cylTheta[0] > IVC && net.cylTheta[0] < IVC + 20) {
+            mass += net.cylM[0];
+            samples++;
+          }
+          // Et ce contre quoi le piston pousse en remontant : la pression moyenne pendant l'échappement.
+          if (net.cylTheta[0] > 240 && net.cylTheta[0] < 340) {
+            pushed += net.cylP[0];
+            pushes++;
+          }
+        }
+      }
+      return { mass: mass / Math.max(samples, 1), pressure: pushed / Math.max(pushes, 1) };
+    };
+    const twoHigh = run('sohc', 7000);
+    const fourHigh = run('dohc', 7000);
+    expect(twoHigh.mass).toBeLessThan(fourHigh.mass * 0.98);
+    expect(twoHigh.pressure).toBeGreaterThan(fourHigh.pressure);
+    // À bas régime, le gaz a le temps de passer : les deux se remplissent presque autant.
+    const twoLow = run('sohc', 1500);
+    const fourLow = run('dohc', 1500);
+    expect(Math.abs(twoLow.mass / fourLow.mass - 1)).toBeLessThan(Math.abs(twoHigh.mass / fourHigh.mass - 1));
+    // Le choix figure dans la clé du réseau : sans cela, rien ne se reconstruit.
+    expect(gasKey(make({ camshaft: 'sohc' }))).not.toBe(gasKey(make({ camshaft: 'dohc' })));
   });
 
   test('la levée dessinée est celle du gaz, et le gaz allume dans l\'ordre dessiné', () => {
@@ -589,6 +743,75 @@ test.describe('la vue', () => {
     await memoryAfter(6);
     await memoryAfter(8);
     expect(await memoryAfter(12)).toBe(twelve);
+
+    // Le simple arbre change les pièces : aller et retour ne laissent rien non plus.
+    const camshaft = (label: string, single: boolean) => page.evaluate(({ label }) => {
+      const set = [...document.querySelectorAll('fieldset')].find((item) => /Distribution/.test(item.querySelector('legend')?.textContent ?? ''))!;
+      [...set.querySelectorAll('button')].find((item) => item.textContent!.trim() === label)!.click();
+    }, { label }).then(() => page.waitForFunction((want) => (document.querySelector('[data-testid=engine-view]') as any).__engine.scene()?.d?.rockers !== null === want, single));
+    const settled = async () => {
+      const reached = await frames();
+      await expect.poll(frames, { timeout: 20_000 }).toBeGreaterThan(reached + 2);
+      return (await snapshot()).geometries;
+    };
+    await camshaft('Simple arbre', true);
+    const single = await settled();
+    await camshaft('Double arbre', false);
+    expect(await settled()).toBe(twelve);
+    await camshaft('Simple arbre', true);
+    expect(await settled()).toBe(single);
+    expect(errors).toEqual([]);
+  });
+
+  test('un simple arbre dans la vue : un arbre par rangée, deux soupapes et des culbuteurs, en 3D et en 2D', async ({ page }) => {
+    const shape = () => page.evaluate(() => {
+      const d = (document.querySelector('[data-testid=engine-view]') as any).__engine;
+      const scene = d.scene();
+      return { sohc: d.layout().valve.sohc, banks: d.layout().banks, count: d.layout().count, cams: scene.cams.length, valvesIn: scene.d.valvesIn.count, valvesEx: scene.d.valvesEx.count, rockers: scene.d.rockers?.count ?? 0, buckets: scene.d.buckets?.count ?? 0, chains: scene.chains.length };
+    });
+    for (const [hash, banks, count] of [
+      ['#m=4.inline.2000.86.6500.stock.natural.petrol.0.off.dump_valve~compact.1200.15.front.1_natural_standard_single_medium_roots_off_400_sohc_stock', 1, 4],
+      ['#m=8.cross_plane.5000.96.6000.sport.natural.petrol.0.off.dump_valve~coupe.1600.18.rear.1_natural_standard_dual_medium_roots_off_400_sohc_stock', 2, 8],
+      ['#m=4.boxer.2000.92.6500.stock.natural.petrol.0.off.dump_valve~coupe.1300.17.rear.1_natural_standard_single_medium_roots_off_400_sohc_stock', 2, 4],
+    ] as const) {
+      // Sans quitter la page, un nouveau `#` ne recharge rien.
+      await page.goto('about:blank');
+      const errors = await open(page, hash);
+      await ready3d(page);
+      expect(await shape()).toEqual({ sohc: true, banks, count, cams: banks, valvesIn: count, valvesEx: count, rockers: count * 2, buckets: 0, chains: banks });
+      // Ça tourne, et l'arbre avec : un culbuteur bascule.
+      await page.getByTestId('start').click();
+      await expect.poll(() => page.evaluate(() => (window as any).__revforge.telemetry().rpm), { timeout: 15_000 }).toBeGreaterThan(500);
+      await expect.poll(() => page.evaluate(() => {
+        const pose = (document.querySelector('[data-testid=engine-view]') as any).__engine.pose();
+        return Math.max(...pose.rockerIn, ...pose.rockerEx);
+      }), { timeout: 15_000 }).toBeGreaterThan(0.01);
+      await page.getByTestId('engine-mode-2d').click();
+      await expect.poll(() => page.getByTestId('engine-view').locator('canvas').first().evaluate((canvas: HTMLCanvasElement) => {
+        const { data } = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height);
+        let painted = 0;
+        for (let i = 3; i < data.length; i += 4) if (data[i] > 0) painted++;
+        return painted;
+      })).toBeGreaterThan(5000);
+      await page.getByTestId('engine-mode-3d').click();
+      expect(errors).toEqual([]);
+    }
+  });
+
+  test('le choix du simple arbre : la fiche, le résumé du bouton et le lien de partage suivent', async ({ page }) => {
+    const errors = await open(page, '#m=4.inline.2000.86.6500.stock.natural.petrol.0.off.dump_valve~compact.1200.15.front.1');
+    const hp = () => page.evaluate(() => {
+      const value = document.querySelector('[data-testid=open-engine-summary]')!.textContent!;
+      return Number(/(\d+) ch/.exec(value)![1]);
+    });
+    const twin = await hp();
+    expect(await page.getByTestId('open-engine-summary').textContent()).not.toContain('Simple arbre');
+    await ouvrir(page, 'engine');
+    await page.getByRole('group', { name: 'Distribution' }).getByRole('button', { name: 'Simple arbre' }).click();
+    await expect(page.getByTestId('open-engine-summary')).toContainText('Simple arbre');
+    await expect(page.getByTestId('camshaft-help')).toContainText('deux soupapes');
+    await expect.poll(hp).toBeLessThan(twin * 0.95);
+    await page.waitForFunction(() => /_sohc_/.test(location.hash));
     expect(errors).toEqual([]);
   });
 

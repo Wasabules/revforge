@@ -94,7 +94,7 @@ Limites connues :
 - Distinguer l'avant de l'arrière au casque reste difficile : le modèle stéréo n'a pas de HRTF.
 - Le ralenti du 4 cylindres sportif sort de la plage des vrais moteurs au comparateur, et reste trop haché.
 - À plein gaz, le limiteur resserre l'écart entre les lignes : environ 6 dB joués pour environ 22 dB estimés entre l'origine et la ligne directe.
-- Les vues 2D et 3D simplifient une partie de la mécanique (automatique schématique, double embrayage approché, distribution à double arbre partout) et n'ont pas été vérifiées sur beaucoup de cartes graphiques. Sans carte graphique, la 3D passe en rendu plus grossier et tourne lentement ; le bouton 2D reste fluide.
+- Les vues 2D et 3D simplifient une partie de la mécanique (automatique schématique, double embrayage approché, pas de distribution à tiges : double ou simple arbre en tête seulement) et n'ont pas été vérifiées sur beaucoup de cartes graphiques. Sans carte graphique, la 3D passe en rendu plus grossier et tourne lentement ; le bouton 2D reste fluide.
 - La consommation estimée lit environ 15 à 25 % au-dessus des chiffres officiels, et l'huile n'est qu'un ordre de grandeur, à un facteur trois près.
 - À cylindrée égale, la course ne change le couple qu'au-delà de 24 m/s de vitesse de piston, et ne change jamais le frottement, l'inertie ni la consommation.
 - La voiture ne recule jamais (démarrage en côte avec maintien supposé), toutes les voitures ont la même adhérence, et les trajets sont réglés en durée, pas en distance.
