@@ -76,9 +76,10 @@ else()
   add_test(NAME revforge_tests COMMAND revforge_tests)
 
   # Empreintes du rendu 16 bits : changer le son doit être un choix, et se voit ici.
+  # L'empreinte commence une ligne, pas forcément la sortie : un avertissement sur stderr peut la précéder (sous Linux, il passe avant).
   function(golden name hash)
     add_test(NAME golden_${name} COMMAND revforge-render --out - ${ARGN})
-    set_tests_properties(golden_${name} PROPERTIES PASS_REGULAR_EXPRESSION "^${hash}")
+    set_tests_properties(golden_${name} PROPERTIES PASS_REGULAR_EXPRESSION "(^|\n)${hash}")
   endfunction()
   golden(steady_city 05db5790 --preset city_14 --scenario steady --rpm 5000)
   golden(launch_v8 078d8bf0 --cylinders 8 --layout cross_plane --cc 7000 --bore 99 --redline 6000 --exhaust sport --body coupe --mass 1700 --rim 19 --drive rear --scenario launch)
