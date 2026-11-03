@@ -11,9 +11,7 @@ namespace revforge {
 namespace {
 
 constexpr double kPi = 3.141592653589793;
-// L'air d'admission est froid : ce n'est pas la ligne d'échappement.
-constexpr double kSoundSpeed = 343.0;
-constexpr double kDensity = 1.2;
+// L'air d'admission est froid, ce n'est pas la ligne d'échappement : celui du jour, dans `IntakeGeometry`.
 constexpr double kReferenceM3 = 0.002;
 
 // Pour 2 L. Le conduit suit le débit, donc la cylindrée ; la boîte reste une boîte : ses longueurs en V^(1/3).
@@ -73,9 +71,9 @@ inline Matrix operator*(const Matrix& x, const Matrix& y) {
     return {x.a * y.a + x.b * y.c, x.a * y.b + x.b * y.d, x.c * y.a + x.d * y.c, x.c * y.b + x.d * y.d};
 }
 
-Matrix tube(double omega, double alpha, double length, double area) {
-    const double impedance = kDensity * kSoundSpeed / area;
-    const double phase = omega / kSoundSpeed * length;
+Matrix tube(const IntakeGeometry& g, double omega, double alpha, double length, double area) {
+    const double impedance = g.densityKgM3 * g.soundSpeedMs / area;
+    const double phase = omega / g.soundSpeedMs * length;
     const double decay = alpha * length;
     const double cosPhase = std::cos(phase), sinPhase = std::sin(phase);
     const double up = std::exp(decay), down = 1.0 / up;
@@ -90,17 +88,17 @@ Matrix tube(double omega, double alpha, double length, double area) {
 Matrix element(double resistance) { return {{1.0, 0.0}, {resistance, 0.0}, {0.0, 0.0}, {1.0, 0.0}}; }
 
 /** Du débit à l'entrée d'une chaîne au débit rayonné à sa bouche, plafonné quand elle cesse de rayonner en (ka)². */
-double radiatedMagnitude(const Matrix& total, double omega, double mouthArea, double sourceArea, double sourceRatio, double restored) {
+double radiatedMagnitude(const IntakeGeometry& g, const Matrix& total, double omega, double mouthArea, double sourceArea, double sourceRatio, double restored) {
     const double radius = std::sqrt(mouthArea / kPi);
-    const double ka = omega / kSoundSpeed * radius;
+    const double ka = omega / g.soundSpeedMs * radius;
     const double reflection = ExhaustLine::outletReflectionMagnitude(ka);
     const double lengthShare = ExhaustLine::outletEndCorrection(ka);
     const double angle = 2.0 * ka * lengthShare;
     const Complex r{-reflection * std::cos(angle), reflection * std::sin(angle)};
     const Complex normalized = Complex{1.0 + r.re, r.im} * inverse(Complex{1.0 - r.re, -r.im});
-    const Complex radiation = scaled(normalized, kDensity * kSoundSpeed / mouthArea);
+    const Complex radiation = scaled(normalized, g.densityKgM3 * g.soundSpeedMs / mouthArea);
     Complex denominator = total.c * radiation + total.d;
-    denominator = denominator + scaled(total.a * radiation + total.b, sourceArea / (sourceRatio * kDensity * kSoundSpeed));
+    denominator = denominator + scaled(total.a * radiation + total.b, sourceArea / (sourceRatio * g.densityKgM3 * g.soundSpeedMs));
     const Complex transfer = inverse(denominator);
     const double low = 0.25 * ka * ka;
     const double saturation = std::sqrt(std::max(normalized.re, 0.0) / std::max(low, 1e-12));
@@ -126,14 +124,14 @@ double pathMagnitude(AirFilter filter, const IntakeGeometry& g, double hzAsked) 
 
     if (filter == AirFilter::Stacks) {
         const double area = kPi * g.stackRadiusM * g.stackRadiusM;
-        return radiatedMagnitude(tube(omega, wall, g.stackM, area), omega, area, area, kValveSource, std::exp(blur * g.stackM));
+        return radiatedMagnitude(g, tube(g, omega, wall, g.stackM, area), omega, area, area, kValveSource, std::exp(blur * g.stackM));
     }
 
     const double resistance = 2.0 * spec.elementDropPa / (kDesignFlowM3S * size);
     if (filter == AirFilter::Cone) {
         const double length = kConeLengthM * scale;
-        const Matrix total = tube(omega, wall, kConeDuctM, duct) * element(resistance) * tube(omega, wall + kFoam * hz, length, duct * kConeArea);
-        return radiatedMagnitude(total, omega, duct * kConeArea, duct, kManifoldSource, std::exp(blur * (kConeDuctM + length)));
+        const Matrix total = tube(g, omega, wall, kConeDuctM, duct) * element(resistance) * tube(g, omega, wall + kFoam * hz, length, duct * kConeArea);
+        return radiatedMagnitude(g, total, omega, duct * kConeArea, duct, kManifoldSource, std::exp(blur * (kConeDuctM + length)));
     }
 
     // La boîte, et les parois par où elle fuit.
@@ -142,10 +140,10 @@ double pathMagnitude(AirFilter filter, const IntakeGeometry& g, double hzAsked) 
     const double snorkel = duct * kSnorkelArea;
     const double half = 0.5 * boxLength;
     const double boxAlpha = wall + kPaper * hz;
-    const Matrix line = tube(omega, wall, kDuctLengthM, duct) * tube(omega, boxAlpha, half, boxArea) * element(resistance) * tube(omega, boxAlpha, half, boxArea) * tube(omega, wall, kSnorkelLengthM, snorkel);
-    const double through = radiatedMagnitude(line, omega, snorkel, duct, kManifoldSource, std::exp(blur * (kDuctLengthM + boxLength + kSnorkelLengthM)));
+    const Matrix line = tube(g, omega, wall, kDuctLengthM, duct) * tube(g, omega, boxAlpha, half, boxArea) * element(resistance) * tube(g, omega, boxAlpha, half, boxArea) * tube(g, omega, wall, kSnorkelLengthM, snorkel);
+    const double through = radiatedMagnitude(g, line, omega, snorkel, duct, kManifoldSource, std::exp(blur * (kDuctLengthM + boxLength + kSnorkelLengthM)));
     const double bareLength = kDuctLengthM + kSnorkelLengthM;
-    const double open = radiatedMagnitude(tube(omega, wall, bareLength, duct), omega, duct, duct, kManifoldSource, std::exp(blur * bareLength));
+    const double open = radiatedMagnitude(g, tube(g, omega, wall, bareLength, duct), omega, duct, duct, kManifoldSource, std::exp(blur * bareLength));
     const double lossDb = std::max(20.0 * std::log10(kBoxWallKgM2 * hz) - kMassLawOffsetDb, 3.0);
     const double leak = open * std::pow(10.0, -lossDb / 20.0);
     return std::sqrt(through * through + leak * leak);

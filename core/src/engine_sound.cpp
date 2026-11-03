@@ -372,6 +372,13 @@ struct EngineSound::State {
     float crossover = 0.0f;
     bool twoPaths = false;
     float linePressure = 0.0f;
+    /**
+     * L'air du jour, rapporté à l'air de référence : σ = ρ/ρ₀ et √θ. Toute source rayonne dans cet air : un débit en ρ·Q̇/4πr,
+     * une paroi en ρc·v. À même température les deux valent σ, et d'une température du réglage à l'autre ils ne diffèrent que de
+     * √θ, 0,4 dB au plus : un seul facteur σ sur toutes les sources à 1 m (`stems`). Exactement 1 dans l'air de référence.
+     */
+    float airDensity = 1.0f;
+    float airSound = 1.0f;
     float exhaustLaw = 1.0f;
     float lineGain = 1.0f;
     float pumpLevel = 0.3f;
@@ -650,6 +657,8 @@ struct EngineSound::State {
         const float cylinder = km::max(p.boreM * p.boreM * p.strokeM, 1e-6f);
         // Le débit crête d'une bouffée : le volume rejeté, sur sa durée. La ligne fait le reste.
         linePressure = kBlowVolume * 0.7854f * cylinder / blowdownBase * kMonopoleAt1m;
+        airDensity = p.car.air.densityRatio;
+        airSound = p.car.air.soundSpeedRatio;
         jetShape = km::sqrt(km::coerceIn(kReferenceCylinder / cylinder, 0.15f, 3.0f));
         turbulence.set(km::coerceIn(900.0f * jetShape, 350.0f, 1800.0f), 0.6f, sr);
         popBlast.set(spec.popCutoffHz, 0.7f, sr);
@@ -679,13 +688,13 @@ struct EngineSound::State {
     void applyCarburetor(const EngineProfile& p) {
         const float radius = p.carbThroatM * 0.5f;
         carbArea = static_cast<float>(km::kPi) * radius * radius;
-        const float mouthOut = km::sqrt(kCarbHissK * carbArea / (4.0f * static_cast<float>(km::kPi))) * acoustics::kAirDensity / kCarbSoundMs;
+        const float mouthOut = km::sqrt(kCarbHissK * carbArea / (4.0f * static_cast<float>(km::kPi))) * acoustics::kAirDensity / (kCarbSoundMs * airSound);
         carbPa = mouthOut * (carbMulti ? kCarbOpenHiss : kCarbBoxedHiss);
         carbLobeMean = 2.0f / static_cast<float>(km::kPi) * (p.rotary ? kPortIvc - kPortIvo : kIvc - kIvo);
         // La crête d'une bouffée dans un corps : un rotor en fait passer deux par cycle.
         carbCrestShare = carbLobeMean * (carbMulti ? static_cast<float>(p.firingCount / p.carbThroats) : 1.0f);
         if (carbMulti) {
-            inletTone.set(kCarbSoundMs / (4.0f * (p.carbRunnerM + 0.6f * radius)), 1.3f, sr);
+            inletTone.set(kCarbSoundMs * airSound / (4.0f * (p.carbRunnerM + 0.6f * radius)), 1.3f, sr);
             carbTuned = true;
         }
     }
@@ -734,6 +743,9 @@ struct EngineSound::State {
             geometry.displacementM3 = 0.7854 * static_cast<double>(p.boreM) * p.boreM * p.strokeM * p.cylinders;
             geometry.stackM = static_cast<double>(p.stackM);
             geometry.stackRadiusM = static_cast<double>(p.stackRadiusM);
+            // L'air du jour : exactement 343 m/s et 1,2 kg/m³ dans l'air de référence.
+            geometry.soundSpeedMs = geometry.soundSpeedMs * static_cast<double>(p.car.air.soundSpeedRatio);
+            geometry.densityKgM3 = geometry.densityKgM3 * static_cast<double>(p.car.air.densityRatio);
             const std::vector<float>& inlet = intakePath.compute(p.airFilter, geometry);
             intakeResponse.setImpulse(inlet.data(), static_cast<int>(inlet.size()));
             // Sans boîte, il s'ouvre dans le compartiment moteur, et en sort avec lui.
@@ -1075,7 +1087,7 @@ struct EngineSound::State {
         const float radius = a.car.outletRadiusM;
         outletArea = static_cast<float>(km::kPi) * radius * radius;
         jetMean = flowNow / paths / outletArea;
-        jetDensity = 1.204f / hot;
+        jetDensity = 1.204f * airDensity / hot;
         field.setJetSpeed(km::min(jetMean, 200.0f));
 
         // Le bruit d'écoulement dans le silencieux ne traverse plus rien : il suit la vitesse (Selamet : 57 dB par décade de régime).
@@ -1680,6 +1692,10 @@ struct EngineSound::State {
         eventGain += eventGainStep;
         gain += gainStep;
 
+        // Tout rayonne dans l'air du jour (voir `airDensity`). Les supports moteur, eux, ne passent pas par l'air.
+        if (airDensity != 1.0f) {
+            for (float& s : stems) s *= airDensity;
+        }
         float l = 0.0f, r = 0.0f;
         field.process(stems, l, r);
         if (cabinActive) {

@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "revforge/air_filter.hpp"
+#include "revforge/atmosphere.hpp"
 #include "revforge/carburetor.hpp"
 #include "revforge/driving_model.hpp"
 #include "revforge/valvetrain.hpp"
@@ -66,7 +67,8 @@ double naturalBmep(const EngineConfig& e) {
 double carburetorBrakeShare(const EngineConfig& e, double rpm, double shape) {
     const CarburetorSpec carb = carburetorSpecOf(e);
     constexpr double kAtmosphereBar = 1e5;
-    const double drop = carburetorDropPa(carb, liters(e) * 1e-3, rpm, kCarburetorVolumetric * shape) / kAtmosphereBar;
+    // La perte, en part de l'atmosphère du jour, d'où part l'air.
+    const double drop = carburetorDropPa(carb, liters(e) * 1e-3, rpm, kCarburetorVolumetric * shape) / (kAtmosphereBar * ambientAirOf(e).pressureRatio);
     const double k = rpm / 1000.0;
     const double friction = (0.9 + 0.12 * k + 0.03 * k * k) * (isRotary(e) ? kRotaryFrictionShare : 1.0);
     const double brake = naturalBmep(e) * shape;
@@ -94,7 +96,8 @@ double breathing(const EngineConfig& e, double rpm) {
         const double excess = std::max(pistonSpeed - kPistonSpeedLimit, 0.0);
         shape *= std::max(1.0 - 0.012 * excess * excess, 0.55);
         // Deux soupapes au lieu de quatre : le gaz qui passe mal, calculé depuis la section et la vitesse du piston.
-        if (e.valvetrain() == Camshaft::Sohc) shape *= sohcBreathingRatio(static_cast<double>(e.boreMm), static_cast<double>(e.strokeMm()), rpm);
+        // L'indice de Mach se compte dans l'air du jour : 343 m/s à 20 °C.
+        if (e.valvetrain() == Camshaft::Sohc) shape *= sohcBreathingRatio(static_cast<double>(e.boreMm), static_cast<double>(e.strokeMm()), rpm, ambientAirOf(e).soundSpeedMs);
     }
     // Une ligne libre gagne en haut, mais perd la contre-pression qui aide en bas.
     const double fraction = clamp(rpm / redline, 0.0, 1.0);
@@ -245,6 +248,7 @@ EngineProfile Powertrain::profile() const {
     EngineProfile p = electric ? electricProfile() : engine.toProfile();
     p.exhaustScale = exhaustScaleOf(car);
     p.car = carAcousticsOf(car, p);
+    p.car.air = airAcousticsOf(ambientAirOf(engine));
     return p;
 }
 
@@ -259,13 +263,19 @@ Powertrain referencePowertrain() {
 }
 
 TurboSpec turboSpecOf(const Powertrain& p) {
-    TurboSpec spec = turboSpecFor(p.engine, breathing(p.engine, 0.88 * static_cast<double>(p.engine.redlineRpm)));
+    // Dimensionné dans l'air de référence : en altitude ou par grand froid, c'est le même turbo.
+    const EngineConfig sized = withReferenceAir(p.engine);
+    TurboSpec spec = turboSpecFor(sized, breathing(sized, 0.88 * static_cast<double>(p.engine.redlineRpm)));
     // Le turbo reste le même, dimensionné sur la voiture d'origine : seul change l'air qu'il reçoit.
     if (p.engine.airFilter != AirFilter::Stock) {
         spec.filterDrop *= airFilterDropShare(p.engine.airFilter);
         spec.inletFilter = p.engine.airFilter;
         spec.inletPlacement = placementOf(p.car);
     }
+    const AmbientAir air = ambientAirOf(p.engine);
+    spec.ambientPa = air.pressurePa;
+    spec.ambientK = air.temperatureK;
+    spec.pipe.ambientK = air.temperatureK;
     return spec;
 }
 
@@ -300,11 +310,47 @@ double withAirFilter(const Powertrain& p, double rpm, double boost, double brake
     return (brakeNm + friction) * fill - friction + (stockDrop - drop) * liters(e) * 1e-3 / (4.0 * kPi);
 }
 
+/**
+ * L'air du jour : l'air piégé change, les frottements restent. Dans l'air de référence, rien ne s'exécute : le couple de
+ * référence est celui que calibrent tous les moteurs réels de la doc.
+ */
+double withAmbientAir(const Powertrain& p, double rpm, double brakeNm, double boost) {
+    const double share = ambientChargeShare(p, rpm, boost);
+    if (share == 1.0) return brakeNm;
+    const double friction = frictionTorqueNm(p, rpm);
+    return (brakeNm + friction) * share - friction;
+}
+
 }  // namespace
 
+Powertrain withReferenceAir(const Powertrain& p) {
+    Powertrain out = p;
+    out.engine = withReferenceAir(p.engine);
+    return out;
+}
+
+double ambientChargeShare(const Powertrain& p, double rpm, double boost) {
+    if (p.electric) return 1.0;
+    const EngineConfig& e = p.engine;
+    const AmbientAir air = ambientAirOf(e);
+    if (air.reference()) return 1.0;
+    // Le compartiment moteur réchauffe d'autant l'air de n'importe quel jour.
+    const double rise = airFilterRiseK(e.airFilter, placementOf(p.car), ratedRegime(e, rpm));
+    switch (e.aspiration) {
+        case Aspiration::Turbo:
+            return turboAmbientChargeShare(static_cast<double>(e.boostBar), boost, rise, clamp(ratedRegime(e, rpm), 0.0, 1.5), air.pressurePa, air.temperatureK);
+        case Aspiration::Supercharger:
+            return superchargerAmbientChargeShare(superchargerSpecOf(p), rpm, breathing(e, rpm), boost);
+        case Aspiration::Natural: break;
+    }
+    return trappedAirShare(air.pressureRatio, kInletK + rise, air.temperatureK + rise);
+}
+
 double intakeAirK(const Powertrain& p, double rpm) {
-    if (p.electric) return kInletK;
-    return kInletK + airFilterRiseK(p.engine.airFilter, placementOf(p.car), ratedRegime(p.engine, rpm));
+    // L'air du jour : 293 K à 20 °C, comme l'air de référence.
+    const double ambientK = ambientAirOf(p.engine).temperatureK;
+    if (p.electric) return ambientK;
+    return ambientK + airFilterRiseK(p.engine.airFilter, placementOf(p.car), ratedRegime(p.engine, rpm));
 }
 
 double intakeDropPa(const Powertrain& p, double rpm) {
@@ -320,7 +366,9 @@ double intakeDropPa(const Powertrain& p, double rpm) {
         const double flow = superchargerSteady(spec, rpm, breathing(e, rpm)).flow;
         return spec.filterDrop * flow * flow;
     }
-    const double flow = naturalFlowKgS(e, rpm) * kInletK / intakeAirK(p, rpm);
+    // Le débit de l'air de référence, puis ce qu'en laisse l'air du jour.
+    double flow = naturalFlowKgS(e, rpm) * kInletK / (kInletK + airFilterRiseK(e.airFilter, placementOf(p.car), ratedRegime(e, rpm)));
+    if (!referenceAirOf(e)) flow *= ambientChargeShare(p, rpm, 0.0);
     return naturalFilterCoefficient(liters(e) * 1e-3, naturalFlowKgS(e, kRatedShare * static_cast<double>(e.redlineRpm))) * flow * flow * airFilterDropShare(e.airFilter);
 }
 
@@ -328,13 +376,18 @@ double breathingOf(const Powertrain& p, double rpm) { return breathing(p.engine,
 
 SuperchargerSpec superchargerSpecOf(const Powertrain& p) {
     const double redline = static_cast<double>(p.engine.redlineRpm);
-    SuperchargerSpec spec = superchargerSpecFor(p.engine, breathing(p.engine, kVolumetricSizingShare * redline), breathing(p.engine, kSuperchargerRatedShare * redline));
+    // Comme le turbo : dimensionné dans l'air de référence.
+    const EngineConfig sized = withReferenceAir(p.engine);
+    SuperchargerSpec spec = superchargerSpecFor(sized, breathing(sized, kVolumetricSizingShare * redline), breathing(sized, kSuperchargerRatedShare * redline));
     // Comme le turbo : le compresseur reste celui du papier d'origine, seul change l'air qu'il reçoit.
     if (p.engine.airFilter != AirFilter::Stock) {
         spec.filterDrop *= airFilterDropShare(p.engine.airFilter);
         spec.inletFilter = p.engine.airFilter;
         spec.inletPlacement = placementOf(p.car);
     }
+    const AmbientAir air = ambientAirOf(p.engine);
+    spec.ambientPa = air.pressurePa;
+    spec.ambientK = air.temperatureK;
     return spec;
 }
 
@@ -358,19 +411,20 @@ double fullLoadTorqueNm(const Powertrain& p, double rpm, double boost) {
     // Sous le ralenti, la combustion devient instable : le couple s'effondre.
     const double idle = idleRpmOf(p);
     const double under = rpm < idle ? (rpm / idle) * (rpm / idle) : 1.0;
+    // Tout ce qui suit est calibré dans l'air de référence ; l'air du jour passe ensuite par `withAmbientAir`.
     if (e.aspiration == Aspiration::Natural) {
         const double natural = bmepToNm(e, naturalBmep(e)) * breathing(e, rpm) * under;
-        return e.airFilter == AirFilter::Stock ? natural : withAirFilter(p, rpm, boost, natural);
+        return withAmbientAir(p, rpm, e.airFilter == AirFilter::Stock ? natural : withAirFilter(p, rpm, boost, natural), boost);
     }
     const double base = bmepToNm(e, naturalBmep(e) * kTurboCompressionLoss);
     // Le compresseur : l'air admis, tel qu'il sort de son calcul. Ce qu'il prend au vilebrequin se compte à part, comme le pompage.
     if (e.aspiration == Aspiration::Supercharger) {
         const double shape = breathing(e, rpm);
-        return base * shape * superchargerAirShare(superchargerSpecOf(p), rpm, shape, boost) * under;
+        return withAmbientAir(p, rpm, base * shape * superchargerAirShare(superchargerSpecOf(p), rpm, shape, boost) * under, boost);
     }
     const double gain = kBoostEfficiency * static_cast<double>(e.boostBar);
     const double charged = std::min(base * breathing(e, rpm) * (1.0 + gain * boost), base * (1.0 + gain) * kPlateauShare) * under;
-    return e.airFilter == AirFilter::Stock ? charged : withAirFilter(p, rpm, boost, charged);
+    return withAmbientAir(p, rpm, e.airFilter == AirFilter::Stock ? charged : withAirFilter(p, rpm, boost, charged), boost);
 }
 
 double torqueCurveNm(const Powertrain& p, double rpm) {
@@ -399,7 +453,10 @@ double pumpingTorqueNm(const Powertrain& p, double rpm, double manifold) {
     if (p.electric) return 0.0;
     const double idle = idleRpmOf(p);
     const double above = clamp((rpm - idle) / 1500.0, 0.0, 1.0);
-    return bmepToNm(p.engine, 3.2) * above * (1.0 - clamp(manifold, 0.0, 1.0));
+    const double pumping = bmepToNm(p.engine, 3.2) * above * (1.0 - clamp(manifold, 0.0, 1.0));
+    // Le collecteur se vide sous l'atmosphère du jour, et le moteur refoule contre elle : (p_atm − p_coll) = p_atm·(1 − remplissage).
+    const AmbientAir air = ambientAirOf(p.engine);
+    return air.reference() ? pumping : pumping * air.pressureRatio;
 }
 
 double engineInertia(const Powertrain& p) {
@@ -439,19 +496,24 @@ double wheelRadiusM(const CarConfig& car) {
 double roadLoadN(const Powertrain& p, double speedMs) {
     const BodySpec& body = bodySpec(p.car.body);
     const double rolling = speedMs > 0.1 ? kRollingResistance * static_cast<double>(p.car.massKg) * kGravity : 0.0;
-    return 0.5 * kAirDensity * body.dragArea * speedMs * speedMs + rolling;
+    // La traînée suit la masse volumique de l'air du jour : exactement 1,2 kg/m³ à 20 °C au niveau de la mer.
+    const double density = kAirDensity * airDensityRatioOf(p.engine);
+    return 0.5 * density * body.dragArea * speedMs * speedMs + rolling;
 }
 
 Gearing gearingOf(const Powertrain& p) {
     const BodySpec& body = bodySpec(p.car.body);
-    // Changer de filtre ne change pas la boîte : elle reste celle du moteur d'origine.
+    // Changer de filtre ne change pas la boîte : elle reste celle du moteur d'origine. Ni monter en altitude : elle est
+    // choisie dans l'air de référence, pour la puissance et pour la traînée.
     Powertrain stock;
     const bool otherFilter = !p.electric && p.engine.airFilter != AirFilter::Stock;
-    if (otherFilter) {
-        stock = p;
-        stock.engine.airFilter = AirFilter::Stock;
+    const bool otherAir = !referenceAirOf(p.engine);
+    if (otherFilter || otherAir) {
+        stock = withReferenceAir(p);
+        if (otherFilter) stock.engine.airFilter = AirFilter::Stock;
     }
-    const PowerSummary peak = powerSummary(otherFilter ? stock : p);
+    const Powertrain& sized = otherFilter || otherAir ? stock : p;
+    const PowerSummary peak = powerSummary(sized);
     const bool rearOrAll = p.car.drive != Drive::Front;
     const bool allWheels = p.car.drive == Drive::All;
     const GearboxKind kind = p.electric ? GearboxKind::Reducer : p.gearbox.kind;
@@ -461,7 +523,7 @@ Gearing gearingOf(const Powertrain& p) {
     double low = 5.0, high = 150.0;
     for (int i = 0; i < 40; ++i) {
         const double middle = 0.5 * (low + high);
-        (roadLoadN(p, middle) * middle > available ? high : low) = middle;
+        (roadLoadN(sized, middle) * middle > available ? high : low) = middle;
     }
     const double radius = wheelRadiusM(p.car);
     GearboxContext context;

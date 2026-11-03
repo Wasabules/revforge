@@ -1,6 +1,7 @@
 // Interface C du moteur pour WebAssembly : un seul moteur, piloté depuis l'AudioWorklet.
 #include <new>
 
+#include "revforge/atmosphere.hpp"
 #include "revforge/carburetor.hpp"
 #include "revforge/driving_model.hpp"
 #include "revforge/engine_sound.hpp"
@@ -279,7 +280,8 @@ float rf_turbine() { return g_sound->turbine(); }
 float rf_turbo_release() { return g_sound->turboRelease(); }
 /** L'arbre et les pressions, en unités physiques : tr/min, bar au-dessus de l'atmosphère, °C, kg/s. */
 float rf_turbo_rpm() { return static_cast<float>(g_model->turbo().state().shaftOmega * 60.0 / (2.0 * 3.141592653589793)); }
-static float gaugeBar(double pascals) { return static_cast<float>((pascals - 101325.0) / 1e5); }
+// Comme un manomètre de suralimentation : au-dessus de l'atmosphère du jour (101 325 Pa à 0 m, voir atmosphere.hpp).
+static float gaugeBar(double pascals) { return static_cast<float>((pascals - ambientAirOf(g_powertrain.engine).pressurePa) / 1e5); }
 // Le chemin de l'air est le même avec un compresseur : mêmes jauges, lues là où il est.
 float rf_turbo_charge() { return gaugeBar(g_model->supercharged() ? g_model->supercharger().state().chargePa : g_model->turbo().state().chargePa); }
 float rf_turbo_plenum() { return gaugeBar(g_model->supercharged() ? g_model->supercharger().state().plenumPa : g_model->turbo().state().plenumPa); }

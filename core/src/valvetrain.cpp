@@ -28,8 +28,7 @@ constexpr double kMeanLift = 2.0 / kPi;
 constexpr double kThroatPerHead = 0.636;
 constexpr double kDischarge = 0.7;
 
-// L'air froid, et le gaz à l'ouverture de l'échappement (1250 K).
-constexpr double kSoundColdMs = 343.0;
+// Le gaz à l'ouverture de l'échappement (1250 K). L'air admis, lui, est celui du jour : `intakeSoundMs`, 343 m/s à 20 °C.
 constexpr double kSoundExhaustMs = 691.0;
 // fill(Z) = (1 + (Z / 0,8)^4)^(-1/4) : l'ajustement de l'intégration, à 1,8 % près de Z = 0,2 à 2.
 constexpr double kFillingKnee = 0.8;
@@ -97,20 +96,20 @@ double exhaustLossBar(double z) {
     return a + (b - a) * (position - static_cast<double>(index));
 }
 
-double sohcFillingRatio(double boreMm, double strokeMm, double rpm) {
+double sohcFillingRatio(double boreMm, double strokeMm, double rpm, double intakeSoundMs) {
     const ValveTrainGeometry two = valveTrainOf(Camshaft::Sohc, boreMm);
     const ValveTrainGeometry four = valveTrainOf(Camshaft::Dohc, boreMm);
-    return valveFilling(machIndex(two.intakeAreaMm2, boreMm, strokeMm, rpm, kSoundColdMs)) /
-           valveFilling(machIndex(four.intakeAreaMm2, boreMm, strokeMm, rpm, kSoundColdMs));
+    return valveFilling(machIndex(two.intakeAreaMm2, boreMm, strokeMm, rpm, intakeSoundMs)) /
+           valveFilling(machIndex(four.intakeAreaMm2, boreMm, strokeMm, rpm, intakeSoundMs));
 }
 
-double sohcBreathingRatio(double boreMm, double strokeMm, double rpm) {
+double sohcBreathingRatio(double boreMm, double strokeMm, double rpm, double intakeSoundMs) {
     const ValveTrainGeometry two = valveTrainOf(Camshaft::Sohc, boreMm);
     const ValveTrainGeometry four = valveTrainOf(Camshaft::Dohc, boreMm);
     const double lossTwo = exhaustLossBar(machIndex(two.exhaustAreaMm2, boreMm, strokeMm, rpm, kSoundExhaustMs));
     const double lossFour = exhaustLossBar(machIndex(four.exhaustAreaMm2, boreMm, strokeMm, rpm, kSoundExhaustMs));
     const double lost = lossTwo + sohcFrictionDeltaBar(strokeMm, rpm);
-    return sohcFillingRatio(boreMm, strokeMm, rpm) * (1.0 - lost / kExhaustLossReferenceBar) / (1.0 - lossFour / kExhaustLossReferenceBar);
+    return sohcFillingRatio(boreMm, strokeMm, rpm, intakeSoundMs) * (1.0 - lost / kExhaustLossReferenceBar) / (1.0 - lossFour / kExhaustLossReferenceBar);
 }
 
 double sohcTuningRatio(double boreMm) {

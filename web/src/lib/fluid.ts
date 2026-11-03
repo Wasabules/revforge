@@ -8,7 +8,7 @@
  */
 import type { EngineConfig } from './config';
 import { CELL_INLET, CELL_OPEN, CELL_WALL, FluidField } from './fluidField';
-import { GasNetwork, type GasInputs, type PlacedSection, T_AMB } from './fluidGas';
+import { GasNetwork, type GasInputs, type PlacedSection } from './fluidGas';
 
 /** Panache : 1,4 m sur 0,9 m derrière la voiture. */
 const PLUME_NX = 84;
@@ -127,9 +127,9 @@ class Lfsr {
   }
 }
 
-/** Ce qui impose de reconstruire le réseau : les réglages qui changent ses pièces. */
+/** Ce qui impose de reconstruire le réseau : les réglages qui changent ses pièces, et l'air du jour dans lequel il s'ouvre. */
 export const gasKey = (config: EngineConfig): string =>
-  `${config.cylinders}|${config.layout}|${config.displacementCc}|${config.boreMm}|${config.exhaust}|${config.aspiration}|${config.fuel}|${config.body}|${config.boostBar}|${config.turboRelease}|${config.turboSize}|${config.redlineRpm}|${config.turboPipeMm}|${config.camshaft}|${config.fuelSystem}|${config.airFilter}|${config.placement}|${config.superchargerKind}|${config.antiLag}`;
+  `${config.cylinders}|${config.layout}|${config.displacementCc}|${config.boreMm}|${config.exhaust}|${config.aspiration}|${config.fuel}|${config.body}|${config.boostBar}|${config.turboRelease}|${config.turboSize}|${config.redlineRpm}|${config.turboPipeMm}|${config.camshaft}|${config.fuelSystem}|${config.airFilter}|${config.placement}|${config.superchargerKind}|${config.antiLag}|${config.ambientC}|${config.altitudeM}`;
 
 export class GasFlow {
   readonly net = new GasNetwork();
@@ -211,6 +211,8 @@ export class GasFlow {
     if (!this.active) return;
     const net = this.net;
     net.build(config, order);
+    // Le panache monte dans l'air du jour : sa poussée se compte sur sa température.
+    this.plume.ambient = net.tAmb;
 
     this.chambers = [];
     this.chamberOf = [];
@@ -267,7 +269,7 @@ export class GasFlow {
     if (running) {
       net.prefill(heat);
       for (const chamber of this.chambers) {
-        const before = net.temp[chamber.section.first] - T_AMB;
+        const before = net.temp[chamber.section.first] - net.tAmb;
         chamber.field.temp.fill(before);
         chamber.field.smoke.fill(1);
       }
@@ -357,7 +359,7 @@ export class GasFlow {
     const net = this.net;
     const field = this.plume;
     const speed = JET_LIMIT * Math.tanh(net.exitU / JET_LIMIT);
-    const temp = net.exitT - T_AMB;
+    const temp = net.exitT - net.tAmb;
     // Ce qu'on voit sortir : presque rien sur un moteur chaud, de la vapeur à froid, des suies d'un diesel en charge.
     const burnt = net.exitY;
     const coldness = Math.max(0, Math.min(1, (0.32 - inputs.heat) / 0.26));
@@ -406,9 +408,9 @@ export class GasFlow {
       const before = section.first - 1;
       const after = section.first + section.count;
       const uIn = CHAMBER_LIMIT * Math.tanh(net.u[before] / CHAMBER_LIMIT);
-      const tIn = net.temp[before] - T_AMB;
+      const tIn = net.temp[before] - net.tAmb;
       const yIn = net.y[before];
-      const tOut = net.temp[after] - T_AMB;
+      const tOut = net.temp[after] - net.tAmb;
       const yOut = net.y[after];
       const uOut = net.u[after];
       const steps = Math.min(4, 1 + Math.floor((Math.abs(uIn) * seconds) / (3 * field.h)));

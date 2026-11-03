@@ -68,6 +68,8 @@ private:
     double idleCircuitGps_ = 0.0;
     double idleRpm_ = 1.0;
     double carbAirShare_ = 1.0;
+    // L'air du jour, rapporté à l'air de référence : ce qu'il reste d'air dans un litre de cylindrée (atmosphere.hpp).
+    double ambientAirShare_ = 1.0;
 };
 
 /** L'état du moteur à ce pas, tel que `DrivingModel` le donne. */

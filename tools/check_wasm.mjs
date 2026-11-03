@@ -622,4 +622,30 @@ for (const [name, system] of [['single', 1], ['multi', 2]]) {
   rf.rf_crank();
   check('démarrage, V14 à 45°', render(rf, 5, 128), native('--cylinders', '14', '--layout', 'v', '--cc', '7000', '--bore', '86', '--redline', '6000', '--exhaust', 'sport', '--routing', 'dual', '--body', 'coupe', '--mass', '2400', '--rim', '19', '--drive', 'rear', '--placement', 'front', '--insulation', 'light', '--scenario', 'start'));
 }
+// L'air du jour : `portable::pow` de l'atmosphère type, l'arbre du turbo à 3000 m, un tube dans l'air froid, un carburateur en
+// altitude, et ce qu'ils consomment.
+for (const [label, changes, options, pipe] of [
+  ['turbo à 3000 m', { altitudeM: 3000 }, ['--altitude', '3000'], 400],
+  ['turbo par -25 °C, tube de 2500 mm', { ambientC: -25 }, ['--ambient', '-25'], 2500],
+]) {
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1400, 18, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  tune(rf, changes);
+  rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6500, EXHAUST.sport, 1, 0, 0, 0, 0, 1.3, ROUTING.single, TURBO.medium, 0, 0, pipe, 0, 0);
+  check(`air du jour, ${label}`, turboStab(rf, 24), native(...turboArgs, '--turbo', 'medium', '--release', 'dump_valve', '--turbo-pipe', String(pipe), ...options));
+}
+{
+  const carb = () => {
+    const rf = citadine();
+    tune(rf, { ambientC: 32, altitudeM: 2400 });
+    rf.rf_set_config(4, LAYOUT.inline, 1360, 75, 6200, EXHAUST.stock, 0, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0, FUEL_SYSTEM.single);
+    rf.rf_set_mode(FRESH);
+    return rf;
+  };
+  const args = ['--preset', 'city_14', '--carb', 'single', '--ambient', '32', '--altitude', '2400', '--scenario', 'lap', '--seconds', '30'];
+  check('air du jour, carburateur à 2400 m', render(carb(), 30, 128), native(...args));
+  const rf = carb();
+  driveLikeNative(rf, 30);
+  checkFigures('air du jour, carburateur à 2400 m', rf, nativeFigures(...args));
+}
 process.exit(failed ? 1 : 0);

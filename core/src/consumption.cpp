@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "revforge/atmosphere.hpp"
 #include "revforge/powertrain.hpp"
 
 namespace revforge {
@@ -35,6 +36,8 @@ constexpr double kEnrichAtAnyPower = 0.4;
 // Air par litre de cylindrée à la pression atmosphérique, et remplissage au pic de couple.
 constexpr double kAirGPerL = 1.2;
 constexpr double kPeakVolumetric = 0.9;
+// Le point nominal, pour l'air du jour : c'est là que le compartiment moteur chauffe ce qu'aspire un filtre sous le capot.
+constexpr double kRatedShare = 0.88;
 
 // Huile. Évaporation et projection sur la chemise, qui suivent le régime, et passage aux segments, qui suit la charge.
 // Un ordre de grandeur, à un facteur trois près : voir docs/modele.md.
@@ -74,10 +77,14 @@ void ConsumptionModel::configure(const Powertrain& p) {
     baseEfficiency_ = diesel_ ? kEfficiencyDiesel : (boosted ? kEfficiencyPetrolTurbo : kEfficiencyPetrol);
     if (isRotary(p.engine)) baseEfficiency_ *= rotaryEfficiencyShare(p.engine.aspiration);
     fullRichness_ = diesel_ ? 1.0 : 1.0 / (boosted ? kFullLoadLambdaTurbo : kFullLoadLambda);
-    throttlingNm_ = diesel_ ? 0.0 : kThrottlingBar * kAtmosphere * litres_ * 1e-3 / (4.0 * kPi);
+    // Le papillon fermé retient au plus l'atmosphère du jour : en altitude, moins de pompage à charge partielle.
+    throttlingNm_ = diesel_ ? 0.0 : kThrottlingBar * kAtmosphere * ambientAirOf(p.engine).pressureRatio * litres_ * 1e-3 / (4.0 * kPi);
     peakNaturalNm_ = 1.0;
     peakGrossW_ = 1.0;
+    ambientAirShare_ = 1.0;
     if (electric_) return;
+    // Un litre de cylindrée avale l'air du jour : les courbes ci-dessous en sont déjà diminuées, pas leur rapport.
+    ambientAirShare_ = ambientChargeShare(p, kRatedShare * redline_, 0.0);
     // Calculer ce qui vaut pour tout le régime une fois par réglage : `fullLoadTorqueNm` est trop lent pour chaque pas.
     for (int i = 0; i < kCurvePoints; ++i) {
         const double rpm = redline_ * i / (kCurvePoints - 1);
@@ -154,7 +161,7 @@ double ConsumptionModel::airGps(double rpm, double load, double fullGrossNm) con
     // Le couple à pleine charge suit l'air que le moteur avale : sa courbe donne le remplissage, et son rapport à la
     // courbe atmosphérique la pression du turbo. Un diesel n'est pas étranglé : il avale tout, quelle que soit la charge.
     const double admitted = (diesel_ ? 1.0 : clamp(load, 0.0, 1.0)) * std::max(fullGrossNm, 0.0) / peakNaturalNm_;
-    const double air = kAirGPerL * litres_ * rpm / 120.0 * kPeakVolumetric * admitted;
+    const double air = kAirGPerL * ambientAirShare_ * litres_ * rpm / 120.0 * kPeakVolumetric * admitted;
     return carburetor_ ? air * carbAirShare_ : air;
 }
 

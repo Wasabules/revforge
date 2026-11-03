@@ -13,6 +13,7 @@
  * il ne le remplace pas et n'agit jamais sur le son. Il n'y a qu'un turbo : celui du C++.
  */
 import { architectureOf, type Architecture } from './architecture';
+import { ambientAirOf } from './atmosphere';
 import { carburetorOf } from './carburetor';
 import type { EngineConfig, Exhaust, Layout } from './config';
 import { EXHAUST_LINES, TURBO_SCALE } from './exhaustLines';
@@ -539,6 +540,15 @@ export class GasNetwork {
   private inletRho = RHO_ATM;
   /** Sa température (K), pour qui la montre. */
   inletK = T_AMB;
+  /**
+   * L'air du jour (`atmosphere.ts`) : pression (Pa) et température (K) de l'atmosphère, sa masse volumique, son énergie par
+   * volume, et le rapport qui ramène une pression relative du turbo à l'atmosphère du jour. Exactement `P_ATM`, `T_AMB`… à 20 °C, 0 m.
+   */
+  pAtm = P_ATM;
+  tAmb = T_AMB;
+  private rhoAtm = RHO_ATM;
+  private eAtm = E_ATM;
+  private boostScale = 1;
   /** Pas de calcul faits à la dernière image. */
   lastSteps = 0;
   /** Temps physique simulé depuis la dernière construction (s). */
@@ -574,10 +584,17 @@ export class GasNetwork {
     this.banks = architecture && architecture.heads === 2 && count >= 4 ? 2 : 1;
     // Un VR, un W, plus de douze cylindres : leurs collecteurs suivent leur architecture (`applyArchitecture`).
     const own = architecture && (config.layout === 'vr' || config.layout === 'w' || count > 12) ? architecture : null;
+    // L'air du jour : le tube s'ouvre sur lui, l'admission l'avale, la soupape du turbo tient sa pression au-dessus de lui.
+    const air = ambientAirOf(config);
+    this.pAtm = air.pressurePa;
+    this.tAmb = air.temperatureK;
+    this.rhoAtm = this.pAtm / (R * this.tAmb);
+    this.eAtm = this.pAtm / G1;
+    this.boostScale = P_ATM / this.pAtm;
     const filter = AIR_FILTER_GAS[config.airFilter ?? 'stock'];
     const engineAt = config.placement ?? (config.body === 'supercar' ? 'mid' : 'front');
-    this.inletK = T_AMB + filter.bay * BAY_RISE_K[engineAt];
-    this.inletRho = (RHO_ATM * T_AMB) / this.inletK;
+    this.inletK = this.tAmb + filter.bay * BAY_RISE_K[engineAt];
+    this.inletRho = (this.rhoAtm * this.tAmb) / this.inletK;
     const carb = carburetorOf(config);
 
     // Géométrie du cylindre.
@@ -740,7 +757,7 @@ export class GasNetwork {
     this.dA = new Float64Array(n);
     this.dragRate = new Float64Array(n);
     this.wallRate = new Float64Array(n);
-    this.wallT = new Float64Array(n).fill(T_AMB);
+    this.wallT = new Float64Array(n).fill(this.tAmb);
     this.wallDecay = new Float64Array(n);
 
     const runnerFirst = new Int32Array(count);
@@ -967,21 +984,21 @@ export class GasNetwork {
   /** Tout au repos, à la température de l'air. */
   reset(): void {
     for (let i = 0; i < this.n; i++) {
-      this.rho[i] = RHO_ATM;
+      this.rho[i] = this.rhoAtm;
       this.mom[i] = 0;
-      this.ene[i] = E_ATM;
+      this.ene[i] = this.eAtm;
       this.trc[i] = 0;
     }
     for (let z = 0; z < this.zoneCount; z++) {
-      this.zM[z] = RHO_ATM * this.zV[z];
-      this.zE[z] = (P_ATM / G1) * this.zV[z];
+      this.zM[z] = this.rhoAtm * this.zV[z];
+      this.zE[z] = (this.pAtm / G1) * this.zV[z];
       this.zY[z] = 0;
     }
     for (let c = 0; c < this.cylinders; c++) {
       const v = this.volumeAt(this.phase[c] * 4 * Math.PI);
       this.cylV[c] = v;
-      this.cylM[c] = RHO_ATM * v;
-      this.cylU[c] = (P_ATM / G1) * v;
+      this.cylM[c] = this.rhoAtm * v;
+      this.cylU[c] = (this.pAtm / G1) * v;
       this.cylY[c] = 0;
       this.cylBurn[c] = 0;
       this.cylFired[c] = 0;
@@ -1004,17 +1021,17 @@ export class GasNetwork {
     const last = this.lineFirst + this.lineCount;
     for (let i = 0; i < this.n; i++) {
       if (i >= last && i < this.pipeFirst) continue;
-      const t = T_AMB + 120 + hot * this.wallDecay[i];
-      const r = P_ATM / (R * t);
+      const t = this.tAmb + 120 + hot * this.wallDecay[i];
+      const r = this.pAtm / (R * t);
       this.rho[i] = r;
       this.mom[i] = 0;
-      this.ene[i] = E_ATM;
+      this.ene[i] = this.eAtm;
       this.trc[i] = r;
     }
     for (let z = 0; z < this.zonePlenum; z++) {
-      const t = T_AMB + 120 + hot * 0.45;
-      this.zM[z] = (P_ATM / (R * t)) * this.zV[z];
-      this.zE[z] = (P_ATM / G1) * this.zV[z];
+      const t = this.tAmb + 120 + hot * 0.45;
+      this.zM[z] = (this.pAtm / (R * t)) * this.zV[z];
+      this.zE[z] = (this.pAtm / G1) * this.zV[z];
       this.zY[z] = this.zM[z];
     }
     this.primitives();
@@ -1044,11 +1061,11 @@ export class GasNetwork {
       let r = rho[i];
       // Garde-fou : une valeur aberrante ne doit jamais contaminer le reste du tube.
       if (!(r > DENSITY_FLOOR) || !(ene[i] > 0)) {
-        if (!(r >= 0)) r = RHO_ATM;
+        if (!(r >= 0)) r = this.rhoAtm;
         r = Math.max(r, DENSITY_FLOOR);
         rho[i] = r;
         mom[i] = 0;
-        ene[i] = E_ATM;
+        ene[i] = this.eAtm;
         trc[i] = 0;
       }
       const ru = mom[i];
@@ -1075,8 +1092,8 @@ export class GasNetwork {
     for (let z = 0; z < this.zoneCount; z++) {
       // Même garde-fou que pour les cellules.
       if (!(this.zM[z] > 1e-7) || !(this.zE[z] > 0)) {
-        this.zM[z] = RHO_ATM * this.zV[z];
-        this.zE[z] = E_ATM * this.zV[z];
+        this.zM[z] = this.rhoAtm * this.zV[z];
+        this.zE[z] = this.eAtm * this.zV[z];
         this.zY[z] = 0;
       }
       const pressure = (G1 * this.zE[z]) / this.zV[z];
@@ -1118,7 +1135,7 @@ export class GasNetwork {
   private setWalls(heat: number): void {
     // Sous ce modèle, la température des parois vient de `Motion.heat`, qui avance en temps réel.
     const hot = WALL_RISE_K * heat;
-    for (let i = 0; i < this.n; i++) this.wallT[i] = T_AMB + hot * this.wallDecay[i];
+    for (let i = 0; i < this.n; i++) this.wallT[i] = this.tAmb + hot * this.wallDecay[i];
   }
 
   private stepCylinders(inputs: GasInputs): void {
@@ -1127,7 +1144,7 @@ export class GasNetwork {
     const load = inputs.load;
     const plenum = this.zonePlenum;
     let plenumOut = 0;
-    const wallCylinder = T_AMB + 160 * inputs.heat;
+    const wallCylinder = this.tAmb + 160 * inputs.heat;
     const advance = ignitionAdvance(this.diesel, inputs.rpm) * this.advanceScale;
     const duration = burnDegrees(this.diesel, inputs.rpm);
     const antiLag = inputs.antiLag ?? 0;
@@ -1145,8 +1162,8 @@ export class GasNetwork {
       const volume = clearance + boreArea * (crank + rod - crank * Math.cos(radians) - Math.sqrt(rod * rod - crank * crank * sine * sine));
       // Même garde-fou que pour les cellules : un cylindre aberrant repart à l'état de l'air.
       if (!(this.cylM[c] > 1e-9) || !(this.cylU[c] > 0)) {
-        this.cylM[c] = RHO_ATM * this.cylV[c];
-        this.cylU[c] = E_ATM * this.cylV[c];
+        this.cylM[c] = this.rhoAtm * this.cylV[c];
+        this.cylU[c] = this.eAtm * this.cylV[c];
         this.cylY[c] = 0;
       }
       let mass = this.cylM[c];
@@ -1337,12 +1354,13 @@ export class GasNetwork {
     const firstIntake = this.intakeFirst;
     const lastIntake = firstIntake + this.intakeCount - 1;
     const chained = this.airChain !== null;
-    const boostFactor = chained ? 1 + inputs.boost * this.boostBar : 1;
+    // La pression relative du turbo, posée sur l'atmosphère du jour : `boostScale` vaut exactement 1 au niveau de la mer.
+    const boostFactor = chained ? 1 + inputs.boost * this.boostBar * this.boostScale : 1;
     // Le turbo calculé par `TurboCharger` ou le compresseur par `Supercharger` : c'est lui que sent la voiture. Sans lui, le rapport se déduit de la pression.
     const compressorRatio = chained ? (inputs.compressorRatio ?? boostFactor) : 1;
 
     // Papillon : il s'ouvre juste assez pour tenir la pression que demande le remplissage réel.
-    const wanted = this.diesel ? P_ATM * boostFactor : P_ATM * (0.18 + 0.82 * Math.min(inputs.load, 1)) * boostFactor;
+    const wanted = this.diesel ? this.pAtm * boostFactor : this.pAtm * (0.18 + 0.82 * Math.min(inputs.load, 1)) * boostFactor;
     const pZone = this.zP[plenum];
     const tZone = this.zT[plenum];
     // Une face de section variable entre le conduit et le plénum : grande ouverte, c'est un simple
@@ -1378,7 +1396,7 @@ export class GasNetwork {
     this.zY[plenum] += moved * share;
     this.throttleFlow = throttleFlow;
     // Le plénum tiédit au contact du moteur. Sur un turbo, c'est l'air de l'échangeur qui compte : il ne fait que tiédir.
-    this.zE[plenum] += (dt / (chained ? 0.6 : 0.05)) * (T_AMB + 30 * inputs.heat - tZone) * this.zM[plenum] * CV;
+    this.zE[plenum] += (dt / (chained ? 0.6 : 0.05)) * (this.tAmb + 30 * inputs.heat - tZone) * this.zM[plenum] * CV;
 
     if (!chained) return;
 
@@ -1392,11 +1410,11 @@ export class GasNetwork {
     let releaseFlow = 0;
     if (!this.flutter && inputs.release > 0.02) {
       const v = this.releaseCell;
-      if (p[v] > P_ATM) {
+      if (p[v] > this.pAtm) {
         const tv = p[v] / (rho[v] * R);
         orifice[0] = p[v];
         orifice[1] = tv;
-        orifice[2] = P_ATM;
+        orifice[2] = this.pAtm;
         orificeFlux();
         const flow = this.releaseArea * Math.min(inputs.release, 1) * orifice[3];
         const dm = Math.min(flow * dt, 0.2 * rho[v] / invV[v]);
@@ -1729,8 +1747,8 @@ export class GasNetwork {
     const { rho, mom, ene, trc, y, invV, area, dt } = this;
     const face = area[i];
     // L'admission prend l'air là où le filtre va le chercher ; l'échappement, s'il aspire, celui du dehors.
-    reservoir[0] = side < 0 ? this.inletRho : RHO_ATM;
-    reservoir[1] = P_ATM;
+    reservoir[0] = side < 0 ? this.inletRho : this.rhoAtm;
+    reservoir[1] = this.pAtm;
     this.reservoirFlux(i, side);
     const m = side * face * flux[0] * dt;
     const w = invV[i];

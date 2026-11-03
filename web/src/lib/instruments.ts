@@ -4,7 +4,6 @@
  */
 import type { EngineConfig } from './config';
 import type { Telemetry } from './engine';
-import { P_ATM } from './fluidGas';
 import { lang, type Lang } from './i18n.svelte';
 import type { Motion } from './motion';
 
@@ -107,8 +106,8 @@ export class Readings {
     const ready = net !== null && net.n > 0 && net.zP[net.zonePlenum] > 0;
     const turning = running && t.rpm > 150 && !t.cranking && !t.stalled;
     // Moteur à l'arrêt, plus de dépression ni de pression : le collecteur est à l'air libre.
-    const manifold = ready && turning ? (net.zP[net.zonePlenum] - P_ATM) / 1e5 : 0;
-    const back = ready && turning ? (net.zP[net.zoneJoin] - P_ATM) / 1e5 : 0;
+    const manifold = ready && turning ? (net.zP[net.zonePlenum] - net.pAtm) / 1e5 : 0;
+    const back = ready && turning ? (net.zP[net.zoneJoin] - net.pAtm) / 1e5 : 0;
     this.manifoldBar += (manifold - this.manifoldBar) * (1 - Math.exp(-seconds / 0.06));
     // Les bouffées se suivent au temps du gaz : la moyenne aussi, pour que l'aiguille ne batte pas au ralenti.
     this.backBar += (back - this.backBar) * (1 - Math.exp(-seconds / Math.max(0.05 * motion.slow, 0.08)));

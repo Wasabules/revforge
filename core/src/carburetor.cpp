@@ -6,6 +6,7 @@
 #include <cstddef>
 
 #include "portable_math.hpp"
+#include "revforge/atmosphere.hpp"
 
 namespace revforge {
 
@@ -112,6 +113,9 @@ CarburetorSpec carburetorSpecOf(const EngineConfig& e) {
     s.partLambda = 1.0 - s.spread;
     s.fullLambda = (e.aspiration != Aspiration::Natural ? kBestLambdaTurbo : kBestLambda) * (1.0 - s.spread);
     s.pumpG = kPumpCm3PerLitre * litres * kFuelKgM3 / 1000.0;
+    const AmbientAir air = ambientAirOf(e);
+    s.airDensityShare = air.densityRatio;
+    s.airTemperatureShare = air.temperatureRatio;
     return s;
 }
 
@@ -146,9 +150,10 @@ double carburetorDropPa(const CarburetorSpec& spec, double displacementM3, doubl
     const double area = portable::kPi / 4.0 * spec.throatM * spec.throatM;
     // Le débit moyen d'un corps. Sa pression dynamique compte selon le débit : pas le carré de la moyenne, car l'à-coup pèse.
     const double speed = displacementM3 * rpm / 120.0 * volumetric / spec.throats / area;
-    const double head = 0.5 * kAirKgM3 * speed * speed * throatPulsation(spec.sharing);
+    // Le même volume d'air du jour : sa masse volumique et sa vitesse du son (exactement celles de référence à 20 °C, 0 m).
+    const double head = 0.5 * kAirKgM3 * speed * speed * throatPulsation(spec.sharing) * spec.airDensityShare;
     // Au-delà de Mach 0,3, le gaz se comprime : la dépression croît plus vite que v².
-    const double mach2 = 2.0 * head / kAirKgM3 / (kSoundMs * kSoundMs);
+    const double mach2 = 2.0 * head / (kAirKgM3 * spec.airDensityShare) / (kSoundMs * kSoundMs * spec.airTemperatureShare);
     const double compressible = head * (1.0 + mach2 / 4.0);
     const double overPipe = spec.throatM / spec.pipeM;
     const double pipeK = kPipeFriction * spec.pipeLengthM / spec.pipeM + spec.pipeBendsK;
@@ -162,6 +167,8 @@ double carburetorRichness(const CarburetorSpec& spec, double share, double rpm) 
     // La soupape d'enrichissement s'ouvre quand la dépression tombe : elle ne connaît ni la puissance ni la température.
     const double nearFull = clamp((share - 0.85) / 0.15, 0.0, 1.0);
     richness += (1.0 / spec.fullLambda - richness) * nearFull;
+    // Des gicleurs choisis dans l'air de référence : un air moins dense passe moins vite qu'eux, et le mélange s'enrichit.
+    if (spec.airDensityShare != 1.0) richness /= std::sqrt(spec.airDensityShare);
     return richness;
 }
 
@@ -185,7 +192,7 @@ void Carburetor::configure(const CarburetorSpec& spec, double displacementM3) {
     spec_ = spec;
     throatArea_ = portable::kPi / 4.0 * spec.throatM * spec.throatM;
     pulsationRoot_ = std::sqrt(throatPulsation(spec.sharing));
-    chargeG_ = kAirKgM3 * 1000.0 * displacementM3 * spec.plenumShare;
+    chargeG_ = kAirKgM3 * 1000.0 * displacementM3 * spec.plenumShare * spec.airDensityShare;
     torqueShare_ = 1.0;
     primed_ = false;
 }
@@ -239,7 +246,9 @@ void Carburetor::step(const CarburetorInput& in, double dt) {
     }
     const double now = intoCylinders * kStoichiometric / in.airGps;
     lambda_ = now > 0.0 ? 1.0 / now : 0.0;
-    torqueShare_ = torqueOfRichness(now) / torqueOfRichness(settled);
+    // Rapporté au mélange pour lequel les gicleurs ont été choisis : celui de l'air de référence.
+    const double calibrated = spec_.airDensityShare != 1.0 ? settled * std::sqrt(spec_.airDensityShare) : settled;
+    torqueShare_ = torqueOfRichness(now) / torqueOfRichness(calibrated);
 }
 
 }  // namespace revforge
