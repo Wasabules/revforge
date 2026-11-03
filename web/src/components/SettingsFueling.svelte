@@ -3,7 +3,7 @@
   import SettingsSection from './SettingsSection.svelte';
   import { AIR_FILTERS, DIESEL_INJECTIONS, FUEL_SYSTEMS, ON_OFF, isRotary, type EngineConfig } from '../lib/config';
   import type { Spec } from '../lib/engine';
-  import { fixed, t } from '../lib/i18n.svelte';
+  import { fixed, t, whole } from '../lib/i18n.svelte';
 
   /** Alimentation : le carburant (carburateur, injection, diesel), ce qui revient de l'échappement, et l'air qui entre. */
   interface Props {
@@ -29,7 +29,7 @@
         <p class="help" data-testid="carb-blown">{t('builder.carb.blown')}</p>
       {/if}
       {#if config.fuelSystem === 'direct' && spec.injection.coolingK > 0}
-        <p class="help" data-testid="direct-figures">{t('builder.direct.figures', { k: fixed(spec.injection.coolingK, 0), gain: fixed(spec.injection.fillGain * 100, 1), bar: Math.round(spec.injection.railBar) })}</p>
+        <p class="help" data-testid="direct-figures">{t('builder.direct.figures', { k: fixed(spec.injection.coolingK, 0), gain: fixed(spec.injection.fillGain * 100, 1), bar: whole(spec.injection.railBar) })}</p>
       {/if}
     </div>
   {:else}
@@ -38,8 +38,8 @@
       <p class="help">{DIESEL_INJECTIONS.find((item) => item.value === config.dieselInjection)?.help}</p>
       {#if spec.injection.railBar > 0}
         <p class="help" data-testid="diesel-injection-figures">{config.dieselInjection === 'common_rail'
-          ? t('builder.dieselInjection.rail', { bar: Math.round(spec.injection.railBar), torque: Math.round(spec.injection.lowEnd * 100), db: fixed(-spec.injection.knockDb, 1) })
-          : t('builder.dieselInjection.pump', { bar: Math.round(spec.injection.railBar) })}</p>
+          ? t('builder.dieselInjection.rail', { bar: whole(spec.injection.railBar), torque: Math.round(spec.injection.lowEnd * 100), db: fixed(-spec.injection.knockDb, 1) })
+          : t('builder.dieselInjection.pump', { bar: whole(spec.injection.railBar) })}</p>
       {/if}
     </div>
   {/if}

@@ -133,7 +133,7 @@
     </Gauge>
     {#if filtered}
       <Gauge id="dpf" label={t('gauge.dpf')} note={t('gauge.dpf.note')} unit="%" min={0} max={120} step={20} minor={10} {clock} read={() => (running() ? telemetry().dpfLoad * 100 : 0)}>
-        <span data-testid="gauge-dpf" bind:this={filterNode}></span>
+        <span data-testid="gauge-dpf-state" bind:this={filterNode}></span>
       </Gauge>
     {/if}
   {/if}
