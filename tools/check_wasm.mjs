@@ -379,4 +379,12 @@ for (const [size, release] of [['small', 0], ['medium', 1], ['large', 0]]) {
   rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6500, EXHAUST.sport, 1, 0, 0, 0, release, 1.3, ROUTING.single, TURBO[size], 0, 0, 400, 0, 0);
   check(`retard du turbo, ${size}`, turboStab(rf, 24), native(...turboArgs, '--turbo', size, '--release', release ? 'flutter' : 'dump_valve'));
 }
+// Le carburateur : son film, sa pompe et son souffle passent au bit près, comme le reste.
+for (const [name, system] of [['single', 1], ['multi', 2]]) {
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1200, 16, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6800, EXHAUST.sport, 0, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0, system);
+  rf.rf_set_mode(3);
+  check(`carburateur, ${name}`, render(rf, 30, 128), native('--cylinders', '4', '--cc', '2000', '--bore', '84', '--redline', '6800', '--exhaust', 'sport', '--body', 'compact', '--mass', '1200', '--rim', '16', '--carb', name, '--scenario', 'lap', '--seconds', '30'));
+}
 process.exit(failed ? 1 : 0);

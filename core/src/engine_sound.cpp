@@ -129,6 +129,23 @@ constexpr float kBodyShare = 0.3f;
 constexpr float kInletPa = 6.0f;
 constexpr float kStructurePa = 0.05f;
 
+// ── Le carburateur : voir docs/modele.md ──
+// Turbulence confinée, un dipôle sur les obstacles du conduit : W = K ρ A v⁶ / c³, soit un rendement acoustique de 2K M³ (Nelson et Morfey, 1981). K supposé.
+constexpr float kCarbHissK = 1e-3f;
+constexpr float kCarbSoundMs = 340.0f;
+constexpr float kCarbVolumetric = 0.9f;
+constexpr float kCarbStrouhal = 0.5f;
+constexpr float kCarbQ = 0.9f;
+// La boîte à air garde environ 12 dB de ce souffle sur un carburateur unique, un petit filtre plat 3 dB. Supposé.
+constexpr float kCarbBoxedHiss = 0.25f;
+constexpr float kCarbOpenHiss = 0.7f;
+// Le niveau d'aspiration est calé sur une boîte à air : un corps par cylindre n'a que ses filtres plats. 6 dB supposés, en bas de ce que retire une boîte (de 10 à 20 dB).
+constexpr float kCarbOpenInlet = 2.0f;
+// Valeur efficace inverse d'un bruit uniforme dans [-1, 1[.
+constexpr float kNoiseRmsInverse = 1.732f;
+// Pied levé, le circuit de ralenti alimente encore : la détonation reste possible, sans décroître comme après une coupure.
+constexpr float kCarbPopFloor = 0.4f;
+
 // ── Du niveau réel à ce qui sort des haut-parleurs ──
 // Le réel couvre de 40 à plus de 130 dB, un haut-parleur bien moins : une courbe de correspondance, comme pour
 // une image, resserre l'écart sans inverser l'ordre. Niveau en dB(A), sortie en dB sous la pleine échelle à volume 1.
@@ -312,6 +329,18 @@ struct EngineSound::State {
     Svf inletTone, blockBand, blockBody, tailBand, jetLow, jetLower;
     float inletLast = 0.0f;
     float inletLevel = 0.0f;
+    // Le carburateur : son générateur à lui, pour ne décaler aucun tirage du reste du son.
+    std::uint32_t carbRng = 0x7A3D9C15;
+    bool carbActive = false;
+    bool carbMulti = false;
+    bool carbTuned = false;
+    Svf carbBand;
+    float carbTop = 0.0f;
+    float carbArea = 1e-3f;
+    float carbPa = 0.0f;
+    float carbLobeMean = 0.25f;
+    float carbSpeed = 0.0f;
+    float carbNorm = 1.0f;
     float blockEnv = 0.0f;
     float blockTop = 0.0f;
     float blockTopCoef = 0.0f;
@@ -470,7 +499,8 @@ struct EngineSound::State {
     static bool sameParts(const EngineProfile& a, const EngineProfile& b) {
         return a.firingCount == b.firingCount && a.firing == b.firing && a.firingGain == b.firingGain && a.headerM == b.headerM &&
                a.exhaust == b.exhaust && a.exhaustScale == b.exhaustScale && a.diesel == b.diesel && a.turbo == b.turbo &&
-               a.electric == b.electric && a.routing == b.routing && a.bank == b.bank && a.twoBanks == b.twoBanks && sameShell(a.car, b.car);
+               a.electric == b.electric && a.routing == b.routing && a.bank == b.bank && a.twoBanks == b.twoBanks && sameShell(a.car, b.car) &&
+               a.fuelSystem == b.fuelSystem;
     }
 
     /** La même caisse aux mêmes endroits : seule l'isolation change, et l'habitacle se recalcule sans couper le moteur. */
@@ -504,6 +534,49 @@ struct EngineSound::State {
         const float bar = km::sqrt(km::max(p.boostBar, 0.1f));
         boostPitch = km::coerceIn(bar, 0.7f, 1.6f);
         boostLevel = km::coerceIn(bar, 0.6f, 1.8f);
+        carbActive = !p.electric && p.fuelSystem != FuelSystem::Injection;
+        carbMulti = carbActive && p.fuelSystem == FuelSystem::MultiCarb;
+        if (carbActive) applyCarburetor(p);
+        if (carbTuned && !carbMulti) {
+            inletTone.set(220.0f, 1.3f, sr);
+            carbTuned = false;
+        }
+    }
+
+    /**
+     * Ce que le son tire du venturi : sa section donne la vitesse de l'air, donc le souffle. Un corps par cylindre n'a plus
+     * ni boîte à air ni collecteur : son conduit droit résonne en quart d'onde, et il rayonne presque sans obstacle.
+     */
+    void applyCarburetor(const EngineProfile& p) {
+        const float radius = p.carbThroatM * 0.5f;
+        carbArea = static_cast<float>(km::kPi) * radius * radius;
+        const float mouthOut = km::sqrt(kCarbHissK * carbArea / (4.0f * static_cast<float>(km::kPi))) * acoustics::kAirDensity / kCarbSoundMs;
+        carbPa = mouthOut * (carbMulti ? kCarbOpenHiss : kCarbBoxedHiss);
+        carbLobeMean = 2.0f / static_cast<float>(km::kPi) * (kIvc - kIvo);
+        if (carbMulti) {
+            inletTone.set(kCarbSoundMs / (4.0f * (p.carbRunnerM + 0.6f * radius)), 1.3f, sr);
+            carbTuned = true;
+        }
+    }
+
+    /**
+     * Le souffle du venturi : une turbulence confinée, en puissance W = K ρ A v⁶ / c³, donc en pression en v³ : presque rien à
+     * bas régime, et il ne peut pas passer devant le moteur. `flows` : le débit de chaque bouffée en cours, en part de sa crête.
+     */
+    float carburetorSample(float sumLobes, float sixthLobes) {
+        const float noise = carbRandom();
+        carbBand.process(noise);
+        carbTop += (carbBand.bp - carbTop) * noiseTopCoef;
+        const float bright = km::max(km::min(load * load, 1.0f), noiseOpen);
+        const float heard = (carbTop + (carbBand.bp - carbTop) * bright) * carbNorm;
+        if (carbMulti) {
+            // Chacun son col : les puissances s'ajoutent, et chacune suit sa propre crête.
+            const float peak = carbSpeed / carbLobeMean;
+            return heard * carbPa * km::sqrt(sixthLobes) * peak * peak * peak;
+        }
+        // Un col pour tous : c'est le débit total qui passe.
+        const float now = carbSpeed * sumLobes / (static_cast<float>(cylinders) * carbLobeMean);
+        return heard * carbPa * now * now * now;
     }
 
     void applyProfile(const EngineProfile& p) {
@@ -577,6 +650,15 @@ struct EngineSound::State {
         x ^= x >> 17;
         x ^= x << 5;
         addedRng = x;
+        return static_cast<float>(static_cast<std::int32_t>(x)) * 4.656613e-10f;
+    }
+
+    float carbRandom() {
+        std::uint32_t x = carbRng;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        carbRng = x;
         return static_cast<float>(static_cast<std::int32_t>(x)) * 4.656613e-10f;
     }
 
@@ -676,6 +758,8 @@ struct EngineSound::State {
         const float boostFill = driven ? 0.4f * driveBoost * km::coerceIn(a.boostBar, 0.3f, 2.5f) : 0.0f;
         const float fill = 0.2f + 0.8f * load * load + boostFill;
         openPressure = fill * (1.0f - kOverrunPressureDrop * overrun);
+        // Sans coupure, le mélange du circuit de ralenti brûle encore un cycle sur deux.
+        if (a.overrunFuel > 0.0f) openPressure = fill * (1.0f - kOverrunPressureDrop * (1.0f - a.overrunFuel) * overrun);
         // Le piston continue de pomper de l'air, combustion ou non.
         pumpLevel += (km::max(openPressure, 0.25f) - pumpLevel) * smoothing(0.004f);
         // Rupteur : la combustion s'arrête net, explosion par explosion. Le papillon, lui, reste ouvert,
@@ -805,6 +889,23 @@ struct EngineSound::State {
         tailLevel = (spec.tailNoise * kTailPa * km::pow(km::max(jetMean, 3.0f) / 100.0f, 2.85f) + spec.tailFloor * kTailFloorPa) * cutGate;
         // L'admission : le remplissage se fait entendre, surtout papillon ouvert.
         inletLevel = kInletPa * (0.12f + 0.88f * load * load) * km::pow(rpmNow / 5000.0f, 1.25f) * crankHush * displacement / 0.002f;
+        if (carbActive) updateCarburetor(displacement, rpmNow);
+    }
+
+    /** La vitesse moyenne au col d'un corps, ce qui en fait la hauteur, et ce qu'on en entend. */
+    void updateCarburetor(float displacement, float rpmNow) {
+        const EngineProfile& a = active;
+        const float admitted = kCarbVolumetric * (0.08f + 0.92f * load);
+        carbSpeed = displacement * rpmNow / 120.0f * admitted / static_cast<float>(a.carbThroats) / carbArea;
+        // Strouhal : la turbulence du col se tient autour de 0,5 v/d. Elle monte avec la crête des bouffées.
+        const float crest = carbMulti ? carbSpeed / carbLobeMean : carbSpeed;
+        const float hz = km::coerceIn(kCarbStrouhal * crest / a.carbThroatM, 300.0f, km::min(6000.0f, sr * 0.4f));
+        carbBand.set(hz, kCarbQ, sr);
+        // Un filtre passe-bande laisse passer d'autant moins de bruit blanc qu'il est étroit : on ramène sa sortie à une valeur efficace de 1.
+        const float kept = km::sqrt(static_cast<float>(km::kPi) * hz * kCarbQ / sr);
+        carbNorm = kNoiseRmsInverse / kept;
+        // Sur un corps par cylindre, plus de boîte entre les cornets et l'air : l'aspiration sort presque entière.
+        if (carbMulti) inletLevel *= kCarbOpenInlet;
     }
 
     /** Pression : monte avec retard sous charge. Turbine : continue sur son élan pied levé. */
@@ -851,10 +952,15 @@ struct EngineSound::State {
     /** Du carburant imbrûlé s'enflamme dans le tube : d'autant plus juste après le lever de pied. */
     void maybePop() {
         const EngineProfile& p = active;
-        if (p.pops == PopLevel::Off || overrun < 0.5f || rpm < kPopMinRpm || popCooldown > 0.0f) return;
+        // Sur un carburateur, le mélange arrive sans qu'on l'ait réglé pour : assez pour une détonation de temps en temps.
+        if ((p.pops == PopLevel::Off && p.overrunFuel <= 0.0f) || overrun < 0.5f || rpm < kPopMinRpm || popCooldown > 0.0f) return;
         const float firingsPerSecond = km::max(rpm / 120.0f * static_cast<float>(cylinders), 1.0f);
         const float freshness = km::exp(-overrunSeconds / kPopWindowS);
-        const float rate = popsPerSecond(p.pops) * spec.popRate * (0.1f + 0.9f * freshness) * (0.5f + 0.5f * rpmFrac) * (1.0f + popHeat);
+        float rate = popsPerSecond(p.pops) * spec.popRate * (0.1f + 0.9f * freshness) * (0.5f + 0.5f * rpmFrac) * (1.0f + popHeat);
+        if (p.overrunFuel > 0.0f) {
+            const float level = popsPerSecond(p.pops == PopLevel::Off ? PopLevel::Light : p.pops);
+            rate = level * (p.pops == PopLevel::Off ? p.overrunFuel : 1.0f + p.overrunFuel) * spec.popRate * (kCarbPopFloor + (1.0f - kCarbPopFloor) * freshness) * (0.5f + 0.5f * rpmFrac) * (1.0f + popHeat);
+        }
         const float roll = random() * 0.5f + 0.5f;
         // Beaucoup de carburant imbrûlé : le premier coup part presque à chaque lever de pied.
         const bool firstBang = p.pops == PopLevel::Strong && !poppedThisLift && overrunSeconds > 0.12f;
@@ -878,7 +984,7 @@ struct EngineSound::State {
 
     void popOnRecovery() {
         const EngineProfile& p = active;
-        if (p.pops == PopLevel::Off || popCooldown > 0.0f) return;
+        if ((p.pops == PopLevel::Off && p.overrunFuel <= 0.0f) || popCooldown > 0.0f) return;
         const float chance = p.pops == PopLevel::Strong ? 0.55f : 0.18f;
         if (random() * 0.5f + 0.5f >= chance) return;
         firePop(random() * 0.5f + 0.5f);
@@ -974,6 +1080,7 @@ struct EngineSound::State {
 
         float collector[2] = {0.0f, 0.0f};
         float intake = 0.0f;
+        float carbSixth = 0.0f;
         bool valve = false;
         for (int c = 0; c < cylinders; ++c) {
             float theta = phase + p.firing[c] + timing[c];
@@ -1017,7 +1124,9 @@ struct EngineSound::State {
 
             if (theta >= kIvo && theta < kIvc) {
                 if (!intakeOpen[c]) intakeOpen[c] = true;
-                intake += sinFast((theta - kIvo) / (kIvc - kIvo) * 0.5f);
+                const float lobe = sinFast((theta - kIvo) / (kIvc - kIvo) * 0.5f);
+                intake += lobe;
+                if (carbMulti) carbSixth += lobe * lobe * lobe * lobe * lobe * lobe;
             } else if (intakeOpen[c]) {
                 intakeOpen[c] = false;
                 valve = true;
@@ -1136,6 +1245,7 @@ struct EngineSound::State {
         stem(Source::ExhaustB) += twoOutlets ? (gasB + tail * 0.7f) * gain + pops * 0.5f : 0.0f;
         // Le compresseur et sa décharge sont sur le conduit d'admission : ils sortent avec lui.
         stem(Source::Intake) += (inducted * cutGate * kIntakePa + inletTone.bp * inletLevel * cutGate) * gain + turboBus * kTurboPa * eventGain;
+        if (carbActive) stem(Source::Intake) += carburetorSample(intake, carbSixth) * gain;
         const float engineNoise = (mechanical * (0.4f + 0.6f * cutGate) * kMechanicalPa + block) * blockLevel * gain;
         stem(Source::Bay) += engineNoise;
         // Le moteur fait vibrer toute la caisse : elle en rayonne une part, de partout, mais pas les aigus.

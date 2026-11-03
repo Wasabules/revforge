@@ -23,7 +23,8 @@ constexpr int kTick = 128;
 
 void usage() {
     std::puts(
-        "revforge-render --out file.wav|-|none [--preset ID | settings] [--scenario lap|blips|launch|start|steady|passby|rattle|shifts|turbo|grind|reverse|clutchblips|idle|cruise|wltc]\n"
+        "revforge-render --out file.wav|-|none [--preset ID | settings] [--scenario lap|blips|launch|start|steady|passby|rattle|shifts|turbo|grind|reverse|clutchblips|idle|cruise|wltc|tipin]\n"
+        "  --scenario tipin  held at --rpm in third, then flat out: prints the torque of the first second\n"
         "  --out none        drive the model without rendering any sound: for the figures of --fuel\n"
         "  --list            list the presets\n"
         "  --seconds N       duration (lap: 60, or one loop of --drive-scenario; blips: 14, steady: 4)\n"
@@ -38,7 +39,7 @@ void usage() {
         "          --aspiration natural|turbo|supercharger --fuel petrol|diesel\n"
         "          --pops off|light|strong --release dump_valve|flutter --boost BAR --turbo small|medium|large\n"
         "          --supercharger roots|twin_screw|centrifugal --antilag off|retard|air|cut --turbo-pipe MM\n"
-        "          --cam dohc|sohc --filter stock|panel|cone|stacks\n"
+        "          --cam dohc|sohc --filter stock|panel|cone|stacks --carb injection|single|multi\n"
         "Car:      --body city|compact|coupe|supercar|van --mass KG --rim INCHES --drive front|rear|all\n"
         "          --placement front|mid|rear --insulation stripped|light|standard|comfort|luxury --windows open|closed\n"
         "Gearbox:  --gearbox synchro|dog|sequential|dual_clutch|converter --gears N --family matched|short|close|long\n"
@@ -382,6 +383,45 @@ void wltc(EngineSound& sound, DrivingModel& model, Output& out, int rate, SpeedF
     });
 }
 
+/**
+ * Une reprise : tenu en troisième à ce régime, puis pied au plancher. Écrit le couple de la première seconde, et le creux du
+ * mélange s'il y a un carburateur. Sert à mesurer : ni le son ni les empreintes n'en dépendent.
+ */
+void tipIn(EngineSound& sound, DrivingModel& model, Output& out, int rate, double fromRpm) {
+    constexpr double kHoldS = 12.0;
+    model.setManual(true);
+    model.requestShift(1);
+    double held = 0.1, sum = 0.0, worst = 1.0, leanest = 0.0, entry = 0.0;
+    int samples = 0;
+    play(sound, model, out, rate, [&](int step, double dt) {
+        const double t = static_cast<double>(step) * kTick / rate;
+        if (t < kHoldS) {
+            // On ne passe que si le rapport suivant retombe au-dessus du régime visé : pas de quoi caler.
+            const int now = model.gear();
+            if (now >= 1 && now < 3 && !model.shifting()) {
+                const double next = model.rpm() * model.gearing().overall[static_cast<std::size_t>(now)] / model.gearing().overall[static_cast<std::size_t>(now - 1)];
+                if (next > std::max(fromRpm, model.idleRpm() * 1.4) || model.rpm() > model.redlineRpm() * 0.85) model.requestShift(1);
+            }
+            const double error = (fromRpm - model.rpm()) / 1000.0;
+            held = std::clamp(held + 0.5 * error * dt, 0.02, 1.0);
+            const double pedal = now < 3 ? 0.5 : std::clamp(held + 1.0 * error, 0.02, 1.0);
+            model.stepPedal(dt, pedal, now == 3 && error < -0.1 ? std::min(-error, 0.5) : 0.0);
+            entry = model.rpm();
+            return;
+        }
+        model.stepPedal(dt, 1.0, 0.0);
+        if (t < kHoldS + 1.0) {
+            sum += model.torqueNm();
+            ++samples;
+            if (model.carbureted()) {
+                worst = std::min(worst, model.carburetor().torqueShare());
+                leanest = std::max(leanest, model.carburetor().lambda());
+            }
+        }
+    });
+    std::printf("Tip-in from %.0f rpm: mean torque of the first second %.1f Nm, mixture dip %.1f %%, leanest lambda %.2f\n", entry, sum / std::max(samples, 1), (1.0 - worst) * 100.0, leanest);
+}
+
 void printFuel(const DrivingModel& model, const Powertrain& powertrain, double seconds, int restarts) {
     const ConsumptionMeter& c = model.consumption();
     if (restarts > 0) std::printf("The driver had to restart the engine %d time(s).\n", restarts);
@@ -394,6 +434,8 @@ void printFuel(const DrivingModel& model, const Powertrain& powertrain, double s
         std::printf("Fuel map: best %.0f g/kWh at %.0f rpm, %.1f bar; %.0f g/kWh at peak power\n", best.bestGPerKwh, best.bestRpm, best.bestBmepBar, best.peakPowerGPerKwh);
         std::printf("Oil (order of magnitude, within a factor of three): %.2f mL, %.1f g/h, %.0f mL/1000 km\n", c.oilTripMl(), c.oilTripMl() * 0.85 / hours, c.oilMlPer1000km());
     }
+    const PowerSummary peak = powerSummary(powertrain);
+    std::printf("Engine: %.1f Nm at %.0f rpm, %.1f kW at %.0f rpm, 0-100 km/h in %.2f s\n", peak.peakTorqueNm, peak.peakTorqueRpm, peak.peakPowerKw, peak.peakPowerRpm, measurePerformance(powertrain).zeroTo100S);
     // Au bit près, pour tools/check_wasm.mjs.
     std::printf("raw fuel_lph=%.17g fuel_trip_l=%.17g trip_km=%.17g oil_trip_ml=%.17g energy_trip_kwh=%.17g\n", c.fuelLph(), c.fuelTripL(), c.tripKm(), c.oilTripMl(), c.energyTripKwh());
 }
@@ -430,6 +472,7 @@ int main(int argc, char** argv) {
     std::optional<int> turboPipeChoice;
     std::optional<Camshaft> camshaftChoice;
     std::optional<AirFilter> airFilterChoice;
+    std::optional<FuelSystem> fuelSystemChoice;
     bool customListener = false;
     Powertrain powertrain = referencePowertrain();
     EngineConfig& config = powertrain.engine;
@@ -532,6 +575,7 @@ int main(int argc, char** argv) {
             else if (arg == "--turbo-pipe") turboPipeChoice = std::atoi(value.c_str());
             else if (arg == "--cam") camshaftChoice = pick<Camshaft>(value, {{"dohc", Camshaft::Dohc}, {"sohc", Camshaft::Sohc}});
             else if (arg == "--filter") airFilterChoice = pick<AirFilter>(value, {{"stock", AirFilter::Stock}, {"panel", AirFilter::Panel}, {"cone", AirFilter::Cone}, {"stacks", AirFilter::Stacks}});
+            else if (arg == "--carb") fuelSystemChoice = pick<FuelSystem>(value, {{"injection", FuelSystem::Injection}, {"single", FuelSystem::Carburetor}, {"multi", FuelSystem::MultiCarb}});
             else if (arg == "--fuel") config.fuel = pick<Fuel>(value, {{"petrol", Fuel::Petrol}, {"diesel", Fuel::Diesel}});
             else if (arg == "--pops") config.pops = pick<PopLevel>(value, {{"off", PopLevel::Off}, {"light", PopLevel::Light}, {"strong", PopLevel::Strong}});
             else if (arg == "--release") config.turboRelease = pick<TurboRelease>(value, {{"dump_valve", TurboRelease::DumpValve}, {"flutter", TurboRelease::Flutter}});
@@ -565,6 +609,7 @@ int main(int argc, char** argv) {
     if (turboPipeChoice) powertrain.engine.turboPipeMm = *turboPipeChoice;
     if (camshaftChoice) powertrain.engine.camshaft = *camshaftChoice;
     if (airFilterChoice) powertrain.engine.airFilter = *airFilterChoice;
+    if (fuelSystemChoice) powertrain.engine.fuelSystem = *fuelSystemChoice;
     if (customCar) {
         if (!presetId.empty()) {
             if (car.placement != EnginePlacement::Natural) powertrain.car.placement = car.placement;
@@ -591,6 +636,7 @@ int main(int argc, char** argv) {
         else if (scenario == "idle") seconds = 65;
         else if (scenario == "cruise") seconds = 180;
         else if (scenario == "wltc") seconds = 1800;
+        else if (scenario == "tipin") seconds = 16;
     }
     EngineSound sound(rate);
     sound.setProfile(profile);
@@ -639,6 +685,8 @@ int main(int argc, char** argv) {
         cruise(sound, model, output, rate, kmh, driver);
     } else if (scenario == "wltc") {
         wltc(sound, model, output, rate, driver);
+    } else if (scenario == "tipin") {
+        tipIn(sound, model, output, rate, rpm);
     } else if (scenario == "steady") {
         sound.setTargetRpm(rpm);
         output.render(sound, 0, static_cast<int>(output.frames()));

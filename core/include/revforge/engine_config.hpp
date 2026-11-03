@@ -25,6 +25,8 @@ enum class AntiLag { Off, Retard, AirInjection, CylinderCut };
 enum class Camshaft { Dohc, Sohc };
 /** Le filtre à air : papier d'origine dans sa boîte, panneau sport dans la boîte, cône à l'air libre, cornets sans boîte. */
 enum class AirFilter { Stock, Panel, Cone, Stacks };
+/** L'alimentation en essence : injection, carburateur unique sur une pipe commune, un corps de carburateur par cylindre. */
+enum class FuelSystem { Injection, Carburetor, MultiCarb };
 
 /**
  * Ce qui dépend de l'échappement en dehors de sa géométrie, calculée par ExhaustLine :
@@ -165,6 +167,13 @@ struct EngineProfile {
     /** Deux rangées séparées ? Sinon, tous les cylindres rejoignent la même ligne. */
     bool twoBanks = false;
     CarAcoustics car;
+    /** Le carburateur s'il y en a un : corps, col du venturi (m), longueur de conduit jusqu'à la soupape (m). */
+    FuelSystem fuelSystem = FuelSystem::Injection;
+    int carbThroats = 0;
+    float carbThroatM = 0.0f;
+    float carbRunnerM = 0.0f;
+    /** Pied levé, le circuit de ralenti alimente encore : part des cycles où ce mélange brûle encore. 0 sur une injection, qui coupe. */
+    float overrunFuel = 0.0f;
 
     /**
      * Régime simulé pour un régime réel de la voiture. Au ralenti, les deux ralentis
@@ -205,6 +214,7 @@ struct EngineConfig {
     int turboPipeMm = 400;
     Camshaft camshaft = Camshaft::Dohc;
     AirFilter airFilter = AirFilter::Stock;
+    FuelSystem fuelSystem = FuelSystem::Injection;
 
     bool operator==(const EngineConfig&) const = default;
 
