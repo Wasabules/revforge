@@ -1111,7 +1111,7 @@ avec Δp la pression du préréglage, b = 0,12 la bande du ressort (sa raideur r
 
 L'autre dérive, celle d'une wastegate trop petite qui sature, n'existe pas sur les préréglages : elle ne s'ouvre jamais à plus de 0,49 (`wastegateK` vaut deux fois la turbine).
 
-**Dépassements.** Il n'y en a presque pas : moins de 0,1 % sur un coup de gaz à régime tenu, grâce à l'anticipation de 0,12 s, qu'une membrane purement pneumatique n'a pas. Chiffré sans elle (copie de `turbo.cpp` hors du dépôt) : 2 à 19 % de dépassement, puis une oscillation qui ne s'éteint pas en 8 s, l'arbre et la soupape se renvoyant la balle. L'ajouter au défaut changerait donc toutes les empreintes turbo ; le ressort reste tel quel.
+**Dépassements.** Il n'y en a presque pas : moins de 0,1 % sur un coup de gaz à régime tenu, grâce à l'anticipation de 0,12 s, qu'une membrane purement pneumatique n'a pas. Chiffré sans elle (copie de `turbo.cpp` hors du dépôt) : 2 à 19 % de dépassement, puis une oscillation qui ne s'éteint pas en 8 s, l'arbre et la soupape se renvoyant la balle. Retirer l'anticipation au défaut pour obtenir ce dépassement changerait toutes les empreintes turbo, et laisserait la pression osciller : le ressort reste tel quel.
 
 ### L'électronique (`electronic`)
 

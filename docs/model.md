@@ -1087,7 +1087,7 @@ with Δp the preset's boost, b = 0.12 the spring's band (its stiffness over the 
 
 The other creep, that of a wastegate too small that saturates, does not occur on the presets: it never opens beyond 0.49 (`wastegateK` is twice the turbine).
 
-**Overshoot.** There is almost none: under 0.1 % on a tip-in at a held speed, thanks to the 0.12 s anticipation, which a purely pneumatic diaphragm does not have. Measured without it (a copy of `turbo.cpp` outside the repository): 2 to 19 % overshoot, then an oscillation that does not die out within 8 s, shaft and valve bouncing off each other. Adding it to the default would change every turbo fingerprint; the spring stays as it is.
+**Overshoot.** There is almost none: under 0.1 % on a tip-in at a held speed, thanks to the 0.12 s anticipation, which a purely pneumatic diaphragm does not have. Measured without it (a copy of `turbo.cpp` outside the repository): 2 to 19 % overshoot, then an oscillation that does not die out within 8 s, shaft and valve bouncing off each other. Removing the anticipation from the default to get this overshoot would change every turbo fingerprint, and leave the pressure oscillating: the spring stays as it is.
 
 ### Electronic (`electronic`)
 
