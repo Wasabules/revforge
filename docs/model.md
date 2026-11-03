@@ -1063,3 +1063,139 @@ such as the Cobra.
 
 The render is bit-identical between native and WebAssembly: calculations in `double` rounded to `float`, frozen order of random draws, no floating-point
 contraction, fixed-step physics. Parity with the original Kotlin version (CANCitroen) was abandoned during this rework. `tools/compare_wav.py` compares two renders.
+
+## Ambient air
+
+Two settings, the air temperature (`ambientC`, −30 to 50 °C) and the altitude (`altitudeM`, 0 to 4500 m), give the day's air:
+`ambientAirOf` (`core/include/revforge/atmosphere.hpp`), copied for the on-screen gas by `web/src/lib/atmosphere.ts`.
+
+### The calculation
+
+- Pressure of the standard atmosphere (ISA, ICAO), in the troposphere: p = 101,325·(1 − 2.25577·10⁻⁵·h)^5.25588. 89,875 Pa at
+  1000 m, 79,495 at 2000 m, 70,109 at 3000 m, 57,728 at 4500 m, within 1 Pa of the published table. The temperature does not
+  follow the 6.5 K/km lapse: the day's temperature is set separately.
+- Temperature in the model's kelvin: T = 293 + (θ − 20). Every engine calculation assumed 293 K at 20 °C; the 0.15 K gap with
+  293.15 changes density by 0.05%.
+- Ideal gas, ρ = p/(R·T) with R = 287; speed of sound c = 343·√(T/293), so 312 m/s at −30 °C and 360 at 50 °C (331.3 and
+  343.2 published at 0 and 20 °C).
+- ISO 9613-1 absorption (`airAbsorptionDbPerM`, already there) at the day's temperature and pressure, and at a reference
+  relative humidity of **50%**, that of pass-by measurements: humidity is not a setting. The test also checks it against
+  table 2 of ISO 9613-2 at 15 °C (20, 50 and 80%) and at 30 °C.
+
+**In the reference air, 20 °C and 0 m, nothing changes, bit for bit.** Each use receives its former constant, not a ratio that
+would round differently: p is exactly 101,325 (1^5.25588 = 1 in `portable::pow`), T exactly 293, and δ = p/p₀, θ = T/T₀,
+σ = δ/θ and √θ are exactly 1. The constants that differed keep their own values: 1.2 kg/m³ for drag, 1.204 for sound, 343 and
+340 m/s. Away from the reference, each becomes constant × σ (or × √θ, × δ): the physical calculation, which gives the constant
+back at 20 °C and 0 m. The four `altitude_*` and `ambient_*` fingerprints protect the rest.
+
+### What is sized once and for all
+
+The turbo, the supercharger, the gearbox and its final drive, the clutch capacity, the torque converter and the shift map are
+parts and a calibration: they are computed on the same build brought back to the reference air (`withReferenceAir`). Driving
+up to 3000 m changes neither the wheel diameter, nor the shaft inertia, nor the ratios.
+
+### Filling
+
+Indicated torque follows the trapped air; friction stays (T_brake = (T + f)·s − f). The trapped air is heated by the port and
+chamber walls before the intake closes:
+
+  T_trapped = T_air + ε·(T_wall − T_air), s = (p / p_ref)·T_trapped(T_ref)/T_trapped(T_air)
+
+with the walls at the warm engine's coolant, 90 °C (`kWarmWallK`, to be read from the "thermal" topic). Warmer air takes less
+from the walls: that is why filling follows T^−0.5 rather than T^−1, as tests measure (Taylor) and as SAE J1349 corrects.
+ε = 0.45 is chosen so that the local exponent is 0.5 at 20 °C; the air gains 31 K, the order of the charge heating by walls
+and residual gas (assumed). An under-bonnet filter adds its own heating to any day's air.
+
+- **Turbo** (`turboAmbientChargeShare`): the spring wastegate holds a **gauge** pressure, since the other side of its
+  diaphragm sees the atmosphere. At altitude, the charge is therefore the atmosphere plus that pressure; the pressure ratio
+  rises, the air leaves the compressor hotter, and the intercooler brings it back towards the day's air.
+- **Supercharger** (`superchargerAmbientChargeShare`): it displaces a volume; at altitude, the same speed moves less mass, so
+  less gauge pressure, and the trapped air is computed the same way.
+- **Carburettor**: its jets, chosen in the reference air, flow as √(ρ_fuel·Δp) and the air as √(ρ_air·Δp): the mixture
+  richens as 1/√σ, ×1.20 at 3000 m. Torque also loses what this over-rich mixture costs (`torqueOfRichness`), and fuel
+  consumption pays for it. Its pressure drop counts as a share of the day's atmosphere.
+- **Diesel**: treated like the rest, torque in proportion to the air (smoke limit). A mechanical pump without an altitude
+  compensator would smoke rather than lose that torque: not modelled.
+
+Against SAE J1349 (2004, spark ignition: CF = 1.18·(99/p)·√((T+273)/298) − 0.18), peak torque relative to 20 °C and 0 m:
+
+| | 1000 m | 2000 m | 3000 m | −30 °C | 0 °C | 35 °C | 50 °C |
+|---|---|---|---|---|---|---|---|
+| SAE J1349 | 0.869 | 0.754 | 0.654 | 1.119 | 1.043 | 0.971 | 0.944 |
+| 2.0 naturally aspirated (`hot_hatch_na`) | 0.868 | 0.749 | 0.642 | 1.108 | 1.041 | 0.971 | 0.943 |
+| its power | 0.854 | 0.724 | 0.607 | 1.120 | 1.045 | 0.968 | 0.938 |
+| 2.0 turbo (`hot_hatch_turbo`) | 0.943 | 0.891 | 0.843 | 1.106 | 1.040 | 0.972 | 0.945 |
+| supercharged V8 (`v8_supercharged`) | 0.903 | 0.793 | 0.692 | 1.110 | 1.042 | 0.970 | 0.942 |
+
+The naturally aspirated engine matches J1349 at 1000 and 2000 m; at 3000 m, outside the standard's range (about 90 to
+105 kPa), friction weighs more than its fixed 15%, especially at high revs, so power drops more than torque. The turbo loses
+half as much: the gauge pressure comes back.
+
+### The turbo at altitude
+
+At 4000 rpm, full load, 2.0 turbo at 1.3 bar: pressure ratio 2.33 at sea level, 2.49 at 1000 m, 2.69 at 2000 m, 2.91 at
+3000 m; the shaft goes from 160,700 to 168,500, 177,100 then 186,400 rpm. At 5500 rpm and 3000 m, the wheel is at 99.8% of its
+speed limit (`tipLimit`); at 4500 m, the ECU opens the wastegate to protect it, and the requested pressure is no longer held
+(82%). This is also what pulls the diesel's peak power back from 4150 to 2800 rpm at 3000 m.
+
+Lag, engine speed held, from 20% to 100% fill, up to 90% of the requested pressure: 1.21 s at sea level, 1.41 s at 1000 m,
+1.66 s at 2000 m, 1.96 s at 3000 m (at 2500 rpm); 0.59, 0.67, 0.77 and 0.89 s at 4000 rpm. In fourth from 1800 rpm
+(`--scenario turbo`): 2.21, 2.62, 3.12 and 3.72 s. The shaft must spin higher, and the engine sends it less gas.
+
+Electronic control aiming at the same **absolute** pressure as at sea level ("boost" topic, which reads
+`TurboSpec::ambientPa`) would ask even more: ratio 3.38 at 3000 m and 4000 rpm, the wheel at its limit from 2000 m at the top of
+the rev range and from 3000 m at 4000 rpm, and 2.17 s of lag instead of 1.96 at 2500 rpm. These figures are computed by
+replacing `targetBar` with the absolute pressure minus the day's atmosphere; none of this is wired in.
+
+### Road and consumption
+
+Drag follows σ, a trailer's too: at 130 km/h, 715 N at sea level, 597 N at 2000 m, 547 N at 3000 m. Pumping behind a closed
+throttle and engine braking follow δ: the manifold empties under the day's atmosphere. The starter cranks more easily: each
+compression starts from a lower atmosphere (trough from 175 to 195 rpm on the diesel at 3000 m).
+
+| | 0-100 km/h | Top speed | WLTC | 90 km/h |
+|---|---|---|---|---|
+| 2.0 NA, 0 / 1000 / 2000 / 3000 m | 8.72 / 9.62 / 10.35 / 11.87 s | 224.5 / 220.5 / 216.5 / 212.0 km/h | | |
+| 2.0 turbo, 0 / 1000 / 2000 / 3000 m | 6.86 / 7.38 / 7.96 / 8.65 s | 260.5 / 264.5 / 268.5 / 260.0 km/h | | |
+| City car 1.4, 0 m / 2000 m | | | 6.76 / 6.13 L/100 km | 5.57 / 4.84 L/100 km |
+| City car 1.4, −10 °C / 40 °C | | | 6.98 / 6.63 L/100 km | 5.84 / 5.42 L/100 km |
+| Electric at 130 km/h, 0 m / 2000 m / −10 °C / 40 °C | | 208 km/h everywhere (motor speed) | | 26.0 / 22.1 / 28.1 / 24.9 kWh/100 km |
+
+The turbo is faster at the top at 2000 m than at sea level: it loses 13% of its power, the air 22% of its drag. In deep cold,
+the naturally aspirated engine gains 12% power but loses top speed: drag has gained 21%. The cold start of the engine itself
+("thermal" topic) is not counted here: at −10 °C, only the air and drag change.
+
+### Sound
+
+- **Propagation**: the speed of sound sets the delays to the ear, the tailpipe mouth (ka), diffraction around the body, the
+  jet effect, the cabin modes and the intake response. At 30 m, sound arrives 1.098 times later at −30 °C.
+- **Absorption**: the day's ISO 9613-1. At 8 kHz: 10.5 dB/100 m at 20 °C, 14.8 at 0 °C, 1.2 at −30 °C (very cold air holds
+  little water), 7.4 at 50 °C.
+- **Radiation**: a flow radiates as ρ·Q̇/4πr, a wall as ρc·v. At equal temperature both are σ; from one temperature of the
+  setting to another, they differ by √θ only, 0.4 dB at most. All sources at 1 m are therefore multiplied by σ, once, before
+  the field and the cabin; the engine mounts, which do not go through the air, are not. At 3000 m the estimated level drops by
+  3.2 dB (66.4 → 63.2 dB(A) at the test speed); `toneGain` gives part of it back at the output.
+- **Tuning**: velocity stacks, cut in the reference air, resonate higher in warm air; their filling gain shifts with it. The
+  Mach index of single-cam valves uses the day's speed of sound.
+- **What does not change**: the exhaust line (`ExhaustLine`) keeps its hot gas (500 m/s, 0.6 kg/m³): its temperature comes from
+  combustion, not from the day's air.
+
+Listening is still to be done: a render at 3000 m should sound like the same engine, a little softer and slower to pick up
+revs, not like another engine.
+
+### On-screen gas
+
+`GasNetwork` opens onto the day's air (`pAtm`, `tAmb`): the line ends at that pressure, the intake swallows that air, the turbo
+wastegate holds its pressure above it, and the plume rises with the difference to its temperature. The boost gauges
+(`rf_turbo_*`) read above the day's atmosphere, like a real gauge. The car panel shows the resulting pressure, density and
+speed of sound.
+
+### Limits and assumed values
+
+- ε = 0.45 (wall heating) is fitted to J1349's exponent at 20 °C, not measured on this engine.
+- Humidity stays at 50%: it changes neither density (dry air) nor filling, only absorption.
+- A filter's loss follows ṁ² without density: at altitude it drops as σ² instead of σ.
+- A turbo-blown carburettor takes the day's σ, without the charge pressure.
+- The assumed levels of supercharger whine and aerodynamic noise follow σ like the rest, without measurement.
+- Neither engine cooling, knock nor the ECU read the day's air yet: "thermal", "combustion", "ECU", "boost" topics. They
+  find `ambientAirOf`, `trappedAirK` and `TurboSpec::ambientPa` here.

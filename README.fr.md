@@ -17,6 +17,7 @@ Il n'y a aucun échantillon sonore. Tout ce qu'on entend est calculé, échantil
 - **Choisir l'échappement.** Confort, origine, sans résonateur, sport, sans silencieux ou ligne directe, avec une ou deux sorties, et un pont en H ou en X sur un moteur en V. Chaque ligne est calculée depuis sa géométrie.
 - **Choisir la boîte, indépendamment du moteur.** Synchros, crabots, séquentielle, double embrayage ou convertisseur ; nombre de rapports, rapports issus de vrais nombres de dents, couple final, denture hélicoïdale ou droite, volant simple ou bi-masse. Une boîte mal adaptée a de vraies conséquences : on peut caler, manquer de vitesse ou la casser.
 - **Conduire.** Démarreur, calage, embrayage qu'on fait patiner, coup de gaz au rétrogradage, grattement si on passe sans débrayer, marche arrière, rupteur, coupure d'injection, détonations, décharge du turbo. Les automatiques ont des modes Éco, Normal, Sport, Piste et palettes, avec des points de passage issus des courbes du moteur.
+- **Choisir l'air du jour.** Température extérieure et altitude : la pression de l'atmosphère type, l'air que le moteur enferme (comparé à SAE J1349), un turbo qui tourne plus vite en montagne jusqu'à sa vitesse limite, la traînée, et un son qui voyage et s'éteint selon l'air du jour.
 - **Partir en balade.** Neuf trajets, de la ville au col de montagne, du tour de circuit au départ arrêté ou au remorquage : la pente, les virages et la remorque se sentent sur la voiture.
 - **Lire les jauges.** Un large tableau de bord : compte-tours, pression d'admission, température et contre-pression des gaz, puissance et couple sur leurs courbes, consommation estimée d'essence et d'huile. Chaque aiguille lit une valeur simulée. Les réglages sont dans des panneaux latéraux : on entend chaque changement en le faisant.
 - **Se placer où l'on veut.** Glisse-toi autour de la voiture sur un plan vu de dessus, ou saute devant, derrière, sur le côté, l'oreille dans le pot, dans l'habitacle ou sous le capot. Les sources sont à leur vraie place, en vraie stéréo, avec un niveau estimé en dB(A).
@@ -109,6 +110,7 @@ Limites connues :
 - Le niveau du sifflement du compresseur est supposé, sans enregistrement de référence ; ni la détonation à forte pression ni l'inertie des rotors ne sont modélisées.
 - Certaines valeurs réglementaires (ONU R51.03 et UE 540/2014) restent à contrôler sur les textes officiels.
 - La carrosserie des années 80 garde la résistance au roulement et l'adhérence de pneus récents, et sa surface frontale et sa faible isolation sont supposées.
+- L'air du jour garde 50 % d'humidité, et l'altitude ne le refroidit pas : la température se règle à part. Le réchauffement de l'air piégé par les parois est calé sur l'exposant de SAE J1349, et rien d'autre (refroidissement, cliquetis, calculateur, régulation du turbo) ne lit encore l'air du jour.
 
 ## Organisation
 

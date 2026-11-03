@@ -17,6 +17,7 @@ There are no audio samples. Everything you hear is computed sample by sample fro
 - **Choose the exhaust.** Comfort, stock, no resonator, sport, muffler delete or straight pipe, with one or two outlets and an H or X pipe on V engines. Each line is computed from its geometry.
 - **Choose the gearbox, independently of the engine.** Synchromesh, dog box, sequential, dual clutch or torque converter; number of gears, ratios built from real tooth counts, final drive, helical or straight-cut gears, single or dual-mass flywheel. A badly matched gearbox has real consequences: you can stall, run out of speed, or break it.
 - **Drive it.** Starter, stalling, a clutch you can slip, rev-matching, grinding when you shift without the clutch, reverse, rev limiter, fuel cut, pops and bangs, turbo blow-off. Automatics offer Eco, Normal, Sport, Track and paddle shift modes, with shift points derived from the engine's curves.
+- **Choose the day's air.** Outside temperature and altitude: the standard atmosphere's pressure, the air the engine traps (compared with SAE J1349), a turbo that spins faster up a mountain until it reaches its speed limit, drag, and sound that travels and fades with the day's air.
 - **Go for a ride.** Nine journeys, from city traffic to a mountain pass, a track lap, a drag run or towing a trailer, with slopes, corners and the trailer felt by the car.
 - **Watch the gauges.** A wide dashboard with tachometer, manifold pressure, exhaust temperature and back-pressure, power and torque on their curves, and estimated fuel and oil consumption. Every needle reads a simulated value. Settings live in side panels, so you hear each change as you make it.
 - **Stand wherever you want.** Drag yourself around the car on a top-down map, or jump to front, rear, side, ear in the tailpipe, cabin or under the hood. Sources sit at their real positions, in true stereo, with an estimated dB(A) reading.
@@ -127,6 +128,7 @@ Known limits:
 - The supercharger's whine level is assumed, not fitted to recordings, and heat soak, knock at high boost and the rotors' inertia are not modelled.
 - Some regulatory values (UN R51.03 and EU 540/2014) still need checking against the official texts.
 - The 80s coupe body keeps the rolling resistance and grip of recent tyres, and its frontal area and light soundproofing are assumptions.
+- The day's air keeps a fixed 50% humidity, and the altitude does not cool it: temperature is set separately. The wall heating of the trapped air is fitted to SAE J1349's exponent, and nothing else (cooling, knock, ECU, boost control) reads the day's air yet.
 
 ## Repository layout
 

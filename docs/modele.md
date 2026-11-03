@@ -1087,3 +1087,144 @@ Le rendu est identique au bit près entre le natif et WebAssembly : calculs en `
 `float`, ordre des tirages aléatoires figé, pas de contraction en virgule flottante, physique à pas
 fixe. La parité avec la version Kotlin d'origine (CANCitroen) a été abandonnée lors de cette
 refonte. `tools/compare_wav.py` compare deux rendus.
+
+## L'air ambiant
+
+Deux réglages, la température de l'air (`ambientC`, −30 à 50 °C) et l'altitude (`altitudeM`, 0 à 4500 m), donnent l'air du
+jour : `ambientAirOf` (`core/include/revforge/atmosphere.hpp`), recopié pour le gaz à l'écran par `web/src/lib/atmosphere.ts`.
+
+### Le calcul
+
+- Pression de l'atmosphère type (ISA, OACI), dans la troposphère : p = 101 325·(1 − 2,25577·10⁻⁵·h)^5,25588. 89 875 Pa à
+  1000 m, 79 495 à 2000 m, 70 109 à 3000 m, 57 728 à 4500 m, à moins de 1 Pa de la table publiée. La température n'y suit
+  pas le gradient de 6,5 K/km : on règle celle du jour à part.
+- Température dans le kelvin du modèle : T = 293 + (θ − 20). Tous les calculs du moteur supposaient 293 K à 20 °C ; l'écart
+  de 0,15 K avec 293,15 change la masse volumique de 0,05 %.
+- Gaz parfait, ρ = p/(R·T) avec R = 287 ; vitesse du son c = 343·√(T/293), soit 312 m/s à −30 °C et 360 à 50 °C (331,3 et
+  343,2 publiés à 0 et 20 °C).
+- Absorption de l'ISO 9613-1 (`airAbsorptionDbPerM`, déjà là) à la température et à la pression du jour, et à une humidité
+  relative de référence de **50 %**, celle des mesures de passage : l'humidité n'est pas un réglage. Le test la confronte
+  aussi au tableau 2 de l'ISO 9613-2 à 15 °C (20, 50 et 80 %) et à 30 °C.
+
+**Dans l'air de référence, 20 °C et 0 m, rien ne change, au bit près.** Chaque usage reçoit sa constante d'avant, pas un
+rapport qui arrondirait autrement : p vaut exactement 101 325 (1^5,25588 = 1 dans `portable::pow`), T exactement 293, et
+δ = p/p₀, θ = T/T₀, σ = δ/θ et √θ valent exactement 1. Les constantes qui différaient restent les leurs : 1,2 kg/m³ pour la
+traînée, 1,204 pour le son, 343 et 340 m/s. En dehors de la référence, chacune devient constante × σ (ou × √θ, × δ) : le calcul
+physique, qui redonne la constante à 20 °C et 0 m. Les quatre empreintes `altitude_*` et `ambient_*` protègent le reste.
+
+### Ce qui se dimensionne une fois pour toutes
+
+Le turbo, le compresseur, la boîte et son pont, la capacité de l'embrayage, le convertisseur et la carte de passage sont des
+pièces et un étalonnage : ils sont calculés sur le même montage ramené à l'air de référence (`withReferenceAir`). Monter à
+3000 m ne change ni le diamètre de la roue, ni l'inertie de l'arbre, ni les rapports.
+
+### Le remplissage
+
+Le couple indiqué suit l'air piégé ; les frottements restent (C_frein = (C + f)·s − f). L'air piégé est réchauffé par les
+parois du conduit et de la chambre avant la fermeture de l'admission :
+
+  T_piégé = T_air + ε·(T_paroi − T_air), s = (p / p_réf)·T_piégé(T_réf)/T_piégé(T_air)
+
+avec les parois à l'eau du moteur chaud, 90 °C (`kWarmWallK`, à lire chez le sujet « thermique »). Un air plus chaud reçoit
+moins des parois : c'est ce qui fait suivre au remplissage T^−0,5 plutôt que T^−1, comme le mesurent les essais (Taylor) et
+comme le corrige SAE J1349. ε = 0,45 est choisi pour que l'exposant local vaille 0,5 à 20 °C ; l'air y gagne 31 K, l'ordre de
+l'échauffement de la charge par les parois et les gaz résiduels (supposé). Un filtre sous le capot ajoute son échauffement à
+l'air de n'importe quel jour.
+
+- **Turbo** (`turboAmbientChargeShare`) : la soupape à ressort tient une pression **relative**, puisque l'autre face de sa
+  membrane voit l'atmosphère. En altitude, la charge vaut donc l'atmosphère plus cette pression ; le rapport de pression
+  monte, l'air sort du compresseur plus chaud, et l'échangeur le rend à l'air du jour.
+- **Compresseur** (`superchargerAmbientChargeShare`) : il déplace un volume ; en altitude, la même vitesse donne moins de
+  masse, donc moins de pression relative, et l'air piégé se calcule de même.
+- **Carburateur** : ses gicleurs, choisis dans l'air de référence, débitent en √(ρ_carburant·Δp) et l'air en √(ρ_air·Δp) :
+  le mélange s'enrichit en 1/√σ, ×1,20 à 3000 m. Le couple perd en plus ce que coûte ce mélange trop riche
+  (`torqueOfRichness`), et la consommation le paie. Sa perte de charge se compte en part de l'atmosphère du jour.
+- **Diesel** : traité comme le reste, couple en proportion de l'air (limite de fumée). Une pompe mécanique sans correcteur
+  altimétrique fumerait plutôt que de perdre ce couple : non modélisé.
+
+Face à SAE J1349 (2004, allumage commandé : CF = 1,18·(99/p)·√((T+273)/298) − 0,18), couple maximal rapporté à 20 °C et 0 m :
+
+| | 1000 m | 2000 m | 3000 m | −30 °C | 0 °C | 35 °C | 50 °C |
+|---|---|---|---|---|---|---|---|
+| SAE J1349 | 0,869 | 0,754 | 0,654 | 1,119 | 1,043 | 0,971 | 0,944 |
+| 2.0 atmosphérique (`hot_hatch_na`) | 0,868 | 0,749 | 0,642 | 1,108 | 1,041 | 0,971 | 0,943 |
+| sa puissance | 0,854 | 0,724 | 0,607 | 1,120 | 1,045 | 0,968 | 0,938 |
+| 2.0 turbo (`hot_hatch_turbo`) | 0,943 | 0,891 | 0,843 | 1,106 | 1,040 | 0,972 | 0,945 |
+| V8 à compresseur (`v8_supercharged`) | 0,903 | 0,793 | 0,692 | 1,110 | 1,042 | 0,970 | 0,942 |
+
+L'atmosphérique colle à J1349 à 1000 et 2000 m ; à 3000 m, hors du domaine de la norme (environ 90 à 105 kPa), les frottements
+pèsent davantage que ses 15 % fixes, surtout en haut du compte-tours, d'où une puissance qui baisse plus que le couple. Le
+turbo perd deux fois moins : la pression relative revient.
+
+### Le turbo en altitude
+
+À 4000 tr/min, pleine charge, 2.0 turbo à 1,3 bar : rapport de pression 2,33 au niveau de la mer, 2,49 à 1000 m, 2,69 à
+2000 m, 2,91 à 3000 m ; l'arbre passe de 160 700 à 168 500, 177 100 puis 186 400 tr/min. À 5500 tr/min et 3000 m, la roue est
+à 99,8 % de sa vitesse limite (`tipLimit`) ; à 4500 m, le calculateur ouvre la soupape pour la protéger, et la pression
+demandée n'est plus tenue (82 %). C'est aussi ce qui fait reculer de 4150 à 2800 tr/min la puissance maximale du diesel à
+3000 m.
+
+Le retard, régime tenu, de 20 % à 100 % de remplissage, jusqu'à 90 % de la pression demandée : 1,21 s au niveau de la mer,
+1,41 s à 1000 m, 1,66 s à 2000 m, 1,96 s à 3000 m (à 2500 tr/min) ; 0,59, 0,67, 0,77 et 0,89 s à 4000 tr/min. En quatrième
+depuis 1800 tr/min (`--scenario turbo`) : 2,21, 2,62, 3,12 et 3,72 s. L'arbre doit monter plus haut, et le moteur lui envoie
+moins de gaz.
+
+Une régulation électronique qui viserait la même pression **absolue** qu'au niveau de la mer (sujet « pression », qui lit
+`TurboSpec::ambientPa`) demanderait plus encore : rapport 3,38 à 3000 m et 4000 tr/min, la roue à sa limite dès 2000 m en haut
+du compte-tours et dès 3000 m à 4000 tr/min, et un retard de 2,17 s au lieu de 1,96 à 2500 tr/min. Ces chiffres sont calculés
+en remplaçant `targetBar` par la pression absolue moins l'atmosphère du jour ; rien de cela n'est branché.
+
+### La route et la consommation
+
+La traînée suit σ, celle d'une remorque aussi : à 130 km/h, 715 N au niveau de la mer, 597 N à 2000 m, 547 N à 3000 m. Le
+pompage derrière un papillon fermé et le frein moteur suivent δ : le collecteur se vide sous l'atmosphère du jour. Le
+démarreur lance plus facilement : chaque compression part d'une atmosphère plus basse (creux de 175 à 195 tr/min sur le
+diesel à 3000 m).
+
+| | 0-100 km/h | V max | WLTC | 90 km/h |
+|---|---|---|---|---|
+| 2.0 atmosphérique, 0 / 1000 / 2000 / 3000 m | 8,72 / 9,62 / 10,35 / 11,87 s | 224,5 / 220,5 / 216,5 / 212,0 km/h | | |
+| 2.0 turbo, 0 / 1000 / 2000 / 3000 m | 6,86 / 7,38 / 7,96 / 8,65 s | 260,5 / 264,5 / 268,5 / 260,0 km/h | | |
+| Citadine 1.4, 0 m / 2000 m | | | 6,76 / 6,13 L/100 km | 5,57 / 4,84 L/100 km |
+| Citadine 1.4, −10 °C / 40 °C | | | 6,98 / 6,63 L/100 km | 5,84 / 5,42 L/100 km |
+| Électrique à 130 km/h, 0 m / 2000 m / −10 °C / 40 °C | | 208 km/h partout (régime du moteur) | | 26,0 / 22,1 / 28,1 / 24,9 kWh/100 km |
+
+Le turbo va plus vite en haut à 2000 m qu'au niveau de la mer : il perd 13 % de puissance, l'air 22 % de traînée. Par grand
+froid, l'atmosphérique gagne 12 % de puissance mais perd en vitesse de pointe : la traînée a gagné 21 %. Le départ à froid du
+moteur lui-même (sujet « thermique ») n'est pas compté ici : à −10 °C, seuls l'air et la traînée changent.
+
+### Le son
+
+- **Propagation** : la vitesse du son fait les retards jusqu'à l'oreille, la bouche du tube (ka), la diffraction par la
+  caisse, l'effet du jet, les modes de l'habitacle et la réponse de l'admission. À 30 m, le son arrive 1,098 fois plus tard
+  à −30 °C.
+- **Absorption** : celle de l'ISO 9613-1 du jour. À 8 kHz : 10,5 dB/100 m à 20 °C, 14,8 à 0 °C, 1,2 à −30 °C (l'air très froid
+  porte peu d'eau), 7,4 à 50 °C.
+- **Rayonnement** : un débit rayonne en ρ·Q̇/4πr, une paroi en ρc·v. À même température, les deux valent σ ; d'une
+  température du réglage à l'autre, ils ne diffèrent que de √θ, 0,4 dB au plus. Toutes les sources à 1 m sont donc
+  multipliées par σ, une fois, avant le champ et l'habitacle ; les supports moteur, qui ne passent pas par l'air, non. À
+  3000 m, le niveau estimé baisse de 3,2 dB (66,4 → 63,2 dB(A) au régime d'essai) ; `toneGain` en rend une partie à la sortie.
+- **Accords** : les cornets, coupés dans l'air de référence, résonnent plus haut dans l'air chaud ; leur gain de remplissage
+  se décale avec. L'indice de Mach des soupapes d'un simple arbre se compte avec la vitesse du son du jour.
+- **Ce qui ne change pas** : la ligne d'échappement (`ExhaustLine`) garde son gaz chaud (500 m/s, 0,6 kg/m³) : sa
+  température vient de la combustion, pas de l'air du jour.
+
+L'écoute reste à faire : un rendu à 3000 m doit sonner comme le même moteur, un peu plus doux et plus lent à prendre ses tours,
+pas comme un autre moteur.
+
+### Le gaz à l'écran
+
+`GasNetwork` s'ouvre sur l'air du jour (`pAtm`, `tAmb`) : la ligne débouche à cette pression, l'admission avale cet air, la
+soupape du turbo tient sa pression au-dessus de lui, et le panache monte selon l'écart à sa température. Les jauges de
+suralimentation (`rf_turbo_*`) se lisent au-dessus de l'atmosphère du jour, comme un vrai manomètre. Le volet de la voiture
+affiche la pression, la masse volumique et la vitesse du son qui en découlent.
+
+### Limites et valeurs supposées
+
+- ε = 0,45 (réchauffement par les parois) est calé sur l'exposant de J1349 à 20 °C, pas mesuré sur ce moteur.
+- L'humidité reste à 50 % : elle ne change ni la masse volumique (air sec) ni le remplissage, seulement l'absorption.
+- La perte d'un filtre suit ṁ² sans la masse volumique : en altitude, elle baisse comme σ² au lieu de σ.
+- Le carburateur soufflé par un turbo prend σ de l'air du jour, sans la pression de charge.
+- Les niveaux supposés du sifflement d'un compresseur et des bruits aérodynamiques suivent σ comme le reste, sans mesure.
+- Ni le refroidissement du moteur, ni la détonation, ni le calculateur ne lisent encore l'air du jour : sujets « thermique »,
+  « combustion », « calculateur », « pression ». Ils trouvent ici `ambientAirOf`, `trappedAirK` et `TurboSpec::ambientPa`.
