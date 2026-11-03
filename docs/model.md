@@ -1063,3 +1063,232 @@ such as the Cobra.
 
 The render is bit-identical between native and WebAssembly: calculations in `double` rounded to `float`, frozen order of random draws, no floating-point
 contraction, fixed-step physics. Parity with the original Kotlin version (CANCitroen) was abandoned during this rework. `tools/compare_wav.py` compares two renders.
+
+## Combustion
+
+Three settings in the engine panel, "Combustion" section: the **compression ratio** (0 = the stock one), the **fuel grade** (RON 95,
+RON 98, race fuel 102, E85, methanol), and what follows from them, **knock**. The code is in `core/src/combustion.cpp` (pure functions
+and `KnockMap`), `DrivingModel::stepKnock` (the sensor) and `core/src/knock_sound.cpp` (the sound). At the defaults none of it runs:
+`combustionStock` returns true, `fullLoadTorqueNm` keeps its original path, no knock map is built, the sound draws nothing more, and the
+29 fingerprints stay bit-identical.
+
+### The compression ratio
+
+Today's engine assumes 10.5:1 naturally aspirated, 9.5:1 boosted, 18:1 diesel, 9.4 or 8.5:1 on a rotary (`stockCompressionRatio`, the
+starter's values). The setting is bounded to what exists (`compressionRatioOf`): a diesel goes no lower than 14:1, the lowest
+production diesel (Mazda Skyactiv-D), and a rotary no higher than 11.9:1, the highest production rotary (Mazda 8C, 2023), as the rotor
+runs out of pocket (assumed); petrol goes from 6 to 24.
+
+Indicated efficiency follows the fuel-air cycle, then what the walls take:
+
+```
+η(r) = η_fa(r) · (1 − k · (2 (r − 1) · B/S + 4))
+η_fa = 1 − r^(1−γ)                                   Otto, γ = 1.3 (Heywood, ch. 5)
+η_fa = 1 − r^(1−γ) · (β^γ − 1) / (γ (β − 1))         Diesel, cutoff ratio β = 2 (assumed)
+```
+
+The second factor is the chamber surface at top dead centre, scaled by the bore: it grows with the ratio, and the heat lost grows with
+it. k = 0.00533 puts the optimum at 17:1 on a square engine, as Caris and Nelson measured (1959, cited by Heywood). From 10.5 to 12.5:1
+efficiency gains 2.5%; an 18:1 diesel is already close to its optimum, and 16:1 costs it only 0.75%, which is what recent diesels lowered
+to 15.5 or 16:1 show. On a rotary the same calculation goes through its elongated chamber (`rotaryCycleEfficiency`, see "The rotary
+engine").
+
+This ratio `η(r)/η(r₀)` scales the gas work, not friction, in `fullLoadTorqueNm`; consumption scales its efficiency by the same ratio, so
+fuel per kilogram of air does not change. The ratio also changes the starter (`compressionLoadNm` reads the real ratio) and the expansion
+at exhaust opening: the Otto pressure `p₄/p₁ = 1 + q/(c_v·T₁·r^(γ−1))` falls as the ratio rises, and the strength of the sound's pulses
+follows (`releasePressureShare`). The gearbox stays the stock engine's, as with the air filter: its final drive does not move.
+
+### Fuels
+
+| | LHV (MJ/kg) | Stoichiometric AFR | kg/L | RON / MON | Vaporisation (kJ/kg) | Energy per kg of air |
+|---|---|---|---|---|---|---|
+| RON 95 (reference) | 42.9 | 14.7 | 0.745 | 95 / 85 | 350 | 2.92 MJ |
+| RON 98 | same | same | same | 98 / 88 | same | same |
+| Race fuel 102 | same | same | same | 102 / 90 | same | same |
+| E85 | 29.3 | 9.75 | 0.782 | 107 / 89 | 831 | 3.01 MJ (+3.0%) |
+| Methanol | 19.9 | 6.47 | 0.792 | 109 / 89 | 1168 | 3.08 MJ (+5.4%) |
+| Diesel | 43.1 | 14.5 | 0.832 | — | 250 | — |
+
+Petrol keeps exactly the figures of the original consumption model. RON 98 and 102 differ only by octane (EN 228 for 98; common values,
+assumed, for 102). E85 is not typed in: it is computed from 85% ethanol by volume and 15% hydrocarbons (Heywood, appendix D; NIST for the
+heats of vaporisation at 25 °C), except its octane numbers, which are measured and do not blend linearly (common values, within a few
+points). Molar masses and boiling points give the vapour pressure by Clausius-Clapeyron.
+
+Vaporisation cools the charge: `evaporationCoolingK` takes the latent heat of the share of fuel that evaporates at the expense of the air,
+until its vapour saturates at the temperature reached. With port injection and carburettors, that share is 0.15 (assumed: most of it
+evaporates on the hot valve and port): 3.6 K for petrol, 12.7 K for E85. Fully evaporated into air at 320 K, E85 would saturate at 40 K
+and methanol at 49 K, well before the 84 and 182 K their latent heat would allow. The colder charge is denser, but its vapour displaces
+a little air: `fuelTorqueShare` multiplies the energy per kilogram of air by this density, against the reference petrol, in
+`fullLoadTorqueNm`. Fuel use in litres follows each fuel's density and LHV.
+
+None of this applies to a diesel: no octane number (it ignites by compression, so the choice is hidden in the panel), no spark knock,
+no evaporative cooling (diesel is injected near top dead centre, after intake closing). Its ratio does count: efficiency, starter, and
+clatter. The clatter follows the share of fuel that burns at once, hence the ignition delay of Hardenberg and Hase (1979), computed at top
+dead centre of a polytropic compression (n = 1.35) from 330 K and 1 atm: at 15:1 the delay is 26% longer, at 22:1 11% shorter
+(`dieselKnockScale`). The pressure rise, hence the clatter (`kDieselKnock`) and the combustion noise of the block (Anderton's law), follows
+in proportion: +2 dB at 15:1, −1 dB at 22:1.
+
+### Knock
+
+**The chamber.** `endGasCycle` steps a single-zone combustion degree by degree, from intake closing (50° after bottom dead centre, the
+sound's stock timing) to exhaust opening: a connecting rod 3.2 times the crank radius, γ = 1.3, Wiebe combustion (a = 5, m = 2) over 45°
+after a 0.35 ms flame kernel, and 80% of the fuel's heat to the gas (the rest to the walls and unburnt fuel). The charge arrives from the
+manifold, warmed by the walls (20% of the gap to the coolant plus 40 K, less when it is dense: h ∝ (ρv)^0.8), cooled by vaporisation,
+and mixed with 4% residual gas at 1000 K. Its mass is what the torque model's filling gives (0.92 × breathing), at the temperature it
+really has. At 3000 rpm and full load, this cycle gives a 60 bar peak and 12 bar of indicated mean pressure on a 10.5:1 naturally
+aspirated engine: the order of magnitude of real ones.
+
+**The end gas.** Fresh gas is compressed by the piston, then by combustion, at γ = 1.30 (wall losses included):
+`T_u = T_IVC · (p/p_IVC)^((γ−1)/γ)`. Its auto-ignition delay is Douaud and Eyzat's (1978):
+
+```
+τ = 17.68 · (ON/100)^3.402 · p^−1.7 · exp(3800/T)     ms, p in atm, T in K, ON the research octane number
+I = ∫ dt / τ                                          Livengood and Wu, up to 90% burnt
+```
+
+The mean cycle knocks if the integral reaches 1 before the flame has burnt 90% of the mixture.
+
+**The map.** The calculation is too slow for every 1 ms step: `KnockMap` does it once per setting, on 10 speeds and 15 advances, and keeps
+it (`knockMapOf`, four engines at a time, no allocation). Pressure is not tabulated: at equal temperature, the whole pressure trace is
+proportional to the intake-closing pressure, and the integral follows its 1.7th power. At a charge pressure `k` times full load, the
+limit is the advance where the integral equals `k^−1.7`. Best torque (MBT) burns half the mixture 8° after top dead centre (Heywood).
+
+**No two cycles alike.** Combustion phasing varies from cycle to cycle (assumed: 1.5° standard deviation, a bell bounded at three standard
+deviations, the sum of three uniform draws). The **knock limit** is the advance at which one cycle in fifty knocks, two standard
+deviations below the mean cycle's.
+
+**The stock map** is set as a calibrator would: best torque, except where it would knock, where it stays 2° under the stock engine's
+limit, on RON 95, in reference air. Even its fastest cycle then stays below the mean cycle's limit: **no preset knocks at its own
+settings**, and the presets' calibrated torque is that map's. It stays the same when the ratio or the fuel changes: it is the ECU's map,
+not a retuned engine's.
+
+| Preset | Ratio | Smallest margin | at | Largest retard from MBT | at | MBT reached from |
+|---|---|---|---|---|---|---|
+| `city_14` | 10.5 | 2.0° | 1000 rpm | 9.4° | 1000 rpm | 2250 rpm |
+| `four_cyl_sport` | 10.5 | 2.0° | 1000 | 10.1° | 1000 | 2250 |
+| `three_cyl_turbo` | 9.5 | 2.0° | 1000 | 22.1° | 2000 | 6000 |
+| `hot_hatch_turbo` | 9.5 | 2.0° | 1000 | 22.3° | 2250 | 6500 |
+| `hot_hatch_na` | 10.5 | 2.0° | 1000 | 10.0° | 1000 | 2250 |
+| `five_cyl_turbo` | 9.5 | 2.0° | 1000 | 24.3° | 2250 | never |
+| `inline_six` | 10.5 | 2.0° | 1000 | 10.0° | 1000 | 2250 |
+| `v6_gt` | 10.5 | 2.0° | 1000 | 10.6° | 1000 | 2500 |
+| `flat_six` | 10.5 | 2.0° | 1000 | 9.8° | 1000 | 2250 |
+| `boxer_four_turbo` | 9.5 | 2.0° | 1000 | 20.7° | 2250 | 6500 |
+| `v8_cross_plane` | 10.5 | 2.0° | 1000 | 11.1° | 1000 | 2500 |
+| `v10_open` | 10.5 | 2.0° | 1000 | 8.0° | 1000 | 2000 |
+| `v12` | 10.5 | 2.0° | 1000 | 8.7° | 1000 | 2000 |
+| `retro_coupe` | 10.5 | 2.0° | 1000 | 10.2° | 1000 | 2500 |
+| `v8_supercharged` | 9.5 | 2.0° | 1000 | 17.6° | 1000 | 5000 |
+| `carb_twin_cam` | 10.5 | 2.0° | 1000 | 10.6° | 1000 | 2500 |
+| `twin_rotor_13` | 9.4 | 2.0° | 1000 | 20.6° (shaft) | 1000 | 2500 |
+| `diesel_four`, `electric` | | no spark | | | | |
+
+Steady full load, from 1000 rpm to the redline, by `revforge-render --out none --preset X --scenario steady --seconds 1 --knock 1`, which
+prints the map speed by speed; the test "aucun préréglage ne cliquette à ses réglages" checks it every 50 rpm from idle. The naturally
+aspirated engines are knock-limited below 2000 to 2500 rpm, as real 10.5:1 engines are on RON 95; the 9.5:1 turbos at 1.2 to 1.5 bar are
+limited all the way up, with half the mixture burnt around 29° after top dead centre at 2000 rpm on the GTI, the order of magnitude of
+boosted engines at 20 bar mean pressure (from memory: 25 to 35°, no source re-read).
+
+What the model gives at 1500 rpm full load on the city car: −4.2° per point of compression, +0.69° per octane number, −0.85° for 10 °C
+more air. That is about 6 octane numbers per point of compression, where the engine builders' rule says 3 to 5 (from memory, no source
+re-read): the model is probably a little too sensitive to the ratio.
+
+**The sensor.** Each detected knock takes 1.5° from its cylinder, the advance returns at 1° per second once it is quiet, never more than
+20° taken (assumed, orders of magnitude of production ECUs). On average: `dρ/dt = 1.5° × share of knocking cycles × combustions per second
+per cylinder − 1°/s`. It settles around 2% of knocking cycles, at the limit. **A carburettor has no sensor**: it knocks. Gas work follows
+the applied advance against the stock map's, through the same cycle (`KnockMap::torqueShare`), on the torque produced at each step; the
+spec sheet takes the steady state. Fuel follows the air: retarding wastes fuel, it does not save it.
+
+**What it gives**, with `revforge-render --out none --preset X [setting] --scenario wltc --fuel 1`:
+
+| Setting | Peak torque | Peak power | 0-100 km/h | WLTC | Best point |
+|---|---|---|---|---|---|
+| `city_14` | 111.4 Nm | 56.6 kW | 13.34 s | 6.76 L/100 | 245 g/kWh |
+| at 12.5:1 | 114.6 (+2.9%) | 58.5 (+3.4%) | 12.96 s | 6.61 (−2.2%) | 238 |
+| on E85 | 119.0 (+6.8%) | 60.9 (+7.6%) | 12.47 s | 9.48 (+40%) | 356 |
+| on methanol | 128.1 (+15%) | 66.0 (+17%) | 11.68 s | 13.88 (+105%) | 522 |
+| `hot_hatch_turbo` | 357.0 Nm | 194.4 kW | 6.86 s | 8.90 L/100 | 240 g/kWh |
+| on race fuel 102 | same | same | same | same | same |
+| on E85 | 380.1 (+6.5%) | 208.1 (+7.0%) | 6.50 s | 12.49 (+40%) | 350 |
+| at 10.5:1 | 355.2 (−0.5%) | 193.9 (−0.3%) | 6.85 s | 8.76 (−1.6%) | 235 |
+| `carb_twin_cam` | 171.5 Nm | 89.5 kW | 8.65 s | 8.94 L/100 | 253 g/kWh |
+| at 12:1 (knocks, no sensor) | 175.6 (+2.4%) | 91.8 (+2.6%) | 8.51 s | 8.78 (−1.8%) | 247 |
+| `diesel_four` | 315.1 Nm | 113.5 kW | 12.94 s | 7.58 L/100 | 196 g/kWh |
+| at 16:1 | 312.5 (−0.8%) | 112.5 | 13.02 s | 7.63 (+0.7%) | 198 |
+| at 22:1 | 314.6 | 113.3 | 12.95 s | 7.59 | 196 |
+| `twin_rotor_13` | 226.7 Nm | 167.3 kW | 7.13 s | 13.35 L/100 | 287 g/kWh |
+| at 11:1 | 237.9 (+4.9%) | 176.7 (+5.6%) | 6.92 s | 12.88 (−3.5%) | 274 |
+
+A higher ratio pays down low, where the sensor takes advance away (up to 7.4° on the city car at 13:1, flat out in fourth from 1800 rpm),
+and gains up high. A better octane changes nothing while the map stays stock: it buys margin, which the ECU's advance offset can take.
+E85 and methanol gain by their energy per kilogram of air and their colder charge, and cost 40% and 105% more litres, the ratio of their
+energy per litre. These gains at equal advance are a little above what is usually read for E85 (3 to 5%, no source re-read): the share
+evaporated into the air is assumed.
+
+### The sound of knock
+
+When the end gas ignites by itself, pressure jumps and the chamber rings on its acoustic modes (Draper, 1938):
+
+```
+f_mn = α_mn · c / (π · bore)          α = 1.841 (1st circumferential), 3.054 (2nd), 3.832 (1st radial)
+c = √(γ R T)                          burnt gas: γ = 1.25, R = 289.7 J/(kg·K), T from the cycle at 90% burnt (≈ 2580 K)
+```
+
+That is 6.59 kHz for an 86 mm bore, 6.75 kHz for 84 mm, 7.55 kHz for 75 mm. Against published measurements:
+
+- the tuners' rule, 1800/(π × bore in mm) kHz, gives 6.66 kHz for 86 mm, within 1% of the model (HP Academy forums, seen quoted);
+- Mittal (SAE 2018-01-1666) finds the first circumferential mode near 6 kHz on a current engine, Eng (SAE 2002-01-2859) between 5 and
+  6 kHz (abstracts read);
+- a 126 mm bore gas engine (Physics, 2021, excerpt seen quoted) shows bands at 4.3-5.4, 6.4-7.7, 8.9-9.6, 10.3-11.4 and 12.2-13.1 kHz:
+  the model puts its first five modes at 4.50, 7.46, 9.36, 10.26 and 12.99 kHz, one in each (a test checks it).
+
+On a rotary the chamber is a slab between two apexes: its first mode runs lengthwise, `c/(2L)`, L the chord (√3 times the generating
+radius), 2.7 kHz on the 1.3 L twin-rotor; then across, then the second lengthwise.
+
+Each combustion draws, from its own generator (`KnockSound`), its phasing within the cycle-to-cycle spread; if it passes the limit, the
+chamber rings 15° after top dead centre. The oscillation's peak (MAPO) is 0.3 bar at the limit and grows by a factor e every 3° beyond,
+10 bar at most (assumed; it is the shape tests show). It dies out in 1 ms (assumed), on three modes weighted 0.6, 0.25 and 0.15, and its
+pitch falls while it rings: the gas expands, `f ∝ V^−(γ−1)/2`. The block radiates it into the engine bay (`Source::Bay`), with 100 dB of
+attenuation from chamber to 1 m (order of magnitude of Priede's structural attenuation curves, assumed): 1 bar of oscillation gives 1 Pa
+at 1 m, 94 dB. It does not go through the body, which does not radiate such highs.
+
+Under the bonnet, the carburettors at 12:1 in fourth, flat out from 1900 rpm, knock 249 times in 16 s, two thirds of the combustions near
+2000 rpm; the 5.5 to 8 kHz band rises 10 dB above the stock engine, then falls back around 3400 rpm, where it stops. A spectrogram in
+3 ms windows shows short strokes at 6.7, 11 and 14 kHz, leaning downwards. **Listening is still to be done**:
+
+```
+./build/revforge-render --out knock.wav --preset carb_twin_cam --compression 12 --scenario turbo --seconds 20 --listener bay
+./build/revforge-render --out stock.wav --preset carb_twin_cam --scenario turbo --seconds 20 --listener bay
+./build/revforge-render --out sensor.wav --preset city_14 --compression 13 --scenario turbo --seconds 20 --listener cabin
+./build/revforge-render --out diesel15.wav --preset diesel_four --compression 15 --scenario idle --seconds 10 --listener bay
+```
+
+### What it reads, and what it exposes
+
+Read, at its reference value until the other topics are wired (`KnockMap::Inputs`): ambient air (293.15 K, 101,325 Pa), coolant
+(363.15 K), intake closing (50° after bottom dead centre) and residual gas (4%), charge cooling by direct injection or water (0), the
+advance map offset (0). The charge pressure and temperature of a boosted engine are the current model's at equilibrium
+(`TurboSteady::coolerOutK`, added, and `chargePa`; `SuperchargerSteady`). Full-load mixture is the consumption model's (0.88 naturally
+aspirated, 0.82 boosted).
+
+Exposed: `fuelProperties`, `energyPerAirJPerKg`, `evaporationCoolingK` (with saturation), `compressionRatioOf`, `indicatedEfficiency`,
+`compressionEfficiencyShare`, `fuelTorqueShare`, `douaudEyzatDelayS`, `endGasCycle`, `mbtAdvanceDeg`, `knockingShare`, `draperHz`,
+`dieselIgnitionDelayDeg`; `KnockMap::at` gives, for a speed and a charge pressure, best torque, the **stock map** (`stockDeg`, to use as
+the reference requested advance) and the knock limit; `DrivingModel` gives the applied advance, the limit, the advance taken away and the
+share of knocking cycles (`rf_spark_advance`, `rf_knock_limit`, `rf_knock_retard`, `rf_knock_share`). The map is only built when combustion
+is no longer stock (`knockMapOf`): once wired, air, coolant, cam or requested advance will need to trigger it too.
+
+### What is assumed, and what is missing
+
+- The single-zone cycle, its constants (heat to the gas, flame kernel, Wiebe duration, wall heating, residual gas) and the cycle-to-cycle
+  spread are assumed, set to give pressures and advances of the order of real ones. Douaud and Eyzat fitted their law on reference fuels
+  (isooctane and heptane): the research octane number stands in for the index, without the sensitivity (RON − MON) that favours alcohols
+  on boosted engines, and the law is extrapolated above 100.
+- Knock only costs torque through the advance taken away: no extra heat to the walls, no piston wear, no failure.
+- The advance the sensor takes away neither heats the exhaust nor spools the turbo, as a real one would: the ECU topic will give exhaust
+  temperature against advance.
+- E85 and methanol burn no faster than petrol in the model, and their own efficiency is no better.
+- The share of fuel evaporated into the air (0.15), the structural attenuation (100 dB), the oscillation's peak and duration are assumed:
+  listening will decide.
+- The gas view follows the compression ratio (its clearance volume), not the fuel nor knock; the 2D and 3D views do not change.
+- A diesel does not refuse to start cold at too low a ratio: the setting stops at 14:1.

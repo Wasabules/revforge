@@ -1087,3 +1087,240 @@ Le rendu est identique au bit près entre le natif et WebAssembly : calculs en `
 `float`, ordre des tirages aléatoires figé, pas de contraction en virgule flottante, physique à pas
 fixe. La parité avec la version Kotlin d'origine (CANCitroen) a été abandonnée lors de cette
 refonte. `tools/compare_wav.py` compare deux rendus.
+
+## La combustion
+
+Trois réglages du volet du moteur, section « Combustion » : le **taux de compression** (0 = celui d'origine), le **carburant** (SP95,
+SP98, essence de course 102, E85, méthanol), et ce qui en découle, le **cliquetis**. Le code est dans `core/src/combustion.cpp`
+(fonctions pures et `KnockMap`), `DrivingModel::stepKnock` (le capteur) et `core/src/knock_sound.cpp` (le son). Au défaut, rien de tout
+cela ne s'exécute : `combustionStock` renvoie vrai, `fullLoadTorqueNm` garde son chemin d'origine, aucune carte de cliquetis n'est
+construite, le son ne tire rien de plus, et les 29 empreintes restent au bit près.
+
+### Le taux de compression
+
+Le moteur d'aujourd'hui suppose 10,5:1 en atmosphérique, 9,5:1 suralimenté, 18:1 en diesel, 9,4 ou 8,5:1 sur un rotatif
+(`stockCompressionRatio`, les valeurs du démarreur). Le réglage est borné à ce qui existe (`compressionRatioOf`) : un diesel ne descend
+pas sous 14:1, le plus bas d'un diesel de série (Mazda Skyactiv-D), et un rotatif ne dépasse pas 11,9:1, le plus haut d'un rotatif de
+série (Mazda 8C, 2023), faute de creux dans le rotor (supposé) ; l'essence va de 6 à 24.
+
+Le rendement indiqué suit le cycle air-carburant, puis ce que perdent les parois :
+
+```
+η(r) = η_ac(r) · (1 − k · (2 (r − 1) · B/S + 4))
+η_ac = 1 − r^(1−γ)                                   Otto, γ = 1,3 (Heywood, ch. 5)
+η_ac = 1 − r^(1−γ) · (β^γ − 1) / (γ (β − 1))         Diesel, rapport d'injection β = 2 (supposé)
+```
+
+Le second facteur est la surface de la chambre au point mort haut, rapportée à l'alésage : elle croît avec le taux, et la chaleur
+perdue avec elle. k = 0,00533 met l'optimum à 17:1 sur un moteur carré, comme l'ont mesuré Caris et Nelson (1959, cité par Heywood).
+De 10,5 à 12,5:1, le rendement gagne 2,5 % ; un diesel à 18:1 est déjà près de son optimum, et 16:1 ne lui coûte que 0,75 %, ce que
+montrent les diesels récents descendus à 15,5 ou 16:1. Sur un rotatif, le même calcul passe par sa chambre allongée
+(`rotaryCycleEfficiency`, voir « Le moteur rotatif »).
+
+Ce rapport `η(r)/η(r₀)` multiplie le travail des gaz, pas les frottements, dans `fullLoadTorqueNm` ; la consommation multiplie son
+rendement par le même rapport, si bien que le carburant par kilogramme d'air ne change pas. Le taux change aussi le démarreur
+(`compressionLoadNm` lit le taux réel) et la détente à l'ouverture de l'échappement : la pression d'Otto `p₄/p₁ = 1 + q/(c_v·T₁·r^(γ−1))`
+baisse quand le taux monte, et la force des bouffées du son suit (`releasePressureShare`). La boîte reste celle du moteur d'origine,
+comme pour le filtre à air : son pont ne bouge pas.
+
+### Les carburants
+
+| | PCI (MJ/kg) | Pouvoir comburivore | kg/L | RON / MON | Vaporisation (kJ/kg) | Énergie par kg d'air |
+|---|---|---|---|---|---|---|
+| SP95 (référence) | 42,9 | 14,7 | 0,745 | 95 / 85 | 350 | 2,92 MJ |
+| SP98 | idem | idem | idem | 98 / 88 | idem | idem |
+| Essence de course 102 | idem | idem | idem | 102 / 90 | idem | idem |
+| E85 | 29,3 | 9,75 | 0,782 | 107 / 89 | 831 | 3,01 MJ (+3,0 %) |
+| Méthanol | 19,9 | 6,47 | 0,792 | 109 / 89 | 1168 | 3,08 MJ (+5,4 %) |
+| Gazole | 43,1 | 14,5 | 0,832 | — | 250 | — |
+
+L'essence garde exactement les chiffres de la consommation d'origine. Le 98 et le 102 n'en diffèrent que par l'octane (EN 228 pour le
+98 ; valeurs courantes, supposées, pour le 102). L'E85 n'est pas saisi : il est calculé à partir de 85 % d'éthanol en volume et de 15 %
+d'hydrocarbures (Heywood, annexe D ; NIST pour les chaleurs de vaporisation à 25 °C), sauf ses indices d'octane, mesurés et non
+mélangeables (valeurs courantes, à quelques points près). Les masses molaires et les températures d'ébullition donnent la tension de
+vapeur par Clausius-Clapeyron.
+
+La vaporisation refroidit la charge : `evaporationCoolingK` prend la chaleur latente de la part du carburant qui se vaporise aux dépens
+de l'air, jusqu'à saturation de sa vapeur à la température atteinte. En injection indirecte et au carburateur, cette part vaut 0,15
+(supposé : l'essentiel se vaporise sur la soupape et le conduit chauds) : 3,6 K pour l'essence, 12,7 K pour l'E85. Tout vaporisé dans
+l'air à 320 K, l'E85 saturerait à 40 K et le méthanol à 49 K, bien avant les 84 et 182 K que sa chaleur latente permettrait. La charge
+plus froide est plus dense, mais sa vapeur prend la place d'un peu d'air : `fuelTorqueShare` fait le produit de l'énergie par kilogramme
+d'air et de cette densité, face à l'essence de référence, dans `fullLoadTorqueNm`. La consommation en litres suit la densité et le PCI de
+chaque carburant.
+
+Rien de cela ne s'applique au diesel : ni indice d'octane (il s'allume par compression, d'où l'absence du choix dans le volet), ni
+cliquetis d'étincelle, ni refroidissement par vaporisation (le gazole est injecté vers le point mort haut, après la fermeture de
+l'admission). Son taux, lui, compte : rendement, démarreur, et claquement. Ce dernier suit la part du carburant qui brûle d'un coup,
+donc le délai d'auto-inflammation de Hardenberg et Hase (1979), calculé au point mort haut d'une compression polytropique (n = 1,35)
+depuis 330 K et 1 atm : à 15:1, le délai s'allonge de 26 %, à 22:1 il raccourcit de 11 % (`dieselKnockScale`). La montée de pression, donc
+le claquement (`kDieselKnock`) et le bruit de combustion du bloc (loi d'Anderton), suivent en proportion : +2 dB à 15:1, −1 dB à 22:1.
+
+### Le cliquetis
+
+**La chambre.** `endGasCycle` déroule une combustion à une zone, degré par degré, de la fermeture de l'admission (50° après le point
+mort bas, le calage d'origine du son) à l'ouverture de l'échappement : bielle de 3,2 fois le rayon de manivelle, γ = 1,3, combustion
+de Wiebe (a = 5, m = 2) sur 45° après un noyau de flamme de 0,35 ms, et 80 % de la chaleur du carburant au gaz (le reste aux parois et
+aux imbrûlés). La charge arrive du collecteur, réchauffée par les parois (20 % de l'écart à l'eau plus 40 K, moins quand elle est
+dense : h ∝ (ρv)^0,8), refroidie par la vaporisation, et mêlée à 4 % de gaz résiduels à 1000 K. Sa masse est celle que donne le
+remplissage du modèle de couple (0,92 × la respiration), à la température qu'elle a vraiment. Ce cycle donne, à 3000 tr/min et pleine
+charge, 60 bar au plus et 12 bar de pression moyenne indiquée sur un atmosphérique de 10,5:1 : l'ordre de grandeur des vrais.
+
+**Le bout de chambre.** Les gaz frais sont comprimés par le piston puis par la combustion, à γ = 1,30 (pertes aux parois comprises) :
+`T_u = T_FA · (p/p_FA)^((γ−1)/γ)`. Leur délai d'auto-inflammation est celui de Douaud et Eyzat (1978) :
+
+```
+τ = 17,68 · (ON/100)^3,402 · p^−1,7 · exp(3800/T)     ms, p en atm, T en K, ON l'indice d'octane recherche
+I = ∫ dt / τ                                          Livengood et Wu, jusqu'à 90 % brûlé
+```
+
+Le cycle moyen cliquette si l'intégrale atteint 1 avant que la flamme n'ait brûlé 90 % du mélange.
+
+**La carte.** Le calcul est trop lent pour chaque pas de 1 ms : `KnockMap` le fait une fois par réglage, sur 10 régimes et
+15 avances, et le garde (`knockMapOf`, quatre moteurs à la fois, sans allocation). La pression n'y est pas tabulée : à température
+égale, toute la trace de pression est proportionnelle à celle de la fermeture, et l'intégrale suit sa puissance 1,7. À une pression de
+charge `k` fois celle de la pleine charge, la limite est l'avance où l'intégrale vaut `k^−1,7`. Le meilleur couple (MBT) brûle la
+moitié du mélange 8° après le point mort haut (Heywood).
+
+**Un cycle n'est pas l'autre.** La phase de combustion varie d'un cycle à l'autre (supposé : 1,5° d'écart type, une cloche bornée à
+trois écarts types, somme de trois tirages uniformes). La **limite de cliquetis** est l'avance où un cycle sur cinquante cliquette,
+deux écarts types sous celle du cycle moyen.
+
+**La carte d'origine** est réglée comme le fait un calibrateur : le meilleur couple, sauf là où il cliquetterait, où elle reste 2° sous
+la limite du moteur d'origine, au SP95, dans l'air de référence. Même son cycle le plus rapide reste alors sous la limite du cycle moyen :
+**aucun préréglage ne cliquette à ses réglages**, et le couple calibré des préréglages est celui de cette carte. Elle reste la même
+quand on change le taux ou le carburant : c'est la carte du calculateur, pas celle d'un moteur re-réglé.
+
+| Préréglage | Taux | Marge la plus faible | à | Retard le plus grand face au MBT | à | MBT atteint dès |
+|---|---|---|---|---|---|---|
+| `city_14` | 10,5 | 2,0° | 1000 tr/min | 9,4° | 1000 tr/min | 2250 tr/min |
+| `four_cyl_sport` | 10,5 | 2,0° | 1000 | 10,1° | 1000 | 2250 |
+| `three_cyl_turbo` | 9,5 | 2,0° | 1000 | 22,1° | 2000 | 6000 |
+| `hot_hatch_turbo` | 9,5 | 2,0° | 1000 | 22,3° | 2250 | 6500 |
+| `hot_hatch_na` | 10,5 | 2,0° | 1000 | 10,0° | 1000 | 2250 |
+| `five_cyl_turbo` | 9,5 | 2,0° | 1000 | 24,3° | 2250 | jamais |
+| `inline_six` | 10,5 | 2,0° | 1000 | 10,0° | 1000 | 2250 |
+| `v6_gt` | 10,5 | 2,0° | 1000 | 10,6° | 1000 | 2500 |
+| `flat_six` | 10,5 | 2,0° | 1000 | 9,8° | 1000 | 2250 |
+| `boxer_four_turbo` | 9,5 | 2,0° | 1000 | 20,7° | 2250 | 6500 |
+| `v8_cross_plane` | 10,5 | 2,0° | 1000 | 11,1° | 1000 | 2500 |
+| `v10_open` | 10,5 | 2,0° | 1000 | 8,0° | 1000 | 2000 |
+| `v12` | 10,5 | 2,0° | 1000 | 8,7° | 1000 | 2000 |
+| `retro_coupe` | 10,5 | 2,0° | 1000 | 10,2° | 1000 | 2500 |
+| `v8_supercharged` | 9,5 | 2,0° | 1000 | 17,6° | 1000 | 5000 |
+| `carb_twin_cam` | 10,5 | 2,0° | 1000 | 10,6° | 1000 | 2500 |
+| `twin_rotor_13` | 9,4 | 2,0° | 1000 | 20,6° (d'arbre) | 1000 | 2500 |
+| `diesel_four`, `electric` | | sans étincelle | | | | |
+
+Pleine charge stabilisée, de 1000 tr/min au régime maximal, par `revforge-render --out none --preset X --scenario steady --seconds 1 --knock 1`,
+qui écrit la carte régime par régime ; le test « aucun préréglage ne cliquette à ses réglages » le vérifie de 50 en 50 tr/min, depuis le
+ralenti. Les atmosphériques sont limités sous 2000 à 2500 tr/min, ce que font les vrais à 10,5:1 au SP95 ; les turbos de 9,5:1 à 1,2 à
+1,5 bar le sont jusqu'en haut, avec une demi-combustion vers 29° après le point mort haut à 2000 tr/min sur la GTI, l'ordre de grandeur
+des moteurs suralimentés à 20 bar de pression moyenne (de mémoire : 25 à 35°, sans source relue).
+
+Ce que le modèle donne, à 1500 tr/min pleine charge sur la citadine : −4,2° par point de compression, +0,69° par point d'octane,
+−0,85° pour 10 °C d'air en plus. Soit environ 6 points d'octane par point de compression, quand la règle des motoristes en dit 3 à 5 (de
+mémoire, sans source relue) : le modèle est sans doute un peu trop sensible au taux.
+
+**Le capteur.** Chaque cliquetis détecté retire 1,5° à son cylindre, l'avance revient de 1° par seconde quand il se tait, jamais plus de
+20° retirés (supposés, ordres de grandeur des calculateurs de série). En moyenne : `dρ/dt = 1,5° × part des cycles qui cliquettent ×
+combustions par seconde et par cylindre − 1°/s`. Il s'équilibre vers 2 % de cycles qui cliquettent, à la limite. **Un carburateur n'a pas
+de capteur** : il cliquette. Le travail des gaz suit l'avance appliquée, rapportée à celle de la carte d'origine, par le même cycle
+(`KnockMap::torqueShare`), sur le couple produit à chaque pas ; la fiche prend l'état stabilisé. Le carburant, lui, suit l'air : retarder
+gaspille, ne dépense pas moins.
+
+**Ce que cela donne**, avec `revforge-render --out none --preset X [réglage] --scenario wltc --fuel 1` :
+
+| Réglage | Couple max | Puissance max | 0-100 km/h | WLTC | Meilleur point |
+|---|---|---|---|---|---|
+| `city_14` | 111,4 Nm | 56,6 kW | 13,34 s | 6,76 L/100 | 245 g/kWh |
+| à 12,5:1 | 114,6 (+2,9 %) | 58,5 (+3,4 %) | 12,96 s | 6,61 (−2,2 %) | 238 |
+| à l'E85 | 119,0 (+6,8 %) | 60,9 (+7,6 %) | 12,47 s | 9,48 (+40 %) | 356 |
+| au méthanol | 128,1 (+15 %) | 66,0 (+17 %) | 11,68 s | 13,88 (+105 %) | 522 |
+| `hot_hatch_turbo` | 357,0 Nm | 194,4 kW | 6,86 s | 8,90 L/100 | 240 g/kWh |
+| à l'essence 102 | identique | identique | identique | identique | identique |
+| à l'E85 | 380,1 (+6,5 %) | 208,1 (+7,0 %) | 6,50 s | 12,49 (+40 %) | 350 |
+| à 10,5:1 | 355,2 (−0,5 %) | 193,9 (−0,3 %) | 6,85 s | 8,76 (−1,6 %) | 235 |
+| `carb_twin_cam` | 171,5 Nm | 89,5 kW | 8,65 s | 8,94 L/100 | 253 g/kWh |
+| à 12:1 (cliquette, sans capteur) | 175,6 (+2,4 %) | 91,8 (+2,6 %) | 8,51 s | 8,78 (−1,8 %) | 247 |
+| `diesel_four` | 315,1 Nm | 113,5 kW | 12,94 s | 7,58 L/100 | 196 g/kWh |
+| à 16:1 | 312,5 (−0,8 %) | 112,5 | 13,02 s | 7,63 (+0,7 %) | 198 |
+| à 22:1 | 314,6 | 113,3 | 12,95 s | 7,59 | 196 |
+| `twin_rotor_13` | 226,7 Nm | 167,3 kW | 7,13 s | 13,35 L/100 | 287 g/kWh |
+| à 11:1 | 237,9 (+4,9 %) | 176,7 (+5,6 %) | 6,92 s | 12,88 (−3,5 %) | 274 |
+
+Un taux plus haut paie en bas, où le capteur retire l'avance (jusqu'à 7,4° sur la citadine à 13:1, plein gaz en quatrième depuis
+1800 tr/min), et gagne en haut. Un meilleur octane ne change rien tant que la carte reste celle d'origine : il donne de la marge, que le
+décalage d'avance du calculateur pourra prendre. L'E85 et le méthanol gagnent par leur énergie par kilogramme d'air et leur charge plus
+froide, et coûtent 40 % et 105 % de litres en plus, le rapport de leurs énergies par litre. Ces gains à avance égale sont un peu au-dessus
+de ce qu'on lit d'ordinaire pour l'E85 (3 à 5 %, sans source relue) : la part vaporisée dans l'air est supposée.
+
+### Le son du cliquetis
+
+Quand les gaz frais s'enflamment d'eux-mêmes, la pression saute et la chambre résonne sur ses modes acoustiques (Draper, 1938) :
+
+```
+f_mn = α_mn · c / (π · alésage)       α = 1,841 (1er circonférentiel), 3,054 (2e), 3,832 (1er radial)
+c = √(γ R T)                          gaz brûlé : γ = 1,25, R = 289,7 J/(kg·K), T du cycle à 90 % brûlé (≈ 2580 K)
+```
+
+Soit 6,59 kHz pour 86 mm d'alésage, 6,75 kHz pour 84 mm, 7,55 kHz pour 75 mm. Face aux mesures publiées :
+
+- la règle des préparateurs, 1800/(π × alésage en mm) kHz, donne 6,66 kHz pour 86 mm, à 1 % du modèle (forums HP Academy, vu cité) ;
+- Mittal (SAE 2018-01-1666) trouve le premier mode circonférentiel vers 6 kHz sur un moteur actuel, Eng (SAE 2002-01-2859) entre 5 et
+  6 kHz (résumés lus) ;
+- un moteur au gaz de 126 mm d'alésage (Physics, 2021, extrait vu cité) montre des bandes à 4,3-5,4, 6,4-7,7, 8,9-9,6, 10,3-11,4 et
+  12,2-13,1 kHz : le modèle place ses cinq premiers modes à 4,50, 7,46, 9,36, 10,26 et 12,99 kHz, dans chacune (un test le vérifie).
+
+Sur un rotatif, la chambre est une lame entre deux sommets : son premier mode est en longueur, `c/(2L)`, L la corde (√3 fois le rayon
+générateur), soit 2,7 kHz sur le birotor de 1,3 L ; puis en largeur, et le deuxième en longueur.
+
+Chaque combustion tire, à son propre générateur (`KnockSound`), sa phase dans la dispersion d'un cycle à l'autre ; si elle passe la
+limite, la chambre sonne à 15° après le point mort haut. La crête de l'oscillation (MAPO) vaut 0,3 bar à la limite et croît d'un
+facteur e tous les 3° au-delà, 10 bar au plus (supposé ; c'est l'allure que montrent les essais). Elle s'éteint en 1 ms (supposé), sur
+trois modes de poids 0,6, 0,25 et 0,15, et sa fréquence descend pendant qu'elle sonne : le gaz se détend, `f ∝ V^−(γ−1)/2`. Le bloc la
+rayonne au compartiment moteur (`Source::Bay`), avec 100 dB d'atténuation entre la chambre et 1 m (ordre de grandeur des courbes
+d'atténuation de structure de Priede, supposé) : 1 bar d'oscillation donne 1 Pa à 1 m, 94 dB. Elle ne passe pas par la caisse, qui ne
+rayonne pas ces aigus.
+
+Sous le capot, les carburateurs à 12:1 en quatrième, plein gaz depuis 1900 tr/min, font 249 cliquetis en 16 s, deux tiers des
+combustions vers 2000 tr/min ; la bande de 5,5 à 8 kHz monte de 10 dB face au moteur d'origine, puis retombe vers 3400 tr/min, où il
+cesse. Le spectrogramme en fenêtres de 3 ms montre des traits brefs à 6,7, 11 et 14 kHz, qui penchent vers le bas. **L'écoute reste à
+faire** :
+
+```
+./build/revforge-render --out cliquetis.wav --preset carb_twin_cam --compression 12 --scenario turbo --seconds 20 --listener bay
+./build/revforge-render --out origine.wav --preset carb_twin_cam --scenario turbo --seconds 20 --listener bay
+./build/revforge-render --out capteur.wav --preset city_14 --compression 13 --scenario turbo --seconds 20 --listener cabin
+./build/revforge-render --out diesel15.wav --preset diesel_four --compression 15 --scenario idle --seconds 10 --listener bay
+```
+
+### Ce qui est lu, et ce qui est exposé
+
+Lu, à sa valeur de référence tant que les autres sujets ne sont pas branchés (`KnockMap::Inputs`) : l'air ambiant (293,15 K,
+101 325 Pa), l'eau (363,15 K), la fermeture de l'admission (50° après le point mort bas) et les gaz résiduels (4 %), le refroidissement
+de charge par l'injection directe ou l'eau (0), le décalage de la carte d'avance (0). La pression et la température de charge d'un moteur
+suralimenté sont celles du modèle actuel à l'équilibre (`TurboSteady::coolerOutK`, ajouté, et `chargePa` ; `SuperchargerSteady`). La
+richesse à pleine charge est celle de la consommation (0,88 atmosphérique, 0,82 suralimenté).
+
+Exposé : `fuelProperties`, `energyPerAirJPerKg`, `evaporationCoolingK` (avec saturation), `compressionRatioOf`, `indicatedEfficiency`,
+`compressionEfficiencyShare`, `fuelTorqueShare`, `douaudEyzatDelayS`, `endGasCycle`, `mbtAdvanceDeg`, `knockingShare`, `draperHz`,
+`dieselIgnitionDelayDeg` ; `KnockMap::at` donne, pour un régime et une pression de charge, le meilleur couple, la **carte d'origine**
+(`stockDeg`, à prendre comme avance demandée de référence) et la limite de cliquetis ; `DrivingModel` donne l'avance appliquée, la limite,
+l'avance retirée et la part des cycles qui cliquettent (`rf_spark_advance`, `rf_knock_limit`, `rf_knock_retard`, `rf_knock_share`). La
+carte n'est construite que si la combustion n'est plus celle d'origine (`knockMapOf`) : une fois branchés, l'air, l'eau, la came ou
+l'avance demandée devront aussi la déclencher.
+
+### Ce qui est supposé, et ce qui manque
+
+- Le cycle à une zone, ses constantes (chaleur au gaz, noyau de flamme, durée de Wiebe, réchauffement par les parois, gaz résiduels) et
+  la dispersion d'un cycle à l'autre sont supposés, réglés pour donner des pressions et des avances de l'ordre des vraies. Douaud et
+  Eyzat ont ajusté leur loi sur des carburants de référence (isooctane et heptane) : l'indice d'octane recherche y tient lieu d'indice,
+  sans la sensibilité (RON − MON) qui avantage les alcools sur les moteurs suralimentés, et la loi est extrapolée au-delà de 100.
+- Le cliquetis ne coûte au couple que l'avance retirée : ni la chaleur supplémentaire aux parois, ni l'usure des pistons, ni la casse.
+- L'avance que retire le capteur ne réchauffe pas l'échappement et ne lance pas le turbo, comme le ferait un vrai : c'est le calculateur
+  qui donnera la température d'échappement selon l'avance.
+- L'E85 et le méthanol ne brûlent pas plus vite que l'essence dans le modèle, et leur rendement propre n'est pas meilleur.
+- La part du carburant vaporisée dans l'air (0,15), l'atténuation de la structure (100 dB), la crête et la durée de l'oscillation sont
+  supposées : l'écoute tranchera.
+- Le gaz à l'écran suit le taux de compression (son volume mort), pas le carburant ni le cliquetis ; les vues 2D et 3D ne changent pas.
+- Un diesel ne refuse pas de démarrer à froid sous un taux trop bas : le réglage s'arrête à 14:1.

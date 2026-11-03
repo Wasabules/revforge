@@ -14,6 +14,7 @@ Il n'y a aucun échantillon sonore. Tout ce qu'on entend est calculé, échantil
 
 - **Construire le moteur.** Cylindres (de 2 à 12), architecture, cylindrée, alésage et course (le curseur ajuste la cylindrée), régime maximal, essence ou diesel, injection ou carburateurs, un turbo avec sa taille et sa pression, et un filtre à air (papier d'origine, panneau sport, cône à l'air libre, cornets). Puissance, couple, 0 à 100 km/h et vitesse de pointe découlent de ces réglages : rien n'est saisi à la main. Le temps de réponse du turbo vient d'un vrai bilan de puissance sur son arbre, et se sent dans la voiture.
 - **Ou un compresseur.** Roots, à vis ou centrifuge, entraîné par une courroie : de la pression dès le bas ou seulement en haut, pas d'arbre à lancer, sa puissance prise au vilebrequin, et un sifflement qui suit le moteur.
+- **Régler la combustion.** Taux de compression et carburant (SP95, SP98, essence de course, E85, méthanol) : rendement, couple et consommation en litres en découlent, et le cliquetis est calculé (Douaud-Eyzat, Livengood-Wu). Le capteur le corrige en retirant de l'avance ; un carburateur n'en a pas, et on l'entend cliqueter, à la fréquence de résonance de la chambre.
 - **Choisir l'échappement.** Confort, origine, sans résonateur, sport, sans silencieux ou ligne directe, avec une ou deux sorties, et un pont en H ou en X sur un moteur en V. Chaque ligne est calculée depuis sa géométrie.
 - **Choisir la boîte, indépendamment du moteur.** Synchros, crabots, séquentielle, double embrayage ou convertisseur ; nombre de rapports, rapports issus de vrais nombres de dents, couple final, denture hélicoïdale ou droite, volant simple ou bi-masse. Une boîte mal adaptée a de vraies conséquences : on peut caler, manquer de vitesse ou la casser.
 - **Conduire.** Démarreur, calage, embrayage qu'on fait patiner, coup de gaz au rétrogradage, grattement si on passe sans débrayer, marche arrière, rupteur, coupure d'injection, détonations, décharge du turbo. Les automatiques ont des modes Éco, Normal, Sport, Piste et palettes, avec des points de passage issus des courbes du moteur.
@@ -109,6 +110,7 @@ Limites connues :
 - Le niveau du sifflement du compresseur est supposé, sans enregistrement de référence ; ni la détonation à forte pression ni l'inertie des rotors ne sont modélisées.
 - Certaines valeurs réglementaires (ONU R51.03 et UE 540/2014) restent à contrôler sur les textes officiels.
 - La carrosserie des années 80 garde la résistance au roulement et l'adhérence de pneus récents, et sa surface frontale et sa faible isolation sont supposées.
+- Le cliquetis vient d'un cycle à une zone aux constantes supposées, un peu trop sensible au taux de compression ; il ne coûte que l'avance retirée (ni usure ni casse), et son son (niveau, durée) attend encore l'écoute.
 
 ## Organisation
 
