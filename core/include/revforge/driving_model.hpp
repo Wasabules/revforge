@@ -210,12 +210,18 @@ public:
     void resetTrip() { consumption_.resetTrip(); }
 
     /**
-     * Les températures du moteur : le réseau tourne toujours, pour les jauges. Il n'agit sur le moteur qu'après un départ à
-     * froid (`StartTemp::Cold`) : un moteur parti chaud reste le moteur de référence, au bit près. Rien sur l'électrique.
+     * Les températures du moteur : le réseau tourne toujours, et agit toujours, parti chaud ou froid, par l'écart de l'eau et de
+     * l'huile à la référence chaude (90 et 100 °C) : frottements, enrichissement, film de carburant, air piégé, cliquetis. Rien
+     * sur l'électrique.
      */
     const ThermalNetwork& thermal() const { return thermal_; }
     bool thermalCoupled() const { return coldCoupled_; }
-    /** Ce que le moteur froid change en ce moment : frottements en plus (Nm), ralenti visé en plus (tr/min), carburant en plus (part). */
+    /** Pour les essais : tenir le moteur à la référence chaude, comme avant que le réseau n'agisse moteur chaud. */
+    void holdThermalReference(bool held);
+    /**
+     * Ce que l'écart à la référence change en ce moment : frottements en plus (Nm, négatifs quand l'huile dépasse 100 °C), ralenti
+     * visé en plus (tr/min), carburant en plus (part).
+     */
     double coldFrictionNm() const { return coldCoupled_ ? coldFrictionNm_ : 0.0; }
     double coldIdleRpm() const { return coldCoupled_ ? idle_ * coldIdleRise_ : 0.0; }
     double coldEnrichment() const { return coldCoupled_ ? coldEnrichment_ : 0.0; }
@@ -255,6 +261,11 @@ public:
     ManifoldCharge manifoldCharge() const;
     /** Ce que la charge ajoute à la pression d'ouverture de l'échappement, pour le son : 0 au défaut. */
     double chargeFill() const { return chargeFill_; }
+    /**
+     * L'air-air ε-NTU (finitions) : la densité de la charge réelle face à celle que suppose le couple de base, l'échangeur au banc ;
+     * le couple indiqué en est multiplié. 1 sans suralimentation, ou avec un autre échangeur (l'air de charge en tient compte).
+     */
+    double airCoolerShare() const;
     /** Remplir la bouteille de protoxyde. */
     void refillNitrous() { chargeAir_.refill(); }
 
@@ -384,6 +395,7 @@ private:
     bool dpfEngine_ = false;
     ChargeAir chargeAir_;
     bool chargeAirEngine_ = false;
+    bool airCoolerEngine_ = false;
     double chargeFill_ = 0.0;
     /** Un deux-temps : à charge partielle, son balayage et ses ratés changent le couple (`twoStrokePartLoad`). */
     bool twoStrokeEngine_ = false;
@@ -446,7 +458,9 @@ private:
     ThermalNetwork thermal_;
     bool thermalEngine_ = false;
     bool thermalReady_ = false;
+    // Le réseau agit sur le moteur : toujours, sauf sur l'électrique et pendant un essai qui le tient à la référence.
     bool coldCoupled_ = false;
+    bool thermalHeld_ = false;
     StartTemp startTemp_ = StartTemp::Warm;
     float ambientC_ = 20.0f;
     double hydroNmPerRpm_ = 0.0;

@@ -103,6 +103,9 @@ struct TwinTurboState {
     double chargerNm = 0.0;    // couple pris au vilebrequin, glissement compris
     double slipW = 0.0;        // chaleur dans l'embrayage qui glisse
     double flapOpenFor = 0.0;  // secondes passées volet grand ouvert, embrayage fermé
+    /** L'air qui entre dans l'échangeur commun : le mélange des compresseurs qui débitent sur la charge (K, kg/s). */
+    double coolerInK = 293.0;
+    double coolerFlow = 0.0;
 };
 
 struct TwinTurboInput {
@@ -114,6 +117,8 @@ struct TwinTurboInput {
     double targetBar = -1.0;
     /** L'ouverture voulue des soupapes de décharge (ou des aubes) : négative, le ressort d'aujourd'hui. */
     double wastegate = -1.0;
+    /** La vitesse de la voiture (m/s), dont l'air traverse l'échangeur air-air. Par défaut, la soufflerie du banc de la fiche. */
+    double coolingAirMs = kChargeReferenceSpeedMs;
 };
 
 /** L'équilibre à pleine charge : ce que donnent les courbes de la fiche. */
@@ -126,6 +131,8 @@ struct TwinTurboSteady {
     double chargerNm = 0.0;
     int stage = 0;
     bool clutch = false;
+    /** Ce que l'air-air ε-NTU change au couple de base, calibré sur l'échangeur d'origine (`turboCoolerTorqueShare`). */
+    double coolShare = 1.0;
     std::array<double, 2> shaftRpm{0.0, 0.0};
     std::array<double, 2> turbineInPa{101325.0, 101325.0};
     std::array<double, 2> vane{1.0, 1.0};
@@ -165,6 +172,8 @@ private:
     /** Twincharger : l'entrée du compresseur et le régime, pour son son. */
     double lastInletPa_ = 101325.0;
     double lastRpm_ = 0.0;
+    /** Le faisceau de l'échangeur air-air commun (finitions). */
+    AirCoolerCore core_;
 };
 
 /** Dimensionne le montage pour ce moteur (voir « Deux turbos » dans docs/modele.md). */

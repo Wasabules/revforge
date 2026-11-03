@@ -338,10 +338,14 @@ TEST_CASE("film d'une injection indirecte : compensé à 90 °C, pauvre à l'acc
 
 TEST_CASE("film d'une injection indirecte : à 90 °C le modèle de conduite ne change pas d'un bit, à froid la reprise faiblit") {
     const Powertrain p = petrol2();
+    // Finitions : le réseau thermique agit toujours ; tenu à la référence, il laisse poser l'eau à la main.
     DrivingModel plain(p);
+    plain.holdThermalReference(true);
     DrivingModel warm(p);
+    warm.holdThermalReference(true);
     warm.setCoolantC(kWarmCoolantC);
     DrivingModel cold(p);
+    cold.holdThermalReference(true);
     cold.setCoolantC(20.0);
     const double plainNm = tipInNm(plain);
     const double warmNm = tipInNm(warm);
@@ -358,6 +362,7 @@ TEST_CASE("film d'une injection indirecte : à 90 °C le modèle de conduite ne 
     CHECK(coldNm < 0.97 * warmNm);
     // L'injection directe n'a pas de film : le froid ne lui fait rien ici.
     DrivingModel direct(petrol2(FuelSystem::Direct));
+    direct.holdThermalReference(true);
     direct.setCoolantC(20.0);
     tipInNm(direct);
     CHECK_FALSE(direct.portFilmActive());

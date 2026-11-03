@@ -176,6 +176,8 @@ void DrivingModel::setPowertrain(const Powertrain& powertrain) {
     antiLagLostNm_ = 0.0;
     superchargerEngine_ = !powertrain.electric && powertrain.engine.aspiration == Aspiration::Supercharger;
     if (superchargerEngine_) supercharger_.setSpec(superchargerSpecOf(powertrain));
+    // Finitions : l'air-air ε-NTU de série, sur un turbo, un biturbo ou un compresseur. Un autre échangeur passe par l'air de charge.
+    airCoolerEngine_ = (turboEngine_ || superchargerEngine_) && powertrain.engine.intercooler == Intercooler::AirToAir;
     carbEngine_ = !powertrain.electric && hasCarburetor(powertrain.engine);
     twoStrokeEngine_ = !powertrain.electric && isTwoStroke(powertrain.engine);
     if (carbEngine_) carb_.configure(carburetorSpecOf(powertrain.engine), powertrain.engine.sweptCcPerTwoTurns() * 1e-6);
@@ -497,17 +499,34 @@ void DrivingModel::configureThermal(const Powertrain& p, const Powertrain& sized
     thermalReady_ = true;
     startTemp_ = p.engine.startTemp;
     ambientC_ = p.engine.ambientC;
-    // Parti chaud, le moteur reste celui de référence : le réseau ne sert qu'aux jauges.
-    coldCoupled_ = p.engine.startTemp == StartTemp::Cold;
+    // Finitions : le réseau agit toujours, parti chaud ou froid, par l'écart de l'eau et de l'huile à la référence chaude (90 et
+    // 100 °C) sur laquelle tout est calé. Seuls les essais le tiennent à cette référence (`holdThermalReference`).
+    coldCoupled_ = !thermalHeld_;
     burnt_.enrichment = 0.0;
     coldFrictionNm_ = 0.0;
     updateColdEffects();
 }
 
+void DrivingModel::holdThermalReference(bool held) {
+    thermalHeld_ = held;
+    if (!thermalEngine_) return;
+    coldCoupled_ = !held;
+    if (held) {
+        coolantC_ = kWarmCoolantC;
+        viscosityExcess_ = 0.0;
+        coldFrictionNm_ = 0.0;
+        coldIdleRise_ = 0.0;
+        coldEnrichment_ = 0.0;
+        burnt_.enrichment = 0.0;
+    } else {
+        updateColdEffects();
+    }
+}
+
 void DrivingModel::updateColdEffects() {
     if (!coldCoupled_) return;
     viscosityExcess_ = revforge::coldViscosityExcess(thermal_.oilC());
-    // L'eau du réseau, que lit le film de carburant d'une injection indirecte (injection) : seulement après un départ à froid.
+    // L'eau du réseau, que lisent le film de carburant (injection indirecte, carburateur) et la carte du cliquetis.
     coolantC_ = thermal_.coolantC();
     coldIdleRise_ = revforge::coldIdleRise(thermal_.coolantC());
     coldEnrichment_ = revforge::coldEnrichment(powertrain_.engine, thermal_.coolantC());
@@ -1045,12 +1064,14 @@ void DrivingModel::stepTwin(double rpmNow, bool burning) {
     input.fill = manifold_;
     input.breathing = breathingOf(powertrain_, rpmNow);
     input.burning = burning;
+    // Finitions : l'air de route traverse l'échangeur air-air.
+    input.coolingAirMs = speedMs_;
     if (boostControlled_) {
         // Intégration : le calculateur donne la cible (plafonnée par la vitesse des roues, ou selon le rapport), et la loi des
         // soupapes (ou des aubes) du biturbo la suit. Son PID et son anticipation ne sont identifiés que sur le banc d'un turbo
         // seul : branchés tels quels, ils dépassaient la cible de 0,49 bar sur un séquentiel, dont l'étagement oscillait
-        // (docs/modele.md, « Quand les réglages se rencontrent (2) »). Les arbres du biturbo comptent dans l'air de référence.
-        const double ambientPa = turbo_laws::constants().atmosphere;
+        // (docs/modele.md, « Quand les réglages se rencontrent (2) »). Finitions : les arbres du biturbo lisent l'air du jour.
+        const double ambientPa = twin_.spec().reference.ambientPa;
         input.targetBar = (revforge::boostTargetPa(boostSpec_, rpmNow, gear_, ambientPa) - ambientPa) / 1e5;
     }
     twin_.step(kStep, input);
@@ -1084,6 +1105,8 @@ void DrivingModel::stepTurbo(double rpmNow, bool burning) {
         input.gateDemand = boostController_.step(boostSpec_, kStep, control);
     }
     if (chargeAirEngine_) input.cooledK = chargeAir_.stepCooler(kStep, turbo_.state().compressorOutK, turbo_.state().compressorFlow, speedMs_);
+    // Finitions : l'air de route traverse l'échangeur air-air.
+    input.coolingAirMs = speedMs_;
     turbo_.step(kStep, input);
     boost_ = std::max(turbo_.boost(), 0.0);
 }
@@ -1091,8 +1114,8 @@ void DrivingModel::stepTurbo(double rpmNow, bool burning) {
 double DrivingModel::boostTargetPa() const {
     // L'air du jour (atmosphère) : exactement 101 325 Pa à 0 m.
     if (!turboEngine_) return powertrain_.electric ? 101325.0 : ambientAirOf(powertrain_.engine).pressurePa;
-    // Le biturbo compte ses arbres dans l'air de référence ; son calculateur n'a pas de PID (stepTwin).
-    const double ambientPa = twinEngine_ ? turbo_laws::constants().atmosphere : turbo_.spec().ambientPa;
+    // Le biturbo lit l'air du jour, comme le turbo simple ; son calculateur n'a pas de PID (stepTwin).
+    const double ambientPa = twinEngine_ ? twin_.spec().reference.ambientPa : turbo_.spec().ambientPa;
     return boostControlled_ && !twinEngine_ && boostController_.targetPa() > 0.0 ? boostController_.targetPa() : revforge::boostTargetPa(boostSpec_, rpm(), gear_, ambientPa);
 }
 
@@ -1107,7 +1130,8 @@ double DrivingModel::stepKnock(double rpmNow) {
     const double bar = charged ? static_cast<double>(powertrain_.engine.boostBar) : 0.0;
     const double full = 1.0 + bar * knockMap_.fullBoost(rpmNow);
     const double now = std::max(manifold_, 0.0) * (1.0 + bar * std::max(boost_, 0.0));
-    const KnockPoint point = knockMap_.at(rpmNow, now / full);
+    // Finitions : l'eau réelle du réseau thermique. Un moteur froid cliquette moins, un moteur qui chauffe davantage.
+    const KnockPoint point = coldCoupled_ ? knockMap_.at(rpmNow, now / full, thermal_.coolantC() + 273.15) : knockMap_.at(rpmNow, now / full);
     const double wanted = point.stockDeg + knockMap_.advanceOffsetDeg();
     double applied = wanted - knockRetard_;
     double share = cut_ ? 0.0 : knockingShare(applied - point.meanLimitDeg);
@@ -1135,6 +1159,7 @@ void DrivingModel::stepSupercharger(double rpmNow) {
     input.fill = manifold_;
     input.breathing = breathingOf(powertrain_, rpmNow);
     if (chargeAirEngine_) input.cooledK = chargeAir_.stepCooler(kStep, supercharger_.state().compressorOutK, supercharger_.state().engineFlow, speedMs_);
+    input.coolingAirMs = speedMs_;
     supercharger_.step(kStep, input);
     boost_ = std::max(supercharger_.boost(), 0.0);
 }
@@ -1181,6 +1206,21 @@ double DrivingModel::stepChargeAir(double rpmNow, double throttle, double indica
     const double added = (share - 1.0) * manifold_ * indicated + (chargeAir_.nitrousOn() ? chargeAir_.nitrousNm() : 0.0);
     chargeFill_ = natural > 1.0 ? kFillPerTorqueShare * added / natural : 0.0;
     return share;
+}
+
+double DrivingModel::airCoolerShare() const {
+    if (!airCoolerEngine_) return 1.0;
+    if (twinEngine_) {
+        const TwinTurboState& s = twin_.state();
+        return turboCoolerTorqueShare(twin_.spec().reference, s.coolerInK, s.coolerFlow, s.unit[0].coolerOutK);
+    }
+    if (turboEngine_) {
+        const TurboState& s = turbo_.state();
+        return turboCoolerTorqueShare(turbo_.spec(), s.compressorOutK, s.compressorFlow, s.coolerOutK);
+    }
+    // Le couple d'un compresseur lit déjà son échangeur à l'équilibre, au banc (`superchargerAirShare`) : reste l'écart à celui-ci.
+    const SuperchargerState& s = supercharger_.state();
+    return s.coolerOutK > 0.0 ? superchargerCoolerOutletK(supercharger_.spec(), s.compressorOutK, s.engineFlow) / s.coolerOutK : 1.0;
 }
 
 ManifoldCharge DrivingModel::manifoldCharge() const {
@@ -1325,11 +1365,13 @@ void DrivingModel::updateEngine(double throttle, bool off) {
     }
     frictionHeatNm_ = friction;
     double indicated = fullLoadTorqueNm(powertrain_, rpmNow, boost_) + frictionTorqueNm(powertrain_, rpmNow);
-    // Moteur froid : des parois plus froides chauffent moins l'air piégé (`trappedAirK`, atmosphère) ; il en entre d'autant plus.
-    // La paroi est le métal du réseau thermique. Parti chaud, rien de cela : la paroi de référence est celle du moteur chaud.
+    // Des parois plus froides chauffent moins l'air piégé (`trappedAirK`, atmosphère) ; il en entre d'autant plus. Plus chaudes, moins.
+    // Finitions : la paroi de référence (`kWarmWallK`) est l'eau à 90 °C ; c'est donc l'écart de l'eau qui la déplace. Le conduit
+    // d'admission est dans la culasse, refroidi par elle ; le métal du réseau, plus chaud qu'elle sous charge, la décalait de 5 à
+    // 15 K même moteur chaud.
     if (coldCoupled_) {
         const double airK = manifoldCharge().temperatureK;
-        indicated *= trappedAirK(airK) / trappedAirK(airK, thermal_.metalC() + 273.0);
+        indicated *= trappedAirK(airK) / trappedAirK(airK, kWarmWallK + (thermal_.coolantC() - kWarmCoolantC));
     }
     // Au démarrage, le calculateur enrichit le mélange : le moteur prend même très bas.
     if (catching_ && rpmNow < idle_) indicated = std::max(indicated, 0.8 * fullLoadTorqueNm(powertrain_, idle_, 0.0));
@@ -1347,10 +1389,11 @@ void DrivingModel::updateEngine(double throttle, bool off) {
         fastIdle_ *= 1.0 - kStep / 0.9;
     }
     const double balance = friction / std::max(indicated, 1.0);
-    // Intégration : après un départ à froid, le ralenti accéléré (came d'un carburateur, vanne du calculateur) ouvre autant qu'au
+    // Intégration : tant que l'eau est froide, le ralenti accéléré (came d'un carburateur, vanne du calculateur) ouvre autant qu'au
     // démarrage. Limité à 0,45 comme moteur chaud, il ne tenait pas l'huile froide d'un moteur peu comprimé : la Cadillac, à son
-    // taux publié de 5,35, calait par 5 °C. Parti chaud, rien ne change.
-    const double idleAuthority = catching_ || coldCoupled_ ? 0.8 : 0.45;
+    // taux publié de 5,35, calait par 5 °C. Finitions : le réseau agit aussi moteur chaud ; c'est l'eau, que lit le calculateur, qui
+    // dit la fin de la mise en température (`coldIdleRise`, 70 °C).
+    const double idleAuthority = catching_ || coldIdleRise_ > 0.0 ? 0.8 : 0.45;
     const double idleOpen = off ? 0.0 : clamp(balance * (1.0 + (idleTarget - rpmNow) / 60.0), 0.0, idleAuthority);
 
     // Un petit filet d'accélérateur remplit vite à bas régime, moins à haut régime.
@@ -1370,6 +1413,9 @@ void DrivingModel::updateEngine(double throttle, bool off) {
     if (turboEngine_) stepTurbo(rpmNow, !cut_ || fuelOnCut_);
     else if (superchargerEngine_) stepSupercharger(rpmNow);
     else boost_ = 0.0;
+    // Finitions : l'air-air ε-NTU, que refroidit l'air de route et dont le faisceau garde la chaleur. Le couple de base suppose
+    // l'échangeur au banc ; à pression égale, l'air admis suit 1/T (`turboCoolerTorqueShare`).
+    if (airCoolerEngine_) indicated *= airCoolerShare();
     // L'échangeur, l'eau, le protoxyde : l'air admis pèse autrement. Rien de cela au défaut.
     if (chargeAirEngine_) indicated *= stepChargeAir(rpmNow, throttle, indicated);
 
@@ -1395,6 +1441,8 @@ void DrivingModel::updateEngine(double throttle, bool off) {
         in.throttle = throttle;
         // En part de l'air de référence : l'air du jour, puis ce que la suralimentation y ajoute.
         in.density = (turboEngine_ || superchargerEngine_ ? 1.0 + boost_ * static_cast<double>(powertrain_.engine.boostBar) : 1.0) * airDensityRatioOf(powertrain_.engine);
+        // Finitions : l'eau du réseau, comme pour une injection indirecte. À 90 °C exactement, le film est celui d'origine.
+        in.coolantC = coolantC_;
         carb_.step(in, kStep);
         // Le moteur qui prend a son propre enrichissement : le film ne compte qu'ensuite.
         if (catching_) carb_.prime();

@@ -646,7 +646,7 @@ TEST_CASE("jonction carburant, injection et air de charge : le refroidissement p
     CHECK(chargeAirSetupOf(water).fuel.latentJPerKg == doctest::Approx(fuelPropertiesOf(water.engine).vaporizationJPerG * 1000.0));
 }
 
-TEST_CASE("jonction thermique, injection et calculateur : un départ à froid réveille le film et la richesse, pas un départ à chaud") {
+TEST_CASE("jonction thermique, injection et calculateur : un départ à froid réveille le film et la richesse ; parti chaud, l'eau reste près de 90 °C") {
     Powertrain cold = enginePreset("city_14");
     cold.engine.startTemp = StartTemp::Cold;
     cold.engine.ambientC = -5.0f;
@@ -659,9 +659,11 @@ TEST_CASE("jonction thermique, injection et calculateur : un départ à froid r�
         warmModel.stepNeutral(0.001, 0.2);
     }
     CHECK(coldModel.portFilmActive());
-    CHECK_FALSE(warmModel.portFilmActive());
     CHECK(coldModel.coolantC() < 20.0);
-    CHECK(warmModel.coolantC() == kWarmCoolantC);
+    // Finitions : le réseau agit aussi parti chaud. L'eau s'écarte à peine de la référence : le film la lit, sans enrichissement.
+    CHECK(warmModel.coolantC() == warmModel.thermal().coolantC());
+    CHECK(warmModel.coolantC() > 84.0);
+    CHECK(warmModel.coolantC() <= kWarmCoolantC);
     // Une seule loi d'enrichissement à froid : celle de la thermique, que le calculateur demande aussi.
     CHECK(coldModel.ecuLambda() == doctest::Approx(1.0 / (1.0 + coldEnrichment(cold.engine, coldModel.thermal().coolantC()))).epsilon(1e-6));
     CHECK(warmModel.ecuLambda() == doctest::Approx(1.0));

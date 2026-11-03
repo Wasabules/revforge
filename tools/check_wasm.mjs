@@ -720,6 +720,16 @@ for (const [label, changes, options, pipe] of [
   check('twincharger, 1.4 à Roots', turboStab(rf, 24), native('--cylinders', '4', '--cc', '1390', '--bore', '77', '--redline', '7000', '--aspiration', 'turbo', '--boost', '1.5', '--exhaust', 'stock',
     '--body', 'compact', '--mass', '1300', '--rim', '17', '--drive', 'front', '--placement', 'front', '--insulation', 'standard', '--turbo-layout', 'twincharger', '--scenario', 'turbo', '--seconds', '24'));
 }
+// Finitions : les arbres du biturbo dans l'air du jour (à 3000 m, la soupape tient une pression relative).
+{
+  const rf = load();
+  rf.rf_set_car(BODY.coupe, 1500, 18, DRIVE.rear, PLACEMENT.front, INSULATION.standard);
+  tune(rf, { turboLayout: TURBO_LAYOUT.twin_parallel, altitudeM: 3000 });
+  rf.rf_set_config(6, LAYOUT.v, 3000, 86, 6800, EXHAUST.sport, 1, 0, 0, 0, 0, 1.0, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0, 0);
+  check('biturbo parallèle à 3000 m', turboStab(rf, 24), native('--cylinders', '6', '--layout', 'v', '--cc', '3000', '--bore', '86', '--redline', '6800', '--aspiration', 'turbo', '--boost', '1',
+    '--exhaust', 'sport', '--body', 'coupe', '--mass', '1500', '--rim', '18', '--drive', 'rear', '--placement', 'front', '--insulation', 'standard', '--altitude', '3000',
+    '--scenario', 'turbo', '--seconds', '24', '--turbo-layout', 'twin_parallel', '--vgt', '0'));
+}
 {
   const rf = load();
   rf.rf_set_car(BODY.coupe, 1300, 18, DRIVE.rear, PLACEMENT.front, INSULATION.standard);
@@ -851,6 +861,14 @@ const camLoad = (changes) => {
   rf.rf_set_mode(2);
   const hash = render(rf, 12, 128, (step) => rf.rf_set_controls(step * TICK_S >= 1 ? 1 : 0, 0, 0));
   check('came, deux profils et déphaseur, plein gaz', hash, native(...camArgs, '--vvt', 'phased_two_step', '--scenario', 'launch', '--seconds', '12'));
+}
+// Finitions : le cycle de la came dans l'air du jour (par 40 °C, la bascule des deux profils monte avec la vitesse du son).
+{
+  const rf = camLoad({ valveTiming: VVT.two_step, ambientC: 40 });
+  rf.rf_set_mode(FRESH);
+  rf.rf_set_mode(2);
+  const hash = render(rf, 12, 128, (step) => rf.rf_set_controls(step * TICK_S >= 1 ? 1 : 0, 0, 0));
+  check('came, deux profils par 40 °C, plein gaz', hash, native(...camArgs, '--vvt', 'two_step', '--ambient', '40', '--scenario', 'launch', '--seconds', '12'));
 }
 // Les culbuteurs : le choc des poussoirs au ralenti, puis tout un tour, au son comme à la consommation (frottement de came).
 {

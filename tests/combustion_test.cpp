@@ -276,6 +276,79 @@ TEST_CASE("plus de compression ou un air plus chaud rapprochent la limite, plus 
     CHECK(limitAt(ethanol, 1500.0) > limitAt(race, 1500.0));
 }
 
+TEST_CASE("le cliquetis lit l'eau réelle : froide, la limite recule ; la carte d'origine tient tant que l'eau est tenue") {
+    // Finitions : la carte est tabulée à 90 °C et à 20 °C d'eau, et le modèle de conduite y lit l'eau du réseau thermique.
+    const Powertrain city = presetPowertrain("city_14");
+    KnockMap map;
+    map.build(city);
+    const double rpm = 1500.0;
+    const KnockPoint warm = map.at(rpm, 1.0);
+    // À l'eau de la carte, exactement le même point : pas d'écart calculé.
+    CHECK(map.at(rpm, 1.0, map.coolantK()).limitDeg == warm.limitDeg);
+    const KnockPoint frozen = map.at(rpm, 1.0, 273.15 - 20.0);
+    const KnockPoint cold = map.at(rpm, 1.0, 273.15 + 20.0);
+    const KnockPoint boiling = map.at(rpm, 1.0, 273.15 + 129.0);
+    // À la seconde eau tabulée, le calcul direct ; entre les deux, la lecture linéaire reste à un dixième de degré du calcul.
+    KnockMap::Inputs at20;
+    at20.coolantK = 293.15;
+    KnockMap direct20;
+    direct20.build(city, at20);
+    CHECK(cold.limitDeg == doctest::Approx(direct20.at(rpm, 1.0).limitDeg).epsilon(1e-9));
+    KnockMap::Inputs at55;
+    at55.coolantK = 328.15;
+    KnockMap direct55;
+    direct55.build(city, at55);
+    CHECK(std::fabs(map.at(rpm, 1.0, 328.15).limitDeg - direct55.at(rpm, 1.0).limitDeg) < 0.1);
+    MESSAGE("1.4 à 1500 tr/min pleine charge : limite " << frozen.limitDeg << "° à -20 °C d'eau, " << cold.limitDeg << "° à 20 °C, " << warm.limitDeg << "° à 90 °C, "
+                                                         << boiling.limitDeg << "° à 129 °C ; la carte d'origine donne " << warm.stockDeg << "°");
+    CHECK(frozen.limitDeg > cold.limitDeg);
+    CHECK(cold.limitDeg > warm.limitDeg + 0.5);
+    CHECK(boiling.limitDeg < warm.limitDeg);
+    // La carte d'origine garde sa marge dans la bande où le calorstat tient l'eau : un moteur d'origine n'y cliquette pas, et sa carte
+    // n'est pas calculée. Plus chaud, à pleine charge (94 à 100 °C selon le moteur, listé ici), il commencerait à cliqueter, et un
+    // vrai calculateur retarderait : c'est une limite connue (docs/modele.md, « La thermique »).
+    std::size_t count = 0;
+    const Preset* all = presets(count);
+    double earliest = 1e9;
+    std::string first;
+    for (std::size_t i = 0; i < count; ++i) {
+        const Powertrain p = all[i].powertrain();
+        if (p.electric || p.engine.burnsDiesel()) continue;
+        const std::string id = all[i].id;
+        CAPTURE(id);
+        KnockMap m;
+        m.build(p);
+        double onset = 140.0;
+        for (double r = idleRpmOf(p); r <= redlineRpmOf(p); r += 250.0) {
+            for (double water = 90.0; water < onset; water += 0.5) {
+                const KnockPoint point = m.at(r, 1.0, 273.15 + water);
+                if (knockingShare(point.stockDeg - point.meanLimitDeg) > 0.0) {
+                    onset = water;
+                    break;
+                }
+            }
+        }
+        if (onset < earliest) {
+            earliest = onset;
+            first = id;
+        }
+        // La bande où le calorstat tient l'eau, moteur chaud : 90 °C, à 2 K près.
+        CHECK(onset > kWarmCoolantC + 2.0);
+    }
+    MESSAGE("la carte d'origine commence à cliqueter à " << earliest << " °C d'eau au plus tôt (" << first << ")");
+}
+
+TEST_CASE("le cliquetis lit l'eau réelle : un moteur parti à froid retire moins d'avance") {
+    Powertrain warm = presetPowertrain("city_14");
+    warm.engine.compressionRatio = 13.0f;
+    Powertrain cold = warm;
+    cold.engine.startTemp = StartTemp::Cold;
+    const Pull hot = pull(warm);
+    const Pull fresh = pull(cold);
+    MESSAGE("1.4 à 13:1, plein gaz en quatrième : retard " << hot.maxRetard << "° moteur chaud, " << fresh.maxRetard << "° parti à froid (eau vers 25 °C)");
+    CHECK(fresh.maxRetard < hot.maxRetard - 0.5);
+}
+
 TEST_CASE("le capteur retire l'avance et le couple qui va avec ; un carburateur, sans capteur, cliquette") {
     Powertrain injected = presetPowertrain("city_14");
     injected.engine.compressionRatio = 13.0f;

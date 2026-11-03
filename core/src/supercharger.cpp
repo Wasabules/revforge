@@ -150,9 +150,18 @@ double coolerOutlet(double hotK, double flow, double rated, double ambientK) {
     return hotK - effect * (hotK - ambientK);
 }
 
-/** L'échangeur à l'équilibre : celui d'origine, ou celui du réglage (charge_air.cpp). */
+/**
+ * L'échangeur à l'équilibre : l'air-air ε-NTU devant la soufflerie du banc, dans l'air du jour (finitions), ou celui du réglage
+ * (charge_air.cpp). La loi d'origine ne sert plus qu'au dimensionnement, avant que le faisceau ne le soit.
+ */
 double coolerOutletOf(const SuperchargerSpec& spec, double hotK, double flow) {
-    if (spec.cooler.kind == Intercooler::AirToAir) return coolerOutlet(hotK, flow, spec.ratedFlow, spec.ambientK);
+    if (spec.cooler.kind == Intercooler::AirToAir) {
+        if (spec.cooler.faceM2 <= 0.0) return coolerOutlet(hotK, flow, spec.ratedFlow, spec.ambientK);
+        ChargeConditions air;
+        air.ambientK = spec.ambientK;
+        air.ambientPa = spec.ambientPa;
+        return benchCoolerOutletK(spec.cooler, hotK, flow, air);
+    }
     return chargeCoolerSteadyK(spec.cooler, hotK, flow);
 }
 
@@ -294,7 +303,9 @@ SuperchargerSpec superchargerSpecFor(const EngineConfig& e, double breathingAtSi
         s.rotorVolumeM3 = perSecond * 2.0 * kPi / sizingOmega;
         double outK = kAmbientK;
         shaftPower(s, sizingOmega, ends.inletPa, ends.inletK, ends.outletPa, flow, &outK);
-        coolK = coolerOutlet(outK, flow, s.ratedFlow, kAmbientK);
+        // Finitions : dimensionné avec l'échangeur de série, le faisceau ε-NTU devant la soufflerie du banc, qui rend plus que
+        // l'ancienne loi à ce débit partiel : la pression demandée est bien tenue à 40 % du régime maximal.
+        coolK = benchCoolerOutletK(airToAirCoolerFor(s.ratedFlow, outK), outK, flow);
     }
     s.leakArea = leak * portable::pow(s.rotorVolumeM3, 2.0 / 3.0);
     s.frictionW = kRotorFrictionW * s.rotorVolumeM3 / kReferenceRotorM3;
@@ -435,9 +446,20 @@ void Supercharger::step(double dt, const SuperchargerInput& input) {
     s.shaftW = shaftPower(spec, omega, ends.inletPa, ends.inletK, ends.outletPa, s.compressorFlow, &outK) / spec.driveEfficiency;
     s.compressorOutK = outK;
     // L'air de charge tient la boucle d'eau, ou il n'y a pas d'échangeur : il rend la température.
-    if (input.cooledK > 0.0) s.coolerOutK = input.cooledK;
-    else s.coolerOutK += (coolerOutlet(outK, engine, spec.ratedFlow, spec.ambientK) - s.coolerOutK) * dt / kCoolerMassS;
+    if (input.cooledK > 0.0) {
+        s.coolerOutK = input.cooledK;
+    } else if (spec.cooler.kind == Intercooler::AirToAir && spec.cooler.faceM2 > 0.0) {
+        // L'air-air : la charge traverse le faisceau, que l'air de route refroidit et dont l'aluminium garde la chaleur.
+        ChargeConditions air;
+        air.ambientK = spec.ambientK;
+        air.ambientPa = spec.ambientPa;
+        s.coolerOutK = core_.step(spec.cooler, dt, outK, engine, input.coolingAirMs, air);
+    } else {
+        s.coolerOutK += (coolerOutlet(outK, engine, spec.ratedFlow, spec.ambientK) - s.coolerOutK) * dt / kCoolerMassS;
+    }
 }
+
+double superchargerCoolerOutletK(const SuperchargerSpec& spec, double hotK, double flow) { return coolerOutletOf(spec, hotK, flow); }
 
 // ── Les mêmes lois, pour le twincharger (twin_turbo.cpp) : un renvoi, rien de recopié ──
 namespace supercharger_laws {

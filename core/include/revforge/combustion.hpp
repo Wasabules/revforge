@@ -179,6 +179,13 @@ public:
     double advanceOffsetDeg() const { return offset_; }
     /** `chargeShare` : la pression de charge, rapportée à la pleine charge stabilisée à ce régime. */
     KnockPoint at(double rpm, double chargeShare) const;
+    /**
+     * Le même point, l'eau du moteur à `coolantK` (thermique) : une paroi plus chaude réchauffe la charge, et la limite recule.
+     * La carte d'origine, elle, reste celle du moteur chaud. Exactement `at(rpm, chargeShare)` à l'eau de la carte.
+     */
+    KnockPoint at(double rpm, double chargeShare, double coolantK) const;
+    /** L'eau à laquelle la carte est tabulée (K) : 363,15 K, moteur chaud. */
+    double coolantK() const { return coolantK_; }
     /** La pression de charge à pleine charge stabilisée, en part de `boostBar` (0 sans suralimentation). */
     double fullBoost(double rpm) const;
     /** Le couple indiqué à l'avance `advanceDeg`, rapporté à celui à `referenceDeg` (degrés d'arbre). */
@@ -201,6 +208,9 @@ private:
 
     std::array<Row, kRpmPoints> actual_{};
     std::array<Row, kRpmPoints> stock_{};
+    // Les mêmes cycles, l'eau à `kColdTableK` : l'intégrale de cliquetis se lit entre les deux, linéaire en température d'eau.
+    std::array<Row, kRpmPoints> cold_{};
+    double coolantK_ = 363.15;
     double degPerCycle_ = 1.0;
     double idleRpm_ = 800.0;
     double redlineRpm_ = 7000.0;

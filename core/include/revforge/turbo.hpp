@@ -98,7 +98,9 @@ struct TurboInput {
      * Négative : la wastegate à ressort, qui s'ouvre seule contre la pression de charge. La protection des roues garde le dernier mot.
      */
     double gateDemand = -1.0;
-    double cooledK = 0.0;       // la sortie de l'échangeur, quand l'air de charge la calcule (air-eau, aucun). 0 : l'air-air d'origine.
+    double cooledK = 0.0;       // la sortie de l'échangeur, quand l'air de charge la calcule (air-eau, aucun). 0 : l'air-air.
+    /** La vitesse de la voiture (m/s), dont l'air traverse le faisceau air-air. Par défaut, la soufflerie du banc de la fiche. */
+    double coolingAirMs = kChargeReferenceSpeedMs;
 };
 
 /** Le point d'équilibre à pleine charge : ce que donnent les courbes de la fiche. */
@@ -142,6 +144,8 @@ public:
 
     /** Le gaz à la sortie des cylindres : celui de la turbine, sauf si un tube ajouté les sépare. C'est là que s'enflamme ce qui arrive imbrûlé. */
     double collectorK() const { return spec_.pipe.active && spec_.pipe.extraM > 0.0 ? pipe_.portK : state_.turbineInK; }
+    /** Le faisceau de l'air-air : la température de ses tranches (finitions). */
+    const AirCoolerCore& cooler() const { return core_; }
 
 private:
     struct AntiLagExhaust {
@@ -166,7 +170,16 @@ private:
     double omegaSquared_ = 0.0;
     bool valveHeld_ = false;
     TurboPipeState pipe_;
+    AirCoolerCore core_;
 };
+
+/** L'échangeur à l'équilibre au banc : l'air-air ε-NTU devant la soufflerie, ou celui du réglage (charge_air.cpp). */
+double turboCoolerOutletK(const TurboSpec& spec, double hotK, double flow);
+/**
+ * Ce que l'air-air change au couple de base d'un turbo, calibré sur l'échangeur d'origine (`stockCoolerOutletK`) : la densité de la
+ * charge, T_origine/T, à pression égale. 1 avec un autre échangeur, dont l'air de charge tient compte.
+ */
+double turboCoolerTorqueShare(const TurboSpec& spec, double hotK, double flow, double coolK);
 
 /** Ce dont le calcul a besoin pour dimensionner le turbo. */
 TurboSpec turboSpecFor(const EngineConfig& engine, double breathingAtRated);

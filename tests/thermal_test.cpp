@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "revforge/driving_model.hpp"
+#include "revforge/powertrain.hpp"
 #include "revforge/presets.hpp"
 #include "revforge/thermal.hpp"
 
@@ -57,7 +58,7 @@ TEST_CASE("thermique : la loi de Vogel retrouve la fiche de l'huile") {
     CHECK(oilViscosityPaS(20.0) / oilViscosityPaS(100.0) == doctest::Approx(14.4).epsilon(0.02));
 }
 
-TEST_CASE("thermique : l'huile froide double presque les frottements, l'huile chaude n'y change rien") {
+TEST_CASE("thermique : l'huile froide double presque les frottements, l'huile chaude en retire un peu") {
     const Powertrain p = city();
     // Sandoval et Heywood : environ deux fois plus de frottements à froid. Ici, selon le régime, à 20 °C puis à 0 °C.
     CHECK(frictionFactor(p, 20.0, 2000.0) > 1.4);
@@ -66,8 +67,11 @@ TEST_CASE("thermique : l'huile froide double presque les frottements, l'huile ch
     CHECK(frictionFactor(p, 0.0, 2000.0) > frictionFactor(p, 20.0, 2000.0));
     // La référence chaude est exacte : aucun écart, pas un 1,0 calculé.
     CHECK(coldFrictionNm(p, kWarmOilC, 3000.0) == 0.0);
-    CHECK(coldFrictionNm(p, 130.0, 3000.0) == 0.0);
     CHECK(frictionFactor(p, kWarmOilC, 3000.0) == 1.0);
+    // Finitions : au-delà de 100 °C, l'huile plus fluide freine moins, de quelques pour cent du total à 130 °C.
+    CHECK(coldFrictionNm(p, 130.0, 3000.0) < 0.0);
+    CHECK(frictionFactor(p, 130.0, 3000.0) > 0.9);
+    CHECK(frictionFactor(p, 130.0, 3000.0) < 0.99);
     // Les termes hydrodynamiques suivent le régime : deux fois plus vite, deux fois plus de frottements en plus.
     CHECK(coldFrictionNm(p, 20.0, 4000.0) == doctest::Approx(2.0 * coldFrictionNm(p, 20.0, 2000.0)));
     // Électrique : rien de tout cela.
@@ -155,35 +159,76 @@ TEST_CASE("thermique : par 45 °C au ralenti, le ventilateur tient l'eau ; en pa
     CHECK(failing.coolantC() > 115.0);
 }
 
-TEST_CASE("thermique : parti chaud, le réseau ne fait que les jauges, au bit près") {
-    // L'air ambiant agit maintenant sur la densité (atmosphère) : on compare donc à air égal deux réseaux dans des états
-    // différents. Les deux moteurs roulent pareil une minute ; puis le réseau de l'un est remis à la référence chaude par un
-    // aller-retour au départ à froid, sans rien toucher à la mécanique, pendant que l'autre garde ses températures. Si le
-    // réseau agissait sur un moteur parti chaud, ces deux conduites se sépareraient.
+TEST_CASE("thermique : parti chaud, le réseau agit, à moins de 0,5 % de la consommation du moteur tenu à la référence") {
+    // Finitions : le réseau agit toujours, par l'écart de l'eau et de l'huile à 90 et 100 °C. Parti chaud, il s'équilibre près de
+    // cette référence (le calorstat tient l'eau vers 86-88 °C, l'échangeur l'huile vers 95-100 °C) : dix minutes de ville coûtent
+    // presque la même chose qu'avec le moteur tenu à la référence, comme avant que le réseau n'agisse moteur chaud.
     const Powertrain warm = started(city(), StartTemp::Warm);
-    DrivingModel kept(warm);
-    DrivingModel reset(warm);
-    const auto pedalAt = [](int i) { return std::fmod(i * kDt, 20.0) < 8.0 ? 0.6 : 0.0; };
-    const int minute = static_cast<int>(60.0 / kDt);
-    for (int i = 0; i < minute; ++i) {
-        kept.stepPedal(kDt, pedalAt(i), 0.0);
-        reset.stepPedal(kDt, pedalAt(i), 0.0);
+    DrivingModel coupled(warm);
+    DrivingModel held(warm);
+    held.holdThermalReference(true);
+    REQUIRE(coupled.thermalCoupled());
+    REQUIRE_FALSE(held.thermalCoupled());
+    bool apart = false;
+    for (int i = 0; i < static_cast<int>(600.0 / kDt); ++i) {
+        coupled.step(kDt);
+        held.step(kDt);
+        apart = apart || coupled.torqueNm() != held.torqueNm();
     }
-    kept.setPowertrain(warm);
-    kept.setPowertrain(warm);
-    reset.setPowertrain(started(city(), StartTemp::Cold));
-    reset.setPowertrain(warm);
-    REQUIRE(kept.thermal().oilC() != reset.thermal().oilC());
-    for (int i = minute; i < minute + static_cast<int>(120.0 / kDt); ++i) {
-        kept.stepPedal(kDt, pedalAt(i), 0.0);
-        reset.stepPedal(kDt, pedalAt(i), 0.0);
-        REQUIRE(kept.rpm() == reset.rpm());
-        REQUIRE(kept.torqueNm() == reset.torqueNm());
-        REQUIRE(kept.load() == reset.load());
+    const double ratio = coupled.consumption().fuelAvgLper100km() / held.consumption().fuelAvgLper100km();
+    MESSAGE("dix minutes de ville parti chaud : " << (ratio - 1.0) * 100.0 << " % de consommation ; eau " << coupled.thermal().coolantC() << " °C, huile "
+                                                  << coupled.thermal().oilC() << " °C");
+    // Le réseau agit : les deux conduites se séparent.
+    CHECK(apart);
+    CHECK(coupled.thermal().oilC() != kWarmOilC);
+    CHECK(std::fabs(ratio - 1.0) < 0.005);
+    // Tenu à la référence, le moteur n'a ni frottements en plus ou en moins, ni ralenti relevé, ni enrichissement.
+    CHECK(held.coldFrictionNm() == 0.0);
+    CHECK(held.coldIdleRpm() == 0.0);
+    CHECK(held.coldEnrichment() == 0.0);
+}
+
+TEST_CASE("thermique : l'échangeur eau-huile tient l'huile entre 90 et 110 °C sur route ; sans lui, elle passe 110 °C") {
+    // Le 1,4 sur route : énergie du carburant et frottements à 90 et à 130 km/h, en quatrième (de l'ordre de ce que donne
+    // `--scenario cruise`). Un carter d'huile mesure 90 à 110 °C sur route ; sans échangeur, le réseau la laissait à 111-130 °C.
+    const Powertrain p = city();
+    const ThermalSpec spec = thermalSpecOf(p, 180000.0);
+    ThermalSpec bare = spec;
+    bare.oilCoolerUaWK = 0.0;
+    REQUIRE(spec.oilCoolerUaWK > 0.0);
+    struct Road {
+        double kmh, rpm, fuelLph;
+    };
+    for (const Road road : {Road{90.0, 2930.0, 5.0}, Road{130.0, 4230.0, 10.4}}) {
+        CAPTURE(road.kmh);
+        ThermalNetwork fitted, without;
+        fitted.configure(spec);
+        without.configure(bare);
+        fitted.reset(StartTemp::Warm, 20.0);
+        without.reset(StartTemp::Warm, 20.0);
+        ThermalInput in;
+        in.fuelW = road.fuelLph / 3600.0 * 0.745 * 42.9e6;
+        in.frictionW = frictionTorqueNm(p, road.rpm) * road.rpm * 2.0 * 3.141592653589793 / 60.0;
+        in.rpm = road.rpm;
+        in.speedMs = road.kmh / 3.6;
+        in.ambientC = 20.0;
+        for (int i = 0; i < 3600 * 100; ++i) {
+            fitted.step(in, 0.01);
+            without.step(in, 0.01);
+        }
+        MESSAGE(road.kmh << " km/h : huile " << fitted.oilC() << " °C avec l'échangeur (" << fitted.oilCoolerW() << " W), " << without.oilC() << " °C sans ; eau "
+                         << fitted.coolantC() << " °C");
+        CHECK(fitted.oilC() > 90.0);
+        // À 130 km/h tenus, ces entrées approchées laissent l'huile vers 110 °C ; le modèle entier, `--scenario cruise`, 98 à 109 °C.
+        CHECK(fitted.oilC() < (road.kmh < 100.0 ? 105.0 : 112.0));
+        CHECK(fitted.oilCoolerW() > 0.0);
+        CHECK(without.oilC() > fitted.oilC() + 8.0);
+        // L'eau reçoit ce que l'huile rend : le calorstat la tient quand même.
+        CHECK(fitted.coolantC() < 95.0);
     }
-    CHECK(kept.thermal().coolantC() != reset.thermal().coolantC());
-    CHECK_FALSE(kept.thermalCoupled());
-    CHECK(kept.coldFrictionNm() == 0.0);
+    CHECK(counterFlowEffectiveness(0.0, 0.5) == 0.0);
+    CHECK(counterFlowEffectiveness(1.0, 1.0) == doctest::Approx(0.5));
+    CHECK(counterFlowEffectiveness(1.0, 0.0) == doctest::Approx(1.0 - std::exp(-1.0)));
 }
 
 TEST_CASE("thermique : un départ à froid tient un ralenti plus haut, qui redescend avec l'eau") {

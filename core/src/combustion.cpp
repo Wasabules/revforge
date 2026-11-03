@@ -102,6 +102,10 @@ constexpr double kAdvanceMin = -20.0;
 constexpr double kAdvanceStep = 5.0;
 // La limite de cliquetis tombe hors de la grille : l'avance n'y cliquette jamais.
 constexpr double kNoLimitDeg = 80.0;
+// Finitions : la seconde eau de la carte, 20 °C. L'eau n'entre dans le cycle que par la charge à la fermeture de l'admission, qui
+// la suit linéairement (`kWallPickup`) ; le logarithme de l'intégrale suit 1/T des gaz frais, linéaire à quelques pour cent
+// près sur 160 K d'eau (de −30 à 130 °C) : deux eaux suffisent, et la carte ne se reconstruit pas pendant la mise en température.
+constexpr double kColdTableK = 293.15;
 
 double clamp(double v, double low, double high) { return v < low ? low : (v > high ? high : v); }
 
@@ -441,14 +445,19 @@ void KnockMap::build(const Powertrain& p, const Inputs& in) {
     stock.engine.ignitionOffsetDeg = 0;
     if (chargeAirActive(stock)) stock = chargeAirStock(stock);
     const Inputs reference;
+    coolantK_ = in.coolantK;
     for (int i = 0; i < kRpmPoints; ++i) {
         const double rpm = idleRpm_ + (redlineRpm_ - idleRpm_) * i / (kRpmPoints - 1);
         Row& row = actual_[static_cast<std::size_t>(i)];
         Row& base = stock_[static_cast<std::size_t>(i)];
+        Row& cold = cold_[static_cast<std::size_t>(i)];
         row.rpm = rpm;
         base.rpm = rpm;
         const EndGasSetup setup = setupAt(p, in, rpm, row.fullBoost);
         const EndGasSetup stockSetup = setupAt(stock, reference, rpm, base.fullBoost);
+        EndGasSetup coldSetup = setup;
+        coldSetup.coolantK = kColdTableK;
+        cold = row;
         for (int j = 0; j < kAdvancePoints; ++j) {
             const double advance = kAdvanceMin + kAdvanceStep * j;
             const EndGasCycle cycle = endGasCycle(setup, advance);
@@ -457,9 +466,11 @@ void KnockMap::build(const Powertrain& p, const Inputs& in) {
             row.work[static_cast<std::size_t>(j)] = cycle.workShare;
             base.logIntegral[static_cast<std::size_t>(j)] = portable::log(std::max(stockCycle.knockIntegral, 1e-20));
             base.work[static_cast<std::size_t>(j)] = stockCycle.workShare;
+            cold.logIntegral[static_cast<std::size_t>(j)] = portable::log(std::max(endGasCycle(coldSetup, advance).knockIntegral, 1e-20));
         }
         row.gasK = endGasCycle(setup, mbtAdvanceDeg(rpm, setup.cycleSpeedShare)).gasK;
         base.gasK = row.gasK;
+        cold.gasK = row.gasK;
     }
 }
 
@@ -499,6 +510,28 @@ KnockPoint KnockMap::at(double rpm, double chargeShare) const {
     const int low = std::min(static_cast<int>(at), kRpmPoints - 2);
     const double share = at - low;
     point.gasK = actual_[static_cast<std::size_t>(low)].gasK + (actual_[static_cast<std::size_t>(low + 1)].gasK - actual_[static_cast<std::size_t>(low)].gasK) * share;
+    return point;
+}
+
+KnockPoint KnockMap::at(double rpm, double chargeShare, double coolantK) const {
+    KnockPoint point = at(rpm, chargeShare);
+    if (coolantK == coolantK_) return point;
+    // L'intégrale de chaque avance, déplacée de ce que l'écart d'eau lui fait, linéaire entre la carte chaude et la carte à 20 °C.
+    const double weight = (coolantK - coolantK_) / (coolantK_ - kColdTableK);
+    const double at = clamp((rpm - idleRpm_) / std::max(redlineRpm_ - idleRpm_, 1.0), 0.0, 1.0) * (kRpmPoints - 1);
+    const int low = std::min(static_cast<int>(at), kRpmPoints - 2);
+    const double share = at - low;
+    const auto shifted = [&](int index) {
+        const std::size_t i = static_cast<std::size_t>(index);
+        Row row = actual_[i];
+        for (std::size_t j = 0; j < static_cast<std::size_t>(kAdvancePoints); ++j) row.logIntegral[j] += weight * (actual_[i].logIntegral[j] - cold_[i].logIntegral[j]);
+        return row;
+    };
+    const double target = -1.7 * portable::log(std::max(chargeShare, 1e-3));
+    const double a = invert(shifted(low), target);
+    const double b = invert(shifted(low + 1), target);
+    point.meanLimitDeg = (a + (b - a) * share) * degPerCycle_;
+    point.limitDeg = point.meanLimitDeg - kLimitSpreads * kPhaseSpreadDeg;
     return point;
 }
 
@@ -594,8 +627,8 @@ KnockMap::Inputs knockInputsOf(const Powertrain& p) {
 
 const KnockMap* knockMapOf(const Powertrain& p) {
     // Intégration : la carte se construit aussi quand l'air, la came, l'avance, l'injection directe ou l'air de charge ne sont plus
-    // ceux d'origine. L'eau du moteur, elle, reste celle d'un moteur chaud : la carte ne se reconstruit pas pendant la mise en
-    // température (un moteur froid cliquette moins).
+    // ceux d'origine. Finitions : elle est tabulée à deux eaux, et le modèle de conduite y lit l'eau du réseau thermique, sans la
+    // reconstruire pendant la mise en température. La fiche, elle, reste celle du moteur chaud.
     if (p.electric || p.engine.burnsDiesel() || (combustionStock(p.engine) && knockConditionsStock(p))) return nullptr;
     const EnginePlacement placement = placementOf(p.car);
     for (CachedMap& entry : g_cache) {

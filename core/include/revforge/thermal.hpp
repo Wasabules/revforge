@@ -27,11 +27,12 @@ double oilViscosityPaS(double oilC);
  */
 double hydrodynamicNmPerRpm(const EngineConfig& engine);
 /**
- * Ce que l'huile froide ajoute à ces frottements, en part de leur valeur à chaud : (μ/μ₁₀₀)^0,5 − 1, à la façon de
- * Sandoval et Heywood. Nul dès 100 °C : au-delà, le modèle de frottement d'origine, calé à chaud, reste tel quel.
+ * Ce que l'huile ajoute à ces frottements, en part de leur valeur à 100 °C : (μ/μ₁₀₀)^0,5 − 1, à la façon de Sandoval et
+ * Heywood. Exactement 0 à 100 °C, où le modèle de frottement d'origine est calé ; négatif au-delà, l'huile plus fluide
+ * freinant moins.
  */
 double coldViscosityExcess(double oilC);
-/** Les frottements que l'huile froide ajoute à ce régime (Nm). 0 à chaud, et sur un moteur électrique. */
+/** Les frottements que l'huile ajoute à ce régime face à l'huile à 100 °C (Nm) : négatifs plus chaude. 0 sur un électrique. */
 double coldFrictionNm(const Powertrain& p, double oilC, double rpm);
 /** Les frottements à cette température d'huile, rapportés à ceux du moteur chaud : 1 à chaud. */
 double frictionFactor(const Powertrain& p, double oilC, double rpm);
@@ -78,7 +79,17 @@ struct ThermalSpec {
     double fanMs = 3.0;
     // Énergie du carburant à la puissance maximale (W) : l'échelle du débit pour la part qui passe aux parois.
     double ratedFuelW = 150000.0;
+    /**
+     * L'échangeur eau-huile à plaques, sur le petit circuit : sa conductance (W/K), le débit de capacité de la pompe à huile
+     * (W/K par tr/min, jusqu'à son clapet de décharge) et la part de l'eau de la pompe qui le traverse. 0 : pas d'échangeur.
+     */
+    double oilCoolerUaWK = 0.0;
+    double oilPumpWKPerRpm = 0.0;
+    double oilCoolerWaterShare = 0.0;
 };
+
+/** Efficacité d'un échangeur à contre-courant (ε-NTU) : celle d'un échangeur à plaques. */
+double counterFlowEffectiveness(double ntu, double capacityRatio);
 
 ThermalSpec thermalSpecOf(const Powertrain& p, double ratedFuelW);
 
@@ -109,6 +120,8 @@ public:
     /** Chaleur rendue à l'air par le radiateur, et reçue par les parois (W). */
     double radiatorW() const { return radiatorW_; }
     double wallW() const { return wallW_; }
+    /** Ce que l'échangeur eau-huile passe de l'huile à l'eau (W) : négatif quand l'eau réchauffe l'huile, au départ à froid. */
+    double oilCoolerW() const { return oilCoolerW_; }
     const ThermalSpec& spec() const { return spec_; }
 
 private:
@@ -121,6 +134,7 @@ private:
     bool fan_ = false;
     double radiatorW_ = 0.0;
     double wallW_ = 0.0;
+    double oilCoolerW_ = 0.0;
 };
 
 }  // namespace revforge
