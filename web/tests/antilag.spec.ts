@@ -97,27 +97,33 @@ test.describe('l\'anti-lag, dans le gaz', () => {
     expect(fired).toEqual([true, false, false, true, false]);
   });
 
-  test('rien n\'alloue de plus à chaque pas', () => {
+  test('rien n\'est alloué d\'une image à l\'autre', () => {
+    // Même mesure que `interface.spec.ts` : après l'échauffement, et sans relever le tas à chaque image, ce que ce relevé alloue lui-même.
     const grownPerFrame = (inputs: GasInputs) => {
-      const net = settled(inputs);
+      const net = new GasNetwork();
+      net.build(BASE, ORDER4);
       let cycle = 0;
-      let previous = process.memoryUsage().heapUsed;
-      let grown = 0;
-      for (let i = 0; i < 600; i++) {
+      const step = () => {
         const turns = (inputs.rpm / 120) * FRAME;
         net.advance(FRAME, cycle, turns, inputs);
         cycle = (cycle + turns) % 1;
-        const now = process.memoryUsage().heapUsed;
-        if (now > previous) grown += now - previous;
-        previous = now;
+      };
+      for (let f = 0; f < 600; f++) step();
+      let grown = 0;
+      let previous = process.memoryUsage().heapUsed;
+      for (let f = 0; f < 3000; f++) {
+        step();
+        if (f % 50 === 0) {
+          const now = process.memoryUsage().heapUsed;
+          if (now > previous) grown += now - previous;
+          previous = now;
+        }
       }
-      return grown / 600;
+      return grown / 3000;
     };
-    const plain = grownPerFrame(LIFTED);
-    const air = grownPerFrame({ ...LIFTED, antiLag: ANTI_LAG_CODE.air, antiLagHeatW: 15000, antiLagAirFlow: 0.025 });
-    const cut = grownPerFrame({ ...LIFTED, antiLag: ANTI_LAG_CODE.cut, antiLagHeatW: 15000 });
-    expect(air).toBeLessThan(plain + 300);
-    expect(cut).toBeLessThan(plain + 300);
+    for (const code of [ANTI_LAG_CODE.retard, ANTI_LAG_CODE.air, ANTI_LAG_CODE.cut]) {
+      expect(grownPerFrame({ ...LIFTED, antiLag: code, antiLagHeatW: 15000, antiLagAirFlow: 0.025 })).toBeLessThan(4000);
+    }
   });
 });
 
