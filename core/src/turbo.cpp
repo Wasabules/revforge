@@ -2,6 +2,8 @@
 
 #include <cmath>
 
+#include "revforge/air_filter.hpp"
+
 namespace revforge {
 
 namespace {
@@ -53,6 +55,7 @@ constexpr double kRatedTurbineShareDiesel = 0.7;
 
 // ── L'échappement et le moteur ──
 constexpr double kVolumetric = 0.92;
+constexpr double kRatedShare = 0.88;
 constexpr double kRatedLineBar = 0.2;
 constexpr double kRatedCoolerBar = 0.12;
 constexpr double kRatedFilterPa = 3000.0;
@@ -120,9 +123,9 @@ double compressorEta(double x) {
 }
 
 /** Hauteur isentropique (J/kg) pour ce débit et cette vitesse de bout de pale. Négative : la roue n'est plus qu'une perte. */
-double compressorHead(const TurboSpec& spec, double flow, double tipSpeed, double* xOut = nullptr) {
+double compressorHead(const TurboSpec& spec, double inletK, double flow, double tipSpeed, double* xOut = nullptr) {
     const double D2 = spec.wheelDiameterM * spec.wheelDiameterM;
-    const double rho = kAtmosphere / (kAirR * kAmbientK);
+    const double rho = kAtmosphere / (kAirR * inletK);
     const double u = tipSpeed < kMinTipSpeed ? kMinTipSpeed : tipSpeed;
     const double unit = rho * kFlowCoefficient * u * D2;
     const double x = flow / unit;
@@ -141,8 +144,14 @@ double compressorHead(const TurboSpec& spec, double flow, double tipSpeed, doubl
     return headCoefficient(x) * tipSpeed * tipSpeed;
 }
 
-double pressureRatio(double head) {
-    const double base = 1.0 + head / (kAirCp * kAmbientK);
+/** La température à l'entrée du compresseur : l'air extérieur, sauf si le filtre respire sous le capot. */
+double inletTemperature(const TurboSpec& spec, double rpm) {
+    if (spec.inletFilter == AirFilter::Stock) return kAmbientK;
+    return kAmbientK + airFilterRiseK(spec.inletFilter, spec.inletPlacement, rpm / (kRatedShare * spec.redlineRpm));
+}
+
+double pressureRatio(double head, double inletK) {
+    const double base = 1.0 + head / (kAirCp * inletK);
     return powerSevenHalves(base < 0.5 ? 0.5 : base);
 }
 
@@ -280,13 +289,13 @@ struct Balance {
 };
 
 /** La vitesse de bout de pale qu'il faut pour cette hauteur, à ce débit. La hauteur croît avec U : une dichotomie suffit. */
-double tipSpeedFor(const TurboSpec& spec, double flow, double head) {
+double tipSpeedFor(const TurboSpec& spec, double inletK, double flow, double head) {
     double low = kMinTipSpeed;
     double high = 900.0;
     if (head <= 0.0) return low;
     for (int i = 0; i < 14; ++i) {
         const double middle = 0.5 * (low + high);
-        (compressorHead(spec, flow, middle) >= head ? high : low) = middle;
+        (compressorHead(spec, inletK, flow, middle) >= head ? high : low) = middle;
     }
     return high;
 }
@@ -302,16 +311,17 @@ Balance balanceAt(const TurboSpec& spec, double rpm, double breathing, double ch
     double head = 0.0;
     double tip = kMinTipSpeed;
     double x = 0.0;
+    const double inletK = inletTemperature(spec, rpm);
     for (int pass = 0; pass < 2; ++pass) {
         const double rho = chargePa / (kAirR * coolK);
         flow = kVolumetric * breathing * rho * spec.displacementM3 * rpm / 120.0;
         inletPa = kAtmosphere - spec.filterDrop * flow * flow;
         // Mêmes pertes qu'à chaque pas : celles de l'échangeur, et celles du conduit, plafonnées.
         outletPa = chargePa + spec.coolerDrop * flow * flow / rho + kDuctLossAtRated / spec.ratedFlow * (flow < kDuctDampedShare * spec.ratedFlow ? flow : kDuctDampedShare * spec.ratedFlow);
-        head = kAirCp * kAmbientK * (powerTwoSevenths(outletPa / inletPa) - 1.0);
-        tip = tipSpeedFor(spec, flow, head);
-        compressorHead(spec, flow, tip, &x);
-        const double outK = kAmbientK + (head > 0.0 ? head : 0.0) / compressorEta(x) / kAirCp;
+        head = kAirCp * inletK * (powerTwoSevenths(outletPa / inletPa) - 1.0);
+        tip = tipSpeedFor(spec, inletK, flow, head);
+        compressorHead(spec, inletK, flow, tip, &x);
+        const double outK = inletK + (head > 0.0 ? head : 0.0) / compressorEta(x) / kAirCp;
         coolK = coolerOutlet(outK, flow, spec.ratedFlow);
     }
     const double fuel = fuelPerAir(spec, 1.0, true);
@@ -401,6 +411,14 @@ void TurboCharger::setSpec(const TurboSpec& spec) {
     state_.shaftShare = state_.shaftOmega / spec_.referenceOmega;
 }
 
+double turboChargeDensityShare(double boostBar, double boost, double inletRiseK, double flowShare) {
+    if (inletRiseK <= 0.0) return 1.0;
+    const double ratio = 1.0 + boostBar * (boost > 0.0 ? boost : 0.0);
+    // L'air qui entre plus chaud sort du compresseur plus chaud encore, à rapport de pression égal, et l'échangeur n'en retire qu'une part.
+    const double compression = 1.0 + (powerTwoSevenths(ratio) - 1.0) / kCompressorEta;
+    return coolerOutlet(kAmbientK * compression, flowShare, 1.0) / coolerOutlet((kAmbientK + inletRiseK) * compression, flowShare, 1.0);
+}
+
 double TurboCharger::boost() const { return (state_.chargePa - kAtmosphere) / (spec_.targetBar * 1e5); }
 
 double TurboCharger::backPressureNm(double fill) const { return turboBackPressureNm(spec_, state_.chargePa, state_.turbineInPa, state_.engineFlow, fill); }
@@ -438,11 +456,12 @@ void TurboCharger::step(double dt, const TurboInput& input) {
 
     // La colonne d'air du conduit : la différence de pression l'accélère. Implicite sur la pente descendante, seule raide.
     double x = 0.0;
-    const double headNow = compressorHead(spec, flowNow, tip, &x);
+    const double inletK = inletTemperature(spec, rpm);
+    const double headNow = compressorHead(spec, inletK, flowNow, tip, &x);
     const double delta = 1e-4 + 1e-3 * (flowNow < 0.0 ? -flowNow : flowNow);
-    const double headNext = compressorHead(spec, flowNow + delta, tip);
-    const double supplied = s.inletPa * pressureRatio(headNow);
-    double slope = s.inletPa * (pressureRatio(headNext) - pressureRatio(headNow)) / delta;
+    const double headNext = compressorHead(spec, inletK, flowNow + delta, tip);
+    const double supplied = s.inletPa * pressureRatio(headNow, inletK);
+    double slope = s.inletPa * (pressureRatio(headNext, inletK) - pressureRatio(headNow, inletK)) / delta;
     if (slope > 0.0) slope = 0.0;
     // Les pertes du conduit à faible débit : sans elles, le moindre filet d'air pomperait dès que le débit passe sous la limite.
     const double damped = clamp(flowNow, -kDuctDampedShare * spec.ratedFlow, kDuctDampedShare * spec.ratedFlow);
@@ -484,10 +503,10 @@ void TurboCharger::step(double dt, const TurboInput& input) {
     if (s.chargePa < 0.5 * kAtmosphere) s.chargePa = 0.5 * kAtmosphere;
 
     // ── Les températures ──
-    const double headNew = compressorHead(spec, flowNext, tip, &x);
+    const double headNew = compressorHead(spec, inletK, flowNext, tip, &x);
     const double eta = compressorEta(x);
     // Le carter a sa masse : la sortie ne suit pas chaque aller-retour du pompage.
-    const double outTarget = flowNext > 0.0 ? kAmbientK + (headNew > 0.0 ? headNew : 0.0) / eta / kAirCp : s.compressorOutK;
+    const double outTarget = flowNext > 0.0 ? inletK + (headNew > 0.0 ? headNew : 0.0) / eta / kAirCp : s.compressorOutK;
     s.compressorOutK += (outTarget - s.compressorOutK) * dt / kOutletS;
     const double outK = s.compressorOutK;
     if (flowNext > 0.02 * spec.ratedFlow) {

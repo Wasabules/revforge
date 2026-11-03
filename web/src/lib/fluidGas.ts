@@ -152,6 +152,21 @@ const TURBO_INTAKE: { kind: IntakePartKind; length: number; area: number; drag: 
   { kind: 'cold', length: 0.5, area: 1, drag: 0, wall: 0.1 },
 ];
 
+/**
+ * Ce que le filtre change au gaz à l'écran. `drop` recopie `airFilterDropShare` (core/src/air_filter.cpp), et multiplie le
+ * frottement ; `mouth`, la section de la boîte sur un turbo (la section de `TURBO_INTAKE` en vaut 8) : sans boîte, l'air entre
+ * par une petite bouche. `duct`, la longueur du conduit sans turbo, boîte et prise d'air comprises ; `bay`, la part de
+ * l'échauffement du compartiment. Le volume entre le compresseur et le papillon ne bouge pas : voir `chargeVolumeM3`.
+ */
+const AIR_FILTER_GAS: Record<NonNullable<EngineConfig['airFilter']>, { drop: number; mouth: number; duct: number; bay: number }> = {
+  stock: { drop: 1, mouth: 8, duct: 0.7, bay: 0 },
+  panel: { drop: 2550 / 3000, mouth: 8, duct: 0.7, bay: 0 },
+  cone: { drop: 1210 / 3000, mouth: 3, duct: 0.45, bay: 1 },
+  stacks: { drop: 200 / 3000, mouth: 1.4, duct: 0.3, bay: 1 },
+};
+/** L'échauffement du compartiment au point nominal (K) : recopie `kBayRiseFrontK` et ses voisines. */
+const BAY_RISE_K: Record<'front' | 'mid' | 'rear', number> = { front: 12, mid: 20, rear: 16 };
+
 /** Longueur de chaque collecteur (m) : mêmes ordres de grandeur que `EngineConfig::toProfile`. */
 function headerLength(layout: Layout, cylinder: number): number {
   switch (layout) {
@@ -400,6 +415,10 @@ export class GasNetwork {
   private turnRate = 0;
   private boostNow = 1;
   private outKNow = 0;
+  /** La densité de l'air à l'entrée de l'admission : plus faible sous le capot. */
+  private inletRho = RHO_ATM;
+  /** Sa température (K), pour qui la montre. */
+  inletK = T_AMB;
   /** Pas de calcul faits à la dernière image. */
   lastSteps = 0;
   /** Temps physique simulé depuis la dernière construction (s). */
@@ -420,6 +439,10 @@ export class GasNetwork {
     this.flutter = config.turboRelease === 'flutter';
     this.boostBar = config.boostBar;
     this.banks = config.layout !== 'inline' && count >= 4 ? 2 : 1;
+    const filter = AIR_FILTER_GAS[config.airFilter ?? 'stock'];
+    const engineAt = config.placement ?? (config.body === 'supercar' ? 'mid' : 'front');
+    this.inletK = T_AMB + filter.bay * BAY_RISE_K[engineAt];
+    this.inletRho = (RHO_ATM * T_AMB) / this.inletK;
 
     // Géométrie du cylindre.
     const bore = config.boreMm / 1000;
@@ -477,11 +500,11 @@ export class GasNetwork {
       let cell = intakeFirst;
       for (const part of TURBO_INTAKE) {
         const count = Math.max(3, Math.round(part.length / CELL_M));
-        parts.push({ kind: part.kind, first: cell, count, area: part.area });
+        parts.push({ kind: part.kind, first: cell, count, area: part.kind === 'filter' ? filter.mouth : part.area });
         cell += count;
       }
     } else {
-      parts.push({ kind: 'duct', first: intakeFirst, count: Math.round(0.7 / CELL_M), area: 1 });
+      parts.push({ kind: 'duct', first: intakeFirst, count: Math.round(filter.duct / CELL_M), area: 1 });
     }
     this.intakeParts = parts;
     const lastPart = parts[parts.length - 1];
@@ -561,7 +584,7 @@ export class GasNetwork {
         const cell = part.first + k;
         this.area[cell] = areaHere;
         // Sans turbo, le filtre à air tient dans les premières cellules.
-        const drag = spec ? spec.drag : k < 4 ? 700 : 0;
+        const drag = (spec ? spec.drag : k < 4 ? 700 : 0) * (spec && spec.kind !== 'filter' ? 1 : filter.drop);
         if (drag > 0) {
           this.dragRate[cell] = drag;
           dragList.push(cell);
@@ -1429,7 +1452,8 @@ export class GasNetwork {
   private openEnd(i: number, side: number): void {
     const { rho, mom, ene, trc, y, invV, area, dt } = this;
     const face = area[i];
-    reservoir[0] = RHO_ATM;
+    // L'admission prend l'air là où le filtre va le chercher ; l'échappement, s'il aspire, celui du dehors.
+    reservoir[0] = side < 0 ? this.inletRho : RHO_ATM;
     reservoir[1] = P_ATM;
     this.reservoirFlux(i, side);
     const m = side * face * flux[0] * dt;

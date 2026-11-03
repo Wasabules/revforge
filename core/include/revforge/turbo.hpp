@@ -32,6 +32,8 @@ struct TurboSpec {
     double ratedBackPa = 0.0;       // ce que coûte un turbo bien apparié au point nominal : pression d'échappement moins pression de charge
     bool blowOffValve = true;       // sans soupape : l'air revient par le compresseur (pompage, flutter)
     double blowOffArea = 4.5e-4;    // m²
+    AirFilter inletFilter = AirFilter::Stock;  // ce qui fixe la température à l'entrée du compresseur
+    EnginePlacement inletPlacement = EnginePlacement::Front;
 };
 
 /** Ce qui change d'une milliseconde à l'autre, en unités physiques. */
@@ -122,5 +124,7 @@ TurboSpec turboSpecFor(const EngineConfig& engine, double breathingAtRated);
 TurboSteady turboSteady(const TurboSpec& spec, double rpm, double breathing);
 /** Le couple perdu au point d'équilibre à cause de la contre-pression (Nm). */
 double turboBackPressureNm(const TurboSpec& spec, double chargePa, double turbineInPa, double flow, double fill);
+/** La densité de la charge, à pression égale, quand l'air arrive au compresseur plus chaud de `inletRiseK` (1 : rien ne change). */
+double turboChargeDensityShare(double boostBar, double boost, double inletRiseK, double flowShare);
 
 }  // namespace revforge

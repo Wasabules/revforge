@@ -677,6 +677,56 @@ Face aux chiffres publiés : 8,3 s et 217 km/h en manuelle (E30 325i, vus cités
 
 **Ce qui manque :** la résistance au roulement (0,0095) et l'adhérence sont celles de pneus récents, pour toutes les voitures. Le moteur n'a ni carburateur ni allumage d'époque : c'est le même modèle de couple, et sa consommation garde l'écart du tableau « Face aux chiffres publiés ». `camshaft: sohc` n'a d'effet que si ce réglage est modélisé.
 
+## Le filtre à air
+
+Quatre filtres (`AirFilter`, `core/src/air_filter.cpp`) : papier d'origine dans sa boîte, panneau sport dans la même boîte, cône à l'air libre, cornets. Le papier est la référence : les couples sont calibrés sur lui, et avec lui aucun de ces calculs ne s'exécute. Tout le reste est écrit par rapport à lui. Le réglage n'agit pas sur un moteur électrique, qui n'a pas de filtre.
+
+**La perte de charge** suit `ΔP = k·ṁ²`. Au point de dessin, 0,11 kg/s, soit 2 L à 6000 tr/min :
+
+| | Perte | D'où vient le chiffre |
+|---|---|---|
+| Papier et boîte | 3 kPa | Réglé sur le meilleur filtre monté dans une boîte d'origine : 2,56 kPa à 6 m³/min (fastcar.co.uk, banc d'un magazine, lu en résumé). Déjà la valeur de `kRatedFilterPa` du turbo |
+| Panneau | 2,55 kPa | Même boîte, élément plus libre. Une boîte d'origine sans aucun élément perd déjà 1,25 kPa (5 po d'eau : Bob Is The Oil Guy, essai d'amateur, lu en résumé) : retirer du papier ne retire pas la boîte |
+| Cône | 1,21 kPa | Le plus fermé des cônes du même banc fastcar.co.uk, à 6 m³/min |
+| Cornets | 0,2 kPa | Supposé : une bouche arrondie et presque pas de grille |
+
+`k` dépend du moteur. Une boîte grandit comme une boîte, sa surface en V^(2/3) : un 5 L n'a pas une boîte 2,5 fois plus grande qu'un 2 L, et il y perd plus. Le constructeur ne dépasse quand même pas 5 kPa sur un filtre neuf, car la limite usuelle d'un filtre chargé est de 20 à 25 po d'eau, soit 5 à 6 kPa (ordre de grandeur lu dans un brevet de filtration). Sur un turbo, `k` est celui du turbo existant, 3 kPa au débit nominal, multiplié par le rapport de ce tableau.
+
+**La température.** Sans boîte, le filtre respire l'air du compartiment moteur. Sa hausse suit un bilan : ce qui est rejeté suit la puissance, donc le régime, et ce qui ventile suit la vitesse de la voiture, avec une part de ventilateur (`kFanShare`, 35 %, supposé). À pleine charge, en rapportant le régime `r` au point nominal, `ΔT = ΔT₀ · r / (0,35 + 0,65·r)`. `ΔT₀` vaut 12 K sur un moteur avant, 16 K à l'arrière, 20 K au centre, où l'échappement est enfermé avec le moteur : **ces valeurs sont supposées**. On n'a pas trouvé d'essai contrôlé capot fermé ; les récits vont de 10 à 30 K, et un banc capot ouvert ne voit presque rien, ce qui explique que le cône « gagne » au banc et perde sur la route. La température ne dépend ni de la charge ni de la vitesse réelle : c'est le chiffre à pleine charge, que voit aussi la fiche, sans inertie thermique. L'accumulation de chaleur à l'arrêt n'est pas simulée, ni l'encrassement.
+
+**Le couple.** Sur un atmosphérique, la masse d'air admise suit la pression et la densité derrière le filtre, et n'agit que sur le travail des gaz : `C = (C_réf + C_frott)·r_remplissage − C_frott`, plus le pompage en moins (`ΔP·V/4π`). Sur un turbo, la soupape de décharge tient la pression : la perte n'enlève pas de couple au plateau, elle change l'arbre. L'air entre au compresseur à `inletPa` et à sa température, ce qui change le débit réduit, la hauteur et la sortie du compresseur (`TurboSpec::inletFilter`). Seule la température de la charge touche le couple, atténuée par l'échangeur (`turboChargeDensityShare`). Le turbo reste dimensionné sur le papier d'origine, et la boîte de vitesses aussi : changer de filtre ne change pas les rapports (`gearingOf`).
+
+**Les cornets.** Leur longueur se choisit : accordée à 72 % du régime maximal, elle vaut 28 cm sur un 2 L à 6800 tr/min, soit un quart d'onde de `f = c/(4(L + 0,61a))`, 294 Hz. L'onde qui revient dans le tube change ce que trouve la soupape à sa fermeture (accord par inertie : Heywood, *Internal Combustion Engine Fundamentals*, § 7.6, cité de mémoire et non relu). Le modèle en tire `−A·cos(2π·f·25/N)`, amorti avec le nombre d'allers-retours (`A` = 3 %, `Q` = 6, **supposés**). Le pic de couple se déplace donc vers le régime accordé, avec un creux au-dessus. Les cornets d'un turbo sont une seule bouche sur l'entrée du compresseur : ni accord, ni plénum retiré.
+
+**Le son.** C'est l'effet le plus marqué. `IntakePath` (`core/src/intake_path.cpp`) calcule par matrices de transfert les deux trajets, de la soupape à l'air libre : conduit, boîte, élément, prise d'air, bouche pour le papier ; conduit court, élément et cône pour le cône ; un tube par cylindre pour les cornets. Comme le niveau du papier est calibré, seul leur **rapport** passe, à phase minimale, sur tout ce qui sort de l'admission (bruit de bouche, raies, sifflement et décharge du turbo). Il n'y a ni nouveau bruit, ni nouveau tirage. La boîte fuit par ses parois (loi de masse, 2,5 kg/m²) : c'est ce qui borne le gain à la retirer, et aucun niveau n'est saisi par filtre. Au-dessus de 3 kHz, le rapport retombe : la boîte cachait là une partie de la source que le modèle n'a jamais décrite, et sans cela les cornets faisaient un bruit blanc tout près du bloc (8-16 kHz à 3 dB sous 0,5-2 kHz au ralenti, 21 dB une fois corrigé, contre 14 dB avec le papier). Ces 3 kHz sont un choix, voisin de `kNoiseTopHz`.
+
+Gain calculé pour un 2 L : le panneau reste à 2 dB au plus. Le cône et les cornets perdent 1 à 7 dB sous 100 Hz, où la boîte résonne sur sa prise d'air, puis gagnent 10 à 25 dB entre 200 Hz et 2 kHz. Sans boîte, l'admission s'ouvre dans le compartiment : elle sort avec lui (`Source::Bay`, capot fermé), et non plus par une prise derrière la calandre. Ces niveaux ne sont comparés à aucun enregistrement : **seule l'écoute tranchera**.
+
+**Les chiffres.** Calculés par ce modèle, voiture compacte de 1300 kg (coupé de 1650 kg pour le V8). Le niveau est un LAeq estimé pendant un départ à pleine charge de 8 s, jamais une mesure.
+
+| Moteur | Filtre | Couple max (Nm) | Puissance max (kW) | Air à la puissance max (°C) | Perte à la puissance max (kPa) | 0-100 km/h (s) | WLTC (L/100 km) | Habitacle, départ (dB(A)) | Devant, départ (dB(A)) |
+|---|---|---|---|---|---|---|---|---|---|
+| 2,0 L atmo | Papier | 174 | 96,8 | 20 | 2,1 | 9,99 | 8,80 | 72,4 | 82,1 |
+|  | Panneau | 174 | 97,3 | 20 | 1,8 | 9,97 | 8,80 | 72,5 | 82,4 |
+|  | Cône | 168 | 93,3 | 32 | 0,8 | 10,21 | 8,77 | 75,9 | 84,0 |
+|  | Cornets | 173 | 93,6 | 32 | 0,1 | 10,16 | 8,77 | 77,6 | 85,0 |
+| V8 5,0 L | Papier | 473 | 275,1 | 20 | 4,7 | 6,28 | 15,81 | 77,6 | 84,8 |
+|  | Panneau | 475 | 277,9 | 20 | 4,0 | 6,26 | 15,81 | 77,6 | 85,4 |
+|  | Cône | 463 | 270,8 | 32 | 1,8 | 6,37 | 15,76 | 80,7 | 86,2 |
+|  | Cornets | 482 | 273,4 | 32 | 0,3 | 6,37 | 15,76 | 83,8 | 88,5 |
+| 2,0 L turbo 1,3 bar | Papier | 354 | 193,5 | 20 | 2,9 | 8,09 | 8,69 | 70,2 | 83,7 |
+|  | Panneau | 354 | 193,6 | 20 | 2,5 | 8,09 | 8,69 | 70,1 | 84,1 |
+|  | Cône | 350 | 190,0 | 32 | 1,1 | 8,06 | 8,69 | 74,2 | 84,2 |
+|  | Cornets | 350 | 190,2 | 32 | 0,2 | 8,06 | 8,68 | 76,5 | 85,5 |
+
+Sur le turbo, à 6000 tr/min : arbre à 176 700 tr/min avec le papier, 176 500 avec le panneau, 179 650 avec le cône. Le temps pour atteindre 90 % de la pression à 2500 tr/min passe de 1,31 s à 1,35 s avec le cône : l'air chaud coûte plus que la perte ne rapporte. Le 0-100 de ce turbo gagne pourtant 0,03 s avec moins de couple : cette traction de 350 Nm patine, et avec quatre roues motrices, le même cône perd 0,09 s (6,32 à 6,41 s). La consommation WLTC bouge à peine, et c'est attendu : à charge partielle, c'est le papillon qui étrangle, pas le filtre.
+
+À régime tenu, l'écart dépend beaucoup du régime dans l'habitacle, où les modes de la caisse peuvent tout couvrir : 0,4 dB à 5000 tr/min, jusqu'à 9 dB à 6500 tr/min pour le cône, sur le 2 L à pleine charge. À 30 % de charge, celui du cône reste sous 3 dB ; derrière la voiture, l'échappement reste maître, à moins de 1 dB. Au ralenti, le niveau ne bouge pas de plus de 2 dB dans l'habitacle, et de 3 à 11 dB la tête au-dessus du moteur : la place à bas régime tient, l'échappement discret ne se fait pas couvrir par un fond fixe.
+
+**Le gaz à l'écran** (`AIR_FILTER_GAS`, `fluidGas.ts`) : le frottement suit le même rapport, la section d'entrée se réduit sans boîte, et l'air entre plus chaud. Le volume entre le compresseur et le papillon ne change pas. **Les vues** dessinent la boîte, le cadre d'un panneau, le cône, ou un cornet par cylindre sans plénum ni papillon central. La jauge de dépression affiche l'air admis, seulement sur un cône ou des cornets : c'est `intakeAirK`, ce que voit le couple.
+
+**Ce qui n'est pas modélisé :** la filtration et l'usure qu'elle épargne (les cornets n'arrêtent rien), l'encrassement, le cliquetis que favorise l'air chaud, l'effet d'un boîtier de cornets alimenté en air frais, et le calculateur qui compenserait la densité sur un turbo.
+
 ## Calibration
 
 Le réglage est comparé à dix enregistrements de voitures de Wikimedia Commons (série « engine and

@@ -1,17 +1,19 @@
 <script lang="ts">
   import Choices from './Choices.svelte';
   import Slider from './Slider.svelte';
-  import { ASPIRATIONS, CYLINDERS, FUELS, LAYOUTS, LIMITS, RELEASES, TURBO_SIZES, cylinderCc, strokeMm, type EngineConfig } from '../lib/config';
+  import { AIR_FILTERS, ASPIRATIONS, CYLINDERS, FUELS, LAYOUTS, LIMITS, RELEASES, TURBO_SIZES, cylinderCc, strokeMm, type EngineConfig } from '../lib/config';
+  import type { Spec } from '../lib/engine';
   import { fixed, t } from '../lib/i18n.svelte';
   import { PISTON_SPEED_LIMIT, moveStroke, pistonSpeed, strokeOutside, strokeRange, strokeShape, strokeThumb, type StrokeAnchor } from '../lib/stroke';
 
   interface Props {
     config: EngineConfig;
     shown: EngineConfig;
+    spec: Spec;
     onapply: (next: Partial<EngineConfig>) => void;
     onlive: (next: Partial<EngineConfig>) => void;
   }
-  let { config, shown, onapply, onlive }: Props = $props();
+  let { config, shown, spec, onapply, onlive }: Props = $props();
 
   // Le curseur de course n'écrit que la cylindrée, et se souvient d'où il est parti le temps qu'on revienne.
   let strokeAnchor: StrokeAnchor | null = null;
@@ -65,6 +67,11 @@
     </div>
     <Choices label={t('builder.release')} options={RELEASES} value={config.turboRelease} onchange={(turboRelease) => onapply({ turboRelease })} />
   {/if}
+  <div>
+    <Choices label={t('builder.airFilter')} options={AIR_FILTERS} value={config.airFilter} onchange={(airFilter) => onapply({ airFilter })} />
+    <p class="help" data-testid="air-filter-help">{AIR_FILTERS.find((item) => item.value === config.airFilter)?.help}</p>
+    <p class="help" data-testid="air-filter-figures">{t('builder.airFilter.figures', { kpa: fixed(spec.intakeDropKpa, 1), c: Math.round(spec.intakeAirC) })}</p>
+  </div>
 {/if}
 
 <style>

@@ -165,6 +165,10 @@ struct EngineProfile {
     /** Deux rangées séparées ? Sinon, tous les cylindres rejoignent la même ligne. */
     bool twoBanks = false;
     CarAcoustics car;
+    /** Le filtre à air, et la longueur et le rayon de ses cornets s'il en a : le bruit d'admission en dépend. */
+    AirFilter airFilter = AirFilter::Stock;
+    float stackM = 0.0f;
+    float stackRadiusM = 0.0f;
 
     /**
      * Régime simulé pour un régime réel de la voiture. Au ralenti, les deux ralentis

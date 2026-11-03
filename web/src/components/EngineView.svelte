@@ -181,7 +181,7 @@
         turbine: t('engine.part.turbine'),
         shaft: t('engine.part.shaft'),
         intercooler: t('engine.part.intercooler'),
-        airbox: t('engine.part.airbox'),
+        airbox: t(layout.airFilter === 'cone' ? 'engine.part.cone' : layout.airFilter === 'stacks' ? 'engine.part.stacks' : 'engine.part.airbox'),
         maf: t('engine.part.maf'),
         chargeHot: t('engine.part.chargeHot'),
         chargeCold: t('engine.part.chargeCold'),

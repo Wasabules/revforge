@@ -9,7 +9,9 @@
 #include "dsp.hpp"
 #include "exhaust_line.hpp"
 #include "gearbox_sound.hpp"
+#include "intake_path.hpp"
 #include "kotlin_math.hpp"
+#include "revforge/air_filter.hpp"
 #include "starter_sound.hpp"
 
 namespace revforge {
@@ -143,6 +145,8 @@ constexpr float kToneMovingS = 0.04f;
 constexpr float kPresetSpeed = 6.0f;
 constexpr float kToneReleaseS = 2.0f;
 constexpr float kOutFadeS = 0.008f;
+// Une partition courte : le retard de la convolution ne doit pas décaler l'admission face au reste du moteur.
+constexpr int kIntakePartition = 32;
 // Niveau efficace le plus haut à volume 1, avec une crête de 4 en moyenne : sous le seuil du limiteur.
 constexpr float kOutputRmsMax = 0.25f;
 
@@ -305,6 +309,11 @@ struct EngineSound::State {
 
     // ── Échappement ──
     ExhaustLine line;
+    // Le trajet de l'admission, quand on a quitté le filtre d'origine : le rapport des deux, en plus de ce qui est calibré.
+    IntakePath intakePath;
+    dsp::Convolver intakeResponse;
+    bool otherFilter = false;
+    Source intakeOut = Source::Intake;
     Svf turbulence, rumble;
 
     // ── Admission et mécanique ──
@@ -381,7 +390,9 @@ struct EngineSound::State {
           starter(static_cast<float>(sampleRate)),
           gearbox(static_cast<float>(sampleRate)),
           controlDt(static_cast<float>(kControlSamples) / static_cast<float>(sampleRate)),
-          line(static_cast<float>(sampleRate)) {
+          line(static_cast<float>(sampleRate)),
+          intakePath(static_cast<float>(sampleRate)) {
+        intakeResponse.init(kIntakePartition, IntakePath::kLength / kIntakePartition);
         valveDecay = km::exp(-1.0f / (0.0009f * sr));
         blockDecay = km::exp(-1.0f / (0.005f * sr));
         blockTopCoef = 1.0f - km::exp(-2.0f * static_cast<float>(km::kPi) * kBlockTopHz / sr);
@@ -470,7 +481,8 @@ struct EngineSound::State {
     static bool sameParts(const EngineProfile& a, const EngineProfile& b) {
         return a.firingCount == b.firingCount && a.firing == b.firing && a.firingGain == b.firingGain && a.headerM == b.headerM &&
                a.exhaust == b.exhaust && a.exhaustScale == b.exhaustScale && a.diesel == b.diesel && a.turbo == b.turbo &&
-               a.electric == b.electric && a.routing == b.routing && a.bank == b.bank && a.twoBanks == b.twoBanks && sameShell(a.car, b.car);
+               a.electric == b.electric && a.routing == b.routing && a.bank == b.bank && a.twoBanks == b.twoBanks && sameShell(a.car, b.car) &&
+               a.airFilter == b.airFilter && (a.airFilter == AirFilter::Stock || (a.boreM == b.boreM && a.strokeM == b.strokeM && a.cylinders == b.cylinders && a.stackM == b.stackM));
     }
 
     /** La même caisse aux mêmes endroits : seule l'isolation change, et l'habitacle se recalcule sans couper le moteur. */
@@ -523,6 +535,17 @@ struct EngineSound::State {
             if (twoPaths) gas[1].line.setImpulse(impulse.data(), static_cast<int>(impulse.size()));
             // Ce qui détone dans le tube sort par la ligne : autant retenu que le reste de ses médiums.
             spec.popOpening = km::pow(10.0f, static_cast<float>(-line.lossDb(100.0, 800.0)) / 20.0f);
+        }
+        otherFilter = !p.electric && p.airFilter != AirFilter::Stock;
+        if (otherFilter) {
+            IntakeGeometry geometry;
+            geometry.displacementM3 = 0.7854 * static_cast<double>(p.boreM) * p.boreM * p.strokeM * p.cylinders;
+            geometry.stackM = static_cast<double>(p.stackM);
+            geometry.stackRadiusM = static_cast<double>(p.stackRadiusM);
+            const std::vector<float>& inlet = intakePath.compute(p.airFilter, geometry);
+            intakeResponse.setImpulse(inlet.data(), static_cast<int>(inlet.size()));
+            // Sans boîte, il s'ouvre dans le compartiment moteur, et en sort avec lui.
+            intakeOut = airFilterSpec(p.airFilter).underBonnet ? Source::Bay : Source::Intake;
         }
         field.setCar(p.car, !p.electric);
         if (presetPosition) applyListenerPreset();
@@ -1135,7 +1158,9 @@ struct EngineSound::State {
         stem(Source::ExhaustA) += (gasA + (twoOutlets ? tail * 0.7f : tail)) * gain + (twoOutlets ? pops * 0.5f : pops);
         stem(Source::ExhaustB) += twoOutlets ? (gasB + tail * 0.7f) * gain + pops * 0.5f : 0.0f;
         // Le compresseur et sa décharge sont sur le conduit d'admission : ils sortent avec lui.
-        stem(Source::Intake) += (inducted * cutGate * kIntakePa + inletTone.bp * inletLevel * cutGate) * gain + turboBus * kTurboPa * eventGain;
+        const float inletStem = (inducted * cutGate * kIntakePa + inletTone.bp * inletLevel * cutGate) * gain + turboBus * kTurboPa * eventGain;
+        if (otherFilter) stem(intakeOut) += intakeResponse.process(inletStem);
+        else stem(Source::Intake) += inletStem;
         const float engineNoise = (mechanical * (0.4f + 0.6f * cutGate) * kMechanicalPa + block) * blockLevel * gain;
         stem(Source::Bay) += engineNoise;
         // Le moteur fait vibrer toute la caisse : elle en rayonne une part, de partout, mais pas les aigus.

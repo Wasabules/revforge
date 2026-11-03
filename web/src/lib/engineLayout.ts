@@ -124,6 +124,9 @@ export interface EngineLayout {
   turboScale: number;
   /** Une soupape de décharge : sans elle (flutter), l'air revient par le compresseur. */
   releaseValve: boolean;
+  /** Le filtre à air, et la longueur de ses cornets s'il en a, de la soupape à la bouche (mm) : recopie `stackLengthM`. */
+  airFilter: NonNullable<EngineConfig['airFilter']>;
+  stackMm: number;
   dualMass: boolean;
   bore: number;
   /** Course dessinée ; `strokeReal` si les réglages sortent de ce qu'on peut dessiner à l'échelle. */
@@ -227,9 +230,18 @@ export function starterTeeth(cylinders: number, displacementCc: number): { ring:
 }
 
 /** Ce qui fait changer les pièces du moteur : à clé égale, les mêmes maillages. */
+/** Recopie `stackLengthM` (core/src/air_filter.cpp) : accordée à 72 % du régime maximal. Une erreur ne change que le dessin. */
+export function stackLengthMm(boreMm: number, redlineRpm: number): number {
+  const tuned = (1.5 * 0.72 * redlineRpm) / 25;
+  const length = 343 / (4 * tuned) - 0.61 * 0.25 * (boreMm / 1000);
+  return Math.min(Math.max(length, 0.12), 0.5) * 1000;
+}
+
 export function layoutKey(config: EngineConfig): string {
   if (config.electric) return 'electric';
-  return `${config.cylinders}|${config.layout}|${config.displacementCc}|${config.boreMm}|${config.fuel}|${config.aspiration}|${config.turboSize}|${config.turboRelease}|${config.boxFlywheel}`;
+  // La longueur des cornets dépend du régime qu'on vise : eux seuls font reconstruire le moteur quand il change.
+  const filter = config.airFilter === 'stacks' ? `stacks${config.redlineRpm}` : config.airFilter ?? 'stock';
+  return `${config.cylinders}|${config.layout}|${config.displacementCc}|${config.boreMm}|${config.fuel}|${config.aspiration}|${config.turboSize}|${config.turboRelease}|${config.boxFlywheel}|${filter}`;
 }
 
 export function engineLayout(config: EngineConfig): EngineLayout {
@@ -410,6 +422,8 @@ export function engineLayout(config: EngineConfig): EngineLayout {
     turbo: config.aspiration === 'turbo',
     turboScale: TURBO_SCALE[config.turboSize ?? 'medium'],
     releaseValve: config.turboRelease !== 'flutter',
+    airFilter: config.airFilter ?? 'stock',
+    stackMm: stackLengthMm(config.boreMm, config.redlineRpm),
     dualMass: config.boxFlywheel === 'dual_mass',
     bore,
     stroke,
@@ -458,6 +472,22 @@ export function plenumPosition(layout: EngineLayout): { x: number; y: number; ra
   const p = [0, 0];
   bankToFront(p, layout.halfDeg, -bore * 1.04, deck + bore * 0.62);
   return { x: 0, y: p[1] + bore * 0.9, radius };
+}
+
+/**
+ * Le cornet d'un cylindre, vu de face : de sa bride sur la culasse à sa bouche. Vers l'extérieur sur une rangée seule,
+ * vers le haut entre les deux rangées d'un V. La bride compte déjà dans la longueur : le conduit dans la culasse en prend une part.
+ */
+export function stackOf(layout: EngineLayout, cylinder: Cylinder): { from: [number, number]; to: [number, number]; radius: number } {
+  const { bore, deck } = layout;
+  const out = [0, 0];
+  bankToFront(out, cylinder.betaDeg, cylinder.intakeSide, 0.1);
+  if (layout.banks === 2) out[1] += 1.4;
+  const norm = Math.hypot(out[0], out[1]) || 1;
+  const from = [0, 0];
+  bankToFront(from, cylinder.betaDeg, cylinder.intakeSide * bore * 1.04, deck + bore * 0.62);
+  const visible = Math.max(layout.stackMm - bore * 0.7, bore * 1.2);
+  return { from: [from[0], from[1]], to: [from[0] + (out[0] / norm) * visible, from[1] + (out[1] / norm) * visible], radius: bore * 0.15 };
 }
 
 /** Le collecteur d'échappement d'une rangée, vue de face : à l'extérieur, un peu sous la culasse. */

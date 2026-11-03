@@ -24,8 +24,11 @@
   let root: HTMLElement;
   let turbineNode = $state<HTMLElement>();
   let tailpipeNode = $state<HTMLElement>();
+  let intakeNode = $state<HTMLElement>();
 
   const turbo = $derived(config.aspiration === 'turbo' && !config.electric);
+  // L'air d'admission n'a d'intérêt que s'il n'est plus celui du dehors : un filtre sous le capot.
+  const hotAir = $derived(!config.electric && (config.airFilter === 'cone' || config.airFilter === 'stacks'));
   /** Une échelle qui finit sur une graduation : tout ce que la simulation peut atteindre y tient. */
   const roundedUp = (value: number, step: number) => Math.ceil(value / step - 1e-9) * step;
 
@@ -52,6 +55,8 @@
     let lastLang = lang();
     let lastTailpipe = NaN;
     let lastTailLang = lang();
+    let lastIntake = NaN;
+    let lastIntakeLang = lang();
     const stops = [
       clock.add((text) => {
         if (!text) return;
@@ -70,6 +75,15 @@
         lastTailpipe = c;
         lastTailLang = lang();
         tailpipeNode.textContent = t('gauge.tailpipe', { c: whole(c) });
+      }),
+      clock.add((text) => {
+        if (!text) return;
+        if (!intakeNode) return;
+        const c = Math.round(running() ? telemetry().intakeAirC : 20);
+        if (c === lastIntake && lang() === lastIntakeLang) return;
+        lastIntake = c;
+        lastIntakeLang = lang();
+        intakeNode.textContent = t('gauge.intakeAir', { c: whole(c) });
       }),
     ];
     return () => {
@@ -91,6 +105,7 @@
     <Gauge id="manifold" label={t('gauge.manifold')} note={t('gauge.manifold.note')} unit="bar" min={-1} max={manifoldMax} step={manifoldStep} minor={manifoldStep / 5} zero={0} mark={turbo ? config.boostBar : null}
       digits={2} signed tickDigits={1} {clock} read={() => readings.manifoldBar}>
       {#if turbo}<span data-testid="gauge-turbine" bind:this={turbineNode}></span>{:else}{t('gauge.manifold.natural')}{/if}
+      {#if hotAir}<span data-testid="gauge-intake-air" bind:this={intakeNode}></span>{/if}
     </Gauge>
     <Gauge id="collector" label={t('gauge.collector')} note={t('gauge.collector.note')} unit="°C" min={0} max={1000} step={200} minor={100} warm {clock} read={() => readings.collectorC}>
       <span data-testid="gauge-tailpipe" bind:this={tailpipeNode}></span>

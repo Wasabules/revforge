@@ -68,6 +68,10 @@ Powertrain referencePowertrain();
 double steadyBoost(const Powertrain& p, double rpm);
 /** Le turbo que ce moteur monte. */
 TurboSpec turboSpecOf(const Powertrain& p);
+/** L'air à l'entrée du moteur ou du compresseur à pleine charge, derrière le filtre : sa température (K). */
+double intakeAirK(const Powertrain& p, double rpm);
+/** La perte de pression de ce filtre à pleine charge et à ce régime (Pa), boîte et prise d'air comprises. */
+double intakeDropPa(const Powertrain& p, double rpm);
 /** Respiration du moteur à ce régime : 1 au pic de couple. */
 double breathingOf(const Powertrain& p, double rpm);
 /** Couple au vilebrequin à pleine charge, net des frottements, pour une pression de turbo donnée (Nm). */
