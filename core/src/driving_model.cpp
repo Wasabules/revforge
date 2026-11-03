@@ -1,5 +1,7 @@
 #include "revforge/driving_model.hpp"
 
+#include "revforge/two_stroke.hpp"
+
 #include "portable_math.hpp"
 
 #include <algorithm>
@@ -128,6 +130,7 @@ void DrivingModel::setPowertrain(const Powertrain& powertrain) {
     superchargerEngine_ = !powertrain.electric && powertrain.engine.aspiration == Aspiration::Supercharger;
     if (superchargerEngine_) supercharger_.setSpec(superchargerSpecOf(powertrain));
     carbEngine_ = !powertrain.electric && fuelSystemOf(powertrain.engine) != FuelSystem::Injection;
+    twoStrokeEngine_ = !powertrain.electric && isTwoStroke(powertrain.engine);
     if (carbEngine_) carb_.configure(carburetorSpecOf(powertrain.engine), powertrain.engine.sweptCcPerTwoTurns() * 1e-6);
     if (gear_ > gearing_.gears) gear_ = gearing_.gears;
     step_ = ShiftStep::None;
@@ -774,8 +777,40 @@ double DrivingModel::rotaryCompressionLoadNm() const {
     return load;
 }
 
+double DrivingModel::twoStrokeCompressionLoadNm() const {
+    // Chaque cylindre comprime à chaque tour, mais seulement une fois la lumière d'échappement fermée : du volume qu'elle enferme.
+    const EngineConfig& e = powertrain_.engine;
+    const TwoStrokePorts ports = twoStrokePortsOf(e);
+    const int count = e.pistons();
+    const double swept = static_cast<double>(e.displacementCc) * 1e-6 / count;
+    const double clearance = swept / (ports.geometricCompression - 1.0);
+    const double closed = clearance + swept * (1.0 - ports.exhaustHeight);
+    const double closesAt = (360.0 - ports.exhaustOpenDeg) * kPi / 180.0;
+    const double opensAt = ports.exhaustOpenDeg * kPi / 180.0;
+    constexpr double kAtmosphere = 1e5;
+    // Mêmes fuites et même retour qu'un quatre-temps (voir `compressionLoadNm`).
+    constexpr double kCrankPolytropic = 1.13;
+    constexpr double kExpansionReturn = 0.8;
+    double load = 0.0;
+    for (int i = 0; i < count; ++i) {
+        const double phi = std::fmod(crankAngle_ + 2.0 * kPi * i / count, 2.0 * kPi);
+        const bool compressing = phi >= closesAt;
+        if (!compressing && phi >= opensAt) continue;
+        const double travel = pistonTravelShare(phi * 180.0 / kPi, ports.rodOverStroke);
+        const double volume = clearance + swept * travel;
+        const double pressure = kAtmosphere * portable::pow(closed / volume, kCrankPolytropic);
+        // Le bras de levier : dV/dφ, calculé par la même cinématique.
+        const double ahead = pistonTravelShare(phi * 180.0 / kPi + 0.5, ports.rodOverStroke);
+        const double lever = swept * (ahead - travel) / (0.5 * kPi / 180.0);
+        const double push = (pressure - kAtmosphere) * lever;
+        load += compressing ? -push : -kExpansionReturn * push;
+    }
+    return load;
+}
+
 double DrivingModel::compressionLoadNm() const {
     if (isRotary(powertrain_.engine)) return rotaryCompressionLoadNm();
+    if (twoStrokeEngine_) return twoStrokeCompressionLoadNm();
     // Chaque cylindre comprime l'air enfermé, puis le gaz lui rend presque tout en se détendant.
     const double swept = static_cast<double>(powertrain_.engine.displacementCc) * 1e-6 / powertrain_.engine.cylinders;
     const double ratio = static_cast<double>(starter_.compressionRatio);
@@ -958,6 +993,8 @@ void DrivingModel::updateEngine(double throttle, bool off) {
     else boost_ = 0.0;
 
     double produced = cut_ ? 0.0 : manifold_ * indicated * torqueScale_;
+    // Un deux-temps balaie mieux à faible débit, mais il rate : ce que son air frais enfermé donne vraiment (voir docs/modele.md).
+    if (twoStrokeEngine_ && !cut_) produced *= twoStrokePartLoad(powertrain_.engine, rpmNow, manifold_).torqueShare;
     antiLagLostNm_ = 0.0;
     if (antiLag_.active) {
         const double kept = produced * antiLagTorqueShare(antiLag_.kind);

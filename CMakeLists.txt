@@ -43,6 +43,7 @@ add_library(revforge_core STATIC
   core/src/consumption.cpp
   core/src/presets.cpp
   core/src/carburetor.cpp
+  core/src/two_stroke.cpp
   ${GENERATED_DIR}/presets_data.inc
 )
 target_include_directories(revforge_core PUBLIC core/include PRIVATE core/src ${GENERATED_DIR})

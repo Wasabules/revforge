@@ -7,6 +7,7 @@
 #include "revforge/supercharger.hpp"
 #include "revforge/carburetor.hpp"
 #include "portable_math.hpp"
+#include "revforge/two_stroke.hpp"
 
 namespace revforge {
 
@@ -38,7 +39,8 @@ void applyCarburetor(const EngineConfig& engine, EngineProfile& p) {
     const double settled = 1.0 / carb.partLambda;
     const double lean = torqueOfRichness(settled * (1.0 - carb.spread)) / torqueOfRichness(settled);
     const double rich = torqueOfRichness(settled * (1.0 + carb.spread)) / torqueOfRichness(settled);
-    for (int i = 0; i < p.firingCount; ++i) p.firingGain[i] *= static_cast<float>(i % 2 == 0 ? lean : rich);
+    // Sur un deux-temps, chaque cylindre allume deux fois par cycle : son mélange reste le sien.
+    for (int i = 0; i < p.firingCount; ++i) p.firingGain[i] *= static_cast<float>((p.twoStroke ? i % p.pistons : i) % 2 == 0 ? lean : rich);
 }
 
 // ── Le moteur rotatif : voir « Le moteur rotatif » dans docs/modele.md ──
@@ -118,6 +120,66 @@ void applyRotary(const EngineConfig& e, EngineProfile& p) {
     p.starter.compressionRatio = static_cast<float>(compression);
 }
 
+/**
+ * Ce qui change sur un deux-temps, une fois le moteur rempli comme un quatre-temps : voir `EngineProfile::twoStroke`. Chaque cylindre
+ * allume deux fois en deux tours, à 360° d'écart ; ses lumières remplacent les soupapes ; son cycle intégré donne ce que le carter
+ * fait entrer et ce que le cylindre garde.
+ */
+void applyTwoStroke(const EngineConfig& e, EngineProfile& p) {
+    const int pistons = e.pistons();
+    const int firings = 2 * pistons;
+    const TwoStrokePorts ports = twoStrokePortsOf(e);
+    // Ce que chaque cylindre avait en quatre temps : sa force, son collecteur, sa rangée. Il les garde à ses deux explosions.
+    const std::array<float, kMaxCylinders> gain = p.firingGain;
+    const std::array<float, kMaxCylinders> header = p.headerM;
+    const std::array<int, kMaxCylinders> bank = p.bank;
+    const float release = static_cast<float>(twoStrokeReleaseShare(e));
+    p.twoStroke = true;
+    p.pistons = pistons;
+    p.cylinders = firings;
+    p.firingCount = firings;
+    for (int i = 0; i < kMaxCylinders; ++i) {
+        p.firing[static_cast<std::size_t>(i)] = 0.0f;
+        p.firingGain[static_cast<std::size_t>(i)] = 0.0f;
+        p.headerM[static_cast<std::size_t>(i)] = 0.0f;
+        p.bank[static_cast<std::size_t>(i)] = 0;
+    }
+    for (int i = 0; i < firings; ++i) {
+        // À intervalles égaux, 360°/cylindres de vilebrequin : l'explosion i et i + pistons sont celles du même cylindre, un tour plus tard.
+        const std::size_t at = static_cast<std::size_t>(i);
+        const std::size_t piston = static_cast<std::size_t>(i % pistons);
+        p.firing[at] = static_cast<float>(i) / static_cast<float>(firings);
+        p.firingGain[at] = gain[piston] * release;
+        p.headerM[at] = header[piston];
+        p.bank[at] = bank[piston];
+    }
+    // Le cycle de 720° du son, compté depuis l'explosion : les lumières d'un tour, symétriques autour du point mort bas, et l'admission
+    // dans le carter autour du point mort haut suivant.
+    p.portEvo = static_cast<float>(ports.exhaustOpenDeg / 720.0);
+    p.portEvc = static_cast<float>((360.0 - ports.exhaustOpenDeg) / 720.0);
+    p.portTo = static_cast<float>(ports.transferOpenDeg / 720.0);
+    p.portTc = static_cast<float>((360.0 - ports.transferOpenDeg) / 720.0);
+    p.portIo = static_cast<float>((360.0 - ports.inletOpenBtdcDeg) / 720.0);
+    p.portIc = static_cast<float>((360.0 + ports.inletOpenBtdcDeg) / 720.0);
+    p.rodOverStroke = static_cast<float>(ports.rodOverStroke);
+    for (int k = 0; k < kTwoStrokePoints; ++k) {
+        const TwoStrokeCharge charge = twoStrokeFullLoad(e, twoStrokeTableRpm(e, k));
+        p.delivery[static_cast<std::size_t>(k)] = static_cast<float>(charge.delivery);
+        p.purity[static_cast<std::size_t>(k)] = static_cast<float>(charge.scavenging);
+    }
+    p.scavengeDisplacement = static_cast<float>(kScavengeDisplacement);
+    p.scavengeShortCircuit = static_cast<float>(kScavengeShortCircuit);
+    // La bouffée : le volume du cylindre à l'ouverture, face à la section de la lumière, rapportés au cylindre de référence du son.
+    const double sweptCc = static_cast<double>(e.displacementCc) / pistons;
+    const double strokeCm = static_cast<double>(e.strokeMm()) / 10.0;
+    const double boreCm = static_cast<double>(e.boreMm) / 10.0;
+    const double openCc = sweptCc * (1.0 / (ports.geometricCompression - 1.0) + (1.0 - ports.exhaustHeight));
+    const double portCm2 = ports.exhaustWidth * boreCm * ports.exhaustHeight * strokeCm;
+    p.blowdownS = static_cast<float>(kPistonBlowdownS * (openCc / portCm2) / kPistonVolumeOverAreaCm);
+    // Le démarreur ne comprime que ce que la lumière d'échappement enferme.
+    p.starter.compressionRatio = static_cast<float>(ports.trappedCompression);
+}
+
 }  // namespace
 
 RotaryGeometry rotaryGeometry(double chamberCc) {
@@ -162,11 +224,13 @@ const ExhaustSpec& exhaustSpec(Exhaust exhaust) {
     static const ExhaustSpec noMuffler{2.0f, 1.15f, 1.4f, 2000.0f, 0.045f, 0.25f, 2.5f};
     static const ExhaustSpec noResonator{2.4f, 0.5f, 0.6f, 800.0f, 0.05f, 1.0f, 1.1f};
     static const ExhaustSpec quiet{2.8f, 0.3f, 0.3f, 500.0f, 0.055f, 0.6f, 0.6f};
+    // La chambre de détente : un long tube (collecteur, cônes et pointe, de l'ordre de 2 m) qui résonne grave, une pointe étroite et
+    // un petit silencieux garni, entre la ligne sport et la directe pour le souffle de sortie (supposé, comme les autres lignes).
+    static const ExhaustSpec expansion{2.2f, 1.0f, 1.2f, 1800.0f, 0.045f, 0.3f, 2.5f};
     switch (exhaust) {
         case Exhaust::Sport: return sport;
-        // Socle : la chambre de détente se comporte comme la ligne directe.
-        case Exhaust::Straight:
-        case Exhaust::Expansion: return straight;
+        case Exhaust::Straight: return straight;
+        case Exhaust::Expansion: return expansion;
         case Exhaust::MufflerDelete: return noMuffler;
         case Exhaust::ResonatorDelete: return noResonator;
         case Exhaust::Quiet: return quiet;
@@ -326,6 +390,9 @@ EngineProfile EngineConfig::toProfile() const {
         s.motorInertia = 0.00008f + 0.00001f * litres;
     }
     if (layout == Layout::Rotary) applyRotary(*this, p);
+    else if (twoStroke()) applyTwoStroke(*this, p);
+    // La chambre de détente, accordée sur ce moteur : sur un quatre-temps (CLI seulement), sur l'ouverture de sa soupape.
+    if (exhaust == Exhaust::Expansion) p.chamber = expansionChamberFor(*this);
     // Après le rotatif : les explosions inégales d'une pipe commune se posent sur les siennes.
     if (fuelSystemOf(*this) != FuelSystem::Injection) applyCarburetor(*this, p);
     return p;

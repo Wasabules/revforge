@@ -12,7 +12,10 @@ inline constexpr int kMaxCylinders = 12;
  */
 enum class Layout { Inline, V, CrossPlane, Boxer, Rotary, Vr, W };
 // L'ordre compte : la position donne la valeur envoyée par le site (web/src/lib/config.ts). On ajoute à la fin.
-/** `Expansion` : la chambre de détente d'un deux-temps. Socle : elle se comporte comme `Straight`. */
+/**
+ * `Expansion` : la chambre de détente d'un deux-temps, accordée sur lui (`expansionChamberFor`). Sur un quatre-temps, les soupapes
+ * ferment le cylindre avant le retour de l'onde : la CLI et le site la ramènent à la ligne directe (`coherentTwoStroke`).
+ */
 enum class Exhaust { Stock, Sport, Straight, MufflerDelete, ResonatorDelete, Quiet, Expansion };
 /** Le chemin des gaz : une seule ligne, deux lignes séparées (une par rangée), reliées par un pont en H ou en X. */
 enum class ExhaustRouting { Single, Dual, HPipe, XPipe };
@@ -60,7 +63,7 @@ enum class TurboLayout { Single, TwinParallel, TwinSequential, Twincharger };
 enum class BoostControl { Spring, Electronic, ByGear };
 /** L'échangeur de l'air de charge : air-air, air-eau, ou aucun. */
 enum class Intercooler { AirToAir, AirToWater, None };
-/** Le cycle : quatre temps, ou deux. Socle : `TwoStroke` se comporte comme un quatre-temps. */
+/** Le cycle : quatre temps, ou deux (lumières, carter-pompe : voir two_stroke.hpp). Un rotatif garde le sien. */
 enum class EngineCycle { FourStroke, TwoStroke };
 
 /**
@@ -159,6 +162,29 @@ struct CarAcoustics {
     bool operator==(const CarAcoustics&) const = default;
 };
 
+/**
+ * La chambre de détente d'un deux-temps, pour un cylindre (m) : collecteur, diffuseur, ventre, cône de retour, pointe.
+ * Accordée sur le moteur par `expansionChamberFor` (two_stroke.hpp) ; tout à 0 sur une autre ligne.
+ */
+struct ExpansionChamber {
+    float headerM = 0.0f;
+    float diffuserM = 0.0f;
+    float bellyM = 0.0f;
+    float baffleM = 0.0f;
+    float stingerM = 0.0f;
+    float headerDiameterM = 0.0f;
+    float bellyDiameterM = 0.0f;
+    float stingerDiameterM = 0.0f;
+    /** Vitesse du son du gaz chaud qui la remplit (m/s), et régime auquel l'onde de retour bouche la lumière (tr/min). */
+    float soundMs = 0.0f;
+    float tunedRpm = 0.0f;
+
+    bool operator==(const ExpansionChamber&) const = default;
+};
+
+/** Points de la table de débit d'un deux-temps, du dixième du régime maximal à 1,2 fois : voir `twoStrokeTableRpm`. */
+inline constexpr int kTwoStrokePoints = 16;
+
 /** Le moteur vu par EngineSound : sa géométrie, d'où découle le son. */
 struct EngineProfile {
     int cylinders = 0;
@@ -232,6 +258,29 @@ struct EngineProfile {
     int rotors = 0;
     /** Durée de la bouffée, pleine charge : le volume de la chambre à l'ouverture, face à la section de la lumière (s). */
     float blowdownS = 0.0f;
+    /**
+     * Deux temps : `firing` reste un cycle de deux tours, avec deux explosions par cylindre à 360° l'une de l'autre, donc
+     * `cylinders` et `firingCount` valent deux fois `pistons`, et les explosions i et i + pistons sont du même cylindre.
+     * Les lumières, en part du cycle de 720° compté depuis l'explosion : échappement, transfert, admission dans le carter.
+     * `blowdownS` y vaut aussi pour la bouffée. Voir « Le deux-temps » dans docs/modele.md.
+     */
+    bool twoStroke = false;
+    int pistons = 0;
+    float portEvo = 0.0f;
+    float portEvc = 0.0f;
+    float portTo = 0.0f;
+    float portTc = 0.0f;
+    float portIo = 0.0f;
+    float portIc = 0.0f;
+    /** Longueur de bielle sur course : l'aire découverte suit la course du piston. */
+    float rodOverStroke = 2.0f;
+    /** Rapport de débit à pleine charge, de `twoStrokeTableRpm(0)` à `twoStrokeTableRpm(kTwoStrokePoints - 1)`, et pureté gardée. */
+    std::array<float, kTwoStrokePoints> delivery{};
+    std::array<float, kTwoStrokePoints> purity{};
+    /** Balayage de Benson et Brandham : part chassée en déplacement, part qui file droit à l'échappement. */
+    float scavengeDisplacement = 0.0f;
+    float scavengeShortCircuit = 0.0f;
+    ExpansionChamber chamber;
 
     /**
      * Régime simulé pour un régime réel de la voiture. Au ralenti, les deux ralentis
@@ -322,26 +371,32 @@ struct EngineConfig {
 
     /** Le nombre de rotors, borné pour tenir dans `kMaxCylinders` explosions par cycle. N'a de sens que sur un rotatif. */
     int rotors() const { return cylinders < 1 ? 1 : (cylinders > kMaxCylinders / 2 ? kMaxCylinders / 2 : cylinders); }
-    /** Explosions en deux tours d'arbre : une par cylindre en quatre temps, deux par rotor. */
-    int firingsPerTwoTurns() const { return layout == Layout::Rotary ? 2 * rotors() : cylinders; }
+    /** Un deux-temps : une explosion par tour et par cylindre. Un rotatif garde son propre cycle, quoi que dise `cycle`. */
+    bool twoStroke() const { return cycle == EngineCycle::TwoStroke && layout != Layout::Rotary; }
+    /** Les cylindres d'un deux-temps, bornés comme les rotors : chacun allume deux fois en deux tours. */
+    int pistons() const { return rotors(); }
+    /** Explosions en deux tours d'arbre : une par cylindre en quatre temps, deux par rotor ou par cylindre d'un deux-temps. */
+    int firingsPerTwoTurns() const { return layout == Layout::Rotary ? 2 * rotors() : (twoStroke() ? 2 * pistons() : cylinders); }
     /**
      * Le volume balayé en deux tours d'arbre (cm³) : ce qui compte pour l'air, le gaz et le couple. La cylindrée d'un
-     * quatre temps ; deux fois celle d'un rotatif, dont chaque rotor balaie une chambre à chaque tour.
+     * quatre temps ; deux fois celle d'un rotatif, dont chaque rotor balaie une chambre à chaque tour, ou d'un deux-temps.
      */
-    double sweptCcPerTwoTurns() const { return (layout == Layout::Rotary ? 2.0 : 1.0) * static_cast<double>(displacementCc); }
+    double sweptCcPerTwoTurns() const { return (layout == Layout::Rotary || twoStroke() ? 2.0 : 1.0) * static_cast<double>(displacementCc); }
     /**
-     * La distribution réelle : un rotatif n'a ni soupapes ni arbre à cames, quoi que dise `camshaft`. Le double arbre est le
-     * modèle d'origine. Socle : les culbuteurs (`Ohv`, deux soupapes) se comportent comme le simple arbre.
+     * La distribution réelle : un rotatif et un deux-temps n'ont ni soupapes ni arbre à cames, quoi que dise `camshaft`. Le
+     * double arbre est le modèle d'origine. Socle : les culbuteurs (`Ohv`, deux soupapes) se comportent comme le simple arbre.
      */
-    Camshaft valvetrain() const { return layout == Layout::Rotary ? Camshaft::Dohc : (camshaft == Camshaft::Ohv ? Camshaft::Sohc : camshaft); }
+    Camshaft valvetrain() const { return layout == Layout::Rotary || twoStroke() ? Camshaft::Dohc : (camshaft == Camshaft::Ohv ? Camshaft::Sohc : camshaft); }
     /** Le diamètre d'un cylindre : `boreMm`, sauf sur un rotatif, qui n'a pas d'alésage et prend le cylindre carré de sa chambre (voir `applyRotary`). */
     double effectiveBoreMm() const;
-    /** Un rotatif ne brûle que de l'essence : un réglage diesel y reste sans effet. */
-    bool burnsDiesel() const { return fuel == Fuel::Diesel && layout != Layout::Rotary; }
+    /** Un rotatif ne brûle que de l'essence, et le deux-temps simulé aussi (balayé par son carter) : un réglage diesel y reste sans effet. */
+    bool burnsDiesel() const { return fuel == Fuel::Diesel && layout != Layout::Rotary && !twoStroke(); }
 };
 
 /** Vrai pour un moteur rotatif : ni alésage, ni course, ni arbre à cames, ni diesel. */
 inline bool isRotary(const EngineConfig& config) { return config.layout == Layout::Rotary; }
+/** Vrai pour un deux-temps : des lumières au lieu des soupapes, un carter qui pompe, ni diesel ni suralimentation. */
+inline bool isTwoStroke(const EngineConfig& config) { return config.twoStroke(); }
 
 /** La géométrie d'un rotor (mm) : rayon générateur R, excentricité e, largeur b. V = 3√3·R·e·b par chambre. */
 struct RotaryGeometry {

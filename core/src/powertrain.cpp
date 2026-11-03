@@ -6,6 +6,7 @@
 #include "revforge/air_filter.hpp"
 #include "revforge/carburetor.hpp"
 #include "revforge/driving_model.hpp"
+#include "revforge/two_stroke.hpp"
 #include "revforge/valvetrain.hpp"
 
 namespace revforge {
@@ -34,6 +35,12 @@ constexpr double kRatedShare = 0.88;
 constexpr double kCarburetorVolumetric = 0.9;  // remplissage au pic de couple : c'est lui qui fixe le débit au col
 // Sur un rotatif : ni distribution ni bielles, mais des segments d'apex. Ramené au volume balayé, un quart de frottements en moins (supposé).
 constexpr double kRotaryFrictionShare = 0.75;
+// Sur un deux-temps, les frottements d'un tour sont ceux d'un quatre-temps de même cylindrée, sans distribution ni pompage par le
+// cylindre : un quart de moins (supposé, la distribution compte pour 20 à 30 % chez Heywood). Ramenés à son volume balayé, double,
+// ce sont 0,75/2. Le frein moteur ne vient que du carter qui pompe contre le papillon, le cylindre restant ouvert sur ses lumières :
+// la moitié de celui d'un quatre-temps de même cylindrée (supposé), soit 0,5/2.
+constexpr double kTwoStrokeFrictionShare = 0.375;
+constexpr double kTwoStrokePumpingShare = 0.25;
 
 constexpr double kElectricTorqueNm = 350.0;
 constexpr double kElectricPowerW = 190000.0;
@@ -73,8 +80,22 @@ double carburetorBrakeShare(const EngineConfig& e, double rpm, double shape) {
     return std::max(((brake + friction) * (1.0 - drop) - friction - drop) / brake, 0.3);
 }
 
+/**
+ * Le couple indiqué d'un deux-temps à pleine charge (bar de son volume balayé en deux tours) : l'air frais que son cycle enferme
+ * (`twoStrokeIndicatedBar`). Le carburateur retire de la densité à l'air qui entre dans le carter, et son travail de pompage.
+ */
+double twoStrokeIndicated(const EngineConfig& e, double rpm) {
+    const double indicated = twoStrokeIndicatedBar(e, rpm);
+    if (fuelSystemOf(e) == FuelSystem::Injection) return indicated;
+    const CarburetorSpec carb = carburetorSpecOf(e);
+    const double drop = carburetorDropPa(carb, liters(e) * 1e-3, rpm, twoStrokeFullLoad(e, rpm).delivery) / 1e5;
+    return indicated * (1.0 - drop) - drop;
+}
+
 /** La respiration selon le régime : 1 au pic de couple. */
 double breathing(const EngineConfig& e, double rpm) {
+    // Un deux-temps : ce que son carter fait entrer, ramené au remplissage du quatre-temps de référence pour les débits.
+    if (e.twoStroke()) return twoStrokeFullLoad(e, rpm).delivery / kVolumetric;
     const double redline = static_cast<double>(e.redlineRpm);
     // Un moteur suralimenté, turbo ou compresseur, a des cames plus sages : son couple culmine un peu plus tôt.
     double peakAt = (e.aspiration == Aspiration::Natural ? 0.62 : 0.6) * redline;
@@ -101,9 +122,10 @@ double breathing(const EngineConfig& e, double rpm) {
     switch (e.exhaust) {
         case Exhaust::Stock: shape *= 0.96 - 0.04 * fraction; break;
         case Exhaust::Sport: break;
-        // Socle : la chambre de détente se comporte comme la ligne directe.
-        case Exhaust::Straight:
-        case Exhaust::Expansion: shape *= 1.0 + 0.04 * fraction - 0.08 * (1.0 - fraction) * (1.0 - fraction); break;
+        case Exhaust::Straight: shape *= 1.0 + 0.04 * fraction - 0.08 * (1.0 - fraction) * (1.0 - fraction); break;
+        // Une chambre sur un quatre-temps (la CLI seule le permet) : les soupapes ferment le cylindre avant que l'onde de retour n'y
+        // repousse quoi que ce soit. Reste un tube libre jusqu'à la pointe et un silencieux garni : la respiration d'une ligne sport.
+        case Exhaust::Expansion: break;
         case Exhaust::MufflerDelete: shape *= 1.0 + 0.02 * fraction - 0.04 * (1.0 - fraction) * (1.0 - fraction); break;
         case Exhaust::ResonatorDelete: shape *= 0.97 - 0.03 * fraction; break;
         case Exhaust::Quiet: shape *= 0.95 - 0.05 * fraction; break;
@@ -358,6 +380,11 @@ double fullLoadTorqueNm(const Powertrain& p, double rpm, double boost) {
     // Sous le ralenti, la combustion devient instable : le couple s'effondre.
     const double idle = idleRpmOf(p);
     const double under = rpm < idle ? (rpm / idle) * (rpm / idle) : 1.0;
+    // Un deux-temps : le cycle intégré donne l'air frais enfermé, donc le couple indiqué ; les frottements se retranchent.
+    if (e.twoStroke()) {
+        const double natural = (bmepToNm(e, twoStrokeIndicated(e, rpm)) - frictionTorqueNm(p, rpm)) * under;
+        return e.airFilter == AirFilter::Stock ? natural : withAirFilter(p, rpm, boost, natural);
+    }
     if (e.aspiration == Aspiration::Natural) {
         const double natural = bmepToNm(e, naturalBmep(e)) * breathing(e, rpm) * under;
         return e.airFilter == AirFilter::Stock ? natural : withAirFilter(p, rpm, boost, natural);
@@ -392,20 +419,21 @@ double frictionTorqueNm(const Powertrain& p, double rpm) {
     const double k = rpm / 1000.0;
     double bar = 0.9 + 0.12 * k + 0.03 * k * k + (p.engine.burnsDiesel() ? 0.3 : 0.0);
     if (p.engine.valvetrain() == Camshaft::Sohc) bar += sohcFrictionDeltaBar(static_cast<double>(p.engine.strokeMm()), rpm);
-    return bmepToNm(p.engine, isRotary(p.engine) ? bar * kRotaryFrictionShare : bar);
+    return bmepToNm(p.engine, isRotary(p.engine) ? bar * kRotaryFrictionShare : (p.engine.twoStroke() ? bar * kTwoStrokeFrictionShare : bar));
 }
 
 double pumpingTorqueNm(const Powertrain& p, double rpm, double manifold) {
     if (p.electric) return 0.0;
     const double idle = idleRpmOf(p);
     const double above = clamp((rpm - idle) / 1500.0, 0.0, 1.0);
-    return bmepToNm(p.engine, 3.2) * above * (1.0 - clamp(manifold, 0.0, 1.0));
+    return bmepToNm(p.engine, p.engine.twoStroke() ? 3.2 * kTwoStrokePumpingShare : 3.2) * above * (1.0 - clamp(manifold, 0.0, 1.0));
 }
 
 double engineInertia(const Powertrain& p) {
     if (p.electric) return 0.05;
     const double light = clamp(6500.0 / static_cast<double>(p.engine.redlineRpm), 0.6, 1.2);
-    const double inertia = (0.03 + 0.055 * liters(p.engine)) * light;
+    // Un deux-temps allume deux fois plus souvent, de moitié moins fort : il lui faut le volant de sa cylindrée, pas de son volume balayé.
+    const double inertia = (0.03 + 0.055 * (p.engine.twoStroke() ? static_cast<double>(p.engine.displacementCc) / 1000.0 : liters(p.engine))) * light;
     return p.engine.valvetrain() == Camshaft::Sohc ? inertia + sohcInertiaDelta(p.engine) : inertia;
 }
 

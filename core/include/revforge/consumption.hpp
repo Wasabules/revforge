@@ -44,6 +44,10 @@ public:
     double naturalGrossNm(double rpm) const;
 
     bool electric() const { return electric_; }
+    /** Un deux-temps : son huile est mélangée à l'essence, et part avec elle. */
+    bool twoStroke() const { return twoStroke_; }
+    /** L'huile d'un mélange à `kPremixRatio` pour ce débit d'essence (g/s). */
+    double premixOilGps(double fuelGps) const;
     const FuelSpec& fuel() const { return *fuel_; }
 
 private:
@@ -68,6 +72,10 @@ private:
     double idleCircuitGps_ = 0.0;
     double idleRpm_ = 1.0;
     double carbAirShare_ = 1.0;
+    // Le deux-temps : ce qu'il faut savoir du moteur pour son balayage et ses ratés, et si l'essence arrive avec l'air.
+    bool twoStroke_ = false;
+    bool injectedInCylinder_ = false;
+    EngineConfig engine_;
 };
 
 /** L'état du moteur à ce pas, tel que `DrivingModel` le donne. */
