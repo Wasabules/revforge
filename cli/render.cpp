@@ -519,7 +519,11 @@ void printFuel(const DrivingModel& model, const Powertrain& powertrain, double s
     const PowerSummary peak = powerSummary(powertrain);
     std::printf("Engine: %.1f Nm at %.0f rpm, %.1f kW at %.0f rpm, 0-100 km/h in %.2f s\n", peak.peakTorqueNm, peak.peakTorqueRpm, peak.peakPowerKw, peak.peakPowerRpm, measurePerformance(powertrain).zeroTo100S);
     // Au bit près, pour tools/check_wasm.mjs.
-    std::printf("raw fuel_lph=%.17g fuel_trip_l=%.17g trip_km=%.17g oil_trip_ml=%.17g energy_trip_kwh=%.17g\n", c.fuelLph(), c.fuelTripL(), c.tripKm(), c.oilTripMl(), c.energyTripKwh());
+    // Le réseau thermique aussi : l'électrique n'en a pas, il lit l'air ambiant, comme rf_coolant_c.
+    const double ambient = static_cast<double>(powertrain.engine.ambientC);
+    const double coolant = powertrain.electric ? ambient : model.thermal().coolantC();
+    const double oil = powertrain.electric ? ambient : model.thermal().oilC();
+    std::printf("raw fuel_lph=%.17g fuel_trip_l=%.17g trip_km=%.17g oil_trip_ml=%.17g energy_trip_kwh=%.17g coolant_c=%.17g oil_c=%.17g\n", c.fuelLph(), c.fuelTripL(), c.tripKm(), c.oilTripMl(), c.energyTripKwh(), coolant, oil);
 }
 
 /**

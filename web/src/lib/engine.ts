@@ -113,10 +113,26 @@ export interface Telemetry {
   energyKwhPer100km: number;
   energyAvgKwhPer100km: number;
   energyTripKwh: number;
+  /**
+   * Les températures du moteur (°C) : eau, huile, métal ; le calorstat (0 à 1) et le ventilateur (0 ou 1) ; la viscosité de
+   * l'huile (mPa·s). Le réseau tourne toujours ; il n'agit qu'après un départ à froid, et alors : frottements en plus (Nm),
+   * ralenti visé en plus (tr/min), carburant en plus (part), et les frottements du moteur chaud à ce régime (Nm).
+   */
+  coolantC: number;
+  oilC: number;
+  metalC: number;
+  thermostat: number;
+  fan: number;
+  oilViscosity: number;
+  coldFrictionNm: number;
+  coldIdleRpm: number;
+  coldEnrichment: number;
+  warmFrictionNm: number;
 }
 
 export const IDLE_TELEMETRY: Telemetry = {
   rpm: 0, speed: 0, gear: 0, throttle: 0, load: 0, boost: 0, turbine: 0, turboRelease: 0, turboRpm: 0, turboCharge: 0, turboPlenum: 0, turboOutlet: 0, turboInlet: 0, turboExhaust: 0, turboWastegate: 0, turboBlowoff: 0, turboFlow: 0, turboOutC: 20, turboCoolC: 20, intakeAirC: 20, turboGasC: 20, antiLag: 0, antiLagHeatKw: 0, antiLagAirFlow: 0, antiLagLostNm: 0, chargerRpm: 0, chargerKw: 0, chargerSpill: 0, torque: 0, power: 0, clutch: 0, clutchInputRpm: 0, clutchSlipKw: 0, clutchTorque: 0, wheelRpm: 0, slip: 0, pops: 0, cut: 0, shifting: 0, cranking: 0, stalled: 0, lugging: 0, legKind: 0, legTarget: 0, gradePct: 0, underpowered: 0, levelDbA: 0, listenerX: 0, listenerY: 0, listenerZ: 0, peak: 0, outputRpm: 0, meshed: 0, shiftStep: 0, grinding: 0, overload: 0, boxWear: 0, boxBroken: 0, boxPending: 0, boxConeSlip: 0, boxRattle: 0, boxLoose0: 0, boxLoose1: 0, boxLoose2: 0, boxLoose3: 0, fuelLph: 0, fuelLper100km: 0, fuelTripL: 0, fuelAvgLper100km: 0, tripKm: 0, co2GPerKm: 0, oilGph: 0, oilTripMl: 0, oilMlPer1000km: 0, energyKwhPer100km: 0, energyAvgKwhPer100km: 0, energyTripKwh: 0,
+  coolantC: 20, oilC: 20, metalC: 20, thermostat: 0, fan: 0, oilViscosity: 0, coldFrictionNm: 0, coldIdleRpm: 0, coldEnrichment: 0, warmFrictionNm: 0,
 };
 
 export interface CurvePoint {
@@ -338,6 +354,18 @@ interface RfExports {
   rf_energy_avg_kwh_per_100km(): number;
   rf_energy_trip_kwh(): number;
   rf_reset_trip(): void;
+  /** Les températures du moteur (°C), le calorstat (0 à 1), le ventilateur, la viscosité de l'huile (mPa·s). */
+  rf_coolant_c(): number;
+  rf_oil_c(): number;
+  rf_metal_c(): number;
+  rf_thermostat(): number;
+  rf_fan(): number;
+  rf_oil_viscosity(): number;
+  /** Ce que le moteur froid change : frottements en plus (Nm), ralenti visé en plus (tr/min), carburant en plus (part). */
+  rf_cold_friction_nm(): number;
+  rf_cold_idle_rpm(): number;
+  rf_cold_enrichment(): number;
+  rf_warm_friction_nm(rpm: number): number;
 }
 
 /** Le moteur finit de tourner sur son élan avant qu'on suspende l'audio. */

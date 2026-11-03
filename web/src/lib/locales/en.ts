@@ -1023,8 +1023,19 @@ export const en = {
   'startTemp.warm': 'Warm',
   'startTemp.warm.help': 'Coolant and oil already at working temperature.',
   'startTemp.cold': 'Cold',
-  'startTemp.cold.help': 'Everything at the outside temperature: thick oil, a faster idle and a richer mixture until it warms up.',
+  'startTemp.cold.help': 'Everything at the outside temperature: thick oil and more friction, a faster idle and extra fuel (the choke on a carburettor) until the coolant reaches 70 °C. A warm start stays the reference engine: its temperatures only feed the gauges.',
   'summary.coldStart': 'cold start',
+  'gauge.coolant': 'Coolant temperature',
+  'gauge.coolant.note': 'Water leaving the engine, from the thermal network: heat through the walls, thermostat, radiator and fan, computed at every step of the model. Mark: the warm reference.',
+  'gauge.coolant.sub': 'Thermostat {lift} %',
+  'gauge.coolant.fan': ' · fan',
+  'gauge.coolant.idle': ' · idle +{rpm}',
+  'gauge.coolant.rich': ' · fuel +{pct} %',
+  'gauge.oil': 'Oil temperature',
+  'gauge.oil.note': "Oil and what it wets, from the thermal network. Its viscosity follows Vogel's law; cold, it adds hydrodynamic friction. Mark: the warm reference.",
+  'gauge.oil.sub': '{mpas} mPa·s',
+  'gauge.oil.idle': 'Viscosity —',
+  'gauge.oil.friction': ' · friction +{pct} %',
 };
 
 export type MessageKey = keyof typeof en;

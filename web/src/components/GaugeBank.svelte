@@ -25,6 +25,8 @@
   let turbineNode = $state<HTMLElement>();
   let tailpipeNode = $state<HTMLElement>();
   let intakeNode = $state<HTMLElement>();
+  let coolantNode = $state<HTMLElement>();
+  let oilNode = $state<HTMLElement>();
 
   const turbo = $derived(config.aspiration === 'turbo' && !config.electric);
   // L'air d'admission n'a d'intérêt que s'il n'est plus celui du dehors : un filtre sous le capot.
@@ -60,6 +62,8 @@
     let lastTailLang = lang();
     let lastIntake = NaN;
     let lastIntakeLang = lang();
+    let lastCoolant = '';
+    let lastOil = '';
     const stops = [
       clock.add((text) => {
         if (!text) return;
@@ -88,6 +92,36 @@
         lastIntakeLang = lang();
         intakeNode.textContent = t('gauge.intakeAir', { c: whole(c) });
       }),
+      // L'eau : le calorstat, le ventilateur, et ce que le calculateur fait d'un moteur froid (ralenti visé, carburant en plus).
+      clock.add((text) => {
+        if (!text || !coolantNode) return;
+        const live = running() ? telemetry() : null;
+        const lift = live ? Math.round(live.thermostat * 100) : 0;
+        const fan = live ? live.fan : 0;
+        const idle = live ? Math.round(live.coldIdleRpm / 10) * 10 : 0;
+        const rich = live ? Math.round(live.coldEnrichment * 100) : 0;
+        const key = `${lift}|${fan}|${idle}|${rich}|${lang()}`;
+        if (key === lastCoolant) return;
+        lastCoolant = key;
+        let line = t('gauge.coolant.sub', { lift: whole(lift) });
+        if (fan) line += t('gauge.coolant.fan');
+        if (idle > 0) line += t('gauge.coolant.idle', { rpm: whole(idle) });
+        if (rich > 0) line += t('gauge.coolant.rich', { pct: whole(rich) });
+        coolantNode.textContent = line;
+      }),
+      // L'huile : sa viscosité, et les frottements qu'elle ajoute tant qu'elle est froide.
+      clock.add((text) => {
+        if (!text || !oilNode) return;
+        const live = running() ? telemetry() : null;
+        const viscosity = live ? Math.round(live.oilViscosity) : 0;
+        const extra = live && live.warmFrictionNm > 0 ? Math.round((live.coldFrictionNm / live.warmFrictionNm) * 100) : 0;
+        const key = `${viscosity}|${extra}|${lang()}`;
+        if (key === lastOil) return;
+        lastOil = key;
+        let line = viscosity > 0 ? t('gauge.oil.sub', { mpas: whole(viscosity) }) : t('gauge.oil.idle');
+        if (extra > 0) line += t('gauge.oil.friction', { pct: whole(extra) });
+        oilNode.textContent = line;
+      }),
     ];
     return () => {
       stop();
@@ -115,6 +149,13 @@
     </Gauge>
     <Gauge id="back" label={t('gauge.back')} note={t('gauge.back.note')} unit="bar" min={0} max={backMax} step={backStep} minor={backStep / 2} digits={2} tickDigits={1} {clock} read={() => Math.max(readings.backBar, 0)}>
       {t('gauge.back.sub')}
+    </Gauge>
+    <!-- L'eau et l'huile : le réseau thermique, calculé à chaque pas du modèle. Repère : le moteur chaud de référence. -->
+    <Gauge id="coolant" label={t('gauge.coolant')} note={t('gauge.coolant.note')} unit="°C" min={0} max={140} step={20} minor={10} zone={{ from: 120, to: 140 }} mark={90} {clock} read={() => readings.coolantC}>
+      <span data-testid="gauge-coolant-sub" bind:this={coolantNode}></span>
+    </Gauge>
+    <Gauge id="oil" label={t('gauge.oil')} note={t('gauge.oil.note')} unit="°C" min={0} max={160} step={40} minor={20} zone={{ from: 140, to: 160 }} mark={100} {clock} read={() => readings.oilC}>
+      <span data-testid="gauge-oil-sub" bind:this={oilNode}></span>
     </Gauge>
   {/if}
 </div>

@@ -477,4 +477,23 @@ int rf_placement() { return static_cast<int>(placementOf(g_powertrain.car)); }
 float rf_sheet_level(int item) { return soundSheet(g_powertrain).level(item); }
 float rf_sheet_line_loss(float fromHz, float toHz) { return lineLossDb(g_powertrain, fromHz, toHz); }
 
+// ── Les températures du moteur, pour les jauges : le réseau tourne toujours, il n'agit qu'après un départ à froid ──
+
+/** Un moteur électrique n'a ni eau ni huile : l'air ambiant. */
+static float thermalReading(double celsius) { return static_cast<float>(g_powertrain.electric ? static_cast<double>(g_powertrain.engine.ambientC) : celsius); }
+float rf_coolant_c() { return thermalReading(g_model->thermal().coolantC()); }
+float rf_oil_c() { return thermalReading(g_model->thermal().oilC()); }
+float rf_metal_c() { return thermalReading(g_model->thermal().metalC()); }
+/** Levée du calorstat (0 à 1), ventilateur en marche (0 ou 1). */
+float rf_thermostat() { return g_powertrain.electric ? 0.0f : static_cast<float>(g_model->thermal().thermostat()); }
+int rf_fan() { return !g_powertrain.electric && g_model->thermal().fan() ? 1 : 0; }
+/** Viscosité de l'huile à sa température (mPa·s), loi de Vogel. */
+float rf_oil_viscosity() { return g_powertrain.electric ? 0.0f : static_cast<float>(oilViscosityPaS(g_model->thermal().oilC()) * 1000.0); }
+/** Ce que le moteur froid change en ce moment : frottements en plus (Nm), ralenti visé en plus (tr/min), carburant en plus (part). */
+float rf_cold_friction_nm() { return static_cast<float>(g_model->coldFrictionNm()); }
+float rf_cold_idle_rpm() { return static_cast<float>(g_model->coldIdleRpm()); }
+float rf_cold_enrichment() { return static_cast<float>(g_model->coldEnrichment()); }
+/** Les frottements du moteur chaud à ce régime (Nm) : pour lire les frottements en plus en pourcentage. */
+float rf_warm_friction_nm(float rpm) { return static_cast<float>(frictionTorqueNm(g_powertrain, static_cast<double>(rpm))); }
+
 }  // extern "C"
