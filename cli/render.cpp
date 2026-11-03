@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "revforge/architecture.hpp"
 #include "revforge/driving_model.hpp"
 #include "revforge/engine_sound.hpp"
 #include "revforge/presets.hpp"
@@ -35,7 +36,9 @@ void usage() {
         "  --kmh N           speed held by cruise (the trip is measured once settled, after 60 s)\n"
         "  --rate N          sample rate (44100)\n"
         "  --volume X        volume (0.7)\n"
-        "Engine:   --cylinders N --layout inline|v|cross_plane|boxer|rotary|vr|w --cc N --bore N --redline N\n"
+        "Engine:   --cylinders N (1 to 16) --layout inline|v|cross_plane|boxer|rotary|vr|w --cc N --bore N --redline N\n"
+        "          --layout vr: VR5 or VR6, one head over two rows 15 deg apart. --layout w: W8, W12 or W16, two VR banks.\n"
+        "                       Elsewhere, and above 12 cylinders unless v or w, the engine is built as a v.\n"
         "          --exhaust stock|sport|straight|no_muffler|no_resonator|quiet|expansion --routing single|dual|h|x\n"
         "          --aspiration natural|turbo|supercharger --fuel petrol|diesel\n"
         "          --pops off|light|strong --release dump_valve|flutter --boost BAR --turbo small|medium|large\n"
@@ -44,8 +47,8 @@ void usage() {
         "          --stroke MM  sets --cc from the bore and the cylinders, in any order, and replaces --cc if both are given.\n"
         "                       On a --preset: applied to the preset's own bore and cylinders, which --bore and --cylinders do not change.\n"
         "                       Ignored on a rotary, which has no stroke; --bore and --cam are ignored there too.\n"
-        "          Each option below overrides a --preset, as --exhaust, --routing, --supercharger, --antilag, --turbo-pipe,\n"
-        "          --cam, --filter and --fuel-system do. A number at 0 keeps the engine's own value.\n"
+        "          Each option below overrides a --preset, as --layout (on the preset's cylinders), --exhaust, --routing,\n"
+        "          --supercharger, --antilag, --turbo-pipe, --cam, --filter and --fuel-system do. A number at 0 keeps the engine's own value.\n"
         "          Architecture: --cycle four_stroke|two_stroke\n"
         "          Combustion:   --compression X (6 to 24) --grade ron95|ron98|race102|e85|methanol\n"
         "          Valvetrain:   --cam-duration DEG --cam-lift MM --lsa DEG --vvt fixed|phased|two_step|phased_two_step\n"
@@ -508,6 +511,7 @@ int main(int argc, char** argv) {
     std::optional<AirFilter> airFilterChoice;
     std::optional<double> strokeChoice;
     std::optional<FuelSystem> fuelSystemChoice;
+    std::optional<Layout> layoutChoice;
     // Les réglages du socle moteur : retenus ici, posés après le préréglage, qu'ils remplacent.
     std::vector<std::function<void(EngineConfig&)>> tuning;
     auto later = [&tuning](auto field, auto value) { tuning.push_back([field, value](EngineConfig& e) { e.*field = value; }); };
@@ -614,7 +618,7 @@ int main(int argc, char** argv) {
             else if (arg == "--redline") config.redlineRpm = std::atoi(value.c_str());
             else if (arg == "--boost") config.boostBar = static_cast<float>(std::atof(value.c_str()));
             else if (arg == "--turbo") config.turboSize = pick<TurboSize>(value, {{"small", TurboSize::Small}, {"medium", TurboSize::Medium}, {"large", TurboSize::Large}});
-            else if (arg == "--layout") config.layout = pick<Layout>(value, {{"inline", Layout::Inline}, {"v", Layout::V}, {"cross_plane", Layout::CrossPlane}, {"boxer", Layout::Boxer}, {"rotary", Layout::Rotary}, {"vr", Layout::Vr}, {"w", Layout::W}});
+            else if (arg == "--layout") { config.layout = pick<Layout>(value, {{"inline", Layout::Inline}, {"v", Layout::V}, {"cross_plane", Layout::CrossPlane}, {"boxer", Layout::Boxer}, {"rotary", Layout::Rotary}, {"vr", Layout::Vr}, {"w", Layout::W}}); layoutChoice = config.layout; }
             else if (arg == "--exhaust") { config.exhaust = pick<Exhaust>(value, {{"stock", Exhaust::Stock}, {"sport", Exhaust::Sport}, {"straight", Exhaust::Straight}, {"no_muffler", Exhaust::MufflerDelete}, {"no_resonator", Exhaust::ResonatorDelete}, {"quiet", Exhaust::Quiet}, {"expansion", Exhaust::Expansion}}); exhaustChoice = config.exhaust; }
             else if (arg == "--routing") { config.routing = pick<ExhaustRouting>(value, {{"single", ExhaustRouting::Single}, {"dual", ExhaustRouting::Dual}, {"h", ExhaustRouting::HPipe}, {"x", ExhaustRouting::XPipe}}); routing = config.routing; }
             else if (arg == "--aspiration") config.aspiration = pick<Aspiration>(value, {{"natural", Aspiration::Natural}, {"turbo", Aspiration::Turbo}, {"supercharger", Aspiration::Supercharger}});
@@ -692,7 +696,16 @@ int main(int argc, char** argv) {
     if (camshaftChoice) powertrain.engine.camshaft = *camshaftChoice;
     if (airFilterChoice) powertrain.engine.airFilter = *airFilterChoice;
     if (fuelSystemChoice) powertrain.engine.fuelSystem = *fuelSystemChoice;
+    // La disposition aussi : sur les cylindres du préréglage, qu'elle ne change pas. Un VR ou un W qui n'existe pas à ce nombre se construit en V.
+    if (layoutChoice) powertrain.engine.layout = *layoutChoice;
     for (const auto& apply : tuning) apply(powertrain.engine);
+    if (powertrain.engine.cylinders < 1 || powertrain.engine.cylinders > kMaxCylinders) {
+        std::fprintf(stderr, "Expected 1 to %d cylinders: %d\n", kMaxCylinders, powertrain.engine.cylinders);
+        return 2;
+    }
+    if (!powertrain.electric && builtLayout(powertrain.engine.layout, powertrain.engine.cylinders) != powertrain.engine.layout) {
+        std::fprintf(stderr, "--layout: no such engine with %d cylinders, built as v (vr: 5 or 6, w: 8, 12 or 16, more than 12: v or w)\n", powertrain.engine.cylinders);
+    }
     // À la fin : la course se lit sur l'alésage et les cylindres retenus, ceux du préréglage s'il y en a un.
     if (strokeChoice) {
         // Un rotatif n'a pas de course : l'option ne dit rien de sa cylindrée.

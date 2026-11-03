@@ -4,11 +4,14 @@
 
 namespace revforge {
 
-inline constexpr int kMaxCylinders = 12;
+/** Seize cylindres : le V16 et le W16. Les tableaux par cylindre du son et du profil en ont cette taille. */
+inline constexpr int kMaxCylinders = 16;
+/** Six rotors au plus : la borne d'avant les seize cylindres, qui ne change pas pour eux. */
+inline constexpr int kMaxRotors = 6;
 
 /**
  * `Rotary` : moteur à pistons rotatifs (Wankel). `cylinders` y compte les rotors, et `displacementCc` une chambre par rotor.
- * `Vr` : un V très fermé sous une seule culasse (VR5, VR6). `W` : deux bancs VR (W8, W12). Socle : tous deux se comportent comme `V`.
+ * `Vr` : un V très fermé sous une seule culasse (VR5, VR6). `W` : deux bancs VR côte à côte (W8, W12, W16). Voir architecture.hpp.
  */
 enum class Layout { Inline, V, CrossPlane, Boxer, Rotary, Vr, W };
 // L'ordre compte : la position donne la valeur envoyée par le site (web/src/lib/config.ts). On ajoute à la fin.
@@ -320,8 +323,8 @@ struct EngineConfig {
     float strokeMm() const;
     EngineProfile toProfile() const;
 
-    /** Le nombre de rotors, borné pour tenir dans `kMaxCylinders` explosions par cycle. N'a de sens que sur un rotatif. */
-    int rotors() const { return cylinders < 1 ? 1 : (cylinders > kMaxCylinders / 2 ? kMaxCylinders / 2 : cylinders); }
+    /** Le nombre de rotors, borné à `kMaxRotors` (deux explosions par rotor et par cycle). N'a de sens que sur un rotatif. */
+    int rotors() const { return cylinders < 1 ? 1 : (cylinders > kMaxRotors ? kMaxRotors : cylinders); }
     /** Explosions en deux tours d'arbre : une par cylindre en quatre temps, deux par rotor. */
     int firingsPerTwoTurns() const { return layout == Layout::Rotary ? 2 * rotors() : cylinders; }
     /**

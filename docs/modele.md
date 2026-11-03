@@ -1087,3 +1087,80 @@ Le rendu est identique au bit près entre le natif et WebAssembly : calculs en `
 `float`, ordre des tirages aléatoires figé, pas de contraction en virgule flottante, physique à pas
 fixe. La parité avec la version Kotlin d'origine (CANCitroen) a été abandonnée lors de cette
 refonte. `tools/compare_wav.py` compare deux rendus.
+
+## Les architectures : VR, W, V14 et V16
+
+Un moteur se décrit par son ordre d'allumage et par la place de chaque numéro : sa culasse, sa rangée dans la culasse, son rang le long du vilebrequin. Tout le reste s'en déduit (`core/src/architecture.cpp`, recopié dans `web/src/lib/architecture.ts`) : l'instant de chaque allumage, la ligne où il souffle, l'angle de chaque maneton. Les moteurs d'avant (en ligne, V, V8 croisé, boxer) y ont leur ligne, recopie de `FIRING_ORDERS` et de l'ancien `placementOf`, mais leur son ne passe pas par là : il reste au bit près. Seuls les VR, les W et les moteurs de plus de douze cylindres l'utilisent (`ownArchitecture`).
+
+### Le modèle
+
+- **Allumages.** À intervalles égaux, le rang s allume à 720·s/N degrés. Sur des manetons communs à un angle de V qui ne divise pas le cycle (le V14), la gauche allume tous les 720/(N/2) degrés et le cylindre de droite du même maneton l'angle du V plus tard : les intervalles en découlent, inégaux.
+- **Désaxage.** Sur un VR et un W, l'axe de chaque rangée passe à e = 12,5 mm du vilebrequin, vers l'extérieur de sa culasse (VW, SSP 248). Le point mort haut est atteint quand maneton, axe de piston et vilebrequin sont alignés, soit à asin(e/(l+r)) de l'axe de la rangée : la course du piston vaut r·cos a + √(l² − (r·sin a − e)²). Le maneton d'un cylindre est donc à φ = β + asin(e/(l+r)) − θ, θ l'angle de son allumage.
+- **Manetons.** Sur un VR6, les paires communes d'un six en ligne (1/6, 2/5, 3/4) s'écartent de 15° + 2·asin(12,5/(164 + 45,15)) = 21,85° ; le SSP 248 dessine 21,833°. Sur un W, les deux cylindres d'une même manivelle s'écartent de l'angle des culasses moins leur écart d'allumage : +12° sur le W12 (72 − 60), −18° sur le W8 (72 − 90), les « splitpins » du SSP 248. Le W16 et le V16 tombent sur des manetons communs (90 − 90, 45 − 45). Le dessin prend une bielle de 1,6 course : 22,6° sur le VR6 dessiné.
+- **Son.** `applyArchitecture` (`engine_config.cpp`) donne à chaque allumage son instant (inégal sur le V14), la culasse où il souffle (`bank`, donc la ligne A ou B quand il y en a deux) et la longueur de son conduit : 0,62 m sur une culasse seule, 0,55 et 0,72 sur deux, comme en ligne et en V. La rangée loin de l'échappement traverse en plus la culasse de l'écart des deux rangées au plan de joint, 2·(H·sin(α/2) + e·cos(α/2)) avec H = 2,1·course + 0,36·alésage : 57 mm de plus sur le VR6. Aucun gain n'est réglé pour l'irrégularité : elle vient de l'ordre et du partage entre les lignes. Un VR n'a qu'une culasse, donc une seule ligne, quelle que soit la sortie choisie.
+- **Démarreur.** `compressionLoadNm` place les compressions aux vrais angles d'allumage.
+- **Vues et gaz.** Le dessin tire placement, angles et manetons de l'architecture ; un VR a une manivelle par cylindre en quinconce (sept paliers pour six), un W deux bielles par manivelle. Le gaz relie chaque conduit au collecteur de sa culasse, et les bouffées partent à leur angle. Sur le V10, le V12 et le V8 à plat, qui soufflaient jusqu'ici par la parité du numéro (les impairs d'un V12 allumaient six fois de suite dans le même collecteur), chaque cylindre souffle maintenant dans la culasse où il est dessiné.
+
+### Les moteurs, et leurs sources
+
+| Moteur | Angles | Ordre | Intervalles | Par culasse | Source |
+|---|---|---|---|---|---|
+| VR5 | rangées 15°, e 12,5 mm | 1-2-4-5-3 | 144° | une culasse | Wikipedia (VR5), Motor1 |
+| VR6 | rangées 15°, e 12,5 mm | 1-5-3-6-2-4 | 120° | une culasse | Wikipedia (VR6), SSP 248 |
+| W8 | culasses 72°, rangées 15° | 1-5-4-8-6-3-7-2 | 90° | 180, 270, 180, 90° | SSP 248 |
+| W12 | culasses 72°, rangées 15° | 1-12-5-8-3-10-6-7-2-11-4-9 | 60° | 120° | SSP 248 |
+| W16 | culasses 90°, rangées 15° | 1-14-9-4-7-12-15-6-13-8-3-16-11-2-5-10 | 45° | 135, 45, 135, 90, 45, 135, 45, 90° | Bugatti (« ordre asymétrique », 45°) ; l'ordre, d'après un communiqué de 2006 cité par un wiki |
+| V14 | 45° | 1-8-2-9-4-11-6-13-7-14-5-12-3-10 | 45 et 57,86° | 102,86° | calcul, ci-dessous |
+| V16 | 45° | 1-9-6-14-2-10-5-13-8-16-3-11-7-15-4-12 | 45° | 90° | Cadillac 452 : deux huit-en-ligne à 45° sur un vilebrequin |
+
+Ce qui est supposé :
+- les numéros alternent d'une rangée à l'autre le long du vilebrequin (zigzag), et ceux d'un W vont de la culasse gauche à la droite, comme le SSP 248 le fait pour le W12 ; aucune source ne le dit pour le VR6 ni pour le W16. Avec cette numérotation, les deux cylindres de chaque manivelle du W16 allument à 90° l'un de l'autre, l'angle des culasses : des manetons communs, ce qui la rend plausible ;
+- le V16 : l'ordre de la Cadillac n'a pas été trouvé. Chaque rangée y prend celui d'un huit-en-ligne (1-6-2-5-8-3-7-4), la droite 45° après la gauche. La Cizeta V16T, deux V8 à plat de 90° dans un bloc, ferait souffler chaque culasse par paires ; elle n'est pas modélisée ;
+- le V14 : aucune voiture de série n'en a eu. Le seul V14 trouvé est un diesel marin ou de centrale (MAN 14V32/44CR, carter en V de 45°, source de seconde main), dont l'ordre n'est pas publié. Sept manetons sont pris en étoile, à 720/7 degrés d'allumage, et l'ordre de la rangée gauche est celui qui annule le mieux les couples de basculement Σ xᵢ·exp(j·k·φᵢ) pour k = 1 et 2 (xᵢ la place du maneton, φᵢ son angle), parmi les 720 ordres possibles : 1-2-4-6-7-5-3, M₁ = 0,27 et M₂ = 1,01 (en r·m·pas), contre 4,48 et 3,59 pour 1-2-3-4-5-6-7.
+
+### Ce que l'on mesure
+
+Ordres de l'arbre en régime tenu (`tools/analyze_orders.py`, dB sous le plus fort, même cylindrée, deux lignes sauf le VR6) :
+
+| | Rang dominant | Demi-ordres |
+|---|---|---|
+| VR6, 4000 tr/min | 3 (0) | 5/2 à −25, 7/2 à −27, 11/2 à −28 |
+| Six en ligne, mêmes cotes | 3 (0) | 5/2 à −33, 7/2 à −38, 11/2 à −37 |
+| W16, 3000 tr/min | 5/2 (0), 8 à −3,6 | moyenne −13,6 |
+| V16 | 4 (0), 8 à −4,8 | moyenne −25,5 |
+| W8 | 4 (0) | moyenne −24,9 |
+| V8 à plat | 4 (0) | moyenne −32,8 |
+| W12 | 3 (−1,8) | moyenne −26,3 |
+| V12 | 3 (−2,0) | moyenne −32,2 |
+| V14 à 45° | 7 (0) | moyenne −28,4 |
+
+- Le VR6 tient le rang 3 d'un six, mais ses rangées allument trois par trois (1, 5, 3 puis 6, 2, 4) et la rangée lointaine a son conduit plus long : ses demi-ordres montent de 8 à 11 dB face au six en ligne.
+- Le W16 et le W8 font entendre chaque culasse à son rythme irrégulier : des demi-ordres 8 à 12 dB plus forts qu'un V de même nombre. Bugatti décrit un moteur « équilibré à faible charge, qui devient un fauve qui gronde » ; aucune analyse publiée en ordres de l'arbre n'a été trouvée pour le confirmer.
+- Le W12 sonne comme un V12 : même rythme par culasse.
+- Sur le V14, un test (`architecture_test.cpp`) isole les instants : forces et conduits égaux, le rang 3,5 est 9,7 dB plus fort qu'avec des intervalles égaux.
+
+Les préréglages, face aux chiffres publiés ; rien n'y est réglé pour coller :
+
+| | Couple simulé | Publié | Puissance simulée | Publiée | 0-100 simulé | Publié |
+|---|---|---|---|---|---|---|
+| VR6 2.8 (Golf III) | 233 Nm à 3050 | 235 Nm à 4200 | 110 kW à 5650 | 128 kW à 5800 | 9,1 s | 7,8 s |
+| W12 biturbo (Continental GT 2003) | 778 Nm | 650 Nm de 1600 à 6100 | 406 kW à 5950 | 412 kW à 6100 | 5,5 s | 4,8 s |
+| W16 (Veyron 16.4) | 1306 Nm | 1250 Nm | 671 kW à 5900 | 736 kW à 6000 | 4,7 s | 2,5 s |
+| V16 (Cadillac 452, 1930) | 579 Nm | 367 à 432 Nm | 171 kW à 3500 | 123 à 138 kW | 10,3 s | — |
+
+- Le VR6 respire moins bien que le vrai, avec ses deux soupapes par cylindre (`camshaft: sohc`, le 12 soupapes).
+- Le W12 et le W16 n'ont qu'un turbo dans le simulateur, en attendant le biturbo : `turboLayout: twin_parallel` y est déjà écrit, sans effet.
+- La Cadillac comprimait à 5,35 (Old Cars Weekly), sous la plage du socle (6 à 24) : son couple est celui d'un moteur moderne de même cylindrée.
+- Sources des préréglages : auto-motor-und-sport et auto-data pour la Golf VR6 (rapports 3,30, 1,94, 1,31, 1,03, 0,84, pont 3,68, 1285 kg) ; supercars.net (ZF 6HP26 de 4,17 à 0,69, pont 3,52, 2385 kg) et australiancar.reviews (0,7 bar) pour la Continental GT ; Bugatti, auto-motor-und-sport (rapports de la Super Sport, pont 3,64) et conceptcarz (environ 18 psi) pour la Veyron ; Wikipedia et Old Cars Weekly pour la Cadillac (3 × 4 pouces, pont 4,39, de 2400 à 3000 kg).
+- Les régimes maximaux du VR6 (6500), du W12 (6500), du W16 (6400) et de la Cadillac (3800) sont supposés.
+
+### Seize cylindres
+
+`kMaxCylinders` passe de 12 à 16 ; les rotors restent bornés à six (`kMaxRotors`). Le WASM atteint 1 255 492 octets au lieu de 1 249 204, soit 6 ko de plus sur 4 Mo fixes. Le rendu de seize cylindres n'alloue pas (test) et calcule 4,1 s de son en 0,4 à 0,7 s en natif. Le gaz à l'écran prend 3,9 ms par image sur le W16, 3,7 sur le V16, 3,4 sur un V12, mesurés sous la charge d'autres compilations. La cylindrée du site monte à 8 L : le W16 fait 7993 cm³.
+
+### Limites
+
+- La culasse d'un VR ou d'un W est dessinée large, sur ses deux rangées, mais les soupapes suivent l'axe de chaque cylindre et les arbres à cames celui de la culasse : sans les linguets qui les relient, le dessin n'est qu'approché. Le fond plat de la culasse et les pistons à tête inclinée ne sont pas dessinés.
+- Le frottement ne dépend pas de l'architecture : les sept paliers d'un VR6 coûtent autant que les quatre d'un V6.
+- Une ligne par culasse : les quatre turbos d'une Veyron, deux par culasse, chacun sur quatre cylindres, ne sont pas modélisés.
+- L'écoute reste à faire, en particulier du W16 et du VR6 face à de vrais enregistrements.

@@ -4,11 +4,14 @@
 
 #include "kotlin_math.hpp"
 #include "revforge/air_filter.hpp"
+#include "revforge/architecture.hpp"
 #include "revforge/supercharger.hpp"
 #include "revforge/carburetor.hpp"
 #include "portable_math.hpp"
 
 namespace revforge {
+
+static_assert(2 * kMaxRotors <= kMaxCylinders, "deux explosions par rotor doivent tenir dans les tableaux par cylindre");
 
 namespace {
 
@@ -118,6 +121,60 @@ void applyRotary(const EngineConfig& e, EngineProfile& p) {
     p.starter.compressionRatio = static_cast<float>(compression);
 }
 
+// ── Les architectures : voir « Les architectures » dans docs/modele.md ──
+// Longueur de collecteur d'une culasse seule (celle d'un moteur en ligne), et des deux culasses d'un V : la plus proche de la
+// jonction, puis l'autre. Mêmes ordres de grandeur qu'en ligne et en V ci-dessus.
+constexpr float kOneHeadHeaderM = 0.62f;
+constexpr float kNearHeadHeaderM = 0.55f;
+constexpr float kFarHeadHeaderM = 0.72f;
+// Le dessin du site : bielle de 1,6 course, axe de piston à 0,36 alésage sous le haut du piston (`engineLayout.ts`).
+constexpr double kRodPerStroke = 1.6;
+constexpr double kPinBelowCrownPerBore = 0.36;
+
+/**
+ * Ce que le son tire de l'architecture : l'instant de chaque allumage, la culasse où il souffle, la longueur de son conduit.
+ * L'indice suit la convention d'origine : l'indice c allume au rang N − c de l'ordre (le temps à rebours), d'où des instants
+ * croissants. Rien n'est réglé à l'oreille : l'irrégularité de chaque ligne vient de l'ordre et du partage entre les culasses.
+ */
+void applyArchitecture(const EngineConfig& e, EngineProfile& p) {
+    const Architecture a = architectureOf(e);
+    const int n = a.cylinders;
+    p.cylinders = n;
+    p.firingCount = n;
+    // La rangée loin de l'échappement a un conduit plus long dans la culasse : l'écart des deux rangées au plan de joint.
+    const double strokeM = static_cast<double>(e.strokeMm()) / 1000.0;
+    const double deckM = (0.5 + kRodPerStroke) * strokeM + kPinBelowCrownPerBore * static_cast<double>(e.boreMm) / 1000.0;
+    const double halfRow = a.rowAngleDeg / 2.0 * portable::kPi / 180.0;
+    const float rowGapM = static_cast<float>(2.0 * (deckM * portable::sin(halfRow) + a.rowOffsetMm / 1000.0 * portable::cos(halfRow)));
+    for (int c = 0; c < n; ++c) {
+        const int slot = c == 0 ? 0 : n - c;
+        const std::size_t at = static_cast<std::size_t>(c);
+        const std::size_t number = static_cast<std::size_t>(a.order[static_cast<std::size_t>(slot)] - 1);
+        p.firing[at] = c == 0 ? 0.0f : static_cast<float>((720.0 - a.firingDeg[static_cast<std::size_t>(slot)]) / 720.0);
+        const int head = a.heads == 2 ? a.head[number] : 0;
+        p.bank[at] = head;
+        const float spread = kCylinderSpread[at % kCylinderSpread.size()];
+        const float headerSpread = kHeaderSpread[at % kHeaderSpread.size()];
+        // Une culasse : comme en ligne. Deux : comme en V, la seconde respire un peu moins bien et a son collecteur plus loin.
+        p.firingGain[at] = a.heads == 2 ? spread * (head == 0 ? 1.0f : 0.96f) : spread;
+        p.headerM[at] = a.heads == 2 ? (head == 0 ? kNearHeadHeaderM : kFarHeadHeaderM) + 0.04f * headerSpread : kOneHeadHeaderM + 0.05f * headerSpread;
+        if (a.rowAngleDeg > 0.0) {
+            // L'échappement sort du côté opposé à l'admission : à droite d'une culasse seule, à l'extérieur d'un W.
+            const int exhaustSide = a.heads == 2 ? (head == 0 ? -1 : 1) : 1;
+            const int rowSide = a.row[number] == 0 ? -1 : 1;
+            if (rowSide != exhaustSide) p.headerM[at] += rowGapM;
+        }
+    }
+    for (int c = n; c < kMaxCylinders; ++c) {
+        const std::size_t at = static_cast<std::size_t>(c);
+        p.firing[at] = 0.0f;
+        p.firingGain[at] = 0.0f;
+        p.headerM[at] = 0.0f;
+        p.bank[at] = 0;
+    }
+    p.twoBanks = a.heads == 2 && n >= 4 && e.routing != ExhaustRouting::Single;
+}
+
 }  // namespace
 
 RotaryGeometry rotaryGeometry(double chamberCc) {
@@ -222,14 +279,16 @@ EngineProfile EngineConfig::toProfile() const {
     const float redline = static_cast<float>(redlineRpm);
     const ExhaustSpec& spec = exhaustSpec(exhaust);
 
+    // Au-delà des tableaux, rien ne s'écrit : la CLI refuse ce nombre, et le site ne le propose pas.
+    const int count = cylinders < 1 ? 1 : (cylinders > kMaxCylinders ? kMaxCylinders : cylinders);
     EngineProfile p;
-    p.cylinders = cylinders;
-    p.firingCount = cylinders;
+    p.cylinders = count;
+    p.firingCount = count;
     p.idleRpm = idle;
     p.redlineRpm = redline;
     p.revMultiplier = revMultiplier > 0.0f ? revMultiplier : fullRangeMultiplier(idle, redline);
 
-    for (int i = 0; i < cylinders; ++i) {
+    for (int i = 0; i < count; ++i) {
         const float even = static_cast<float>(i) / static_cast<float>(cylinders);
         // Temps d'allumage
         if (layout == Layout::Boxer && cylinders % 2 == 0) {
@@ -242,24 +301,23 @@ EngineProfile EngineConfig::toProfile() const {
         const float spread = kCylinderSpread[i % kCylinderSpread.size()];
         switch (layout) {
             case Layout::Inline: p.firingGain[i] = spread; break;
-            // Socle : un VR et un W se comportent comme un V.
-            case Layout::V:
-            case Layout::Vr:
-            case Layout::W: p.firingGain[i] = spread * (i % 2 == 0 ? 1.0f : 0.96f); break;
+            case Layout::V: p.firingGain[i] = spread * (i % 2 == 0 ? 1.0f : 0.96f); break;
             case Layout::Boxer: p.firingGain[i] = spread * (i % 2 == 0 ? 1.0f : 0.76f); break;
             // Deux explosions de suite sur une même rangée : le « glouglou ».
             case Layout::CrossPlane: p.firingGain[i] = spread * kCrossPlaneCrowded[i % kCrossPlaneCrowded.size()]; break;
+            case Layout::Vr:
+            case Layout::W: break;  // voir `applyArchitecture`
             case Layout::Rotary: break;  // voir `applyRotary`
         }
         // Longueurs réalistes : égales en ligne, par rangée en V, très inégales sur un boxer.
         const float headerSpread = kHeaderSpread[i % kHeaderSpread.size()];
         switch (layout) {
             case Layout::Inline: p.headerM[i] = 0.62f + 0.05f * headerSpread; break;
-            case Layout::V:
-            case Layout::Vr:
-            case Layout::W: p.headerM[i] = (i % 2 == 0 ? 0.55f : 0.72f) + 0.04f * headerSpread; break;
+            case Layout::V: p.headerM[i] = (i % 2 == 0 ? 0.55f : 0.72f) + 0.04f * headerSpread; break;
             case Layout::CrossPlane: p.headerM[i] = (kCrossPlaneLeft[i % kCrossPlaneLeft.size()] ? 0.5f : 0.86f) + 0.04f * headerSpread; break;
             case Layout::Boxer: p.headerM[i] = i % 2 == 0 ? 0.48f : 1.05f; break;
+            case Layout::Vr:
+            case Layout::W: break;  // voir `applyArchitecture`
             case Layout::Rotary: break;
         }
         // La rangée de ce cylindre : en ligne, il n'y en a qu'une. Les petits moteurs rejoignent vite une seule ligne.
@@ -326,6 +384,8 @@ EngineProfile EngineConfig::toProfile() const {
         s.motorInertia = 0.00008f + 0.00001f * litres;
     }
     if (layout == Layout::Rotary) applyRotary(*this, p);
+    // Un VR, un W, ou plus de douze cylindres : l'ordre d'allumage réel, ses intervalles et ses culasses.
+    if (ownArchitecture(*this)) applyArchitecture(*this, p);
     // Après le rotatif : les explosions inégales d'une pipe commune se posent sur les siennes.
     if (fuelSystemOf(*this) != FuelSystem::Injection) applyCarburetor(*this, p);
     return p;

@@ -92,10 +92,19 @@ export class Engine2D {
   private readonly rockerPath: Path2D | null;
   private readonly bankList: readonly number[];
   private readonly signList: readonly number[];
+  /** Les cylindres coupés de face : le premier de chaque culasse, et sur un VR celui de chaque rangée, la plus loin d'abord. */
+  private readonly sections: readonly Cylinder[];
 
   constructor(private readonly layout: EngineLayout) {
     const { bore, crank, rod, pinRadius, mainRadius, deck, valve } = layout;
     this.chainDash = [bore * 0.11, bore * 0.05];
+    const sections: Cylinder[] = [];
+    for (let bank = 0; bank < layout.banks; bank++) {
+      const front = layout.byBank[bank];
+      if (layout.banks === 1 && layout.rowAngleDeg > 0 && front.length > 1) sections.push(front[1]);
+      sections.push(front[0]);
+    }
+    this.sections = sections;
     this.bankList = layout.flat ? [0, 1] : [0];
     this.signList = layout.flat ? [1, -1] : [1];
     // Le flasque : même contour que la 3D.
@@ -141,7 +150,8 @@ export class Engine2D {
     this.rockerPath = valve.rocker ? polyPath(rockerOutline(valve.rocker, bore)) : null;
     this.cover = polyPath([[-coverW, topY], [coverW, topY], [coverW, coverTop - bore * 0.14], [coverW - bore * 0.18, coverTop], [-coverW + bore * 0.18, coverTop], [-coverW, coverTop - bore * 0.14]]);
 
-    const half = bore * 0.66;
+    // Un VR : le bloc couvre ses deux rangées, écartées de part et d'autre de son axe.
+    const half = bore * 0.66 + layout.rowSpread;
     const swing = Math.max(crank * 1.25 + bore * 0.1, mainRadius * 1.6);
     const flange = Math.max(swing + bore * 0.05, half);
     let panTop: number;
@@ -418,18 +428,15 @@ export class Engine2D {
     ctx.globalAlpha = 1;
     ctx.stroke(this.pan);
 
-    // ── Un rang : la section la plus à l'avant de chaque rangée ──
-    for (let bank = 0; bank < layout.banks; bank++) {
-      const cylinder = layout.byBank[bank][0];
-      this.drawBank(ctx, cylinder, pose, painter, theme, hatch, px);
-    }
+    // ── Un rang : la section la plus à l'avant de chaque rangée ; sur un VR, des deux rangées de sa culasse, la plus loin d'abord ──
+    const sections = this.sections;
+    for (const cylinder of sections) this.drawBank(ctx, cylinder, pose, painter, theme, hatch, px);
 
     // ── L'attelage : la bielle la plus loin d'abord, puis la manivelle ──
     const main = layout.mainRadius;
     const first = layout.byBank[0][0];
     const firstPin = first.pinDeg + pose.crankDeg;
-    for (let bank = 0; bank < layout.banks; bank++) {
-      const cylinder = layout.byBank[bank][0];
+    for (const cylinder of sections) {
       const i = cylinder.index;
       ctx.save();
       ctx.translate(pose.pinX[i], pose.pinY[i]);
@@ -453,8 +460,8 @@ export class Engine2D {
     ctx.fillStyle = theme.metal;
     ctx.strokeStyle = theme.text;
     ctx.lineWidth = px;
-    for (let bank = 0; bank < layout.banks; bank++) {
-      const i = layout.byBank[bank][0].index;
+    for (const cylinder of sections) {
+      const i = cylinder.index;
       ctx.beginPath();
       ctx.arc(pose.pinX[i], pose.pinY[i], layout.pinRadius, 0, Math.PI * 2);
       ctx.fill();
@@ -561,6 +568,8 @@ export class Engine2D {
 
     ctx.save();
     ctx.rotate(-cylinder.betaDeg * DEG);
+    // Un VR, un W : l'axe du cylindre passe à côté du vilebrequin, vers l'extérieur de sa culasse.
+    if (cylinder.offset !== 0) ctx.translate(cylinder.offset, 0);
 
     // La culasse hachurée, le couvre-culasse en verre.
     ctx.fillStyle = theme.surface;

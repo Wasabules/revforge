@@ -8,7 +8,8 @@ export interface EngineShape {
   cylinders: number;
 }
 
-export const DISPLACEMENT_LIMITS = { min: 600, max: 7000, step: 50 };
+/** Jusqu'à 8 L : le W16 de la Veyron (7993 cm³) et le V16 de la Cadillac 452 (7413 cm³). */
+export const DISPLACEMENT_LIMITS = { min: 600, max: 8000, step: 50 };
 
 /**
  * De 40 mm (un V8 de Formule 1 de 2,4 L, 98 mm d'alésage) à 130 mm (une Bugatti Royale, 125 × 130).

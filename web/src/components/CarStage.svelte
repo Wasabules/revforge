@@ -5,7 +5,8 @@
   import type { Telemetry } from '../lib/engine';
   import { fixed, t } from '../lib/i18n.svelte';
   import { PLUME_CELL_M, PLUME_EXIT_ROW, PLUME_PIPE_CELLS } from '../lib/fluid';
-  import { firingOrder, type Motion } from '../lib/motion';
+  import { type Motion } from '../lib/motion';
+  import { architectureOf, firingOrderOf } from '../lib/architecture';
 
   interface Props {
     config: EngineConfig;
@@ -676,7 +677,9 @@
       labels.push({ x: midX, text: t('car.battery') }, { x: motorX, text: t('car.motor') });
     } else {
       // Moteur : sa taille suit la cylindrée, ses cylindres se comptent.
-      const blockWidth = Math.min((0.42 + 0.075 * config.cylinders * (config.layout === 'inline' ? 1 : 0.62) + 0.035 * litres) * 0.85, shape.wheelbase * 0.42);
+      // La longueur du bloc : un VR est plus court qu'un six en ligne, un W qu'un V de même nombre (`engineLayout`, pas des rangées).
+      const perCylinder = config.layout === 'inline' ? 1 : config.layout === 'vr' ? 0.68 : config.layout === 'w' ? 0.51 : 0.62;
+      const blockWidth = Math.min((0.42 + 0.075 * config.cylinders * perCylinder + 0.035 * litres) * 0.85, shape.wheelbase * 0.42);
       // Il reste sous le capot, même à 7 litres.
       const blockHeight = Math.min(config.layout === 'boxer' ? 0.26 + 0.015 * litres : 0.36 + 0.022 * litres, shape.height * (behind ? 0.42 : 0.3));
       // Devant, il sort juste derrière la roue pour rester visible ; au centre, derrière les sièges ; à l'arrière, en porte-à-faux.
@@ -702,13 +705,17 @@
       // Chaque case s'allume quand c'est le tour de son cylindre, à la même horloge que les autres vues.
       const rotary = isRotary(config);
       // Un rotor s'allume à chaque tour d'arbre : son horloge va deux fois plus vite, et chacun a sa case.
-      const row = config.layout === 'inline' || rotary ? config.cylinders : Math.ceil(config.cylinders / 2);
+      // Une culasse (en ligne, VR) : une case par cylindre. Deux : une par paire.
+      const architecture = rotary ? null : architectureOf(config);
+      const row = rotary || architecture?.heads === 1 ? config.cylinders : Math.ceil(config.cylinders / 2);
       const perCell = config.cylinders / row;
-      const order = firingOrder(config.cylinders);
+      const order = firingOrderOf(config);
       const cellWidth = (blockWidth * scale - 6) / row;
       for (let i = 0; i < config.cylinders; i++) {
         const cell = Math.floor(i / perCell);
-        const phase = ((motion.cycle * (rotary ? 2 : 1)) + 1 - order.indexOf(i + 1) / config.cylinders) % 1;
+        // Le rang de ce cylindre dans le cycle : à son angle d'allumage, inégal sur un V14.
+        const firing = architecture ? architecture.firingDeg[order.indexOf(i + 1)] / 720 : order.indexOf(i + 1) / config.cylinders;
+        const phase = ((motion.cycle * (rotary ? 2 : 1)) + 1 - firing) % 1;
         if (i % perCell !== 0 && !(motion.burning && phase < 0.25)) continue;
         ctx.fillStyle = motion.burning && phase < 0.25 ? gasColor(0.4 + 0.6 * motion.load) : theme.bg;
         ctx.fillRect(X(left) + 3 + cell * cellWidth, Y(engineY + blockHeight) + 3, Math.max(cellWidth - 2, 1), blockHeight * scale * 0.42);

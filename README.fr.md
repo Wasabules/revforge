@@ -12,7 +12,7 @@ Il n'y a aucun échantillon sonore. Tout ce qu'on entend est calculé, échantil
 
 ## Ce qu'on peut faire
 
-- **Construire le moteur.** Cylindres (de 2 à 12), architecture, cylindrée, alésage et course (le curseur ajuste la cylindrée), régime maximal, essence ou diesel, injection ou carburateurs, un turbo avec sa taille et sa pression, et un filtre à air (papier d'origine, panneau sport, cône à l'air libre, cornets). Puissance, couple, 0 à 100 km/h et vitesse de pointe découlent de ces réglages : rien n'est saisi à la main. Le temps de réponse du turbo vient d'un vrai bilan de puissance sur son arbre, et se sent dans la voiture.
+- **Construire le moteur.** Cylindres (de 2 à 16), architecture (en ligne, V, V8 croisé, boxer, rotatif, VR5 et VR6, W8, W12 et W16, chacun avec son vrai ordre d'allumage et ses manetons), cylindrée, alésage et course (le curseur ajuste la cylindrée), régime maximal, essence ou diesel, injection ou carburateurs, un turbo avec sa taille et sa pression, et un filtre à air (papier d'origine, panneau sport, cône à l'air libre, cornets). Puissance, couple, 0 à 100 km/h et vitesse de pointe découlent de ces réglages : rien n'est saisi à la main. Le temps de réponse du turbo vient d'un vrai bilan de puissance sur son arbre, et se sent dans la voiture.
 - **Ou un compresseur.** Roots, à vis ou centrifuge, entraîné par une courroie : de la pression dès le bas ou seulement en haut, pas d'arbre à lancer, sa puissance prise au vilebrequin, et un sifflement qui suit le moteur.
 - **Choisir l'échappement.** Confort, origine, sans résonateur, sport, sans silencieux ou ligne directe, avec une ou deux sorties, et un pont en H ou en X sur un moteur en V. Chaque ligne est calculée depuis sa géométrie.
 - **Choisir la boîte, indépendamment du moteur.** Synchros, crabots, séquentielle, double embrayage ou convertisseur ; nombre de rapports, rapports issus de vrais nombres de dents, couple final, denture hélicoïdale ou droite, volant simple ou bi-masse. Une boîte mal adaptée a de vraies conséquences : on peut caler, manquer de vitesse ou la casser.
@@ -109,6 +109,7 @@ Limites connues :
 - Le niveau du sifflement du compresseur est supposé, sans enregistrement de référence ; ni la détonation à forte pression ni l'inertie des rotors ne sont modélisées.
 - Certaines valeurs réglementaires (ONU R51.03 et UE 540/2014) restent à contrôler sur les textes officiels.
 - La carrosserie des années 80 garde la résistance au roulement et l'adhérence de pneus récents, et sa surface frontale et sa faible isolation sont supposées.
+- Les VR et les W : la numérotation des cylindres du VR6 et du W16, l'ordre d'allumage du V16 (celui de Cadillac n'a pas été trouvé) et celui du V14 (aucune voiture de série n'en a eu ; calculé pour l'équilibre) sont supposés, le frottement ne dépend pas du nombre de paliers, et la distribution dessinée d'un VR ou d'un W est approchée.
 
 ## Organisation
 

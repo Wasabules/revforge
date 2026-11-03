@@ -867,6 +867,9 @@ export const fr: Record<MessageKey, string> = {
   'layout.w': 'W',
   'engine.layout.vr': 'en VR',
   'engine.layout.w': 'en W',
+  'layout.vr.help': 'VR5 ou VR6 : une seule culasse sur deux rangées écartées de 15° seulement, les cylindres en quinconce le long du vilebrequin, chacun sur son maneton. Aussi court qu\'un quatre en ligne, aussi régulier qu\'un six.',
+  'layout.w.help': 'W8, W12 ou W16 : deux bancs VR côte à côte sur un même vilebrequin, deux bielles par maneton. Chaque banc a son échappement, et sur le W8 et le W16 ses bouffées arrivent inégales.',
+  'engine.caption.rows': 'rangées à {angle}°, désaxées de {offset} mm',
   // ── Deux-temps : cycle et chambre de détente ──
   'builder.cycle': 'Cycle',
   'cycle.four_stroke': 'Quatre temps',
@@ -1047,4 +1050,8 @@ export const frPresets: Record<string, { name: string; description: string }> = 
   v8_supercharged: { name: 'V8 à compresseur', description: 'V8 de 6,2 L à compresseur Roots : du couple tout de suite, et son sifflement.' },
   carb_twin_cam: { name: 'Double arbre, un carburateur par cylindre', description: 'Un 2 litres des années 70 sur carburateurs double corps : admission libre, pas de coupure.' },
   twin_rotor_13: { name: 'Birotor 1.3', description: 'Rotatif à deux rotors. Lisse, bourdonnant, jusqu\'à 9000 tr/min.' },
+  vr6_golf: { name: 'VR6 2.8, Golf III', description: 'Six cylindres sous une seule culasse, à 15° : la régularité d\'un six en ligne dans la longueur d\'un quatre, et un collecteur unique qui gronde.' },
+  w12_continental: { name: 'W12 biturbo GT', description: 'Deux bancs VR6 à 72°, un turbo chacun : 6 litres de poussée douce et grave dans une lourde grand tourisme.' },
+  w16_hypercar: { name: 'W16 quatre turbos', description: 'Deux bancs VR8 à 90°, 8 litres : une explosion tous les 45° en tout, mais chaque banc souffle irrégulièrement.' },
+  v16_cadillac: { name: 'V16 7,4, Cadillac 1930', description: 'Deux huit-en-ligne à 45° sur un même vilebrequin, soupapes en tête, faible compression : soyeux et paisible.' },
 };

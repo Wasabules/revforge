@@ -595,4 +595,31 @@ for (const [name, system] of [['single', 1], ['multi', 2]]) {
   rf.rf_set_mode(3);
   check('socle moteur, électrique', render(rf, 20, 128), native('--preset', 'electric', '--ambient', '40', '--altitude', '1500', '--traction', 'full', '--scenario', 'lap', '--seconds', '20'));
 }
+// Les architectures : leur son passe par `architectureOf`. Un VR6 sur son tour, un W16 en deux lignes, un V14 aux intervalles inégaux au démarreur.
+{
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1285, 15, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  // Comme le préréglage : ses rapports, posés avant la boîte qui les lit.
+  [3.3, 1.94, 1.31, 1.03, 0.84].forEach((ratio, gear) => rf.rf_set_gear_ratio(gear + 1, ratio));
+  rf.rf_set_gearbox(BOX.synchro, 5, FAMILY.custom, 3.68, TEETH.helical, 0, 0, 0, 0);
+  rf.rf_set_config(6, LAYOUT.vr, 2792, 81, 6500, EXHAUST.stock, 0, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, CAMSHAFT.sohc, 0, 0);
+  rf.rf_set_mode(3);
+  check('tour complet, VR6', render(rf, 30, 128), native('--preset', 'vr6_golf', '--scenario', 'lap', '--seconds', '30'));
+}
+{
+  const rf = load();
+  rf.rf_set_car(BODY.supercar, 1888, 20, DRIVE.all, PLACEMENT.mid, INSULATION.light);
+  rf.rf_set_config(16, LAYOUT.w, 7993, 86, 6400, EXHAUST.sport, 1, 0, 0, 0, 0, 1.2, ROUTING.dual, TURBO.medium, 0, 0, 400, 0, 0, 0);
+  rf.rf_set_mode(4);
+  rf.rf_set_manual_rpm(4000);
+  check('régime tenu, W16 deux lignes', render(rf, 4, 512), native('--cylinders', '16', '--layout', 'w', '--cc', '7993', '--bore', '86', '--redline', '6400', '--exhaust', 'sport', '--aspiration', 'turbo', '--boost', '1.2', '--routing', 'dual', '--body', 'supercar', '--mass', '1888', '--rim', '20', '--drive', 'all', '--placement', 'mid', '--insulation', 'light', '--scenario', 'steady', '--rpm', '4000'));
+}
+{
+  const rf = load();
+  rf.rf_set_car(BODY.coupe, 2400, 19, DRIVE.rear, PLACEMENT.front, INSULATION.light);
+  rf.rf_set_config(14, LAYOUT.v, 7000, 86, 6000, EXHAUST.sport, 0, 0, 0, 0, 0, 1, ROUTING.dual, TURBO.medium, 0, 0, 400, 0, 0, 0);
+  rf.rf_set_mode(1);
+  rf.rf_crank();
+  check('démarrage, V14 à 45°', render(rf, 5, 128), native('--cylinders', '14', '--layout', 'v', '--cc', '7000', '--bore', '86', '--redline', '6000', '--exhaust', 'sport', '--routing', 'dual', '--body', 'coupe', '--mass', '2400', '--rim', '19', '--drive', 'rear', '--placement', 'front', '--insulation', 'light', '--scenario', 'start'));
+}
 process.exit(failed ? 1 : 0);

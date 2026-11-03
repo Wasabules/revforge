@@ -1063,3 +1063,80 @@ such as the Cobra.
 
 The render is bit-identical between native and WebAssembly: calculations in `double` rounded to `float`, frozen order of random draws, no floating-point
 contraction, fixed-step physics. Parity with the original Kotlin version (CANCitroen) was abandoned during this rework. `tools/compare_wav.py` compares two renders.
+
+## The architectures: VR, W, V14 and V16
+
+An engine is described by its firing order and by the place of each number: its cylinder head, its row in that head, its rank along the crankshaft. Everything else follows (`core/src/architecture.cpp`, copied in `web/src/lib/architecture.ts`): when each cylinder fires, which exhaust line it blows into, the angle of each crankpin. The earlier engines (inline, V, cross-plane V8, boxer) have their row there, a copy of `FIRING_ORDERS` and of the former `placementOf`, but their sound does not go through it: it stays bit-exact. Only VR, W and engines above twelve cylinders use it (`ownArchitecture`).
+
+### The model
+
+- **Firings.** With even intervals, rank s fires at 720·s/N degrees. On crankpins shared at a V angle that does not divide the cycle (the V14), the left bank fires every 720/(N/2) degrees and the right cylinder on the same pin fires the V angle later: the intervals follow, uneven.
+- **Cylinder offset.** On a VR and a W, each row's bore axis passes e = 12.5 mm from the crankshaft, towards the outside of its head (VW, SSP 248). Top dead centre comes when crankpin, gudgeon pin and crankshaft line up, at asin(e/(l+r)) from the row axis: the piston travel is r·cos a + √(l² − (r·sin a − e)²). A cylinder's crankpin therefore sits at φ = β + asin(e/(l+r)) − θ, θ being its firing angle.
+- **Crankpins.** On a VR6, the pairs an inline six shares (1/6, 2/5, 3/4) are split by 15° + 2·asin(12.5/(164 + 45.15)) = 21.85°; SSP 248 draws 21.833°. On a W, the two cylinders of one throw are split by the head angle minus their firing gap: +12° on the W12 (72 − 60), −18° on the W8 (72 − 90), the SSP 248 "splitpins". The W16 and the V16 come out on shared pins (90 − 90, 45 − 45). The drawing uses a rod of 1.6 strokes: 22.6° on the drawn VR6.
+- **Sound.** `applyArchitecture` (`engine_config.cpp`) gives each firing its instant (uneven on the V14), the head it blows into (`bank`, hence line A or B when there are two) and the length of its runner: 0.62 m on a single head, 0.55 and 0.72 on two, as inline and V. The row far from the exhaust also crosses the head by the gap between both rows at the deck, 2·(H·sin(α/2) + e·cos(α/2)) with H = 2.1·stroke + 0.36·bore: 57 mm more on the VR6. No gain is tuned for the unevenness: it comes from the firing order and the split between lines. A VR has one head, hence one line, whatever outlets are chosen.
+- **Starter.** `compressionLoadNm` puts the compressions at the real firing angles.
+- **Views and gas.** The drawing takes placement, angles and crankpins from the architecture; a VR has one throw per cylinder, staggered (seven main bearings for six), a W two rods per throw. The gas links each runner to its own head's collector, and pulses leave at their angle. On the V10, the V12 and the flat-plane V8, which so far blew by the parity of the number (a V12's odd cylinders fired six times in a row into the same collector), each cylinder now blows into the head it is drawn in.
+
+### The engines, and their sources
+
+| Engine | Angles | Order | Intervals | Per head | Source |
+|---|---|---|---|---|---|
+| VR5 | rows 15°, e 12.5 mm | 1-2-4-5-3 | 144° | one head | Wikipedia (VR5), Motor1 |
+| VR6 | rows 15°, e 12.5 mm | 1-5-3-6-2-4 | 120° | one head | Wikipedia (VR6), SSP 248 |
+| W8 | heads 72°, rows 15° | 1-5-4-8-6-3-7-2 | 90° | 180, 270, 180, 90° | SSP 248 |
+| W12 | heads 72°, rows 15° | 1-12-5-8-3-10-6-7-2-11-4-9 | 60° | 120° | SSP 248 |
+| W16 | heads 90°, rows 15° | 1-14-9-4-7-12-15-6-13-8-3-16-11-2-5-10 | 45° | 135, 45, 135, 90, 45, 135, 45, 90° | Bugatti ("asymmetric firing order", 45°); the order from a 2006 press release quoted by a wiki |
+| V14 | 45° | 1-8-2-9-4-11-6-13-7-14-5-12-3-10 | 45 and 57.86° | 102.86° | computed, below |
+| V16 | 45° | 1-9-6-14-2-10-5-13-8-16-3-11-7-15-4-12 | 45° | 90° | Cadillac 452: two straight-eights at 45° on one crankshaft |
+
+What is assumed:
+- the numbers alternate from one row to the other along the crankshaft (zigzag), and a W's go from the left head to the right, as SSP 248 does for the W12; no source says so for the VR6 or the W16. With this numbering, the two cylinders of each W16 throw fire 90° apart, the head angle: shared crankpins, which makes it plausible;
+- the V16: Cadillac's order was not found. Each bank takes a straight-eight's (1-6-2-5-8-3-7-4), the right bank 45° after the left. The Cizeta V16T, two 90° flat-plane V8s in one block, would make each head blow in pairs; it is not modelled;
+- the V14: no production car ever had one. The only V14 found is a marine or power-plant diesel (MAN 14V32/44CR, 45° V crankcase, second-hand source), whose order is not published. Seven crankpins are taken as a star, 720/7 degrees of firing apart, and the left bank's order is the one that best cancels the rocking couples Σ xᵢ·exp(j·k·φᵢ) for k = 1 and 2 (xᵢ the pin's place, φᵢ its angle), out of the 720 possible orders: 1-2-4-6-7-5-3, M₁ = 0.27 and M₂ = 1.01 (in r·m·pitch), against 4.48 and 3.59 for 1-2-3-4-5-6-7.
+
+### What we measure
+
+Shaft orders at a held speed (`tools/analyze_orders.py`, dB below the strongest, same displacement, two lines except the VR6):
+
+| | Dominant order | Half orders |
+|---|---|---|
+| VR6, 4000 rpm | 3 (0) | 5/2 at −25, 7/2 at −27, 11/2 at −28 |
+| Inline six, same dimensions | 3 (0) | 5/2 at −33, 7/2 at −38, 11/2 at −37 |
+| W16, 3000 rpm | 5/2 (0), 8 at −3.6 | average −13.6 |
+| V16 | 4 (0), 8 at −4.8 | average −25.5 |
+| W8 | 4 (0) | average −24.9 |
+| Flat-plane V8 | 4 (0) | average −32.8 |
+| W12 | 3 (−1.8) | average −26.3 |
+| V12 | 3 (−2.0) | average −32.2 |
+| V14 at 45° | 7 (0) | average −28.4 |
+
+- The VR6 keeps a six's order 3, but its rows fire three by three (1, 5, 3 then 6, 2, 4) and the far row has the longer runner: its half orders rise 8 to 11 dB over the inline six.
+- The W16 and the W8 let each head be heard at its uneven rhythm: half orders 8 to 12 dB stronger than a V of the same count. Bugatti describes an engine "balanced and comfortable in the lower load range" that "increasingly becomes a growling beast"; no published analysis in shaft orders was found to confirm it.
+- The W12 sounds like a V12: the same rhythm per head.
+- On the V14, a test (`architecture_test.cpp`) isolates the instants: with equal strengths and runners, order 3.5 is 9.7 dB stronger than with even intervals.
+
+The presets, against published figures; nothing is tuned to match:
+
+| | Simulated torque | Published | Simulated power | Published | Simulated 0-100 | Published |
+|---|---|---|---|---|---|---|
+| VR6 2.8 (Golf III) | 233 Nm at 3050 | 235 Nm at 4200 | 110 kW at 5650 | 128 kW at 5800 | 9.1 s | 7.8 s |
+| Twin-turbo W12 (Continental GT 2003) | 778 Nm | 650 Nm from 1600 to 6100 | 406 kW at 5950 | 412 kW at 6100 | 5.5 s | 4.8 s |
+| W16 (Veyron 16.4) | 1306 Nm | 1250 Nm | 671 kW at 5900 | 736 kW at 6000 | 4.7 s | 2.5 s |
+| V16 (Cadillac 452, 1930) | 579 Nm | 367 to 432 Nm | 171 kW at 3500 | 123 to 138 kW | 10.3 s | — |
+
+- The VR6 breathes less well than the real one, with its two valves per cylinder (`camshaft: sohc`, the 12-valve).
+- The W12 and the W16 have one turbo in the simulator until the twin-turbo work lands: `turboLayout: twin_parallel` is already written, without effect.
+- The Cadillac's compression was 5.35 (Old Cars Weekly), below the range of the engine settings (6 to 24): its torque is that of a modern engine of the same displacement.
+- Preset sources: auto-motor-und-sport and auto-data for the Golf VR6 (ratios 3.30, 1.94, 1.31, 1.03, 0.84, final 3.68, 1285 kg); supercars.net (ZF 6HP26 from 4.17 to 0.69, final 3.52, 2385 kg) and australiancar.reviews (0.7 bar) for the Continental GT; Bugatti, auto-motor-und-sport (Super Sport ratios, final 3.64) and conceptcarz (about 18 psi) for the Veyron; Wikipedia and Old Cars Weekly for the Cadillac (3 × 4 in, final 4.39, 2400 to 3000 kg).
+- The redlines of the VR6 (6500), the W12 (6500), the W16 (6400) and the Cadillac (3800) are assumed.
+
+### Sixteen cylinders
+
+`kMaxCylinders` goes from 12 to 16; rotors stay capped at six (`kMaxRotors`). The WASM reaches 1,255,492 bytes instead of 1,249,204, 6 kB more out of a fixed 4 MB. Rendering sixteen cylinders does not allocate (test) and computes 4.1 s of sound in 0.4 to 0.7 s natively. The on-screen gas takes 3.9 ms per frame on the W16, 3.7 on the V16, 3.4 on a V12, measured under the load of other builds. The site's displacement goes up to 8 L: the W16 is 7993 cc.
+
+### Limits
+
+- A VR or W head is drawn wide, over both its rows, but the valves follow each cylinder's axis and the camshafts the head's: without the finger followers that connect them, the drawing is approximate. The flat head deck and the angled piston crowns are not drawn.
+- Friction does not depend on the architecture: a VR6's seven main bearings cost the same as a V6's four.
+- One line per head: a Veyron's four turbos, two per head, each on four cylinders, are not modelled.
+- Listening is still to be done, especially the W16 and the VR6 against real recordings.
