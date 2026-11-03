@@ -794,4 +794,5 @@ export const frPresets: Record<string, { name: string; description: string }> = 
   v12: { name: 'V12 atmosphérique', description: 'Aigu à haut régime.' },
   diesel_four: { name: 'Diesel 4 cylindres', description: 'Utilitaire. Grave, léger claquement.' },
   electric: { name: 'Électrique', description: "Sifflement de l'onduleur, aigu et propre." },
+  twin_rotor_13: { name: 'Birotor 1.3', description: 'Rotatif à deux rotors. Lisse, bourdonnant, jusqu\'à 9000 tr/min.' },
 };

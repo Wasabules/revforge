@@ -23,6 +23,8 @@ constexpr double kTurboCompressionLoss = 0.95;
 // Le calculateur tient le couple constant au sommet : le plateau des moteurs turbo.
 constexpr double kPlateauShare = 0.97;
 constexpr double kPistonSpeedLimit = 24.0;  // m/s, au-delà le moteur respire mal
+// Sur un rotatif : ni distribution ni bielles, mais des segments d'apex. Ramené au volume balayé, un quart de frottements en moins (supposé).
+constexpr double kRotaryFrictionShare = 0.75;
 
 constexpr double kElectricTorqueNm = 350.0;
 constexpr double kElectricPowerW = 190000.0;
@@ -30,15 +32,21 @@ constexpr double kElectricMaxRpm = 12000.0;
 
 double clamp(double v, double low, double high) { return v < low ? low : (v > high ? high : v); }
 
-double liters(const EngineConfig& e) { return static_cast<double>(e.displacementCc) / 1000.0; }
+/** Le volume balayé en deux tours d'arbre (L) : deux fois la cylindrée d'un rotatif. */
+double liters(const EngineConfig& e) { return e.sweptCcPerTwoTurns() / 1000.0; }
 
-/** Couple net d'une pression moyenne (bar), quatre temps : p × V / 4π. */
+/**
+ * Couple net d'une pression moyenne (bar) : p × V / 4π, avec V le volume balayé en deux tours d'arbre. Un rotatif en balaie
+ * deux fois sa cylindrée : son couple est donc p × V / 2π, sans autre coefficient.
+ */
 double bmepToNm(const EngineConfig& e, double bar) { return bar * 1e5 * liters(e) * 1e-3 / (4.0 * kPi); }
 
 /** Un moteur qui tourne haut est plus poussé : soupapes, calage, admission. */
 double naturalBmep(const EngineConfig& e) {
-    if (e.fuel == Fuel::Diesel) return kBmepDieselNa;
-    return clamp(11.0 + 1.1 * (static_cast<double>(e.redlineRpm) - 6200.0) / 1000.0, 10.5, 14.5);
+    if (e.burnsDiesel()) return kBmepDieselNa;
+    const double pushed = clamp(11.0 + 1.1 * (static_cast<double>(e.redlineRpm) - 6200.0) / 1000.0, 10.5, 14.5);
+    // Même air que le moteur à pistons de même régime, mais un rendement moindre : chambre allongée, faible compression.
+    return isRotary(e) ? pushed * rotaryEfficiencyShare(e.aspiration) : pushed;
 }
 
 /** La respiration selon le régime : 1 au pic de couple. */
@@ -53,10 +61,12 @@ double breathing(const EngineConfig& e, double rpm) {
         const double above = (rpm - peakAt) / (redline - peakAt);
         shape = 1.0 - 0.22 * above * above;
     }
-    // Une longue course à haut régime : le gaz n'a plus le temps de passer.
-    const double pistonSpeed = 2.0 * e.strokeMm() / 1000.0 * rpm / 60.0;
-    const double excess = std::max(pistonSpeed - kPistonSpeedLimit, 0.0);
-    shape *= std::max(1.0 - 0.012 * excess * excess, 0.55);
+    // Une longue course à haut régime : le gaz n'a plus le temps de passer. Un rotatif n'a ni course ni soupapes à faire suivre.
+    if (!isRotary(e)) {
+        const double pistonSpeed = 2.0 * e.strokeMm() / 1000.0 * rpm / 60.0;
+        const double excess = std::max(pistonSpeed - kPistonSpeedLimit, 0.0);
+        shape *= std::max(1.0 - 0.012 * excess * excess, 0.55);
+    }
     // Une ligne libre gagne en haut, mais perd la contre-pression qui aide en bas.
     const double fraction = clamp(rpm / redline, 0.0, 1.0);
     switch (e.exhaust) {
@@ -247,8 +257,8 @@ double frictionTorqueNm(const Powertrain& p, double rpm) {
     // Fer et ventilation d'un moteur électrique, de l'ordre du kilowatt à 5000 tr/min : le reste est dans le rendement.
     if (p.electric) return 0.6 + rpm * 0.00035;
     const double k = rpm / 1000.0;
-    const double bar = 0.9 + 0.12 * k + 0.03 * k * k + (p.engine.fuel == Fuel::Diesel ? 0.3 : 0.0);
-    return bmepToNm(p.engine, bar);
+    const double bar = 0.9 + 0.12 * k + 0.03 * k * k + (p.engine.burnsDiesel() ? 0.3 : 0.0);
+    return bmepToNm(p.engine, isRotary(p.engine) ? bar * kRotaryFrictionShare : bar);
 }
 
 double pumpingTorqueNm(const Powertrain& p, double rpm, double manifold) {

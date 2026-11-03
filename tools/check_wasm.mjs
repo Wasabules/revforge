@@ -18,7 +18,7 @@ function load() {
   return rf;
 }
 
-const LAYOUT = { inline: 0, v: 1, cross_plane: 2, boxer: 3 };
+const LAYOUT = { inline: 0, v: 1, cross_plane: 2, boxer: 3, rotary: 4 };
 const EXHAUST = { stock: 0, sport: 1, straight: 2, no_muffler: 3, no_resonator: 4, quiet: 5 };
 const BODY = { city: 0, compact: 1, coupe: 2, supercar: 3, van: 4 };
 const DRIVE = { front: 0, rear: 1, all: 2 };

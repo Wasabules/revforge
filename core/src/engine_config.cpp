@@ -3,6 +3,7 @@
 #include <cmath>
 
 #include "kotlin_math.hpp"
+#include "portable_math.hpp"
 
 namespace revforge {
 
@@ -19,7 +20,119 @@ const std::array<float, 6> kCylinderSpread{1.0f, 0.94f, 1.05f, 0.97f, 1.02f, 0.9
 constexpr float kMinCarRpm = 100.0f;
 constexpr float kSoftCeilingFrom = 0.8f;
 
+// ── Le moteur rotatif : voir « Le moteur rotatif » dans docs/modele.md ──
+// Proportions du moteur de référence : R 105, e 15, b 80 mm, soit 654 cm³ par chambre.
+constexpr double kRotaryEccentricityShare = 15.0 / 105.0;
+constexpr double kRotaryWidthShare = 80.0 / 105.0;
+constexpr double kSqrtThree = 1.7320508075688772;
+constexpr double kRotaryCompressionNatural = 9.4;
+constexpr double kRotaryCompressionBoosted = 8.5;
+constexpr double kPistonCompressionNatural = 10.5;
+constexpr double kPistonCompressionBoosted = 9.5;
+constexpr double kExpansionGamma = 1.3;
+// Part de la cylindrée déjà parcourue quand la lumière s'ouvre, 195° d'arbre après le point mort haut : (1 - cos(2·195°/3))/2.
+constexpr double kOpenedShare = 0.821;
+// Section de la lumière d'échappement, en part de R·b : environ 14 cm² sur le moteur de référence (supposé, à 30 % près).
+constexpr double kExhaustPortShare = 0.167;
+// La référence du son : un cylindre de 500 cm³, à 10,5 de compression, et une soupape de 30 mm levée de 9 mm (8,5 cm²).
+constexpr double kPistonBlowdownS = 0.002;
+constexpr double kPistonVolumeOverAreaCm = 500.0 * (1.0 / 9.5 + kOpenedShare) / 8.5;
+// Une unité de surface en plus, sur le rapport au cylindre carré, coûte cette part du rendement indiqué : une part de la chaleur
+// perdue aux parois serait devenue du travail. Ordre de grandeur (Heywood : de 10 à 15 % de l'énergie du carburant passe aux parois).
+constexpr double kWallLossPerRatio = 0.125;
+// Fuites par les segments d'apex : la part que les mesures de compression laissent attendre (supposé).
+constexpr double kApexLeakLoss = 0.05;
+
+double cubeRoot(double value) {
+    double x = 100.0;
+    for (int i = 0; i < 48; ++i) x = (2.0 * x + value / (x * x)) / 3.0;
+    return x;
+}
+
+double compressionOf(Aspiration aspiration, double natural, double boosted) { return aspiration == Aspiration::Turbo ? boosted : natural; }
+
+/** Le rendement du cycle idéal, à ce taux de compression. */
+double ottoEfficiency(double ratio) { return 1.0 - portable::pow(ratio, 1.0 - kExpansionGamma); }
+
+/** Ce qui change sur un rotatif, une fois le moteur rempli comme les autres : voir `EngineProfile::rotary`. */
+void applyRotary(const EngineConfig& e, EngineProfile& p) {
+    const int rotors = e.rotors();
+    const int firings = 2 * rotors;
+    const double chamberCc = static_cast<double>(e.displacementCc) / rotors;
+    const double compression = compressionOf(e.aspiration, kRotaryCompressionNatural, kRotaryCompressionBoosted);
+    const double pistonCompression = compressionOf(e.aspiration, kPistonCompressionNatural, kPistonCompressionBoosted);
+    p.rotary = true;
+    p.rotors = rotors;
+    p.cylinders = firings;
+    p.firingCount = firings;
+    // Au même moment de la détente, un plus faible taux a moins détendu le gaz : la lumière s'ouvre sur plus de pression.
+    const double expandedRotary = 1.0 + kOpenedShare * (compression - 1.0);
+    const double expandedPiston = 1.0 + kOpenedShare * (pistonCompression - 1.0);
+    const float release = static_cast<float>(portable::pow(expandedPiston / expandedRotary, kExpansionGamma));
+    for (int i = 0; i < kMaxCylinders; ++i) {
+        p.firing[static_cast<std::size_t>(i)] = 0.0f;
+        p.firingGain[static_cast<std::size_t>(i)] = 0.0f;
+        p.headerM[static_cast<std::size_t>(i)] = 0.0f;
+        p.bank[static_cast<std::size_t>(i)] = 0;
+    }
+    for (int i = 0; i < firings; ++i) {
+        // Une explosion par rotor et par tour d'arbre, à intervalles égaux : 360°/rotors, sur un cycle de deux tours.
+        const std::size_t at = static_cast<std::size_t>(i);
+        const std::size_t rotor = static_cast<std::size_t>(i % rotors);
+        p.firing[at] = static_cast<float>(i) / static_cast<float>(firings);
+        p.firingGain[at] = kCylinderSpread[rotor % kCylinderSpread.size()] * release;
+        // Une lumière par rotor, donc un seul tube : deux explosions du même rotor passent par le même.
+        p.headerM[at] = 0.42f + 0.04f * kHeaderSpread[rotor % kHeaderSpread.size()];
+        p.bank[at] = static_cast<int>(rotor % 2);
+    }
+    p.twoBanks = rotors >= 2 && e.routing != ExhaustRouting::Single;
+    // Un cylindre équivalent, carré : le volume seul compte pour le débit et la ligne.
+    const float side = static_cast<float>(cubeRoot(chamberCc * 1000.0 / 0.7854)) / 1000.0f;
+    p.boreM = side;
+    p.strokeM = side;
+    const RotaryGeometry shape = rotaryGeometry(chamberCc);
+    const double portCm2 = kExhaustPortShare * shape.radiusMm * shape.widthMm * 0.01;
+    const double openCc = chamberCc * (1.0 / (compression - 1.0) + kOpenedShare);
+    p.blowdownS = static_cast<float>(kPistonBlowdownS * (openCc / portCm2) / kPistonVolumeOverAreaCm);
+    p.starter.compressionRatio = static_cast<float>(compression);
+}
+
 }  // namespace
+
+RotaryGeometry rotaryGeometry(double chamberCc) {
+    RotaryGeometry g;
+    g.radiusMm = cubeRoot(chamberCc * 1000.0 / (3.0 * kSqrtThree * kRotaryEccentricityShare * kRotaryWidthShare));
+    g.eccentricityMm = g.radiusMm * kRotaryEccentricityShare;
+    g.widthMm = g.radiusMm * kRotaryWidthShare;
+    return g;
+}
+
+float rotaryCompressionRatio(Aspiration aspiration) {
+    return static_cast<float>(compressionOf(aspiration, kRotaryCompressionNatural, kRotaryCompressionBoosted));
+}
+
+double rotaryWallRatio(float compressionRatio) {
+    // Sans dimension : à proportions égales, le rapport ne dépend pas de la taille. On le calcule à R = 1.
+    const double ratio = static_cast<double>(compressionRatio);
+    const double volume = 3.0 * kSqrtThree * kRotaryEccentricityShare * kRotaryWidthShare;
+    const double clearance = volume / (ratio - 1.0);
+    // Au point mort haut, la chambre est une longue lame : la corde entre deux sommets, sur la largeur du rotor.
+    const double length = kSqrtThree;
+    const double height = clearance / (length * kRotaryWidthShare);
+    const double rotarySurface = 2.0 * length * kRotaryWidthShare + 2.0 * length * height;
+    // Le cylindre carré de même volume : deux disques et le peu de chemise découverte.
+    const double side = cubeRoot(volume * 1e9 / 0.7854) / 1000.0;
+    const double disc = 0.7854 * side * side;
+    const double pistonSurface = 2.0 * disc + 3.141592653589793 * side * (clearance / disc);
+    return rotarySurface / pistonSurface;
+}
+
+double rotaryEfficiencyShare(Aspiration aspiration) {
+    const double compression = compressionOf(aspiration, kRotaryCompressionNatural, kRotaryCompressionBoosted);
+    const double pistonCompression = compressionOf(aspiration, kPistonCompressionNatural, kPistonCompressionBoosted);
+    const double wall = rotaryWallRatio(static_cast<float>(compression));
+    return ottoEfficiency(compression) / ottoEfficiency(pistonCompression) * (1.0 - kWallLossPerRatio * (wall - 1.0)) * (1.0 - kApexLeakLoss);
+}
 
 const ExhaustSpec& exhaustSpec(Exhaust exhaust) {
     static const ExhaustSpec stock{2.6f, 0.45f, 0.45f, 700.0f, 0.05f, 1.0f, 1.0f};
@@ -73,7 +186,7 @@ float EngineConfig::strokeMm() const {
 }
 
 EngineProfile EngineConfig::toProfile() const {
-    const bool isDiesel = fuel == Fuel::Diesel;
+    const bool isDiesel = burnsDiesel();
     const float cc = cylinderCc();
     const float idle = km::coerceAtLeast(900.0f - 0.25f * cc, 600.0f) + (isDiesel ? 80.0f : 0.0f);
     const float redline = static_cast<float>(redlineRpm);
@@ -103,6 +216,7 @@ EngineProfile EngineConfig::toProfile() const {
             case Layout::Boxer: p.firingGain[i] = spread * (i % 2 == 0 ? 1.0f : 0.76f); break;
             // Deux explosions de suite sur une même rangée : le « glouglou ».
             case Layout::CrossPlane: p.firingGain[i] = spread * kCrossPlaneCrowded[i % kCrossPlaneCrowded.size()]; break;
+            case Layout::Rotary: break;  // voir `applyRotary`
         }
         // Longueurs réalistes : égales en ligne, par rangée en V, très inégales sur un boxer.
         const float headerSpread = kHeaderSpread[i % kHeaderSpread.size()];
@@ -111,6 +225,7 @@ EngineProfile EngineConfig::toProfile() const {
             case Layout::V: p.headerM[i] = (i % 2 == 0 ? 0.55f : 0.72f) + 0.04f * headerSpread; break;
             case Layout::CrossPlane: p.headerM[i] = (kCrossPlaneLeft[i % kCrossPlaneLeft.size()] ? 0.5f : 0.86f) + 0.04f * headerSpread; break;
             case Layout::Boxer: p.headerM[i] = i % 2 == 0 ? 0.48f : 1.05f; break;
+            case Layout::Rotary: break;
         }
         // La rangée de ce cylindre : en ligne, il n'y en a qu'une. Les petits moteurs rejoignent vite une seule ligne.
         switch (layout) {
@@ -136,7 +251,8 @@ EngineProfile EngineConfig::toProfile() const {
     p.boostBar = boostBar;
 
     // Le démarreur dépend de ce qu'il doit lancer : la puissance suit la cylindrée et la compression.
-    const float litres = static_cast<float>(displacementCc) / 1000.0f;
+    // Un rotatif se lance comme le quatre temps de deux fois sa cylindrée : il comprime autant à chaque tour.
+    const float litres = static_cast<float>(sweptCcPerTwoTurns()) / 1000.0f;
     StarterSpec& s = p.starter;
     s.kind = (cylinders >= 8 || litres > 4.5f) ? StarterKind::Direct : StarterKind::Reduction;
     s.compressionRatio = isDiesel ? 18.0f : (aspiration == Aspiration::Turbo ? 9.5f : 10.5f);
@@ -158,6 +274,7 @@ EngineProfile EngineConfig::toProfile() const {
         s.motorFreeRpm = 16500.0f;
         s.motorInertia = 0.00008f + 0.00001f * litres;
     }
+    if (layout == Layout::Rotary) applyRotary(*this, p);
     return p;
 }
 

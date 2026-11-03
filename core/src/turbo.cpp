@@ -202,8 +202,9 @@ double windagePower(const TurboSpec& spec, double tipSpeed) {
 
 TurboSpec turboSpecFor(const EngineConfig& e, double breathingAtRated) {
     TurboSpec s;
-    s.diesel = e.fuel == Fuel::Diesel;
-    s.displacementM3 = static_cast<double>(e.displacementCc) * 1e-6;
+    s.diesel = e.burnsDiesel();
+    // Le volume avalé en deux tours d'arbre : tous les débits ci-dessous s'en déduisent avec rpm/120.
+    s.displacementM3 = e.sweptCcPerTwoTurns() * 1e-6;
     s.targetBar = static_cast<double>(e.boostBar);
     s.redlineRpm = static_cast<double>(e.redlineRpm);
     s.blowOffValve = e.turboRelease == TurboRelease::DumpValve;

@@ -6,7 +6,8 @@ namespace revforge {
 
 inline constexpr int kMaxCylinders = 12;
 
-enum class Layout { Inline, V, CrossPlane, Boxer };
+/** `Rotary` : moteur à pistons rotatifs (Wankel). `cylinders` y compte les rotors, et `displacementCc` une chambre par rotor. */
+enum class Layout { Inline, V, CrossPlane, Boxer, Rotary };
 // L'ordre compte : la position donne la valeur envoyée par le site (web/src/lib/config.ts). On ajoute à la fin.
 enum class Exhaust { Stock, Sport, Straight, MufflerDelete, ResonatorDelete, Quiet };
 /** Le chemin des gaz : une seule ligne, deux lignes séparées (une par rangée), reliées par un pont en H ou en X. */
@@ -165,6 +166,15 @@ struct EngineProfile {
     /** Deux rangées séparées ? Sinon, tous les cylindres rejoignent la même ligne. */
     bool twoBanks = false;
     CarAcoustics car;
+    /**
+     * Moteur rotatif : `firing` y reste un cycle de deux tours d'arbre, avec deux explosions par rotor, donc
+     * `cylinders` et `firingCount` valent deux fois le nombre de rotors, et `boreM`, `strokeM` donnent le volume
+     * d'une chambre : le débit de gaz, calculé sur deux tours, tombe juste sans autre correction.
+     */
+    bool rotary = false;
+    int rotors = 0;
+    /** Durée de la bouffée, pleine charge : le volume de la chambre à l'ouverture, face à la section de la lumière (s). */
+    float blowdownS = 0.0f;
 
     /**
      * Régime simulé pour un régime réel de la voiture. Au ralenti, les deux ralentis
@@ -212,7 +222,41 @@ struct EngineConfig {
     /** Déduite de la cylindrée d'un cylindre et de son alésage. */
     float strokeMm() const;
     EngineProfile toProfile() const;
+
+    /** Le nombre de rotors, borné pour tenir dans `kMaxCylinders` explosions par cycle. N'a de sens que sur un rotatif. */
+    int rotors() const { return cylinders < 1 ? 1 : (cylinders > kMaxCylinders / 2 ? kMaxCylinders / 2 : cylinders); }
+    /** Explosions en deux tours d'arbre : une par cylindre en quatre temps, deux par rotor. */
+    int firingsPerTwoTurns() const { return layout == Layout::Rotary ? 2 * rotors() : cylinders; }
+    /**
+     * Le volume balayé en deux tours d'arbre (cm³) : ce qui compte pour l'air, le gaz et le couple. La cylindrée d'un
+     * quatre temps ; deux fois celle d'un rotatif, dont chaque rotor balaie une chambre à chaque tour.
+     */
+    double sweptCcPerTwoTurns() const { return (layout == Layout::Rotary ? 2.0 : 1.0) * static_cast<double>(displacementCc); }
+    /** Un rotatif ne brûle que de l'essence : un réglage diesel y reste sans effet. */
+    bool burnsDiesel() const { return fuel == Fuel::Diesel && layout != Layout::Rotary; }
 };
+
+/** Vrai pour un moteur rotatif : ni alésage, ni course, ni arbre à cames, ni diesel. */
+inline bool isRotary(const EngineConfig& config) { return config.layout == Layout::Rotary; }
+
+/** La géométrie d'un rotor (mm) : rayon générateur R, excentricité e, largeur b. V = 3√3·R·e·b par chambre. */
+struct RotaryGeometry {
+    double radiusMm = 0.0;
+    double eccentricityMm = 0.0;
+    double widthMm = 0.0;
+};
+
+/** Déduite du volume d'une chambre, aux proportions du moteur de référence (R 105, e 15, b 80 : 654 cm³). */
+RotaryGeometry rotaryGeometry(double chamberCc);
+/** Taux de compression géométrique : la forme de la chambre le borne, et il baisse sous pression. */
+float rotaryCompressionRatio(Aspiration aspiration);
+/** Surface de chambre sur volume au point mort haut, face à un cylindre carré de 500 cm³ : la cause des pertes aux parois. */
+double rotaryWallRatio(float compressionRatio);
+/**
+ * Le rendement indiqué d'un rotatif, en part de celui d'un moteur à pistons de même aspiration. Il ne dépend que de sa
+ * forme : la chambre allongée perd plus de chaleur aux parois, et le taux de compression est plus bas.
+ */
+double rotaryEfficiencyShare(Aspiration aspiration);
 
 /** Sifflement d'un moteur électrique : pas de cylindres, pas de configuration. */
 EngineProfile electricProfile();

@@ -43,6 +43,9 @@ constexpr double kOilGPerKwh = 0.1;
 constexpr double kOilTurbo = 1.3;
 constexpr double kOilDiesel = 1.2;
 constexpr double kOilDensityKgPerL = 0.85;
+// Un rotatif dose de l'huile dans le carburant, pour graisser ses segments d'apex : une pompe de dosage donne de l'ordre de 25 mL/h à
+// 2000 tr/min sur un birotor de 1,3 L, soit environ 8 g/h par litre et par 1000 tr/min. À un facteur trois près, comme le reste.
+constexpr double kOilMeteredGPerHPerLitreKrpm = 8.0;
 
 // Machine et onduleur, de la batterie à l'arbre, dans les deux sens.
 constexpr double kElectricChainEfficiency = 0.90;
@@ -59,12 +62,15 @@ const FuelSpec& fuelSpecOf(Fuel fuel) { return fuel == Fuel::Diesel ? kDiesel : 
 
 void ConsumptionModel::configure(const Powertrain& p) {
     electric_ = p.electric;
-    diesel_ = p.engine.fuel == Fuel::Diesel;
+    diesel_ = p.engine.burnsDiesel();
     turbo_ = p.engine.aspiration == Aspiration::Turbo;
-    fuel_ = &fuelSpecOf(p.engine.fuel);
-    litres_ = static_cast<double>(p.engine.displacementCc) / 1000.0;
+    fuel_ = &fuelSpecOf(diesel_ ? Fuel::Diesel : Fuel::Petrol);
+    // Le volume avalé en deux tours d'arbre : c'est lui qui remplit, et que le papillon étrangle.
+    litres_ = p.engine.sweptCcPerTwoTurns() / 1000.0;
+    oilPerKrpm_ = isRotary(p.engine) ? kOilMeteredGPerHPerLitreKrpm * static_cast<double>(p.engine.displacementCc) / 1000.0 : kOilGPerHPerLitreKrpm * litres_;
     redline_ = redlineRpmOf(p);
     baseEfficiency_ = diesel_ ? kEfficiencyDiesel : (turbo_ ? kEfficiencyPetrolTurbo : kEfficiencyPetrol);
+    if (isRotary(p.engine)) baseEfficiency_ *= rotaryEfficiencyShare(p.engine.aspiration);
     fullRichness_ = diesel_ ? 1.0 : 1.0 / (turbo_ ? kFullLoadLambdaTurbo : kFullLoadLambda);
     throttlingNm_ = diesel_ ? 0.0 : kThrottlingBar * kAtmosphere * litres_ * 1e-3 / (4.0 * kPi);
     peakNaturalNm_ = 1.0;
@@ -129,7 +135,7 @@ double ConsumptionModel::airGps(double rpm, double load, double fullGrossNm) con
 double ConsumptionModel::oilGps(double rpm, double brakeNm) const {
     if (electric_ || rpm <= 0.0) return 0.0;
     const double kw = std::max(brakeNm, 0.0) * rpm * 2.0 * kPi / 60.0 / 1000.0;
-    const double perHour = kOilGPerHPerLitreKrpm * litres_ * rpm / 1000.0 + kOilGPerKwh * kw;
+    const double perHour = oilPerKrpm_ * rpm / 1000.0 + kOilGPerKwh * kw;
     return perHour * (turbo_ ? kOilTurbo : 1.0) * (diesel_ ? kOilDiesel : 1.0) / 3600.0;
 }
 
@@ -235,7 +241,7 @@ FuelMapSummary fuelMapSummary(const Powertrain& p) {
     model.configure(p);
     const double idle = idleRpmOf(p);
     const double redline = redlineRpmOf(p);
-    const double perBar = kAtmosphere * static_cast<double>(p.engine.displacementCc) * 1e-6 / (4.0 * kPi);
+    const double perBar = kAtmosphere * p.engine.sweptCcPerTwoTurns() * 1e-6 / (4.0 * kPi);
     for (double rpm = idle; rpm <= redline; rpm += 100.0) {
         const double friction = frictionTorqueNm(p, rpm);
         const double full = fullLoadTorqueNm(p, rpm, steadyBoost(p, rpm));

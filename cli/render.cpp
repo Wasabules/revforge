@@ -33,7 +33,7 @@ void usage() {
         "  --kmh N           speed held by cruise (the trip is measured once settled, after 60 s)\n"
         "  --rate N          sample rate (44100)\n"
         "  --volume X        volume (0.7)\n"
-        "Engine:   --cylinders N --layout inline|v|cross_plane|boxer --cc N --bore N --redline N\n"
+        "Engine:   --cylinders N --layout inline|v|cross_plane|boxer|rotary --cc N --bore N --redline N\n"
         "          --exhaust stock|sport|straight|no_muffler|no_resonator|quiet --routing single|dual|h|x\n"
         "          --aspiration natural|turbo|supercharger --fuel petrol|diesel\n"
         "          --pops off|light|strong --release dump_valve|flutter --boost BAR --turbo small|medium|large\n"
@@ -523,7 +523,7 @@ int main(int argc, char** argv) {
             else if (arg == "--redline") config.redlineRpm = std::atoi(value.c_str());
             else if (arg == "--boost") config.boostBar = static_cast<float>(std::atof(value.c_str()));
             else if (arg == "--turbo") config.turboSize = pick<TurboSize>(value, {{"small", TurboSize::Small}, {"medium", TurboSize::Medium}, {"large", TurboSize::Large}});
-            else if (arg == "--layout") config.layout = pick<Layout>(value, {{"inline", Layout::Inline}, {"v", Layout::V}, {"cross_plane", Layout::CrossPlane}, {"boxer", Layout::Boxer}});
+            else if (arg == "--layout") config.layout = pick<Layout>(value, {{"inline", Layout::Inline}, {"v", Layout::V}, {"cross_plane", Layout::CrossPlane}, {"boxer", Layout::Boxer}, {"rotary", Layout::Rotary}});
             else if (arg == "--exhaust") { config.exhaust = pick<Exhaust>(value, {{"stock", Exhaust::Stock}, {"sport", Exhaust::Sport}, {"straight", Exhaust::Straight}, {"no_muffler", Exhaust::MufflerDelete}, {"no_resonator", Exhaust::ResonatorDelete}, {"quiet", Exhaust::Quiet}}); exhaustChoice = config.exhaust; }
             else if (arg == "--routing") { config.routing = pick<ExhaustRouting>(value, {{"single", ExhaustRouting::Single}, {"dual", ExhaustRouting::Dual}, {"h", ExhaustRouting::HPipe}, {"x", ExhaustRouting::XPipe}}); routing = config.routing; }
             else if (arg == "--aspiration") config.aspiration = pick<Aspiration>(value, {{"natural", Aspiration::Natural}, {"turbo", Aspiration::Turbo}, {"supercharger", Aspiration::Supercharger}});
@@ -556,6 +556,10 @@ int main(int argc, char** argv) {
     } else if (!customConfig) {
         std::size_t count = 0;
         powertrain = presets(count)[0].powertrain();
+    }
+    if (isRotary(config) && config.fuel == Fuel::Diesel) {
+        std::fprintf(stderr, "A rotary engine burns petrol: --fuel diesel is refused with --layout rotary\n");
+        return 2;
     }
     // Sur un préréglage, les réglages donnés en plus l'emportent.
     if (exhaustChoice) powertrain.engine.exhaust = *exhaustChoice;

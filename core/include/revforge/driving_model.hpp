@@ -190,6 +190,7 @@ private:
     double rpmInGear(int gear) const;
     double ratio(int gear) const;
     double compressionLoadNm() const;
+    double rotaryCompressionLoadNm() const;
     void stepTurbo(double rpmNow, bool burning);
     double bmepPumping(double rpm) const;
     double wheelSpeedMs() const { return wheelOmega_ * radius_; }

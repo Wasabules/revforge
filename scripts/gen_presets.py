@@ -3,7 +3,7 @@
 import json
 import sys
 
-LAYOUT = {"inline": "Inline", "v": "V", "cross_plane": "CrossPlane", "boxer": "Boxer"}
+LAYOUT = {"inline": "Inline", "v": "V", "cross_plane": "CrossPlane", "boxer": "Boxer", "rotary": "Rotary"}
 EXHAUST = {
     "stock": "Stock", "sport": "Sport", "straight": "Straight",
     "no_muffler": "MufflerDelete", "no_resonator": "ResonatorDelete", "quiet": "Quiet",
