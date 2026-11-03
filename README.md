@@ -119,6 +119,7 @@ Known limits:
 - Gear rattle has no isolated real recording to compare against, and several gearbox parameters (module, helix angle, backlash, wear rate) are assumed.
 - The gas view follows the driving model without feeding back into it, so its pressures do not exactly match the displayed torque.
 - Some regulatory values (UN R51.03 and EU 540/2014) still need checking against the official texts.
+- The 80s coupe body keeps the rolling resistance and grip of recent tyres, and its frontal area and light soundproofing are assumptions.
 
 ## Repository layout
 

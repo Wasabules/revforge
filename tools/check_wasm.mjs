@@ -20,7 +20,7 @@ function load() {
 
 const LAYOUT = { inline: 0, v: 1, cross_plane: 2, boxer: 3 };
 const EXHAUST = { stock: 0, sport: 1, straight: 2, no_muffler: 3, no_resonator: 4, quiet: 5 };
-const BODY = { city: 0, compact: 1, coupe: 2, supercar: 3, van: 4 };
+const BODY = { city: 0, compact: 1, coupe: 2, supercar: 3, van: 4, retro: 5 };
 const DRIVE = { front: 0, rear: 1, all: 2 };
 const PLACEMENT = { front: 0, mid: 1, rear: 2 };
 const INSULATION = { stripped: 0, light: 1, standard: 2, comfort: 3, luxury: 4 };
@@ -378,5 +378,23 @@ for (const [size, release] of [['small', 0], ['medium', 1], ['large', 0]]) {
   rf.rf_set_car(BODY.compact, 1400, 18, DRIVE.front, PLACEMENT.front, INSULATION.standard);
   rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6500, EXHAUST.sport, 1, 0, 0, 0, release, 1.3, ROUTING.single, TURBO[size], 0, 0, 400, 0, 0);
   check(`retard du turbo, ${size}`, turboStab(rf, 24), native(...turboArgs, '--turbo', size, '--release', release ? 'flutter' : 'dump_valve'));
+}
+// La carrosserie des années 80 : son rang dans `Body`, sa ligne, son plan, et l'isolation dans l'habitacle.
+function retroCoupe() {
+  const rf = load();
+  rf.rf_set_car(BODY.retro, 1150, 14, DRIVE.rear, PLACEMENT.front, INSULATION.light);
+  rf.rf_set_config(6, LAYOUT.inline, 2500, 84, 6400, EXHAUST.stock, 0, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 1, 0);
+  return rf;
+}
+{
+  const rf = retroCoupe();
+  rf.rf_set_mode(3);
+  check('tour complet, coupé années 80', render(rf, 60, 128), native('--preset', 'retro_coupe', '--scenario', 'lap'));
+}
+{
+  const rf = retroCoupe();
+  rf.rf_set_listener(LISTENER.cabin);
+  rf.rf_set_mode(3);
+  check('habitacle, coupé années 80', renderStereo(rf, 20, 128), native('--preset', 'retro_coupe', '--stereo', '1', '--scenario', 'lap', '--seconds', '20', '--listener', 'cabin'));
 }
 process.exit(failed ? 1 : 0);

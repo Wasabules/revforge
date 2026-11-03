@@ -285,6 +285,7 @@ export const fr: Record<MessageKey, string> = {
   'body.coupe': 'Coupé',
   'body.supercar': 'Supercar',
   'body.van': 'Utilitaire',
+  'body.retro': 'Coupé années 80',
   'drive.front': 'Traction',
   'drive.rear': 'Propulsion',
   'drive.all': 'Intégrale',
@@ -794,4 +795,5 @@ export const frPresets: Record<string, { name: string; description: string }> = 
   v12: { name: 'V12 atmosphérique', description: 'Aigu à haut régime.' },
   diesel_four: { name: 'Diesel 4 cylindres', description: 'Utilitaire. Grave, léger claquement.' },
   electric: { name: 'Électrique', description: "Sifflement de l'onduleur, aigu et propre." },
+  retro_coupe: { name: 'Coupé années 80, 2.5 six', description: "6 cylindres en ligne à arbre unique, propulsion légère, peu d'isolant : un timbre lisse qui s'entend dans l'habitacle." },
 };

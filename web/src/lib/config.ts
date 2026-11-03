@@ -15,7 +15,7 @@ export type SuperchargerKind = 'roots' | 'twin_screw' | 'centrifugal';
 export type AntiLag = 'off' | 'retard' | 'air' | 'cut';
 export type Camshaft = 'dohc' | 'sohc';
 export type AirFilter = 'stock' | 'panel' | 'cone' | 'stacks';
-export type Body = 'city' | 'compact' | 'coupe' | 'supercar' | 'van';
+export type Body = 'city' | 'compact' | 'coupe' | 'supercar' | 'van' | 'retro';
 export type Drive = 'front' | 'rear' | 'all';
 export type BoxKind = 'synchro' | 'dog' | 'sequential' | 'dual_clutch' | 'converter';
 export type BoxFamily = 'matched' | 'short' | 'close' | 'long' | 'custom';
@@ -164,13 +164,14 @@ export const AIR_FILTERS: { value: AirFilter; label: string; help: string }[] = 
   { value: 'cone', get label() { return t('airFilter.cone'); }, get help() { return t('airFilter.cone.help'); } },
   { value: 'stacks', get label() { return t('airFilter.stacks'); }, get help() { return t('airFilter.stacks.help'); } },
 ];
-/** Choisir une carrosserie règle aussi une masse, des jantes et une transmission plausibles. */
-export const BODIES: { value: Body; label: string; massKg: number; rimInch: number; drive: Drive; placement: Placement }[] = [
+/** Choisir une carrosserie règle aussi une masse, des jantes et une transmission plausibles, et parfois une isolation. */
+export const BODIES: { value: Body; label: string; massKg: number; rimInch: number; drive: Drive; placement: Placement; insulation?: Insulation }[] = [
   { value: 'city', get label() { return t('body.city'); }, massKg: 1100, rimInch: 15, drive: 'front', placement: 'front' },
   { value: 'compact', get label() { return t('body.compact'); }, massKg: 1350, rimInch: 18, drive: 'front', placement: 'front' },
   { value: 'coupe', get label() { return t('body.coupe'); }, massKg: 1600, rimInch: 19, drive: 'rear', placement: 'front' },
   { value: 'supercar', get label() { return t('body.supercar'); }, massKg: 1500, rimInch: 20, drive: 'all', placement: 'mid' },
   { value: 'van', get label() { return t('body.van'); }, massKg: 1950, rimInch: 16, drive: 'front', placement: 'front' },
+  { value: 'retro', get label() { return t('body.retro'); }, massKg: 1100, rimInch: 14, drive: 'rear', placement: 'front', insulation: 'light' },
 ];
 export const DRIVES: { value: Drive; label: string }[] = [
   { value: 'front', get label() { return t('drive.front'); } },

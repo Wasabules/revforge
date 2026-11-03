@@ -15,7 +15,11 @@
 
   function chooseBody(value: Body) {
     const chosen = BODIES.find((item) => item.value === value);
-    if (chosen) onapply({ body: chosen.value, massKg: chosen.massKg, rimInch: chosen.rimInch, drive: chosen.drive, placement: chosen.placement });
+    if (!chosen) return;
+    // Une carrosserie peut imposer son isolation : en la quittant, celle qu'elle avait imposée ne la suit pas.
+    const imposed = BODIES.find((item) => item.value === config.body)?.insulation;
+    const insulation = chosen.insulation ?? (imposed === config.insulation ? 'standard' : config.insulation);
+    onapply({ body: chosen.value, massKg: chosen.massKg, rimInch: chosen.rimInch, drive: chosen.drive, placement: chosen.placement, insulation });
   }
 </script>
 

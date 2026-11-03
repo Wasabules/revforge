@@ -589,6 +589,46 @@ The model's automatic gearbox matters little: a driver following longer gears, a
 
 **Turbo and gearbox settings count:** these figures follow the model's real torque and pressure, and will move if those parts change.
 
+## The 80s body
+
+`Body::Retro` is a sharp-edged three-box coupe. It adds no computation: `BodySpec` gives its figures and the rest follows: drag, top speed, final drive, source placement, line length, driver's head. The other bodies do not move.
+
+| Quantity | Chosen | Where it comes from |
+|---|---:|---|
+| Cd | 0.40 | Wikipedia's list (read): Capri III 0.374, 280ZX 0.38, Mark VII 0.38, Cougar 1983 0.40, XJS 0.40, 1982 Volvo 740 0.41; but Sierra 0.34 and E30 M3 0.33: not everyone was there. Picked inside the requested range, at the top of a wider real one |
+| Frontal area | 1.85 m² | **Assumed.** No published value read. The 0.84 × width × height rule (seen quoted, without the original page) would give 1.88 m². Check: the Volvo 740 Turbo's CdA of 0.808 m², read, with Cd 0.41, implies 1.97 m² for a bigger car |
+| CdA | 0.74 m² | The only figure the physics reads: Cd and area are not separate there |
+| Dimensions | 4.25 × 1.65 × 1.36 m, 2.50 m wheelbase | E30 325i coupe (Auto-Data, read): 4.325 × 1.645 × 1.38 m, 2.57 m. Capri 2.8i (seen quoted): 4.35 × 1.70 × 1.30 m, 2.565 m. Shorter than both: a **choice** of a short wheelbase |
+| Mass | 1100 kg when choosing the body, 1150 kg in the preset | E30 325i: 1145 kg (Auto-Data, read), 1180 kg (seen quoted). Capri 2.8i: 1170 kg (seen quoted) |
+| Rims | 14 inches | 5.5J × 14 with 195/60 R14 on the 325i (read). The radius stays the shared formula: 273 mm, for about 295 mm in reality |
+| Gearbox | 5 speeds | Common at the time, with no source read to pin it down: the Capri came with 4 and 5 speeds (seen quoted) |
+| Centre of gravity, front share, shift time | 0.52 m, 53 %, 0.36 s | **Assumed**, between the coupe and the city car |
+| Line | 0.98 times a compact's | Follows length, like the other bodies |
+| Insulation | Sporty when choosing the body | **Assumed:** little trim, thin glass. No period cabin measurement read. The site sets it when you choose the body and takes it back when you leave, unless you changed it by hand. On the command line, `--body retro` does not change it: give `--insulation light` |
+
+The `retro_coupe` preset is a 2.5 L inline six, 84 mm bore, 6400 rpm, single cam. Nothing in it is tuned to match a published figure, and the model gives less power than the reference: 149 hp and 209 Nm, for 171 hp and 222 Nm (Auto-Data, read).
+
+| | Coupe, preset | Compact, same engine, compact settings | Compact, same engine, same mass and rims |
+|---|---:|---:|---:|
+| Cd, area | 0.40, 1.85 m² | not entered | not entered |
+| CdA | 0.74 m² | 0.70 m² | 0.70 m² |
+| Mass, rims, drive | 1150 kg, 14", rear | 1350 kg, 18", front | 1150 kg, 14", rear |
+| Gears | 5 | 6 | 6 |
+| Top speed | 213 km/h | 218.5 km/h | 217 km/h |
+| 0 to 100 km/h | 8.45 s | 9.53 s | 8.45 s |
+| WLTC | 9.47 L/100 km | 9.49 L/100 km | 9.35 L/100 km |
+| 120 km/h | 9.34 L/100 km | 8.95 L/100 km | 9.01 L/100 km |
+| Cabin, idle, full throttle | 46.2, 76.0 dB(A) | 42.0, 70.8 dB(A) | with the same insulation: 46.7, 76.0 dB(A) |
+| Outside, at 5 m, full throttle | 80.4 dB(A) | 80.6 dB(A) | 80.6 dB(A) |
+
+Measured with `measurePerformance`, `--fuel 1` and `soundSheet`. Levels remain estimates.
+
+Against published figures: 8.3 s and 217 km/h with a manual (E30 325i, seen quoted, Cd given as 0.38), 10 s and 206 km/h with a 4-speed automatic (Auto-Data, read, Cd given as 0.35); 8 s and 210 km/h for the Capri 2.8i (seen quoted). Consumption: 12.7 L/100 km urban and 6.8 extra-urban for that automatic, under a period standard that is not WLTC.
+
+**What the body changes little:** the compact's CdA of 0.70 m² is already high for a recent car, and a small frontal area makes up for a poor Cd. The drag gap is therefore only 6 %. That is worth 4 km/h at the top and 3.7 % at 120 km/h; in WLTC, at low speed, the gap blends with that of the gearing. In the cabin, nearly all the gap comes from insulation: with equal insulation, the two bodies are within 1 dB.
+
+**What is missing:** rolling resistance (0.0095) and grip are those of recent tyres, for every car. The engine has no carburettor or period ignition: it is the same torque model, and its consumption keeps the gap of the "Against published figures" table. `camshaft: sohc` only has an effect if that setting is modelled.
+
 ## Calibration
 
 The tuning is compared to ten car recordings from Wikimedia Commons ("engine and exhaust sound" series, CC BY 3.0: Shelby Cobra, Mustang GT, Shelby GT500,

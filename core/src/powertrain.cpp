@@ -78,11 +78,14 @@ const BodySpec& bodySpec(Body body) {
     static const BodySpec coupe{0.66, 2.72, 0.5, 0.52, 1.1f, 0.22, 6, 4.6f, 1.85f, 1.3f, 0.85f, 0.33f, EnginePlacement::Front};
     static const BodySpec supercar{0.62, 2.65, 0.42, 0.43, 0.45f, 0.12, 7, 4.55f, 1.95f, 1.15f, 0.95f, 0.5f, EnginePlacement::Mid};
     static const BodySpec van{1.35, 3.2, 0.85, 0.55, 1.25f, 0.45, 5, 4.9f, 1.9f, 1.95f, 1.0f, 0.38f, EnginePlacement::Front};
+    // Un coupé trois volumes des années 80 : Cx de 0,40 sur 1,85 m². Voir « La carrosserie des années 80 » dans docs/modele.md.
+    static const BodySpec retro{0.74, 2.5, 0.52, 0.53, 0.98f, 0.36, 5, 4.25f, 1.65f, 1.36f, 0.95f, 0.3f, EnginePlacement::Front};
     switch (body) {
         case Body::Compact: return compact;
         case Body::Coupe: return coupe;
         case Body::Supercar: return supercar;
         case Body::Van: return van;
+        case Body::Retro: return retro;
         case Body::City: break;
     }
     return city;

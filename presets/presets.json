@@ -278,5 +278,23 @@
     "drive": "rear",
     "placement": "front",
     "insulation": "standard"
+  },
+  {
+    "id": "retro_coupe",
+    "name": "80s coupe, 2.5 six",
+    "description": "Single-cam inline six, light rear-drive, little soundproofing: a smooth note you hear from the cabin.",
+    "cylinders": 6,
+    "layout": "inline",
+    "displacementCc": 2500,
+    "boreMm": 84,
+    "redlineRpm": 6400,
+    "exhaust": "stock",
+    "camshaft": "sohc",
+    "body": "retro",
+    "massKg": 1150,
+    "rimInch": 14,
+    "drive": "rear",
+    "placement": "front",
+    "insulation": "light"
   }
 ]
