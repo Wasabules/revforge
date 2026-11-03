@@ -410,16 +410,23 @@ float rf_carb_drop_kpa() {
 // ── La combustion, pour la fiche : le taux réel, ce qu'il rend, et la marge au cliquetis à pleine charge ──
 float rf_compression_ratio() { return g_powertrain.electric ? 0.0f : compressionRatioOf(g_powertrain.engine); }
 float rf_compression_efficiency() { return g_powertrain.electric ? 1.0f : static_cast<float>(compressionEfficiencyShare(g_powertrain.engine)); }
-int rf_knock_sensor() {
-    KnockMap map;
-    map.build(g_powertrain);
-    return map.valid() && map.sensor() ? 1 : 0;
+/** La carte de cliquetis de la fiche, même sur un moteur d'origine : construite une fois par réglage, sur le fil de la page seulement. */
+static const KnockMap& specKnock() {
+    static KnockMap map;
+    static Powertrain built;
+    static bool ready = false;
+    if (!ready || !(built.engine == g_powertrain.engine) || built.electric != g_powertrain.electric || placementOf(built.car) != placementOf(g_powertrain.car)) {
+        map.build(g_powertrain);
+        built = g_powertrain;
+        ready = true;
+    }
+    return map;
 }
+int rf_knock_sensor() { return specKnock().valid() && specKnock().sensor() ? 1 : 0; }
 /** La plus petite marge de la carte d'origine sous la limite de cliquetis, à pleine charge (degrés, négative s'il cliquette), et son régime. */
 static float knockMargin(bool wantRpm) {
     if (g_powertrain.electric || g_powertrain.engine.burnsDiesel()) return 0.0f;
-    KnockMap map;
-    map.build(g_powertrain);
+    const KnockMap& map = specKnock();
     const double idle = idleRpmOf(g_powertrain);
     const double redline = redlineRpmOf(g_powertrain);
     double worst = 1e9, at = idle;

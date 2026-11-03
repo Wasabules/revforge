@@ -1061,6 +1061,8 @@ struct EngineSound::State {
         if (a.diesel) blockDb = (a.turbo || a.supercharged) ? 40.0f * logN + 50.0f * logB - 135.0f : 30.0f * logN + 50.0f * logB - 106.0f;
         // Sans charge, un moteur essence perd un peu ; un diesel presque rien (Austen et Priede, 1959 ; mesures sur une Saturn : presque rien non plus).
         blockDb -= (a.diesel ? 2.0f : 5.0f) * (1.0f - km::min(load, 1.0f));
+        // Un délai d'auto-inflammation plus long fait brûler plus de gazole d'un coup : la pente de pression, donc le bruit de combustion, suit.
+        if (a.diesel && a.dieselKnockScale != 1.0f) blockDb += 20.0f * km::log10(a.dieselKnockScale);
         // Au ralenti, accessoires et distribution tiennent un plancher.
         const float floorDb = 65.0f + 15.0f * km::log10(bore / 86.0f) + (a.diesel ? 7.0f : (a.rotary ? kRotaryFloorDb : 0.0f));
         blockLevel = kBlockPa * km::sqrt(km::pow(10.0f, blockDb / 10.0f) + km::pow(10.0f, floorDb / 10.0f));

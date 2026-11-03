@@ -387,6 +387,21 @@ TEST_CASE("le diesel : le taux change son rendement, son démarreur et son claqu
     const double usual = crankRpm(stock);
     MESSAGE("lancement du diesel : " << easy << " tr/min à 15:1, " << usual << " à 18:1");
     CHECK(easy > usual);
+    // Au ralenti, sous le capot : un délai plus long, plus de gazole brûlé d'un coup, une combustion plus bruyante.
+    const auto idling = [](const EngineProfile& p) {
+        EngineSound sound(test::kRate);
+        sound.setProfile(p);
+        sound.setListener(Listener::EngineBay);
+        sound.setTargetRpm(p.idleRpm);
+        sound.setDrive(0.1f, 0.0f, false, false, 0.0f);
+        test::Samples out(static_cast<std::size_t>(3 * test::kRate));
+        sound.render(out.data(), static_cast<int>(out.size()));
+        return test::slice(out, test::kRate, out.size());
+    };
+    const double louder = dB(band(idling(low.profile()), 500.0, 4000.0) / band(idling(stock.profile()), 500.0, 4000.0));
+    MESSAGE("ralenti du diesel sous le capot, 500-4000 Hz, à 15:1 : +" << louder << " dB");
+    CHECK(louder > 0.4);
+    CHECK(louder < 3.0);
 }
 
 TEST_CASE("le rotatif : son taux est borné par son rotor, son rendement suit sa chambre, et il peut cliqueter") {

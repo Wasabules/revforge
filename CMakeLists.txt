@@ -121,6 +121,6 @@ else()
   # La combustion : des carburateurs à 12:1 qui cliquettent sans capteur, l'E85 sur un turbo, un diesel moins comprimé au démarrage, un rotor plus creusé.
   golden(knock_carb cd653d6e --preset carb_twin_cam --compression 12 --scenario turbo --seconds 16)
   golden(compression_e85_turbo 8c6eee0c --preset hot_hatch_turbo --compression 10.5 --grade e85 --scenario launch --seconds 6)
-  golden(compression_diesel_start fecb0c11 --preset diesel_four --compression 15 --scenario start)
+  golden(compression_diesel_start a48c481b --preset diesel_four --compression 15 --scenario start)
   golden(compression_rotary f21ca74c --preset twin_rotor_13 --compression 11 --scenario lap --seconds 10)
 endif()
