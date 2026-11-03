@@ -17,6 +17,7 @@ import type { EngineConfig, Exhaust, Layout } from './config';
 import { EXHAUST_LINES, TURBO_SCALE } from './exhaustLines';
 import { WALL_RISE_K } from './heat';
 import { sohcSectionShare } from './valves';
+import { camShift } from './cam';
 import { CYCLE_PER_SHAFT, EXHAUST_PORT_SHARE, firingsPerCycle, INTAKE_PORT_SHARE, isRotary, rotaryCompression, rotaryShape, SHAFT_EVC, SHAFT_EVO, SHAFT_INTAKE_SWEEP, SHAFT_IVC, SHAFT_IVO, SHAFT_PORT_SWEEP, sweptCc, WALL_RATIO } from './rotary';
 
 export const GAMMA = 1.36;
@@ -583,10 +584,12 @@ export class GasNetwork {
     }
     this.cycleScale = 1;
     this.advanceScale = 1;
-    this.evo = EVO;
-    this.evc = EVC;
-    this.ivo = IVO;
-    this.ivc = IVC;
+    // La came : ce qu'elle change au calage d'origine, lu à 1 mm (cam.ts). Rien sur la came d'origine.
+    const cam = camShift(config);
+    this.evo = EVO + cam.evo;
+    this.evc = EVC + cam.evc;
+    this.ivo = IVO + cam.ivo;
+    this.ivc = IVC + cam.ivc;
     this.sweepEx = 0;
     this.sweepIn = 0;
     this.wallGain = 14;

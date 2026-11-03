@@ -8,7 +8,6 @@ import { mix, type Theme } from './canvas';
 import { collectorPosition, DEG, type Cylinder, type EngineLayout, type EnginePose, lobeNoseDeg, lobeRadius, plenumPosition, stackOf, rockerOutline, hasOpenStacks } from './engineLayout';
 import { chargerUnit, lobedOutline, type ChargerUnit } from './superchargerLayout';
 import { turboChain, type TurboChain, type TurboUnit } from './turboChain';
-import { EVC, EVO, IVC, IVO } from './fluidGas';
 import { heatColors } from './heat';
 import type { GasPainter } from './fluidRender';
 
@@ -199,8 +198,8 @@ export class Engine2D {
     for (const cylinder of layout.cylinders) {
       for (const exhaust of [false, true]) {
         const side = exhaust ? -cylinder.intakeSide : cylinder.intakeSide;
-        const open = exhaust ? EVO : IVO;
-        const close = exhaust ? EVC : IVC;
+        const open = exhaust ? layout.timing.evo : layout.timing.ivo;
+        const close = exhaust ? layout.timing.evc : layout.timing.ivc;
         const nose = lobeNoseDeg(cylinder, valve.followerDeg, side, open, close);
         const points: P2[] = [];
         for (let k = 0; k < 44; k++) {
@@ -1848,8 +1847,8 @@ export class Engine2D {
       const side = exhaust ? -cylinder.intakeSide : cylinder.intakeSide;
       const dz = valve.sohc ? side * valve.zOffset : slot.zSign * valve.zOffset;
       const radius = exhaust ? valve.radiusEx : valve.radiusIn;
-      const open = exhaust ? EVO : IVO;
-      const close = exhaust ? EVC : IVC;
+      const open = exhaust ? layout.timing.evo : layout.timing.ivo;
+      const close = exhaust ? layout.timing.evc : layout.timing.ivc;
       const share = exhaust ? pose.liftEx[i] : pose.liftIn[i];
       const lift = share * valve.lift;
       const stemTop = deck + valve.seatRise + Math.cos(valve.tiltDeg * DEG) * valve.stem;

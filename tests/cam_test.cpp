@@ -465,9 +465,14 @@ TEST_CASE("came : figures de la documentation (affichage)" * doctest::skip()) {
     };
     show("origine", p);
     show("route rapide 265/11/110", withProfile(p, 265, 11.0f, 110));
-    show("course 290/12,5/106", withProfile(p, 290, 12.5f, 106));
+    show("course 280/12/106", withProfile(p, 280, 12.0f, 106));
+    show("origine, rupteur 8000", [&] {
+        Powertrain q = p;
+        q.engine.redlineRpm = 8000;
+        return q;
+    }());
     show("course, rupteur 8000", [&] {
-        Powertrain q = withProfile(p, 290, 12.5f, 106);
+        Powertrain q = withProfile(p, 280, 12.0f, 106);
         q.engine.redlineRpm = 8000;
         return q;
     }());

@@ -113,10 +113,13 @@ export interface Telemetry {
   energyKwhPer100km: number;
   energyAvgKwhPer100km: number;
   energyTripKwh: number;
+  /** La distribution variable : le second profil est en prise (0 ou 1), et l'avance du déphaseur d'admission (degrés de vilebrequin). */
+  camHigh: number;
+  camPhaser: number;
 }
 
 export const IDLE_TELEMETRY: Telemetry = {
-  rpm: 0, speed: 0, gear: 0, throttle: 0, load: 0, boost: 0, turbine: 0, turboRelease: 0, turboRpm: 0, turboCharge: 0, turboPlenum: 0, turboOutlet: 0, turboInlet: 0, turboExhaust: 0, turboWastegate: 0, turboBlowoff: 0, turboFlow: 0, turboOutC: 20, turboCoolC: 20, intakeAirC: 20, turboGasC: 20, antiLag: 0, antiLagHeatKw: 0, antiLagAirFlow: 0, antiLagLostNm: 0, chargerRpm: 0, chargerKw: 0, chargerSpill: 0, torque: 0, power: 0, clutch: 0, clutchInputRpm: 0, clutchSlipKw: 0, clutchTorque: 0, wheelRpm: 0, slip: 0, pops: 0, cut: 0, shifting: 0, cranking: 0, stalled: 0, lugging: 0, legKind: 0, legTarget: 0, gradePct: 0, underpowered: 0, levelDbA: 0, listenerX: 0, listenerY: 0, listenerZ: 0, peak: 0, outputRpm: 0, meshed: 0, shiftStep: 0, grinding: 0, overload: 0, boxWear: 0, boxBroken: 0, boxPending: 0, boxConeSlip: 0, boxRattle: 0, boxLoose0: 0, boxLoose1: 0, boxLoose2: 0, boxLoose3: 0, fuelLph: 0, fuelLper100km: 0, fuelTripL: 0, fuelAvgLper100km: 0, tripKm: 0, co2GPerKm: 0, oilGph: 0, oilTripMl: 0, oilMlPer1000km: 0, energyKwhPer100km: 0, energyAvgKwhPer100km: 0, energyTripKwh: 0,
+  rpm: 0, speed: 0, gear: 0, throttle: 0, load: 0, boost: 0, turbine: 0, turboRelease: 0, turboRpm: 0, turboCharge: 0, turboPlenum: 0, turboOutlet: 0, turboInlet: 0, turboExhaust: 0, turboWastegate: 0, turboBlowoff: 0, turboFlow: 0, turboOutC: 20, turboCoolC: 20, intakeAirC: 20, turboGasC: 20, antiLag: 0, antiLagHeatKw: 0, antiLagAirFlow: 0, antiLagLostNm: 0, chargerRpm: 0, chargerKw: 0, chargerSpill: 0, torque: 0, power: 0, clutch: 0, clutchInputRpm: 0, clutchSlipKw: 0, clutchTorque: 0, wheelRpm: 0, slip: 0, pops: 0, cut: 0, shifting: 0, cranking: 0, stalled: 0, lugging: 0, legKind: 0, legTarget: 0, gradePct: 0, underpowered: 0, levelDbA: 0, listenerX: 0, listenerY: 0, listenerZ: 0, peak: 0, outputRpm: 0, meshed: 0, shiftStep: 0, grinding: 0, overload: 0, boxWear: 0, boxBroken: 0, boxPending: 0, boxConeSlip: 0, boxRattle: 0, boxLoose0: 0, boxLoose1: 0, boxLoose2: 0, boxLoose3: 0, fuelLph: 0, fuelLper100km: 0, fuelTripL: 0, fuelAvgLper100km: 0, tripKm: 0, co2GPerKm: 0, oilGph: 0, oilTripMl: 0, oilMlPer1000km: 0, energyKwhPer100km: 0, energyAvgKwhPer100km: 0, energyTripKwh: 0, camHigh: 0, camPhaser: 0,
 };
 
 export interface CurvePoint {
@@ -199,7 +202,28 @@ export interface Spec {
   carb: { throats: number; throatMm: number; dropKpa: number };
   curve: CurvePoint[];
   box: BoxSpec;
+  /** La came, telle que le C++ la calcule (voir `rf_cam_spec`) : calage à 1 mm du profil de base et du second, croisement, fermeture de l'admission après le point mort bas, compression effective, régime de bascule, et le ralenti qu'elle donne. */
+  cam: CamSpec;
 }
+
+export interface CamSpec {
+  ivo: number;
+  ivc: number;
+  evo: number;
+  evc: number;
+  liftMm: number;
+  overlap: number;
+  ivcAbdc: number;
+  effectiveRatio: number;
+  switchRpm: number;
+  idleKpa: number;
+  idleResidual: number;
+  idleCov: number;
+  seatDeg: number;
+  high: { ivo: number; ivc: number; evo: number; evc: number };
+}
+
+export const EMPTY_CAM: CamSpec = { ivo: 0, ivc: 0, evo: 0, evc: 0, liftMm: 0, overlap: 0, ivcAbdc: 0, effectiveRatio: 0, switchRpm: 0, idleKpa: 0, idleResidual: 0, idleCov: 0, seatDeg: 0, high: { ivo: 0, ivc: 0, evo: 0, evc: 0 } };
 
 /** La voiture vue de dessus, en mètres (voir `Telemetry.listenerX`), pour la placer sur le plan. */
 export interface CarPlan {
@@ -224,7 +248,7 @@ export interface SoundSheet {
   lineLoss: { hz: number; db: number }[];
 }
 
-export const EMPTY_SPEC: Spec = { idle: 0, redline: 7000, peakTorque: 0, peakTorqueRpm: 0, peakHp: 0, peakHpRpm: 0, gears: 0, ratios: [], turboWheelMm: 0, turboInertia: 0, intakeDropKpa: 0, intakeAirC: 20, chargerRatio: 0, chargerVolume: 0, chargerWheelMm: 0, zeroTo100: 0, topSpeed: 0, starter: { direct: false, kw: 0, ring: 0, pinion: 0, helix: 0 }, carb: { throats: 0, throatMm: 0, dropKpa: 0 }, curve: [], box: EMPTY_BOX };
+export const EMPTY_SPEC: Spec = { idle: 0, redline: 7000, peakTorque: 0, peakTorqueRpm: 0, peakHp: 0, peakHpRpm: 0, gears: 0, ratios: [], turboWheelMm: 0, turboInertia: 0, intakeDropKpa: 0, intakeAirC: 20, chargerRatio: 0, chargerVolume: 0, chargerWheelMm: 0, zeroTo100: 0, topSpeed: 0, starter: { direct: false, kw: 0, ring: 0, pinion: 0, helix: 0 }, carb: { throats: 0, throatMm: 0, dropKpa: 0 }, curve: [], box: EMPTY_BOX, cam: EMPTY_CAM };
 
 interface RfExports {
   memory: WebAssembly.Memory;
@@ -289,6 +313,9 @@ interface RfExports {
   rf_carb_throats(): number;
   rf_carb_throat_mm(): number;
   rf_carb_drop_kpa(): number;
+  rf_cam_spec(which: number): number;
+  rf_cam_high(): number;
+  rf_cam_phaser(): number;
   rf_starter_ring(): number;
   rf_starter_pinion(): number;
   rf_starter_helix(): number;
@@ -596,6 +623,11 @@ export class Engine {
       topSpeed: rf.rf_top_speed(),
       starter: { direct: rf.rf_starter_direct() === 1, kw: rf.rf_starter_kw(), ring: rf.rf_starter_ring(), pinion: rf.rf_starter_pinion(), helix: rf.rf_starter_helix() },
       carb: { throats: rf.rf_carb_throats(), throatMm: rf.rf_carb_throat_mm(), dropKpa: rf.rf_carb_drop_kpa() },
+      cam: {
+        ivo: rf.rf_cam_spec(0), ivc: rf.rf_cam_spec(1), evo: rf.rf_cam_spec(2), evc: rf.rf_cam_spec(3), liftMm: rf.rf_cam_spec(4), overlap: rf.rf_cam_spec(5),
+        ivcAbdc: rf.rf_cam_spec(6), effectiveRatio: rf.rf_cam_spec(7), switchRpm: rf.rf_cam_spec(8), idleKpa: rf.rf_cam_spec(9), idleResidual: rf.rf_cam_spec(10),
+        idleCov: rf.rf_cam_spec(11), seatDeg: rf.rf_cam_spec(12), high: { ivo: rf.rf_cam_spec(13), ivc: rf.rf_cam_spec(14), evo: rf.rf_cam_spec(15), evc: rf.rf_cam_spec(16) },
+      },
       curve,
       box: this.boxSpec(rf, gears, redline),
     };

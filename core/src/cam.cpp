@@ -28,8 +28,10 @@ constexpr double kLiftPerBore = 0.12;
 constexpr double kThroatPerHead = 0.636;
 constexpr double kDischarge = 0.7;
 constexpr double kRodToCrank = 3.2;
-// Une came ne peut pas rester ouverte plus d'un tour : au-delà, elle couvrirait le point mort haut d'allumage.
-constexpr double kHalfSpanMaxDeg = 175.0;
+// Le bossage, siège à siège, ne doit pas atteindre le point mort haut d'allumage : l'admission ferme avant 360 + axe + 210 < 720
+// (axe de 140° au plus, déphaseur compris), l'échappement ouvre après 360 − axe − 210 > 0. Sous 0,25 mm de jeu, la soupape ne
+// décolle pas : ce qu'elle tient vraiment reste plus court.
+constexpr double kHalfSpanMaxDeg = 210.0;
 
 // ── Le cycle : la combustion au point mort haut, d'un coup. Le rendement ne compte pas : on compare deux cames. ──
 // 2,9 MJ par kg d'air à la stœchiométrie, dont 75 % restent au gaz (supposé) : 5 bar à l'ouverture, pleine charge, comme
@@ -67,7 +69,7 @@ constexpr double kLastShare = 1.25;
 constexpr int kPhases = 3;
 constexpr double kPhaseStepDeg = kCamPhaserAuthorityDeg;
 // Au-dessous de ce régime, le pas du calcul passe au demi-degré : le cycle dure plus longtemps, les écoulements aussi.
-constexpr double kFineBelowRpm = 3000.0;
+constexpr double kFineBelowRpm = 2000.0;
 
 // ── Le ralenti ──
 // Au ralenti, l'avance est retardée pour garder une réserve de couple : la chaleur utile y est plus faible. Cette part est
@@ -207,12 +209,18 @@ double exchange(double area, double p1, double t1, double v1, double p2, double 
     return -std::fmin(dm, (p2 - p1) / (kGamma * kGasR * t2) * share);
 }
 
+/** L'état à la fin d'un cycle : le point de départ du régime suivant, déjà presque établi. */
+struct Warm {
+    bool valid = false;
+    double m = 0.0, t = 0.0, y = 0.0, mr = 0.0, tr = 0.0, ur = 0.0, slug = 0.0, te = 0.0, me = 0.0, ue = 0.0;
+};
+
 /**
  * Un cylindre à zéro dimension, son conduit d'admission (un volume et sa colonne d'air, qui a de l'inertie) et son tube
- * primaire (de même), sur trois cycles depuis un état grossier. Ce qui reflue dans le conduit y reste en bouchon contre la
- * soupape, et revient le premier.
+ * primaire (de même), sur trois cycles depuis un état grossier, ou deux depuis celui du régime voisin (`warm`). Ce qui reflue
+ * dans le conduit y reste en bouchon contre la soupape, et revient le premier.
  */
-Cycle runCycle(const Geometry& g, const CamProfile& cam, double rpm, double plenumPa, double backPa, double heatShare) {
+Cycle runCycle(const Geometry& g, const CamProfile& cam, double rpm, double plenumPa, double backPa, double heatShare, Warm* warm = nullptr) {
     const auto& stroke = strokeShareTable();
     const int half = rpm < kFineBelowRpm ? 1 : 2;
     const int steps = 1440 / half;
@@ -234,10 +242,24 @@ Cycle runCycle(const Geometry& g, const CamProfile& cam, double rpm, double plen
     double te = 900.0;
     double me = backPa * headerV / (kGasR * te);
     double ue = 0.0;
+    const bool started = warm != nullptr && warm->valid;
+    if (started) {
+        m = warm->m;
+        t = warm->t;
+        y = warm->y;
+        mr = warm->mr;
+        tr = warm->tr;
+        ur = warm->ur;
+        slug = warm->slug;
+        te = warm->te;
+        me = warm->me;
+        ue = warm->ue;
+    }
+    const int cycles = started ? kCycles - 1 : kCycles;
     Cycle out;
     double work = 0.0;
-    for (int k = 0; k < kCycles; ++k) {
-        const bool last = k == kCycles - 1;
+    for (int k = 0; k < cycles; ++k) {
+        const bool last = k == cycles - 1;
         for (int i = 0; i < steps; ++i) {
             const double deg = static_cast<double>(i) * stepDeg;
             if (i == 0) {
@@ -302,6 +324,7 @@ Cycle runCycle(const Geometry& g, const CamProfile& cam, double rpm, double plen
                   (peNext - backPa - 0.5 * rhoNext * kHeaderLoss * ue * std::fabs(ue) - kHeaderDamping * rhoNext * std::sqrt(kGamma * kGasR * te) * ue);
         }
     }
+    if (warm != nullptr) *warm = Warm{true, m, t, y, mr, tr, ur, slug, te, me, ue};
     out.fill = m * (1.0 - y) / (kAmbientPa / (kGasR * kAmbientK) * g.vd);
     out.residual = y;
     out.imepBar = work / g.vd / 1e5;
@@ -353,12 +376,14 @@ struct Tables {
 double rpmAt(const Tables& t, int i) { return t.firstRpm + t.stepRpm * static_cast<double>(i); }
 
 void fillCurve(const Geometry& g, const Tables& t, const CamProfile& cam, bool phased, Curve& c) {
+    // Chaque calage part de l'état que lui a laissé le régime précédent.
+    std::array<Warm, kPhases> warm{};
     for (int i = 0; i < kCamPoints; ++i) {
         const double rpm = rpmAt(t, i);
         const double back = backPressurePa(g, rpm);
         const std::size_t at = static_cast<std::size_t>(i);
         if (!phased) {
-            const Cycle cycle = runCycle(g, cam, rpm, kAmbientPa, back, 1.0);
+            const Cycle cycle = runCycle(g, cam, rpm, kAmbientPa, back, 1.0, &warm[0]);
             c.imep[at] = cycle.imepBar;
             c.fill[at] = cycle.fill;
             c.open[at] = cycle.openPa;
@@ -368,7 +393,7 @@ void fillCurve(const Geometry& g, const Tables& t, const CamProfile& cam, bool p
         std::array<Cycle, kPhases> tried{};
         int best = 0;
         for (int k = 0; k < kPhases; ++k) {
-            tried[static_cast<std::size_t>(k)] = runCycle(g, advancedIntake(cam, kPhaseStepDeg * static_cast<double>(k - kPhases / 2)), rpm, kAmbientPa, back, 1.0);
+            tried[static_cast<std::size_t>(k)] = runCycle(g, advancedIntake(cam, kPhaseStepDeg * static_cast<double>(k - kPhases / 2)), rpm, kAmbientPa, back, 1.0, &warm[static_cast<std::size_t>(k)]);
             if (tried[static_cast<std::size_t>(k)].imepBar > tried[static_cast<std::size_t>(best)].imepBar) best = k;
         }
         const int middle = best == 0 ? 1 : (best == kPhases - 1 ? kPhases - 2 : best);

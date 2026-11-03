@@ -6,6 +6,7 @@
  * une demi-seconde.
  * Rien n'alloue d'une image à l'autre, sauf quand le moteur change.
  */
+import { camKey } from './cam';
 import type { EngineConfig } from './config';
 import { CELL_INLET, CELL_OPEN, CELL_WALL, FluidField } from './fluidField';
 import { GasNetwork, type GasInputs, type PlacedSection, T_AMB } from './fluidGas';
@@ -129,7 +130,7 @@ class Lfsr {
 
 /** Ce qui impose de reconstruire le réseau : les réglages qui changent ses pièces. */
 export const gasKey = (config: EngineConfig): string =>
-  `${config.cylinders}|${config.layout}|${config.displacementCc}|${config.boreMm}|${config.exhaust}|${config.aspiration}|${config.fuel}|${config.body}|${config.boostBar}|${config.turboRelease}|${config.turboSize}|${config.redlineRpm}|${config.turboPipeMm}|${config.camshaft}|${config.fuelSystem}|${config.airFilter}|${config.placement}|${config.superchargerKind}|${config.antiLag}`;
+  `${config.cylinders}|${config.layout}|${config.displacementCc}|${config.boreMm}|${config.exhaust}|${config.aspiration}|${config.fuel}|${config.body}|${config.boostBar}|${config.turboRelease}|${config.turboSize}|${config.redlineRpm}|${config.turboPipeMm}|${config.camshaft}|${config.fuelSystem}|${config.airFilter}|${config.placement}|${config.superchargerKind}|${config.antiLag}|${camKey(config)}`;
 
 export class GasFlow {
   readonly net = new GasNetwork();

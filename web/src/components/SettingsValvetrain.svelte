@@ -3,18 +3,23 @@
   import SettingsSection from './SettingsSection.svelte';
   import TunedSlider from './TunedSlider.svelte';
   import { CAMSHAFTS, LIMITS, VALVE_SPRINGS, VALVE_TIMINGS, isRotary, type EngineConfig } from '../lib/config';
-  import { fixed, t } from '../lib/i18n.svelte';
+  import type { Spec } from '../lib/engine';
+  import { fixed, t, whole } from '../lib/i18n.svelte';
 
   /** Distribution : l'arbre à cames et ses soupapes. Un rotatif et un deux-temps n'en ont pas : la section ne s'affiche pas. */
   interface Props {
     config: EngineConfig;
     shown: EngineConfig;
+    /** La fiche du C++ : le calage et ce que la came calcule (`rf_cam_spec`). */
+    spec?: Spec;
     onapply: (next: Partial<EngineConfig>) => void;
     onlive: (next: Partial<EngineConfig>) => void;
   }
-  let { config, shown, onapply, onlive }: Props = $props();
+  let { config, shown, spec, onapply, onlive }: Props = $props();
 
   const valves = $derived(!isRotary(config) && config.cycle !== 'two_stroke');
+  const cam = $derived(spec?.cam);
+  const twoStep = $derived(config.valveTiming === 'two_step' || config.valveTiming === 'phased_two_step');
 </script>
 
 {#if valves}
@@ -37,6 +42,16 @@
       <Choices label={t('builder.valveTiming')} options={VALVE_TIMINGS} value={config.valveTiming} onchange={(valveTiming) => onapply({ valveTiming })} />
       <p class="help">{VALVE_TIMINGS.find((item) => item.value === config.valveTiming)?.help}</p>
     </div>
+    {#if cam && cam.ivc > 0}
+      <!-- Ce que la came calcule : rien de saisi. -->
+      <div class="figures" data-testid="cam-spec">
+        <p class="help" data-testid="cam-timing">{t('builder.cam.timing', { ivo: whole(360 - cam.ivo), ivc: whole(cam.ivc - 540), evo: whole(180 - cam.evo), evc: whole(cam.evc - 360) })}</p>
+        <p class="help" data-testid="cam-figures">{t('builder.cam.figures', { overlap: whole(cam.overlap), ratio: fixed(cam.effectiveRatio, 1), kpa: whole(cam.idleKpa), residual: whole(cam.idleResidual * 100), cov: whole(cam.idleCov * 100) })}</p>
+        {#if twoStep}
+          <p class="help" data-testid="cam-switch">{cam.switchRpm > 0 ? t('builder.cam.switch', { rpm: whole(Math.round(cam.switchRpm / 50) * 50) }) : t('builder.cam.noSwitch')}</p>
+        {/if}
+      </div>
+    {/if}
     <div data-testid="valve-springs">
       <Choices label={t('builder.valveSprings')} options={VALVE_SPRINGS} value={config.valveSprings} onchange={(valveSprings) => onapply({ valveSprings })} />
       <p class="help">{VALVE_SPRINGS.find((item) => item.value === config.valveSprings)?.help}</p>
@@ -46,4 +61,5 @@
 
 <style>
   .help { margin: 0; color: var(--text-dim); font-size: var(--type-small); }
+  .figures { display: grid; gap: 4px; font-variant-numeric: tabular-nums; }
 </style>

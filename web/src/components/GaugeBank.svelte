@@ -25,12 +25,16 @@
   let turbineNode = $state<HTMLElement>();
   let tailpipeNode = $state<HTMLElement>();
   let intakeNode = $state<HTMLElement>();
+  let camNode = $state<HTMLElement>();
 
   const turbo = $derived(config.aspiration === 'turbo' && !config.electric);
   // L'air d'admission n'a d'intérêt que s'il n'est plus celui du dehors : un filtre sous le capot.
   const hotAir = $derived(!config.electric && (config.airFilter === 'cone' || config.airFilter === 'stacks'));
   const charged = $derived(config.aspiration === 'supercharger' && !config.electric);
   const boosted = $derived(turbo || charged);
+  // Une distribution variable : le profil en prise et le calage du déphaseur, tels que le modèle les donne.
+  const twoStep = $derived(!config.electric && config.layout !== 'rotary' && config.cycle !== 'two_stroke' && (config.valveTiming === 'two_step' || config.valveTiming === 'phased_two_step'));
+  const phased = $derived(!config.electric && config.layout !== 'rotary' && config.cycle !== 'two_stroke' && (config.valveTiming === 'phased' || config.valveTiming === 'phased_two_step'));
   /** Une échelle qui finit sur une graduation : tout ce que la simulation peut atteindre y tient. */
   const roundedUp = (value: number, step: number) => Math.ceil(value / step - 1e-9) * step;
 
@@ -60,6 +64,7 @@
     let lastTailLang = lang();
     let lastIntake = NaN;
     let lastIntakeLang = lang();
+    let lastCam = '';
     const stops = [
       clock.add((text) => {
         if (!text) return;
@@ -88,6 +93,17 @@
         lastIntakeLang = lang();
         intakeNode.textContent = t('gauge.intakeAir', { c: whole(c) });
       }),
+      clock.add((text) => {
+        if (!text) return;
+        if (!camNode) return;
+        const now = running() ? telemetry() : null;
+        const profile = twoStep ? t(now && now.camHigh > 0 ? 'gauge.cam.high' : 'gauge.cam.low') : '';
+        const phaser = phased ? t('gauge.cam.phaser', { deg: `${now && now.camPhaser >= 0.5 ? '+' : ''}${whole(now ? now.camPhaser : 0)}` }) : '';
+        const shown = profile && phaser ? t('gauge.cam.join', { a: profile, b: phaser }) : profile || phaser;
+        if (shown === lastCam) return;
+        lastCam = shown;
+        camNode.textContent = shown;
+      }),
     ];
     return () => {
       stop();
@@ -109,6 +125,7 @@
       digits={2} signed tickDigits={1} {clock} read={() => readings.manifoldBar}>
       {#if boosted}<span data-testid="gauge-turbine" bind:this={turbineNode}></span>{:else}{t('gauge.manifold.natural')}{/if}
       {#if hotAir}<span data-testid="gauge-intake-air" bind:this={intakeNode}></span>{/if}
+      {#if twoStep || phased}<span class="line" data-testid="gauge-cam" bind:this={camNode}></span>{/if}
     </Gauge>
     <Gauge id="collector" label={t('gauge.collector')} note={t('gauge.collector.note')} unit="°C" min={0} max={1000} step={200} minor={100} warm {clock} read={() => readings.collectorC}>
       <span data-testid="gauge-tailpipe" bind:this={tailpipeNode}></span>
@@ -121,4 +138,6 @@
 
 <style>
   .bank { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; }
+  /* La distribution variable : sa propre ligne sous la jauge. */
+  .line { display: block; }
 </style>

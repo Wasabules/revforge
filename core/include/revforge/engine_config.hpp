@@ -160,7 +160,7 @@ struct CarAcoustics {
 };
 
 /** Les régimes où la came est calculée, du bas jusqu'à 1,25 fois le régime maximal (voir cam.hpp). */
-inline constexpr int kCamPoints = 20;
+inline constexpr int kCamPoints = 14;
 
 /** Le moteur vu par EngineSound : sa géométrie, d'où découle le son. */
 struct EngineProfile {

@@ -148,6 +148,8 @@ class RevforgeProcessor extends AudioWorkletProcessor {
         energyKwhPer100km: rf.rf_energy_kwh_per_100km(),
         energyAvgKwhPer100km: rf.rf_energy_avg_kwh_per_100km(),
         energyTripKwh: rf.rf_energy_trip_kwh(),
+        camHigh: rf.rf_cam_high(),
+        camPhaser: rf.rf_cam_phaser(),
         peak: this.peak,
       });
       this.peak = 0;

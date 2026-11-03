@@ -595,4 +595,32 @@ for (const [name, system] of [['single', 1], ['multi', 2]]) {
   rf.rf_set_mode(3);
   check('socle moteur, électrique', render(rf, 20, 128), native('--preset', 'electric', '--ambient', '40', '--altitude', '1500', '--traction', 'full', '--scenario', 'lap', '--seconds', '20'));
 }
+// La came : un profil pointu (remplissage calculé, ralenti qui galope, à son propre tirage), puis deux profils et un
+// déphaseur pied au plancher, avec la bascule et son verrou. Au son comme à la consommation.
+const camArgs = ['--cylinders', '4', '--cc', '2000', '--bore', '86', '--redline', '7200', '--exhaust', 'sport', '--body', 'compact', '--mass', '1200', '--rim', '16'];
+const camLoad = (changes) => {
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1200, 16, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  tune(rf, changes);
+  rf.rf_set_config(4, LAYOUT.inline, 2000, 86, 7200, EXHAUST.sport, 0, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+  return rf;
+};
+{
+  const race = { camDurationDeg: 300, camLiftMm: 13, lobeSeparationDeg: 104 };
+  const raceOptions = ['--cam-duration', '300', '--cam-lift', '13', '--lsa', '104'];
+  const rf = camLoad(race);
+  rf.rf_set_mode(3);
+  check('came pointue, tour', render(rf, 20, 128), native(...camArgs, ...raceOptions, '--scenario', 'lap', '--seconds', '20'));
+  const figures = camLoad(race);
+  figures.rf_set_mode(3);
+  driveLikeNative(figures, 20);
+  checkFigures('came pointue, consommation', figures, nativeFigures(...camArgs, ...raceOptions, '--scenario', 'lap', '--seconds', '20'));
+}
+{
+  const rf = camLoad({ valveTiming: VVT.phased_two_step });
+  rf.rf_set_mode(FRESH);
+  rf.rf_set_mode(2);
+  const hash = render(rf, 12, 128, (step) => rf.rf_set_controls(step * TICK_S >= 1 ? 1 : 0, 0, 0));
+  check('came, deux profils et déphaseur, plein gaz', hash, native(...camArgs, '--vvt', 'phased_two_step', '--scenario', 'launch', '--seconds', '12'));
+}
 process.exit(failed ? 1 : 0);
