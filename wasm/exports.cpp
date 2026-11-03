@@ -325,7 +325,7 @@ float rf_supercharger_wheel_mm() { const SuperchargerSpec spec = chargerNow(); r
  * volet du compresseur, l'ouverture des aubes (0 fermées, 1 grandes ouvertes). Tout à zéro sur un turbo simple.
  */
 static bool twinNow() { return g_model->twinTurbo(); }
-int rf_turbo_units() { return twinNow() ? g_model->twin().spec().units : (g_model->turbo().spec().referenceOmega > 0.0 ? 1 : 0); }
+int rf_turbo_units() { return twinNow() ? g_model->twin().spec().units : (!g_powertrain.electric && g_powertrain.engine.aspiration == Aspiration::Turbo ? 1 : 0); }
 float rf_turbo2_rpm() { return twinNow() ? static_cast<float>(g_model->turboStateB().shaftOmega * 60.0 / (2.0 * 3.141592653589793)) : 0.0f; }
 float rf_turbo2_exhaust() { return twinNow() && g_model->twin().spec().units == 2 ? gaugeBar(g_model->turboStateB().turbineInPa) : 0.0f; }
 float rf_turbo2_wastegate() { return twinNow() ? static_cast<float>(g_model->turboStateB().wastegate) : 0.0f; }
