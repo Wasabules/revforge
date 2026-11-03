@@ -4,6 +4,7 @@
 
 #include "portable_math.hpp"
 #include "revforge/air_filter.hpp"
+#include "supercharger_laws.hpp"
 
 namespace revforge {
 
@@ -403,5 +404,17 @@ void Supercharger::step(double dt, const SuperchargerInput& input) {
     s.compressorOutK = outK;
     s.coolerOutK += (coolerOutlet(outK, engine, spec.ratedFlow) - s.coolerOutK) * dt / kCoolerMassS;
 }
+
+// ── Les mêmes lois, pour le twincharger (twin_turbo.cpp) : un renvoi, rien de recopié ──
+namespace supercharger_laws {
+
+double compressorFlow(const SuperchargerSpec& spec, double omega, double inletPa, double inletK, double outletPa) { return compressorFlowAt(spec, omega, inletPa, inletK, outletPa); }
+double shaftPower(const SuperchargerSpec& spec, double omega, double inletPa, double inletK, double outletPa, double flow, double* outK) {
+    return revforge::shaftPower(spec, omega, inletPa, inletK, outletPa, flow, outK);
+}
+double orificeSpeed(double across, double rho) { return revforge::orificeSpeed(across, rho); }
+double discharge() { return kDischarge; }
+
+}  // namespace supercharger_laws
 
 }  // namespace revforge

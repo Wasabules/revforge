@@ -138,15 +138,20 @@ struct Output {
 std::FILE* g_trace = nullptr;
 
 void traceHeader() {
-    std::fputs("t,rpm,throttle,gear,boost,shaft_rpm,t3_c,turbine_kw,compressor_kw,air_g_s,heat_kw,fuel_g_s,torque_nm,lost_nm,antilag,kmh,flow_kg_s,blowoff,wastegate,charge_bar,exhaust_bar,trip_l,pops\n", g_trace);
+    std::fputs("t,rpm,throttle,gear,boost,shaft_rpm,t3_c,turbine_kw,compressor_kw,air_g_s,heat_kw,fuel_g_s,torque_nm,lost_nm,antilag,kmh,flow_kg_s,blowoff,wastegate,charge_bar,exhaust_bar,trip_l,pops,shaft2_rpm,exhaust2_bar,stage,vane,vane2,clutch,charger_nm,interstage_bar,flap\n", g_trace);
 }
 
 void traceLine(const DrivingModel& model, const EngineSound& sound, double t) {
-    const TurboState& s = model.turbo().state();
+    const TurboState& s = model.turboState();
     const AntiLagState& a = model.turbo().antiLag();
-    std::fprintf(g_trace, "%.4f,%.1f,%.3f,%d,%.4f,%.0f,%.1f,%.3f,%.3f,%.3f,%.3f,%.4f,%.2f,%.2f,%d,%.2f,%.4f,%.3f,%.3f,%.4f,%.4f,%.6f,%u\n", t, model.rpm(), model.throttle(), model.gear(), model.boost(),
+    std::fprintf(g_trace, "%.4f,%.1f,%.3f,%d,%.4f,%.0f,%.1f,%.3f,%.3f,%.3f,%.3f,%.4f,%.2f,%.2f,%d,%.2f,%.4f,%.3f,%.3f,%.4f,%.4f,%.6f,%u", t, model.rpm(), model.throttle(), model.gear(), model.boost(),
                  s.shaftOmega * 60.0 / (2.0 * 3.141592653589793), s.turbineInK - 273.15, s.turbinePowerW / 1000.0, s.compressorPowerW / 1000.0, a.airFlow * 1000.0, a.collectorHeatW / 1000.0,
                  model.consumption().fuelGps(), model.torqueNm(), model.antiLagLostNm(), model.antiLagActive() ? 1 : 0, model.speedKmh(), s.compressorFlow, s.blowOff, s.wastegate, s.chargePa / 1e5 - 1.01325, s.turbineInPa / 1e5 - 1.01325, model.consumption().fuelTripL(), static_cast<unsigned>(sound.pops()));
+    // Deux turbos, twincharger, aubes : le second arbre, l'étape du séquentiel, les aubes, l'embrayage du compresseur.
+    const TwinTurboState& w = model.twin().state();
+    const bool twin = model.twinTurbo();
+    std::fprintf(g_trace, ",%.0f,%.4f,%d,%.3f,%.3f,%d,%.2f,%.4f,%.3f\n", twin ? w.unit[1].shaftOmega * 60.0 / (2.0 * 3.141592653589793) : 0.0, twin ? w.unit[1].turbineInPa / 1e5 - 1.01325 : 0.0,
+                 twin ? w.stage : 0, twin ? w.vane[0] : 1.0, twin ? w.vane[1] : 1.0, twin && w.clutch ? 1 : 0, twin ? w.chargerNm : 0.0, twin ? w.interstagePa / 1e5 - 1.01325 : 0.0, twin ? w.flap : 1.0);
 }
 
 /** Le modèle de conduite pilote le son : chaque tranche est une pédale, ou le pilote automatique. */
@@ -162,6 +167,7 @@ void play(EngineSound& sound, DrivingModel& model, Output& out, int rate, Drive 
         sound.setTargetRpm(static_cast<float>(model.rpm()));
         sound.setDrive(static_cast<float>(model.load()), static_cast<float>(model.boost()), model.cut(), model.cranking(), static_cast<float>(model.throttle()));
         sound.setTurbo(model.turboDrive());
+        if (model.twinTurbo() && model.twin().spec().units == 2) sound.setTurboB(model.turboDriveB());
         sound.setSupercharger(model.superchargerDrive());
         sound.setStarter(model.starterPowered(), model.starterMeshed(), static_cast<float>(model.starterLoad()));
         sound.setRoad(static_cast<float>(model.speedKmh() / 3.6), static_cast<float>(model.wheelSlip()));

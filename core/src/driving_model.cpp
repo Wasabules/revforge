@@ -120,8 +120,11 @@ void DrivingModel::setPowertrain(const Powertrain& powertrain) {
     starter_ = powertrain.profile().starter;
     turboEngine_ = !powertrain.electric && powertrain.engine.aspiration == Aspiration::Turbo;
     if (turboEngine_) turbo_.setSpec(turboSpecOf(powertrain));
-    // Un diesel n'a ni papillon à entrouvrir, ni étincelle à retarder : voir docs/modele.md.
-    antiLagEngine_ = turboEngine_ && powertrain.engine.fuel == Fuel::Petrol && powertrain.engine.antiLag != AntiLag::Off;
+    // Deux turbos, un twincharger ou des aubes : un autre modèle tient les arbres (twin_turbo.cpp).
+    twinEngine_ = turboEngine_ && usesTwinTurbo(powertrain.engine);
+    if (twinEngine_) twin_.setSpec(twinTurboSpecOf(powertrain));
+    // Un diesel n'a ni papillon à entrouvrir, ni étincelle à retarder : voir docs/modele.md. L'anti-lag n'est modélisé que sur un turbo simple.
+    antiLagEngine_ = turboEngine_ && !twinEngine_ && powertrain.engine.fuel == Fuel::Petrol && powertrain.engine.antiLag != AntiLag::Off;
     antiLag_.kind = antiLagEngine_ ? powertrain.engine.antiLag : AntiLag::Off;
     antiLag_.active = false;
     antiLagLostNm_ = 0.0;
@@ -802,7 +805,21 @@ double DrivingModel::compressionLoadNm() const {
     return load;
 }
 
+void DrivingModel::stepTwin(double rpmNow, bool burning) {
+    TwinTurboInput input;
+    input.rpm = rpmNow;
+    input.fill = manifold_;
+    input.breathing = breathingOf(powertrain_, rpmNow);
+    input.burning = burning;
+    twin_.step(kStep, input);
+    boost_ = std::max(twin_.boost(), 0.0);
+}
+
 void DrivingModel::stepTurbo(double rpmNow, bool burning) {
+    if (twinEngine_) {
+        stepTwin(rpmNow, burning);
+        return;
+    }
     TurboInput input;
     input.rpm = rpmNow;
     input.fill = manifold_;
@@ -980,8 +997,9 @@ void DrivingModel::updateEngine(double throttle, bool off) {
     // Rupteur : le papillon reste ouvert, donc peu de pompage. Le moteur ne redescend que sur ses frottements.
     // Sur un turbo, s'y ajoute le gaz à pousser contre la turbine.
     // Sur un compresseur, ce que coûte son entraînement : la combustion le paie, et il s'ajoute au frein moteur.
-    const double charger = superchargerEngine_ ? supercharger_.driveNm(rpmNow) : 0.0;
-    const double pumping = pumpingTorqueNm(powertrain_, rpmNow, manifold_) + (turboEngine_ ? turbo_.backPressureNm(manifold_) : 0.0) + charger;
+    // Le compresseur d'un twincharger aussi, embrayé : glissement compris.
+    const double charger = superchargerEngine_ ? supercharger_.driveNm(rpmNow) : (twinEngine_ ? twin_.chargerDriveNm() : 0.0);
+    const double pumping = pumpingTorqueNm(powertrain_, rpmNow, manifold_) + (turboEngine_ ? (twinEngine_ ? twin_.backPressureNm(manifold_) : turbo_.backPressureNm(manifold_)) : 0.0) + charger;
     torque_ = produced - friction - pumping;
     // Pour la consommation : le couple au frein que demande cette charge d'air. Le calculateur qui retient le moteur
     // pendant un relais retarde l'allumage : il gaspille, il ne dépense pas moins. Le broutement s'annule en moyenne.

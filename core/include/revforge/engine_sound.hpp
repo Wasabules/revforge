@@ -59,6 +59,11 @@ public:
      * Sans cet appel, le son déduit tout cela de la pression de `setDrive`.
      */
     void setTurbo(const TurboDrive& drive);
+    /**
+     * Le second arbre d'un biturbo : son propre sifflement, à sa propre vitesse, et son propre tirage. Sans cet appel, il
+     * n'existe pas et ne coûte rien.
+     */
+    void setTurboB(const TurboDrive& drive);
     /** Le vrai compresseur, quand il y en a un : sa vitesse et l'écart de pression font son sifflement. */
     void setSupercharger(const SuperchargerDrive& drive);
     /** Le démarreur : alimenté ; pignon engagé dans la couronne. Le contact des dents fait le son. */

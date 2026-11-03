@@ -6,6 +6,7 @@
 #include "revforge/air_filter.hpp"
 #include "revforge/carburetor.hpp"
 #include "revforge/driving_model.hpp"
+#include "revforge/twin_turbo.hpp"
 #include "revforge/valvetrain.hpp"
 
 namespace revforge {
@@ -243,6 +244,8 @@ CarAcoustics carAcousticsOf(const CarConfig& car, const EngineProfile& profile) 
 
 EngineProfile Powertrain::profile() const {
     EngineProfile p = electric ? electricProfile() : engine.toProfile();
+    // Un twincharger a aussi un compresseur, avec ses poches : son son en dépend (twin_turbo.cpp).
+    if (!electric && usesTwinTurbo(engine) && engine.turboLayout == TurboLayout::Twincharger) twinchargerProfile(*this, p);
     p.exhaustScale = exhaustScaleOf(car);
     p.car = carAcousticsOf(car, p);
     return p;
@@ -311,6 +314,7 @@ double intakeDropPa(const Powertrain& p, double rpm) {
     if (p.electric) return 0.0;
     const EngineConfig& e = p.engine;
     if (e.aspiration == Aspiration::Turbo) {
+        if (usesTwinTurbo(e)) return twinIntakeDropPa(p, rpm);
         const TurboSpec spec = turboSpecOf(p);
         const double flow = turboSteady(spec, rpm, breathing(e, rpm)).flow;
         return spec.filterDrop * flow * flow;
@@ -346,6 +350,7 @@ double superchargerDriveNm(const Powertrain& p, double rpm, double fill) {
 double steadyBoost(const Powertrain& p, double rpm) {
     if (p.electric || p.engine.aspiration == Aspiration::Natural) return 0.0;
     if (p.engine.aspiration == Aspiration::Supercharger) return superchargerSteady(superchargerSpecOf(p), rpm, breathing(p.engine, rpm)).boost;
+    if (usesTwinTurbo(p.engine)) return twinSteadyBoost(p, rpm);
     return turboSteady(turboSpecOf(p), rpm, breathing(p.engine, rpm)).boost;
 }
 
@@ -381,6 +386,7 @@ double torqueCurveNm(const Powertrain& p, double rpm) {
         return fullLoadTorqueNm(p, rpm, steady.boost) - steady.driveNm;
     }
     // L'arbre stabilisé : la courbe de la fiche ne dit rien du retard. La contre-pression, elle, se paie toujours.
+    if (usesTwinTurbo(p.engine)) return twinTorqueCurveNm(p, rpm);
     const TurboSpec spec = turboSpecOf(p);
     const TurboSteady steady = turboSteady(spec, rpm, breathing(p.engine, rpm));
     return fullLoadTorqueNm(p, rpm, steady.boost) - turboBackPressureNm(spec, steady.chargePa, steady.turbineInPa, steady.flow, 1.0);

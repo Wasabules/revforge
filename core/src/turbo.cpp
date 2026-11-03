@@ -3,6 +3,7 @@
 #include <cmath>
 
 #include "revforge/air_filter.hpp"
+#include "turbo_laws.hpp"
 
 namespace revforge {
 
@@ -194,7 +195,8 @@ double turbinePower(const TurboSpec& spec, double flow, double inletK, double in
     double y = omega * spec.turbineRadiusM / (jet * kBestSpeedRatio);
     if (y < 0.05) y = 0.05;
     if (y >= 2.0) return 0.0;
-    return flow * enthalpy * kTurbineEta * y * (2.0 - y);
+    // `turbineEtaShare` vaut exactement 1 sur une turbine fixe : le produit ne change pas d'un bit.
+    return flow * enthalpy * kTurbineEta * spec.turbineEtaShare * y * (2.0 - y);
 }
 
 double bearingPower(const TurboSpec& spec, double omega) {
@@ -605,5 +607,32 @@ void TurboCharger::step(double dt, const TurboInput& input) {
     s.shaftOmega = std::sqrt(omegaSquared_);
     s.shaftShare = s.shaftOmega / spec.referenceOmega;
 }
+
+// ── Les mêmes lois, pour les montages à plusieurs turbos (twin_turbo.cpp) : un renvoi, rien de recopié ──
+namespace turbo_laws {
+
+namespace {
+constexpr Constants kConstants{kAtmosphere, kAmbientK, kAirR, kAirCp, kGasCp, kVolumetric, kRatedShare, kDuctLossAtRated, kDuctDampedShare, kPulsePa, kHeatUpS, kCoolDownS, kOutletS,
+                               kCoolerMassS, kCoolerRestS, kWastegateBand, kWastegateS, kWastegateLeadS, kBlowOffS, kBlowOffVacuumPa, kBlowOffVacuumSpanPa, kBlowOffOpensAbovePa,
+                               kBlowOffDischarge, kHoldX, kTurbineEta, kRatedTurbineShare, kRatedTurbineShareDiesel, kMinTipSpeed};
+}  // namespace
+
+const Constants& constants() { return kConstants; }
+double compressorHead(const TurboSpec& spec, double inletK, double flow, double tipSpeed, double* x) { return revforge::compressorHead(spec, inletK, flow, tipSpeed, x); }
+double compressorEta(double x) { return revforge::compressorEta(x); }
+double pressureRatio(double head, double inletK) { return revforge::pressureRatio(head, inletK); }
+double headForRatio(double ratio, double inletK) { return kAirCp * inletK * (powerTwoSevenths(ratio) - 1.0); }
+double inletTemperature(const TurboSpec& spec, double rpm) { return revforge::inletTemperature(spec, rpm); }
+double fuelPerAir(const TurboSpec& spec, double fill, bool burning) { return revforge::fuelPerAir(spec, fill, burning); }
+double exhaustTemperature(const TurboSpec& spec, double intakeK, double rpm, double fill, double fuel) { return revforge::exhaustTemperature(spec, intakeK, rpm, fill, fuel); }
+double coolerOutlet(double hotK, double flow, double rated) { return revforge::coolerOutlet(hotK, flow, rated); }
+double turbinePower(const TurboSpec& spec, double flow, double inletK, double inPa, double outPa, double omega, double pulsePa) {
+    return revforge::turbinePower(spec, flow, inletK, inPa, outPa, omega, pulsePa);
+}
+double bearingPower(const TurboSpec& spec, double omega) { return revforge::bearingPower(spec, omega); }
+double windagePower(const TurboSpec& spec, double tipSpeed) { return revforge::windagePower(spec, tipSpeed); }
+double tipSpeedFor(const TurboSpec& spec, double inletK, double flow, double head) { return revforge::tipSpeedFor(spec, inletK, flow, head); }
+
+}  // namespace turbo_laws
 
 }  // namespace revforge
