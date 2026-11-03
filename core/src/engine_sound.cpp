@@ -290,6 +290,7 @@ struct EngineSound::State {
     float driveBoost = 0.0f;
     bool driveCut = false;
     bool driveCrank = false;
+    float chargeFill = 0.0f;
     std::uint32_t popCount = 0;
 
     // ── Écoute et route ──
@@ -1197,7 +1198,9 @@ struct EngineSound::State {
         popCooldown = km::max(popCooldown - controlDt, 0.0f);
         // Plein gaz, le cylindre s'ouvre sur bien plus de pression : c'est l'écart qui fait la vie du son.
         const float boostFill = driven ? 0.4f * driveBoost * km::coerceIn(a.boostBar, 0.3f, 2.5f) : 0.0f;
-        const float fill = 0.2f + 0.8f * load * load + boostFill;
+        float fill = 0.2f + 0.8f * load * load + boostFill;
+        // L'air de charge : le protoxyde brûle plus, une charge plus froide pèse plus. Rien au défaut.
+        if (driven && chargeFill != 0.0f) fill = km::max(fill + chargeFill, 0.05f);
         openPressure = fill * (1.0f - kOverrunPressureDrop * overrun);
         // Sans coupure, le mélange du circuit de ralenti brûle encore un cycle sur deux.
         if (a.overrunFuel > 0.0f) openPressure = fill * (1.0f - kOverrunPressureDrop * (1.0f - a.overrunFuel) * overrun);
@@ -2181,6 +2184,7 @@ std::uint32_t EngineSound::knocks() const { return s_->knock.knocks(); }
 void EngineSound::setEcu(const EcuDrive& drive) { s_->ecuIn = drive; }
 
 void EngineSound::setCam(const CamDrive& drive) { s_->camIn = drive; }
+void EngineSound::setCharge(float fill) { s_->chargeFill = fill; }
 
 void EngineSound::setStarter(bool powered, bool meshed, float load) {
     s_->starter.setState(powered, meshed, load);

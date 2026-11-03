@@ -4,7 +4,7 @@
   import { animate } from '../lib/canvas';
   import type { EngineConfig } from '../lib/config';
   import { KW_TO_HP, type Spec, type Telemetry } from '../lib/engine';
-  import { lang, t, whole } from '../lib/i18n.svelte';
+  import { fixed, lang, t, whole } from '../lib/i18n.svelte';
   import { InstrumentClock, niceStep, type Readings } from '../lib/instruments';
   import type { Motion } from '../lib/motion';
 
@@ -17,8 +17,10 @@
     running: () => boolean;
     /** Lit la simulation pour cette image. `gas` : ces jauges lisent le modèle du gaz, il doit avancer. */
     sample: (now: number, gas: boolean) => void;
+    /** Remplir la bouteille de protoxyde. */
+    onrefill?: () => void;
   }
-  let { config, spec, motion, readings, telemetry, running, sample }: Props = $props();
+  let { config, spec, motion, readings, telemetry, running, sample, onrefill }: Props = $props();
 
   const clock = new InstrumentClock();
   let root: HTMLElement;
@@ -30,6 +32,8 @@
   let filterNode = $state<HTMLElement>();
   let camNode = $state<HTMLElement>();
   let dutyNode = $state<HTMLElement>();
+  let chargeNode = $state<HTMLElement>();
+  let bottleNode = $state<HTMLElement>();
 
   const turbo = $derived(config.aspiration === 'turbo' && !config.electric);
   // L'air d'admission n'a d'intérêt que s'il n'est plus celui du dehors : un filtre sous le capot.
@@ -43,6 +47,10 @@
   // Une distribution variable : le profil en prise et le calage du déphaseur, tels que le modèle les donne.
   const twoStep = $derived(!config.electric && config.layout !== 'rotary' && config.cycle !== 'two_stroke' && (config.valveTiming === 'two_step' || config.valveTiming === 'phased_two_step'));
   const phased = $derived(!config.electric && config.layout !== 'rotary' && config.cycle !== 'two_stroke' && (config.valveTiming === 'phased' || config.valveTiming === 'phased_two_step'));
+  /** L'air de charge, quand il n'est plus celui de l'échangeur d'origine : un autre échangeur, l'eau, le protoxyde. Pas sur un diesel. */
+  const spark = $derived(config.layout === 'rotary' || config.fuel !== 'diesel');
+  const nitrous = $derived(!config.electric && spark && config.nitrousKw > 0);
+  const chargeShown = $derived(!config.electric && ((boosted && config.intercooler !== 'air_to_air') || (spark && (config.waterInjection || config.nitrousKw > 0))));
   /** Une échelle qui finit sur une graduation : tout ce que la simulation peut atteindre y tient. */
   const roundedUp = (value: number, step: number) => Math.ceil(value / step - 1e-9) * step;
 
@@ -80,6 +88,9 @@
     let lastCam = '';
     let lastDuty = NaN;
     let lastDutyLang = lang();
+    let lastCharge = NaN;
+    let lastChargeLang = lang();
+    let lastBottle = '';
     const stops = [
       clock.add((text) => {
         if (!text) return;
@@ -171,6 +182,24 @@
         lastDutyLang = lang();
         dutyNode.textContent = t('gauge.boostDuty', { duty: whole(duty) });
       }),
+      clock.add((text) => {
+        if (!text) return;
+        if (!chargeNode) return;
+        const c = Math.round(running() ? telemetry().chargeC : 20);
+        if (c === lastCharge && lang() === lastChargeLang) return;
+        lastCharge = c;
+        lastChargeLang = lang();
+        chargeNode.textContent = t('gauge.chargeAir', { c: whole(c) });
+      }),
+      clock.add((text) => {
+        if (!text) return;
+        if (!bottleNode) return;
+        const now = telemetry();
+        const shown = t(now.nitrousFlow > 0 ? 'gauge.nitrous.flowing' : 'gauge.nitrous.left', { kg: fixed(running() ? now.nitrousKg : 0, 2), g: whole(now.nitrousFlow) });
+        if (shown === lastBottle) return;
+        lastBottle = shown;
+        bottleNode.textContent = shown;
+      }),
     ];
     return () => {
       stop();
@@ -194,6 +223,7 @@
       {#if hotAir}<span data-testid="gauge-intake-air" bind:this={intakeNode}></span>{/if}
       {#if twoStep || phased}<span class="line" data-testid="gauge-cam" bind:this={camNode}></span>{/if}
       {#if solenoid}<span data-testid="gauge-boost-duty" bind:this={dutyNode}></span>{/if}
+      {#if chargeShown}<span data-testid="gauge-charge-air" bind:this={chargeNode}></span>{/if}
     </Gauge>
     <Gauge id="collector" label={t('gauge.collector')} note={t('gauge.collector.note')} unit="°C" min={0} max={1000} step={200} minor={100} warm {clock} read={() => readings.collectorC}>
       <span data-testid="gauge-tailpipe" bind:this={tailpipeNode}></span>
@@ -213,6 +243,13 @@
         <span data-testid="gauge-dpf-state" bind:this={filterNode}></span>
       </Gauge>
     {/if}
+    {#if nitrous}
+      <!-- La bouteille : sa pression suit sa température, qui baisse à mesure que le liquide bout pour remplir le vide. -->
+      <Gauge id="nitrous" label={t('gauge.nitrous')} note={t('gauge.nitrous.note')} unit="bar" min={0} max={80} step={20} minor={5} {clock} read={() => (running() ? Math.max(telemetry().nitrousBar, 0) : 0)}>
+        <span data-testid="gauge-nitrous-left" bind:this={bottleNode}></span>
+        {#if onrefill}<button type="button" class="refill" onclick={() => onrefill?.()} data-testid="nitrous-refill">{t('gauge.nitrous.refill')}</button>{/if}
+      </Gauge>
+    {/if}
   {/if}
 </div>
 
@@ -220,4 +257,6 @@
   .bank { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; }
   /* La distribution variable : sa propre ligne sous la jauge. */
   .line { display: block; }
+  .refill { min-height: 24px; margin-left: 6px; padding: 0 8px; border: 0; background: var(--surface-raised); color: var(--text); font-size: var(--type-small); cursor: pointer; }
+  .refill:hover { background: var(--surface-high); }
 </style>

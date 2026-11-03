@@ -2053,3 +2053,84 @@ Avec deux turbos, `GasNetwork` a deux collecteurs (un moteur en ligne coupé en 
 - L'air ambiant passe par `turbo_laws::constants()` (`atmosphere`, `ambientK`), les mêmes que `turbo.cpp`.
 - Les rangées et la longueur des collecteurs viennent de `EngineConfig::toProfile` (`bank`, `headerM`).
 - `DrivingModel::turboState()` et `turboStateB()` exposent chaque arbre, avec la pression et la température de charge communes ; `twinTurboSteady` l'équilibre.
+
+## L'air de charge
+
+`core/src/charge_air.cpp` : l'échangeur (air-air, air-eau, aucun), l'injection d'eau et le protoxyde d'azote, en fonctions pures. Ce qui évolue en roulant (la boucle d'eau, la bouteille) est l'état `ChargeAir`, qu'avance `DrivingModel` à chaque pas de 1 ms, par `revforge::portable`. Au défaut (air-air, sans eau, sans protoxyde), `chargeAirActive` est faux et rien de cela ne s'exécute : les préréglages et les 29 empreintes d'origine ne bougent pas d'un bit. Sur un diesel, l'eau et le protoxyde restent sans effet (le réglage n'apparaît que sur un moteur à étincelle) ; sur un atmosphérique, l'échangeur n'existe pas.
+
+**Le principe, partout le même.** Le couple de base (`fullLoadTorqueNm`) suppose l'échangeur d'origine. Ce qui change la charge change la masse d'air admise à pression égale : `C = ((C₀ + f)·T_réf/T·part_air − f)`, où `f` est le frottement, qui ne suit pas la densité. Sur la fiche, `torqueCurveNm` l'applique à l'équilibre, à 100 km/h ; en conduite, `DrivingModel` multiplie le couple indiqué par le même rapport, lu dans l'état du moment. La boîte et l'embrayage restent ceux du moteur d'origine (`chargeAirStock`), comme pour le filtre : un échangeur ne redessine pas une boîte, et un embrayage ne se renforce pas pour du protoxyde.
+
+### L'échangeur
+
+- **Air-air d'origine.** Inchangé : `ε = 0,86 − 0,14·ṁ/ṁ_nom`, une masse de 1,5 s, l'air extérieur de l'autre côté, quelle que soit la vitesse.
+- **Air-air par ε-NTU, avec l'air de route** (`airToAirCoolerFor`, `airToAirOutletK`) : prêt à brancher, il ne remplace pas l'origine, car il ne la reproduit pas au bit près. `UA = 1/(1/hA_charge + 1/hA_route)`, `hA_charge ∝ ṁ^0,8` (Dittus-Boelter), `hA_route ∝ ṁ_route^0,5` (ailettes à persiennes, régime laminaire), `ṁ_route = ρ·A·(0,3·v + 1 m/s)` (une calandre ne laisse passer qu'une part de la vitesse ; le ventilateur, à l'arrêt ; deux valeurs supposées). Courants croisés, deux fluides non brassés : `ε = 1 − exp[(NTU^0,22/Cr)·(exp(−Cr·NTU^0,78) − 1)]` (Incropera). Face de 0,85 m² par kg/s (600 × 300 mm pour un 2 L), deux côtés de même conductance, calée pour rendre l'origine au nominal à 100 km/h. Ce qu'il changerait au couple à la puissance maximale, à pression égale :
+
+| Préréglage | Origine | 0 km/h | 50 km/h | 100 km/h | 150 km/h |
+|---|---|---|---|---|---|
+| three_cyl_turbo | 52,4 °C | 92,0 °C, −10,8 % | 60,6 °C, −2,4 % | 52,2 °C, +0,1 % | 48,0 °C, +1,4 % |
+| hot_hatch_turbo | 53,6 °C | 94,5 °C, −11,1 % | 62,0 °C, −2,5 % | 53,4 °C, +0,1 % | 49,0 °C, +1,4 % |
+| five_cyl_turbo | 56,8 °C | 101,7 °C, −12,0 % | 66,1 °C, −2,7 % | 56,6 °C, +0,1 % | 51,8 °C, +1,6 % |
+| boxer_four_turbo | 51,9 °C | 90,7 °C, −10,7 % | 59,9 °C, −2,4 % | 51,7 °C, 0,0 % | 47,5 °C, +1,4 % |
+| diesel_four | 61,3 °C | 111,6 °C, −13,1 % | 71,6 °C, −3,0 % | 61,0 °C, +0,1 % | 55,6 °C, +1,7 % |
+| v8_supercharged | 40,1 °C | 64,8 °C, −7,3 % | 45,3 °C, −1,6 % | 40,1 °C, 0,0 % | 37,4 °C, +0,9 % |
+
+  L'écart ne compte vraiment qu'à l'arrêt, plein gaz : sur un banc sans soufflerie, ou au départ d'un feu. Le brancher changerait le 0-100 km/h des préréglages turbo, donc leurs empreintes : c'est un choix à faire à part.
+- **Air-eau.** Une brique refroidie par une boucle d'eau glycolée, sa pompe électrique et son radiateur basse température à la calandre :
+
+  ```
+  C_boucle·dT_eau/dt = ε_b·ṁ·cp·(T2 − T_eau) − K_rad(v)·(T_eau − T_air) + G·(T_compartiment(v) − T_eau)
+  T3 = T2 − ε_b·(T2 − T_eau)
+  ```
+
+  La brique : ε-NTU, côté eau quatre fois le côté air (supposé), 85 % au nominal (supposé). La pompe : 2 kg de liquide par kg d'air au nominal (24 L/min pour un 2 L) ; à 1 kg/kg, le liquide s'échauffait de plus de 20 K dans la brique, et aucun radiateur de cette taille ne pouvait rendre le point d'origine. Le radiateur : 0,7 m² par kg/s, ε-NTU face à l'air de route, sa conductance calée pour que l'équilibre au nominal, à 100 km/h, rende l'air-air d'origine : c'est le même échangeur, autrement refroidi. La boucle : 3 L de liquide et 3,5 kg d'aluminium pour 0,21 kg/s, soit 68 kJ/K par kg/s. Le compartiment : à l'arrêt, l'air y est à mi-chemin entre l'air extérieur et l'eau du moteur (55 °C par 20 °C, moteur chaud), deux fois moins en roulant à 36 km/h ; il rend 70 W/K par kg/s à la boucle. Toutes ces tailles sont supposées, dans l'ordre des montages de série.
+
+  `--scenario soak` (hot_hatch_turbo, une minute à l'arrêt, puis trois départs arrêtés de 8 s, 20 s d'arrêt entre eux) :
+
+  | | Arrêt (60 s) | Fin du départ 1 | 2 | 3 | Eau au départ 1/2/3 |
+  |---|---|---|---|---|---|
+  | Air-air | 19,9 °C | 48,6 °C | 48,6 °C | 48,7 °C | — |
+  | Air-eau | 21,3 °C | 43,9 °C | 45,6 °C | 46,2 °C | 21,3/24,9/26,2 °C |
+
+  La masse de la boucle fait le premier départ plus frais que l'air-air ; elle garde ensuite ce qu'elle a pris, et le radiateur, sans vitesse, ne le rend qu'en 90 s environ. À l'arrêt seul, la boucle ne prend que 1,4 K en une minute (3 K à l'équilibre) : ce qu'on lit d'un capteur dans un collecteur chaud, à très faible débit, vient surtout du collecteur, qui n'est pas modélisé, pour aucun échangeur. Ordre de grandeur publié : un échangeur air-air à l'avant tient la charge à environ 15 K au-dessus de l'air à pleine puissance (Behr, brevet US 7 779 791 B2), 20 à 30 K selon d'autres brevets du même fabricant ; ici, 28,6 K à la fin d'un départ et 33,6 K à l'équilibre à la puissance maximale.
+- **Aucun.** La sortie du compresseur va droit au papillon : `T3 = T2`. Le chemin de l'air (`ChargePath`, recopié par `fluidGas.ts`) : tube chaud 0,45 m, faisceau 0,45 m de quatre fois la section, tube froid 0,5 m pour l'air-air d'un turbo ; brique de 0,25 m et tube froid de 0,2 m pour l'air-eau ; un seul tube de 0,8 m sans échangeur. Le volume suit : 6,5, 3,9 et 1,9 L sur un 2 L. La perte suit `ρv²` : Darcy (`f = 0,02`) et 0,3 par coude ; le faisceau porte environ 80 % des 0,12 bar d'origine, une brique la moitié (supposé). Le retard ne gagne presque rien : 90 % de la pression à 3000 tr/min en 0,85, 0,80 et 0,76 s, car l'inertie de l'arbre domine. Le turbo et le compresseur restent ceux de l'échangeur d'origine.
+
+| | Couple max | Puissance | 0-100 km/h | Charge à la puissance max. |
+|---|---|---|---|---|
+| hot_hatch_turbo, air-air | 357 Nm à 2850 | 194,4 kW | 6,86 s | 53,6 °C |
+| air-eau | 363 Nm à 2850 | 195,0 kW | 6,60 s | 52,6 °C |
+| aucun | 274 Nm à 4350 | 150,4 kW | 7,79 s | 131,7 °C |
+| injection d'eau | 378 Nm à 2850 | 209,5 kW | 6,59 s | 27,8 °C |
+| protoxyde 75 kW | 598 Nm à 3000 | 271,5 kW | 5,57 s | 18,4 °C |
+| v8_supercharged, d'origine | 767 Nm à 3650 | 393,6 kW | 6,99 s | 40,1 °C |
+| air-eau | 772 Nm à 3550 | 393,7 kW | 6,96 s | 40,1 °C |
+| aucun | 651 Nm à 3850 | 338,7 kW | 7,16 s | 87,4 °C |
+| hot_hatch_na | 194 Nm à 4500 | 117,8 kW | 8,72 s | 19,9 °C |
+| injection d'eau | 203 Nm à 4550 | 123,7 kW | 8,42 s | 6,4 °C |
+| protoxyde 75 kW | 417 Nm à 3000 | 192,3 kW | 7,18 s | −27,5 °C |
+
+Sans échangeur, le moteur perd 23 % de puissance par la seule densité : la détonation, qu'un calculateur éviterait en retirant de l'avance, n'est pas dans ce calcul (voir ce que lit le cliquetis, plus bas).
+
+### L'injection d'eau
+
+De l'eau, à 30 % de la masse d'essence (supposé ; selon la presse, la M4 GTS de BMW demande de refaire ses 5 L d'eau à chaque plein sur circuit, où l'injection ne marche qu'à pleine charge), pulvérisée dans le collecteur à partir de 80 % de remplissage, toute au-delà de 95 %. Elle s'évapore jusqu'à saturer l'air, ou jusqu'à la dernière goutte :
+
+```
+cp_air·(T_entrée − T) = x_eau·c_eau·(T − T_réservoir) + x_vap·h_fg(T),   x_vap = min(x_eau, 0,622·p_s(T)/(p − p_s(T)))
+ln(p_s/p₀) = (a/R_v)·(1/T₀ − 1/T) − (b/R_v)·ln(T/T₀),   h_fg = a − b·T
+```
+
+Clausius-Clapeyron intégrée avec une chaleur latente linéaire (Kirchhoff) : `a = 3,1615 MJ/kg`, `b = 2386 J/(kg·K)`, depuis l'ébullition à 1 atm ; à 1 % près des tables à 20 et 60 °C. La température se trouve par dichotomie. L'air admis est `(p − p_vap)/p·T_entrée/T` de l'air sec : plus froid, mais la vapeur prend sa place. De l'air sec à 20 °C descend à 6,4 °C, sa température de saturation adiabatique (6 à 7 °C sur un diagramme psychrométrique) : +4,5 % de couple sur hot_hatch_na. Sur un turbo, l'air chaud de l'échangeur porte bien plus d'eau : 53,6 → 27,8 °C, +7 % d'air. Ce qui reste liquide est exposé (`liquidWaterPerAir`) : il s'évaporera pendant la compression, ce qui regarde le cliquetis. L'air extérieur est supposé sec ; il n'y a pas de réservoir qui se vide.
+
+### Le protoxyde d'azote
+
+- **Le protoxyde saturé** : corrélations ESDU 91022 (pression, masses volumiques du liquide et de la vapeur, enthalpies), de 183 à 309 K. 50,5 bar, 786 et 158 kg/m³, 169 kJ/kg à 20 °C ; 31,3 bar à 0 °C (NIST : 3,12 MPa).
+- **La combustion.** `2 N₂O → 2 N₂ + O₂` : 36,4 % d'oxygène en masse, contre 23,1 % dans l'air, et 82,05 kJ/mol libérés, soit 1,86 MJ/kg, dans la flamme. L'oxygène brûle `O₂/(14,7·0,2314) = 0,107` kg d'essence par kg de protoxyde ; `P_ind = η·(m_essence·PCI + ṁ_N₂O·Δh)`, `η = 0,39` (entre les 0,375 et 0,405 de `consumption.cpp`), soit 2,52 MJ indiqués par kg. Un kit de 75 kW débite 29,8 g/s, 0,30 kg en 10 s pour 100 ch : la règle des préparateurs dit 0,8 lb, 0,36 kg.
+- **Les gicleurs.** Celui d'essence est à pression régulée : 1 kg pour 6 de protoxyde au point de calcul (recommandation courante, plus riche que les 9,4 de la stœchiométrie), et il ne suit pas la bouteille ; le mélange s'enrichit à mesure qu'elle se vide. Tout son débit se paie à la consommation, brûlé ou non. Celui de protoxyde passe du liquide (`ṁ = Cd·A·√(2ρ_l·Δp)`), dimensionné bouteille pleine à l'air ambiant et collecteur à pleine charge ; de la vapeur seule, un col sonique (`ṁ = Cd·A·0,667·√(ρp)`, γ = 1,3).
+- **La bouteille.** 10 lb (4,536 kg), au taux de remplissage réglementaire de 0,68 kg par litre (6,67 L), 6,8 kg d'aluminium (supposé). Le liquide parti laisse un volume que du liquide doit vaporiser pour le remplir : `ṁ_vap = ṁ·ρ_v/(ρ_l − ρ_v)`, et `C·dT/dt = −ṁ_vap·h_fg + hA·(T_air − T)` (liquide à 2,5 kJ/(kg·K), paroi à 2 W/K, supposés). Pour 75 kW : −0,8 bar en 10 s ; plus de liquide après 133 s, la bouteille à 8,8 °C ; 5 s plus tard, la vapeur seule donne 4,5 g/s, 85 % de moins. Les forums parlent de 80 à 120 s à 100 ch pour cette bouteille, Holley de 7 à 10 quarts de mile pour un kit de 125 ch. Mais la bouteille est ici un seul bloc à l'équilibre : la pression qui baisse nettement dès le troisième passage, que rapportent les préparateurs, vient d'un liquide qui se stratifie, et n'y est pas. Elle se remplit à chaque changement de moteur, ou par le bouton de la jauge.
+- **L'activation.** Contacteur de plein gaz (pédale à 95 %), fenêtre de régime de max(3000, 0,4·régime maximal) à 97 % du régime maximal (les fabricants déconseillent d'ouvrir sous 3000 tr/min), combustion en marche. Un débit constant donne une puissance constante, donc un couple en `1/ω` : 417 Nm à 3000 tr/min sur un 2 L qui en fait 194. L'embrayage reste celui d'origine, à 1,6 fois le couple d'origine : il peut patiner.
+- **La charge.** Le liquide se vaporise à la température de la bouteille, puis la vapeur et l'essence prennent celle du mélange : `ṁ_air·cp·(T3 − T) = ṁ_N₂O·[h_fg(T_b) + c_v·(T − T_b)] + ṁ_ess·[L + c_ess·(T − T_b)]`, avec la chaleur de vaporisation de l'essence lue en paramètre. À pression égale, le cylindre se partage entre les moles : le protoxyde et l'essence prennent la place de l'air, et le froid lui en rend. Sur hot_hatch_na à 6750 tr/min, −27,5 °C, et l'air admis reste à 100 % : les deux effets s'annulent, et le kit donne sa puissance (+74,5 kW). Les préparateurs annoncent 60 à 75 °F (33 à 42 K) de moins à l'admission ; ici 47 K, pour un kit de 75 kW sur un 2 L, gros pour ce moteur. L'écart au gaz parfait de la vapeur (de l'ordre de 60 kJ/kg) est ignoré : le refroidissement est plutôt sous-estimé.
+- **Le son.** `EngineSound::setCharge` ajoute à la pression d'ouverture de l'échappement ce que la charge ajoute au couple, avec le rapport de `boostFill` (0,4 pour 0,9 de couple). Sur `--scenario launch`, hot_hatch_na : 89,6 → 93,2 dB(A) LAeq, la voiture allant aussi plus vite. **Aucune écoute n'a été faite.**
+
+### Ce qui se lit, ce qui s'expose
+
+Lu en paramètres, aux valeurs de référence tant que les sujets concernés ne sont pas branchés : `ChargeConditions` (`ambientK`, `ambientPa` de l'atmosphère, `engineCoolantK` de la thermique) et `ChargeFuel` (`latentJPerKg`, `stoichiometricAfr`, `lowerHeatingJPerKg` de la combustion, `fullLoadLambda` du calculateur). Exposé pour le cliquetis : `ManifoldCharge` (pression et température au collecteur, eau injectée et encore liquide, protoxyde, oxygène du comburant, part d'air), par `DrivingModel::manifoldCharge()` en roulant et `steadyManifoldCharge(p, rpm)` sur la fiche ; et les fonctions pures `mixCharge`, `waterSpray`, `waterSaturationPa`, `nitrousSaturation`, `chargeCoolerSteadyK`. Sur le site : `rf_charge_c`, `rf_charge_water_c`, `rf_water_gps`, `rf_nitrous_bar`, `rf_nitrous_kg`, `rf_nitrous_flow`, `rf_nitrous_refill`, `rf_nitrous_activation_rpm` ; la jauge de la bouteille et la charge sous celle du collecteur. Tests : `tests/charge_air_test.cpp`, `web/tests/air-de-charge.spec.ts` ; empreintes `golden_charge_*`.

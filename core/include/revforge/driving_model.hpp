@@ -248,6 +248,15 @@ public:
     CamDrive camDrive() const { return camDrive_; }
     /** Le régime où la came à deux profils bascule (0 : sans). */
     double camSwitchRpm() const { return camSwitchRpm_; }
+    /** L'air de charge : échangeur, eau, protoxyde. Rien ne s'y exécute au défaut (`chargeAirActive`). */
+    bool chargeAirEngine() const { return chargeAirEngine_; }
+    const ChargeAir& chargeAir() const { return chargeAir_; }
+    /** La charge au collecteur à ce pas : ce que lira le cliquetis. Au défaut, celle de l'échangeur d'origine, sans eau ni protoxyde. */
+    ManifoldCharge manifoldCharge() const;
+    /** Ce que la charge ajoute à la pression d'ouverture de l'échappement, pour le son : 0 au défaut. */
+    double chargeFill() const { return chargeFill_; }
+    /** Remplir la bouteille de protoxyde. */
+    void refillNitrous() { chargeAir_.refill(); }
 
 private:
     enum class Driver { Pilot, Pedal, Neutral, Off };
@@ -296,6 +305,7 @@ private:
     void updateAntiLag(double throttle, double rpmNow, bool off);
     void stepSupercharger(double rpmNow);
     void stepTwin(double rpmNow, bool burning);
+    double stepChargeAir(double rpmNow, double throttle, double indicated);
     double bmepPumping(double rpm) const;
     double wheelSpeedMs() const { return wheelOmega_ * radius_; }
     void meterConsumption();
@@ -371,6 +381,9 @@ private:
     double egrShare_ = 0.0;
     ParticulateFilter dpf_;
     bool dpfEngine_ = false;
+    ChargeAir chargeAir_;
+    bool chargeAirEngine_ = false;
+    double chargeFill_ = 0.0;
     double torque_ = 0.0;
     bool cut_ = false;
     bool limiterCut_ = false;

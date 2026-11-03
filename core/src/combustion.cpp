@@ -374,7 +374,7 @@ EndGasSetup setupAt(const Powertrain& p, const KnockMap::Inputs& in, double rpm,
     if (e.aspiration == Aspiration::Turbo) {
         const TurboSteady steady = turboSteady(turboSpecOf(p), rpm, breathing);
         s.manifoldPa = steady.chargePa;
-        s.manifoldK = steady.coolerOutK + (in.ambientK - 293.15);
+        s.manifoldK = steady.coolK + (in.ambientK - 293.15);
         fullBoost = steady.boost;
     } else if (e.aspiration == Aspiration::Supercharger) {
         const SuperchargerSteady steady = superchargerSteady(superchargerSpecOf(p), rpm, breathing);

@@ -1206,8 +1206,8 @@ export class Engine2D {
       ctx.lineTo(qx + dx * (bore * 0.34 + lift), qy + bore * 0.14);
       ctx.stroke();
     }
-    // L'échangeur, sous le moteur : ses ailettes, et la température de l'air qui le traverse, du chaud au froid.
-    const steps = 12;
+    // L'échangeur, sous le moteur : ses ailettes, et la température de l'air qui le traverse, du chaud au froid. Sans lui, les tubes se rejoignent.
+    const steps = chain.hasCooler ? 12 : 0;
     const firstSide = chain.units[0].side;
     for (let k = 0; k < steps; k++) {
       const share = k / (steps - 1);
@@ -1216,18 +1216,20 @@ export class Engine2D {
       const x0 = firstSide > 0 ? cx + chx - ((k + 1) / steps) * 2 * chx : cx - chx + (k / steps) * 2 * chx;
       ctx.fillRect(x0, cy - chy, (2 * chx) / steps + px, 2 * chy);
     }
-    ctx.strokeStyle = theme.lineStrong;
-    ctx.lineWidth = 0.75 * px;
-    ctx.beginPath();
-    for (let k = 1; k < 18; k++) {
-      const fx = cx - chx + (2 * chx * k) / 18;
-      ctx.moveTo(fx, cy - chy);
-      ctx.lineTo(fx, cy + chy);
+    if (chain.hasCooler) {
+      ctx.strokeStyle = theme.lineStrong;
+      ctx.lineWidth = 0.75 * px;
+      ctx.beginPath();
+      for (let k = 1; k < 18; k++) {
+        const fx = cx - chx + (2 * chx * k) / 18;
+        ctx.moveTo(fx, cy - chy);
+        ctx.lineTo(fx, cy + chy);
+      }
+      ctx.stroke();
+      ctx.strokeStyle = theme.text;
+      ctx.lineWidth = 1.2 * px;
+      ctx.strokeRect(cx - chx, cy - chy, 2 * chx, 2 * chy);
     }
-    ctx.stroke();
-    ctx.strokeStyle = theme.text;
-    ctx.lineWidth = 1.2 * px;
-    ctx.strokeRect(cx - chx, cy - chy, 2 * chx, 2 * chy);
     for (const unit of chain.units) this.drawUnitFront(ctx, unit, pose, painter, theme, px, stroke, hot);
   }
 
@@ -1363,19 +1365,21 @@ export class Engine2D {
     ctx.strokeStyle = hot;
     ctx.beginPath();
     ctx.moveTo(unit.sideCompressorZ + bore * 0.24, y);
-    ctx.lineTo(coolerZ - coolerHalfZ, y);
+    ctx.lineTo(chain.hasCooler ? coolerZ - coolerHalfZ : coolerZ, y);
     ctx.stroke();
     ctx.lineCap = 'butt';
-    // L'échangeur, vu sur la tranche, et le tube froid qui remonte.
-    ctx.fillStyle = cold;
-    ctx.strokeStyle = theme.text;
-    ctx.lineWidth = 1.2 * px;
-    ctx.fillRect(coolerZ - coolerHalfZ, coolerY - coolerHalfY, 2 * coolerHalfZ, 2 * coolerHalfY);
-    ctx.strokeRect(coolerZ - coolerHalfZ, coolerY - coolerHalfY, 2 * coolerHalfZ, 2 * coolerHalfY);
+    // L'échangeur, vu sur la tranche, et le tube froid qui remonte. Sans échangeur, le tube chaud tourne là et remonte seul.
+    if (chain.hasCooler) {
+      ctx.fillStyle = cold;
+      ctx.strokeStyle = theme.text;
+      ctx.lineWidth = 1.2 * px;
+      ctx.fillRect(coolerZ - coolerHalfZ, coolerY - coolerHalfY, 2 * coolerHalfZ, 2 * coolerHalfY);
+      ctx.strokeRect(coolerZ - coolerHalfZ, coolerY - coolerHalfY, 2 * coolerHalfZ, 2 * coolerHalfY);
+    }
     ctx.strokeStyle = cold;
     ctx.lineWidth = bore * 0.18;
     ctx.beginPath();
-    ctx.moveTo(coolerZ, coolerY + coolerHalfY);
+    ctx.moveTo(coolerZ, chain.hasCooler ? coolerY + coolerHalfY : coolerY);
     ctx.lineTo(coolerZ, this.layout.deck + bore * 1.2);
     ctx.stroke();
     for (let u = 0; u < chain.units.length; u++) {
@@ -1610,7 +1614,7 @@ export class Engine2D {
     const { bore } = this.layout;
     const unit = chain.units[0];
     ctx.textAlign = 'center';
-    if (labels.intercooler) at(labels.intercooler, chain.cooler[0], chain.cooler[1] - chain.coolerSize[1] - bore * 0.02);
+    if (labels.intercooler && chain.hasCooler) at(labels.intercooler, chain.cooler[0], chain.cooler[1] - chain.coolerSize[1] - bore * 0.02);
     if (labels.airbox) at(labels.airbox, unit.airbox[0], unit.airbox[1] + unit.airboxSize[1] + bore * 0.08);
     if (labels.turbine) at(labels.turbine, unit.x, unit.y + bore * 0.02);
     if (labels.chargeHot) at(labels.chargeHot, unit.hotTo[0] + unit.side * bore * 0.2, unit.hotTo[1] + bore * 1.1);
@@ -1628,7 +1632,7 @@ export class Engine2D {
     if (labels.compressor) at(labels.compressor, unit.sideCompressorZ + bore * 0.3, y - unit.compressorHousing - bore * 0.22);
     if (labels.turbine) at(labels.turbine, unit.sideZ, y - unit.turbineHousing - bore * 0.22);
     ctx.textAlign = 'right';
-    if (labels.intercooler) at(labels.intercooler, chain.cooler[2] - chain.coolerSize[2] - bore * 0.08, chain.cooler[1] + chain.coolerSize[1] * 0.6);
+    if (labels.intercooler && chain.hasCooler) at(labels.intercooler, chain.cooler[2] - chain.coolerSize[2] - bore * 0.08, chain.cooler[1] + chain.coolerSize[1] * 0.6);
     ctx.textAlign = 'center';
   }
 

@@ -8,6 +8,7 @@
 #include "revforge/cam.hpp"
 #include "revforge/carburetor.hpp"
 #include "revforge/combustion.hpp"
+#include "revforge/charge_air.hpp"
 #include "revforge/driving_model.hpp"
 #include "revforge/ecu.hpp"
 #include "revforge/injection.hpp"
@@ -424,6 +425,38 @@ double intakeDropPa(const Powertrain& p, double rpm) {
 
 double breathingOf(const Powertrain& p, double rpm) { return breathing(p.engine, rpm); }
 
+namespace {
+
+/**
+ * Un autre échangeur sur un compresseur mécanique, ou aucun : le compresseur reste celui de l'échangeur d'origine, seuls changent
+ * le chemin de l'air et ce qui le refroidit (charge_air.cpp). La sortie du compresseur au nominal demande son équilibre : trop lent
+ * pour chaque pas de `fullLoadTorqueNm`, on garde la dernière.
+ */
+struct ChargerHotMemo {
+    bool valid = false;
+    EngineConfig engine;
+    EnginePlacement placement = EnginePlacement::Front;
+    double hotK = 293.0;
+};
+ChargerHotMemo g_chargerHot;
+
+void withChargeCooler(const Powertrain& p, SuperchargerSpec& spec) {
+    const double ratedRpm = kSuperchargerRatedShare * static_cast<double>(p.engine.redlineRpm);
+    const EnginePlacement placement = placementOf(p.car);
+    if (!g_chargerHot.valid || !(g_chargerHot.engine == p.engine) || g_chargerHot.placement != placement) {
+        g_chargerHot.hotK = superchargerSteady(spec, ratedRpm, breathing(p.engine, ratedRpm)).outK;
+        g_chargerHot.engine = p.engine;
+        g_chargerHot.placement = placement;
+        g_chargerHot.valid = true;
+    }
+    // Le conduit d'un 2 L fait 55 mm, comme celui du turbo.
+    const double area = 0.7854 * 0.055 * 0.055 * spec.displacementM3 / 0.002;
+    applyChargePath(p.engine.intercooler, false, area, spec.chargeVolumeM3, spec.coolerDrop);
+    spec.cooler = chargeCoolerFor(p.engine.intercooler, spec.ratedFlow, g_chargerHot.hotK);
+}
+
+}  // namespace
+
 SuperchargerSpec superchargerSpecOf(const Powertrain& p) {
     const double redline = static_cast<double>(p.engine.redlineRpm);
     // Comme le turbo : dimensionné dans l'air de référence, sur la came d'origine.
@@ -439,6 +472,7 @@ SuperchargerSpec superchargerSpecOf(const Powertrain& p) {
     const AmbientAir air = ambientAirOf(p.engine);
     spec.ambientPa = air.pressurePa;
     spec.ambientK = air.temperatureK;
+    if (p.engine.intercooler != Intercooler::AirToAir) withChargeCooler(p, spec);
     return spec;
 }
 
@@ -534,7 +568,9 @@ double fullLoadTorqueNm(const Powertrain& p, double rpm, double boost) {
     return (airTorqueNm(p, rpm, boost) + friction) * share - friction;
 }
 
-double torqueCurveNm(const Powertrain& p, double rpm) {
+namespace {
+
+double plainTorqueCurveNm(const Powertrain& p, double rpm) {
     // Le cliquetis : à pleine charge stabilisée, l'avance que laisse le capteur retire sa part du travail des gaz. Sans réglage de la
     // combustion, la carte d'origine reste sous sa limite : rien ne change.
     const KnockMap* knock = p.electric ? nullptr : knockMapOf(p);
@@ -567,6 +603,14 @@ double torqueCurveNm(const Powertrain& p, double rpm) {
     const TurboSteady steady = turboSteady(spec, rpm, breathing(p.engine, rpm));
     const double torque = full(steady.boost) - turboBackPressureNm(spec, steady.chargePa, steady.turbineInPa, steady.flow, 1.0);
     return injection ? torque - injectionLossNm(p, rpm, steady.boost) : torque;
+}
+
+}  // namespace
+
+double torqueCurveNm(const Powertrain& p, double rpm) {
+    const double plain = plainTorqueCurveNm(p, rpm);
+    // L'échangeur, l'eau, le protoxyde : rien de cela ne s'exécute au défaut (charge_air.cpp).
+    return chargeAirActive(p) ? chargeAirTorqueNm(p, rpm, plain) : plain;
 }
 
 double frictionTorqueNm(const Powertrain& p, double rpm) {
@@ -695,7 +739,10 @@ Gearing gearingOf(const Powertrain& p) {
         stock.engine.fuelGrade = FuelGrade::Ron95;
         if (otherCam) stock.engine = withStockCam(stock.engine);
     }
-    const Powertrain& sized = otherEngine ? stock : p;
+    // Ni l'échangeur, ni l'eau, ni le protoxyde non plus.
+    const bool otherCharge = chargeAirActive(p);
+    if (otherCharge) stock = chargeAirStock(otherEngine ? stock : p);
+    const Powertrain& sized = otherEngine || otherCharge ? stock : p;
     const PowerSummary peak = powerSummary(sized);
     const bool rearOrAll = p.car.drive != Drive::Front;
     const bool allWheels = p.car.drive == Drive::All;

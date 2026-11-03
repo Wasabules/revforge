@@ -2,6 +2,7 @@
 
 #include "revforge/anti_lag.hpp"
 #include "revforge/ecu.hpp"
+#include "revforge/charge_air.hpp"
 #include "revforge/engine_config.hpp"
 #include "revforge/turbo_pipe.hpp"
 
@@ -46,6 +47,7 @@ struct TurboSpec {
     double ambientK = 293.0;
     EcuExhaust ecu;                 // la carte du calculateur, si elle s'écarte de l'origine : avance et richesse
     double turbineEtaShare = 1.0;   // rendement de la turbine, en part du nominal : moins d'1 aubes d'une géométrie variable fermées (twin_turbo.cpp)
+    ChargeCoolerSpec cooler;        // l'échangeur : air-air d'origine, sauf réglage (charge_air.cpp)
 };
 
 /** Ce qui change d'une milliseconde à l'autre, en unités physiques. */
@@ -96,6 +98,7 @@ struct TurboInput {
      * Négative : la wastegate à ressort, qui s'ouvre seule contre la pression de charge. La protection des roues garde le dernier mot.
      */
     double gateDemand = -1.0;
+    double cooledK = 0.0;       // la sortie de l'échangeur, quand l'air de charge la calcule (air-eau, aucun). 0 : l'air-air d'origine.
 };
 
 /** Le point d'équilibre à pleine charge : ce que donnent les courbes de la fiche. */
@@ -106,7 +109,8 @@ struct TurboSteady {
     double shaftRpm = 0.0;
     double wastegate = 0.0;
     double flow = 0.0;
-    double coolerOutK = 293.0;  // la charge après l'échangeur : ce que lit le cliquetis
+    double outK = 293.0;      // sortie du compresseur
+    double coolK = 293.0;     // sortie de l'échangeur
 };
 
 /**

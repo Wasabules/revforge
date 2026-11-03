@@ -50,9 +50,13 @@ export interface TurboUnit {
 
 export interface TurboChain {
   units: TurboUnit[];
-  /** L'échangeur : centre et demi-tailles. */
+  /**
+   * L'échangeur : centre et demi-tailles. Air-eau, une brique plus petite au même endroit ; sans échangeur, `hasCooler` est faux :
+   * la place reste celle où le turbo se dessine dans la coupe de côté, mais rien ne s'y dessine, et les tubes se rejoignent devant le moteur.
+   */
   cooler: P3T;
   coolerSize: P3T;
+  hasCooler: boolean;
   /** Le tube froid : du haut de l'échangeur (ou de son côté) jusqu'au papillon. */
   coldFrom: P3T;
   coldFromDir: P3T;
@@ -104,9 +108,14 @@ export function turboChain(layout: EngineLayout): TurboChain {
   const throttleZ = zFrontAll + bore * 0.5;
   const coolerY = -layout.ring.radius - bore * 0.32;
   const coolerZ = layout.pulleyZ + bore * 0.95;
-  const coolerHalfX = bore * (layout.banks === 2 ? 2.2 : 1.9);
-  const coolerHalfY = bore * 0.52;
-  const coolerHalfZ = bore * 0.22;
+  // Une brique air-eau : moins de face, plus d'épaisseur, autant de volume que le calcul en garde (`ChargePath`, 0,25 m sur 0,45).
+  const water = layout.intercooler === 'air_to_water';
+  const hasCooler = layout.intercooler !== 'none';
+  const coolerHalfX = bore * (layout.banks === 2 ? 2.2 : 1.9) * (water ? 0.45 : 1);
+  const coolerHalfY = bore * 0.52 * (water ? 0.8 : 1);
+  const coolerHalfZ = bore * 0.22 * (water ? 1.4 : 1);
+  // Sans échangeur, le tube chaud rejoint le tube froid devant le moteur, à mi-hauteur : le chemin le plus court vers le papillon.
+  const junctionY = coolerY + bore * 0.52 + bore * 1.2;
   const units: TurboUnit[] = [];
   let xMax = coolerHalfX + bore * 0.2;
   let yMax = 0;
@@ -144,7 +153,7 @@ export function turboChain(layout: EngineLayout): TurboChain {
     yMax = Math.max(yMax, airbox[1] + airboxSize[1]);
     yLow = Math.min(yLow, y - bore * 1.15);
     const hotFrom: P3T = [x + side * compressorHousing * 0.6, y - compressorHousing * 1.0, compressorZ];
-    const hotTo: P3T = [side * coolerHalfX, coolerY - coolerHalfY * 0.35, coolerZ];
+    const hotTo: P3T = hasCooler ? [side * coolerHalfX, coolerY - coolerHalfY * 0.35, coolerZ] : [side * bore * 0.3, junctionY, coolerZ];
     const turbineHousing = bore * 0.46 * s;
     let feedRun: P3T[] = [];
     let hotRun: P3T[] = [];
@@ -211,12 +220,17 @@ export function turboChain(layout: EngineLayout): TurboChain {
   // Sans turbo d'un côté, le tube froid part de ce côté libre. Sur deux rangées, il part du milieu et monte devant le moteur.
   const oneBank = layout.banks === 1;
   const freeSide = oneBank ? -units[0].side : 0;
-  const coldFrom: P3T = oneBank ? [freeSide * coolerHalfX, coolerY + coolerHalfY * 0.35, coolerZ] : [0, coolerY + coolerHalfY, coolerZ];
-  const coldFromDir: P3T = oneBank ? [freeSide, 0, 0] : [0, 1, 0];
+  let coldFrom: P3T = oneBank ? [freeSide * coolerHalfX, coolerY + coolerHalfY * 0.35, coolerZ] : [0, coolerY + coolerHalfY, coolerZ];
+  let coldFromDir: P3T = oneBank ? [freeSide, 0, 0] : [0, 1, 0];
+  if (!hasCooler) {
+    coldFrom = oneBank ? [units[0].side * bore * 0.3, junctionY, coolerZ] : [0, junctionY, coolerZ];
+    coldFromDir = [0, 1, 0];
+  }
   return {
     units,
     cooler: [0, coolerY, coolerZ],
     coolerSize: [coolerHalfX, coolerHalfY, coolerHalfZ],
+    hasCooler,
     coldFrom,
     coldFromDir,
     coldTo: [plenum.x, plenum.y, throttleZ + bore * 0.3],

@@ -77,6 +77,11 @@ public:
     void setEcu(const EcuDrive& drive);
     /** La distribution variable : le profil en prise et le déphaseur. Sans effet sur une came d'origine. */
     void setCam(const CamDrive& drive);
+    /**
+     * Ce que l'air de charge ajoute à la pression d'ouverture de l'échappement, en part d'un atmosphérique à pleine charge :
+     * le protoxyde, ou une charge plus ou moins dense (`DrivingModel::chargeFill`). 0 : rien ne change.
+     */
+    void setCharge(float fill);
     /** Le démarreur : alimenté ; pignon engagé dans la couronne. Le contact des dents fait le son. */
     void setStarter(bool powered, bool meshed, float load = 0.5f);
     /** Vitesse de la voiture et glissement des pneus : vent, roulement, crissement. */

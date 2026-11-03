@@ -182,6 +182,14 @@ export interface Telemetry {
   chargerClutch: number;
   chargerFlap: number;
   chargerInterstage: number;
+  /** L'air de charge : au collecteur, après l'échangeur, l'eau et le protoxyde (°C) ; la boucle d'un air-eau (°C) ; l'eau injectée (g/s). */
+  chargeC: number;
+  chargeWaterC: number;
+  waterGps: number;
+  /** La bouteille de protoxyde : pression relative (bar), ce qu'il en reste (kg), ce qui en sort (g/s, 0 fermé). */
+  nitrousBar: number;
+  nitrousKg: number;
+  nitrousFlow: number;
 }
 
 export const IDLE_TELEMETRY: Telemetry = {
@@ -192,6 +200,7 @@ export const IDLE_TELEMETRY: Telemetry = {
   dpfLoad: 0, dpfKpa: 0, dpfRegen: 0, dpfC: 0, egrShare: 0,
   camHigh: 0, camPhaser: 0,
   turbo2Rpm: 0, turbo2Exhaust: 0, turbo2Wastegate: 0, turbo2Flow: 0, turbo2GasC: 20, turboVane: 0, turbo2Vane: 0, twinStage: 0, twinValve: 0, twinOnline: 0, chargerClutch: 0, chargerFlap: 0, chargerInterstage: 0,
+  chargeC: 20, chargeWaterC: 20, waterGps: 0, nitrousBar: 0, nitrousKg: 0, nitrousFlow: 0,
 };
 
 export interface CurvePoint {
@@ -287,6 +296,8 @@ export interface Spec {
    * pleine levée (N), fréquence propre de la chaîne (Hz), rapport du culbuteur.
    */
   valves: { floatRpm: number; massG: number; seatN: number; openN: number; naturalHz: number; ratio: number };
+  /** Le kit de protoxyde : le régime à partir duquel il s'ouvre, pied au plancher (0 sans kit). */
+  nitrousRpm: number;
   curve: CurvePoint[];
   box: BoxSpec;
   /**
@@ -341,7 +352,7 @@ export interface SoundSheet {
   lineLoss: { hz: number; db: number }[];
 }
 
-export const EMPTY_SPEC: Spec = { idle: 0, redline: 7000, peakTorque: 0, peakTorqueRpm: 0, peakHp: 0, peakHpRpm: 0, gears: 0, ratios: [], turboWheelMm: 0, turboInertia: 0, turboUnits: 0, chargerOffRpm: 0, intakeDropKpa: 0, intakeAirC: 20, chargerRatio: 0, chargerVolume: 0, chargerWheelMm: 0, zeroTo100: 0, topSpeed: 0, starter: { direct: false, kw: 0, ring: 0, pinion: 0, helix: 0 }, carb: { throats: 0, throatMm: 0, dropKpa: 0 }, combustion: { ratio: 0, efficiency: 1, marginDeg: 0, marginRpm: 0, sensor: false }, ecu: { rpm: 0, sparkDeg: 0, fullShare: 1, exhaustC: 0, stockExhaustC: 0 }, curve: [], box: EMPTY_BOX, injection: { coolingK: 0, fillGain: 0, railBar: 0, lowEnd: 0, knockDb: 0, egr: 0, dpfCleanKpa: 0, dpfFullKpa: 0 }, cam: EMPTY_CAM, valves: { floatRpm: 0, massG: 0, seatN: 0, openN: 0, naturalHz: 0, ratio: 0 } };
+export const EMPTY_SPEC: Spec = { idle: 0, redline: 7000, peakTorque: 0, peakTorqueRpm: 0, peakHp: 0, peakHpRpm: 0, gears: 0, ratios: [], turboWheelMm: 0, turboInertia: 0, turboUnits: 0, chargerOffRpm: 0, intakeDropKpa: 0, intakeAirC: 20, chargerRatio: 0, chargerVolume: 0, chargerWheelMm: 0, zeroTo100: 0, topSpeed: 0, starter: { direct: false, kw: 0, ring: 0, pinion: 0, helix: 0 }, carb: { throats: 0, throatMm: 0, dropKpa: 0 }, nitrousRpm: 0, combustion: { ratio: 0, efficiency: 1, marginDeg: 0, marginRpm: 0, sensor: false }, ecu: { rpm: 0, sparkDeg: 0, fullShare: 1, exhaustC: 0, stockExhaustC: 0 }, curve: [], box: EMPTY_BOX, injection: { coolingK: 0, fillGain: 0, railBar: 0, lowEnd: 0, knockDb: 0, egr: 0, dpfCleanKpa: 0, dpfFullKpa: 0 }, cam: EMPTY_CAM, valves: { floatRpm: 0, massG: 0, seatN: 0, openN: 0, naturalHz: 0, ratio: 0 } };
 
 interface RfExports {
   memory: WebAssembly.Memory;
@@ -356,6 +367,15 @@ interface RfExports {
   rf_boost_target(): number;
   rf_boost_charge(): number;
   rf_boost_duty(): number;
+  /** L'air de charge (télémétrie : charge_air.cpp) ; le régime d'activation du kit, pour la fiche (0 sans kit). */
+  rf_charge_c(): number;
+  rf_charge_water_c(): number;
+  rf_water_gps(): number;
+  rf_nitrous_bar(): number;
+  rf_nitrous_kg(): number;
+  rf_nitrous_flow(): number;
+  rf_nitrous_refill(): void;
+  rf_nitrous_activation_rpm(): number;
   rf_render(frames: number): void;
   rf_render_stereo(frames: number): void;
   rf_set_listener(listener: number): void;
@@ -655,6 +675,11 @@ export class Engine {
     this.send({ type: 'resetTrip' });
   }
 
+  /** Remplit la bouteille de protoxyde. */
+  refillNitrous(): void {
+    this.send({ type: 'refillNitrous' });
+  }
+
   /** Relance le démarreur, après un calage. */
   crank(): void {
     this.send({ type: 'crank' });
@@ -796,6 +821,7 @@ export class Engine {
         idleCov: rf.rf_cam_spec(11), seatDeg: rf.rf_cam_spec(12), high: { ivo: rf.rf_cam_spec(13), ivc: rf.rf_cam_spec(14), evo: rf.rf_cam_spec(15), evc: rf.rf_cam_spec(16) },
       },
       valves: { floatRpm: rf.rf_valve_sheet(0), massG: rf.rf_valve_sheet(1), seatN: rf.rf_valve_sheet(2), openN: rf.rf_valve_sheet(3), naturalHz: rf.rf_valve_sheet(4), ratio: rf.rf_valve_sheet(5) },
+      nitrousRpm: rf.rf_nitrous_activation_rpm(),
       curve,
       box: this.boxSpec(rf, gears, redline),
       injection: {

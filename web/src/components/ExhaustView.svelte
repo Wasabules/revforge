@@ -227,7 +227,10 @@
           inlet: lift.length > 0 ? [[filterX, rowY], ...lift] : [[filterX, rowY], [compressorX + compressorR, rowY]],
           hot: [[compressorX - compressorR * 0.9, intakeY + compressorR * 0.4], [coolerX1 + 2, intakeY + compressorR * 0.9], [coolerX1 + 2, coolerAt - coolerTall * 0.25], [coolerX1, coolerAt]],
           cooler: [[coolerX1, coolerAt], [coolerX0, coolerAt]],
-          cold: [[coolerX0, coolerAt], [throttleX + 1, coolerAt], [throttleX + 1, intakeY + tube * 0.9], [throttleX, intakeY]],
+          // Sans échangeur, le tube froid reprend sa place : le même chemin, sans faisceau.
+          cold: net.coolerCount > 0
+            ? [[coolerX0, coolerAt], [throttleX + 1, coolerAt], [throttleX + 1, intakeY + tube * 0.9], [throttleX, intakeY]]
+            : [[coolerX1, coolerAt], [coolerX0, coolerAt], [throttleX + 1, coolerAt], [throttleX + 1, intakeY + tube * 0.9], [throttleX, intakeY]],
           // Monté soufflé : le carburateur attend juste avant le papillon.
           venturi: [[throttleX, intakeY], [throttleX, intakeY]],
           duct: [[throttleX, intakeY], [throttleX, intakeY]],
@@ -1027,44 +1030,46 @@
     ctx.fill();
     ctx.stroke();
 
-    // L'échangeur : son corps et ses ailettes. La température de l'air s'y lit de droite à gauche.
+    // L'échangeur : son corps et ses ailettes. La température de l'air s'y lit de droite à gauche. Sans lui, le tube seul.
+    const hasCooler = net.coolerCount > 0;
     const fins = Math.max(4, Math.floor((view.coolerX1 - view.coolerX0) / 5));
     const coolerTop = view.coolerY - view.coolerTall / 2;
-    ctx.strokeStyle = theme.metal;
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.roundRect(view.coolerX0, coolerTop, view.coolerX1 - view.coolerX0, view.coolerTall, 2);
-    ctx.stroke();
-    ctx.globalAlpha = 0.45;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (let i = 1; i < fins; i++) {
-      const fx = view.coolerX0 + ((view.coolerX1 - view.coolerX0) * i) / fins;
-      ctx.moveTo(fx, coolerTop + 1);
-      ctx.lineTo(fx, coolerTop + view.coolerTall - 1);
+    if (hasCooler) {
+      ctx.strokeStyle = theme.metal;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.roundRect(view.coolerX0, coolerTop, view.coolerX1 - view.coolerX0, view.coolerTall, 2);
+      ctx.stroke();
+      ctx.globalAlpha = 0.45;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let i = 1; i < fins; i++) {
+        const fx = view.coolerX0 + ((view.coolerX1 - view.coolerX0) * i) / fins;
+        ctx.moveTo(fx, coolerTop + 1);
+        ctx.lineTo(fx, coolerTop + view.coolerTall - 1);
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
     }
-    ctx.stroke();
-    ctx.globalAlpha = 1;
 
     if (view.width > 420) {
       ctx.font = '11px "Inter Tight", system-ui, sans-serif';
       ctx.textAlign = 'center';
       const coolerBelow = coolerTop + view.coolerTall + 11;
-      label(ctx, theme, t('gas.intercooler'), (view.coolerX0 + view.coolerX1) / 2, coolerBelow);
+      if (hasCooler) label(ctx, theme, t('gas.intercooler'), (view.coolerX0 + view.coolerX1) / 2, coolerBelow);
       label(ctx, theme, t('gas.airbox'), (boxLeft + boxRight) / 2, y + boxTall / 2 + 12);
       if (view.width > 620) {
         label(ctx, theme, t('gas.maf'), mafX, y - view.tube * 0.95 - 4);
-        // Les températures, de part et d'autre de l'échangeur, et les tubes qui les portent.
-        const hot = Math.round(net.temp[net.coolerInCell] - 273.15);
-        const cold = Math.round(net.temp[net.coolerOutCell] - 273.15);
+        // Les températures, de part et d'autre de l'échangeur, et les tubes qui les portent. Sans échangeur, une seule : celle de la charge.
+        const coldCell = net.intakeParts.find((part) => part.kind === 'cold') ?? net.intakeParts[net.intakeParts.length - 1];
+        const hot = Math.round(net.temp[hasCooler ? net.coolerInCell : coldCell.first] - 273.15);
         ctx.textAlign = 'right';
         label(ctx, theme, t('gas.tempOut', { deg: hot }), view.coolerX1 - 3, coolerTop - 3);
         label(ctx, theme, t('gas.chargeHot'), view.coolerX1 - 3, coolerTop - 15);
         ctx.textAlign = 'left';
-        label(ctx, theme, t('gas.tempOut', { deg: cold }), view.coolerX0 + 2, coolerTop - 3);
-        const coldCell = net.intakeParts[4];
+        if (hasCooler) label(ctx, theme, t('gas.tempOut', { deg: Math.round(net.temp[net.coolerOutCell] - 273.15) }), view.coolerX0 + 2, coolerTop - 3);
         const coldAt = coldCell.first - net.intakeFirst + (coldCell.count >> 2);
-        label(ctx, theme, t('gas.chargeCold'), view.intakeX[coldAt] - view.tube * 0.5 - 2 > view.plenumRight ? view.plenumRight + 2 : view.plenumRight + 2, coolerBelow);
+        if (hasCooler) label(ctx, theme, t('gas.chargeCold'), view.intakeX[coldAt] - view.tube * 0.5 - 2 > view.plenumRight ? view.plenumRight + 2 : view.plenumRight + 2, coolerBelow);
         if (net.releaseCell >= 0 && config.turboRelease !== 'flutter') {
           const i = net.releaseCell - net.intakeFirst;
           label(ctx, theme, t('gas.blowoff'), view.intakeX[i] + view.tube * 2.2, view.intakeYs[i] - 8);
@@ -1116,7 +1121,7 @@
       ctx.strokeStyle = theme.lineStrong;
       ctx.lineWidth = 1;
       ctx.beginPath();
-      for (const cell of [net.compressorCell, net.coolerFirst, net.coolerOutCell, net.intakeFirst + net.intakeCount - 1]) {
+      for (const cell of net.coolerCount > 0 ? [net.compressorCell, net.coolerFirst, net.coolerOutCell, net.intakeFirst + net.intakeCount - 1] : [net.compressorCell, net.intakeFirst + net.intakeCount - 1]) {
         const tx = view.traceX[cell - net.intakeFirst];
         ctx.moveTo(tx, view.intakeTraceY - 3);
         ctx.lineTo(tx, view.intakeTraceY + 3);
@@ -1219,7 +1224,7 @@
   // Deux collecteurs sur deux culasses : un VR n'en a qu'une (`architecture.ts`).
   const dual = $derived(!isRotary(config) && architectureOf(config).heads === 2 && config.cylinders >= 4);
   const caption = $derived(
-    config.electric ? '' : [t(`gas.line.${config.exhaust}`), ...(dual ? [t('gas.banks')] : []), ...(config.aspiration === 'turbo' ? [t('gas.turboPulses')] : []), ...(config.aspiration === 'supercharger' ? [t('gas.chargerNote')] : []), ...(config.aspiration === 'turbo' && config.fuel === 'petrol' && config.antiLag === 'air' ? [t('gas.antiLagAir')] : []), t('gas.legend', { speed: speedLabel(slow) })].join(' '),
+    config.electric ? '' : [t(`gas.line.${config.exhaust}`), ...(dual ? [t('gas.banks')] : []), ...(config.aspiration === 'turbo' ? [t(config.intercooler === 'none' ? 'gas.turboPulses.noCooler' : 'gas.turboPulses')] : []), ...(config.aspiration === 'supercharger' ? [t('gas.chargerNote')] : []), ...(config.aspiration === 'turbo' && config.fuel === 'petrol' && config.antiLag === 'air' ? [t('gas.antiLagAir')] : []), t('gas.legend', { speed: speedLabel(slow) })].join(' '),
   );
 </script>
 

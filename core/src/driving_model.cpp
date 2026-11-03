@@ -111,6 +111,7 @@ DrivingModel::DrivingModel(const Powertrain& powertrain) {
 void DrivingModel::setPowertrain(const Powertrain& powertrain) {
     const bool sameBox = powertrain.gearbox == powertrain_.gearbox;
     // Un autre moteur ou une autre voiture : le trajet repart de zéro. Les vitres ou l'isolation ne changent pas ce qu'on brûle.
+    const bool sameEngine = powertrain.electric == powertrain_.electric && powertrain.engine == powertrain_.engine;
     const bool sameConsumer = sameBox && powertrain.electric == powertrain_.electric && powertrain.engine == powertrain_.engine &&
                               powertrain.car.body == powertrain_.car.body && powertrain.car.massKg == powertrain_.car.massKg &&
                               powertrain.car.rimInch == powertrain_.car.rimInch && powertrain.car.drive == powertrain_.car.drive;
@@ -132,7 +133,8 @@ void DrivingModel::setPowertrain(const Powertrain& powertrain) {
     configureThermal(powertrain, sized, peak.peakPowerRpm, peak.peakPowerKw);
     peakTorqueRpm_ = peak.peakTorqueRpm;
     shiftMap_ = buildShiftMap(sized, gearing_);
-    clutchCapacity_ = 1.6 * peak.peakTorqueNm;
+    // L'embrayage est une pièce : un autre échangeur, l'eau ou le protoxyde ne le changent pas, ni l'air du jour.
+    clutchCapacity_ = 1.6 * (chargeAirActive(powertrain) ? powerSummary(chargeAirStock(sized)).peakTorqueNm : peak.peakTorqueNm);
     // Le robot change d'autant plus vite que la voiture est sportive ; sur une boîte à crabots, c'est le barillet qui décide.
     shiftPace_ = bodySpec(powertrain.car.body).shiftSeconds;
     const double litres = static_cast<double>(powertrain.engine.displacementCc) / 1000.0;
@@ -193,6 +195,10 @@ void DrivingModel::setPowertrain(const Powertrain& powertrain) {
     const ParticulateFilterSpec filterSpec = particulateFilterSpecOf(powertrain.engine);
     dpfEngine_ = !powertrain.electric && particulateFiltered(powertrain.engine);
     if (dpfEngine_ && (!filterBefore || dpf_.spec().volumeL != filterSpec.volumeL || dpf_.spec().diesel != filterSpec.diesel)) dpf_.configure(filterSpec);
+    // L'air de charge : un autre moteur remplit la bouteille et ramène la boucle d'eau à l'air ambiant.
+    chargeAirEngine_ = chargeAirActive(powertrain);
+    if (chargeAirEngine_) chargeAir_.configure(chargeAirSetupOf(powertrain), !sameEngine);
+    chargeFill_ = 0.0;
     if (gear_ > gearing_.gears) gear_ = gearing_.gears;
     step_ = ShiftStep::None;
     ignitionCut_ = false;
@@ -1005,6 +1011,7 @@ void DrivingModel::stepTurbo(double rpmNow, bool burning) {
         control.chargePa = turbo_.state().chargePa;
         input.gateDemand = boostController_.step(boostSpec_, kStep, control);
     }
+    if (chargeAirEngine_) input.cooledK = chargeAir_.stepCooler(kStep, turbo_.state().compressorOutK, turbo_.state().compressorFlow, speedMs_);
     turbo_.step(kStep, input);
     boost_ = std::max(turbo_.boost(), 0.0);
 }
@@ -1053,8 +1060,69 @@ void DrivingModel::stepSupercharger(double rpmNow) {
     input.rpm = rpmNow;
     input.fill = manifold_;
     input.breathing = breathingOf(powertrain_, rpmNow);
+    if (chargeAirEngine_) input.cooledK = chargeAir_.stepCooler(kStep, supercharger_.state().compressorOutK, supercharger_.state().engineFlow, speedMs_);
     supercharger_.step(kStep, input);
     boost_ = std::max(supercharger_.boost(), 0.0);
+}
+
+double DrivingModel::stepChargeAir(double rpmNow, double throttle, double indicated) {
+    ChargeAirInput in;
+    in.dt = kStep;
+    in.rpm = rpmNow;
+    in.throttle = throttle;
+    in.fill = manifold_;
+    in.speedMs = speedMs_;
+    in.burning = !cut_;
+    const ChargeCoolerSpec& cooler = chargeAir_.setup().cooler;
+    if (turboEngine_) {
+        const TurboState& s = turbo_.state();
+        in.compressorOutK = s.compressorOutK;
+        in.chargeFlowKgS = s.compressorFlow;
+        in.chargeK = s.coolerOutK;
+        // Le couple de base d'un turbo suppose l'échangeur d'origine, à la sortie du compresseur de ce pas.
+        in.referenceK = cooler.kind == Intercooler::AirToAir ? s.coolerOutK : stockCoolerOutletK(s.compressorOutK, s.compressorFlow / turbo_.spec().ratedFlow);
+        in.plenumPa = s.plenumPa;
+        in.airKgS = s.engineFlow;
+    } else if (superchargerEngine_) {
+        const SuperchargerState& s = supercharger_.state();
+        in.compressorOutK = s.compressorOutK;
+        in.chargeFlowKgS = s.engineFlow;
+        in.chargeK = s.coolerOutK;
+        // Celui d'un compresseur suppose son échangeur à l'équilibre : la boucle d'eau en est l'écart.
+        in.referenceK = cooler.kind == Intercooler::AirToAir ? s.coolerOutK : chargeCoolerSteadyK(cooler, s.compressorOutK, s.engineFlow);
+        in.plenumPa = s.plenumPa;
+        in.airKgS = s.engineFlow;
+    } else {
+        in.chargeK = intakeAirK(powertrain_, rpmNow);
+        in.referenceK = in.chargeK;
+        in.plenumPa = chargeAir_.setup().conditions.ambientPa * manifold_;
+        in.airKgS = consumption_.model().airGps(rpmNow, manifold_, indicated) / 1000.0;
+    }
+    chargeAir_.step(in);
+    const double share = chargeAir_.torqueShare();
+    // Pour le son : chaque bar de turbo y ajoute 0,4 à la pression d'ouverture, pour 0,9 de couple (`boostFill`, engine_sound.cpp ;
+    // `kBoostEfficiency`, powertrain.cpp). Le couple ajouté se compte en part de celui d'un atmosphérique à pleine charge.
+    constexpr double kFillPerTorqueShare = 0.4 / 0.9;
+    const double natural = indicated / (1.0 + 0.9 * static_cast<double>(powertrain_.engine.boostBar) * boost_);
+    const double added = (share - 1.0) * manifold_ * indicated + (chargeAir_.nitrousOn() ? chargeAir_.nitrousNm() : 0.0);
+    chargeFill_ = natural > 1.0 ? kFillPerTorqueShare * added / natural : 0.0;
+    return share;
+}
+
+ManifoldCharge DrivingModel::manifoldCharge() const {
+    if (chargeAirEngine_) return chargeAir_.manifold();
+    ManifoldCharge m;
+    if (turboEngine_) {
+        m.pressurePa = turbo_.state().plenumPa;
+        m.temperatureK = turbo_.state().coolerOutK;
+    } else if (superchargerEngine_) {
+        m.pressurePa = supercharger_.state().plenumPa;
+        m.temperatureK = supercharger_.state().coolerOutK;
+    } else {
+        m.pressurePa = 101325.0 * manifold_;
+        m.temperatureK = intakeAirK(powertrain_, toRpm(omega_));
+    }
+    return m;
 }
 
 void DrivingModel::updateEngine(double throttle, bool off) {
@@ -1069,6 +1137,7 @@ void DrivingModel::updateEngine(double throttle, bool off) {
         burnt_.extraFuelGps = 0.0;
         burnt_.extraAirGps = 0.0;
     }
+    if (chargeAirEngine_) burnt_.extraFuelGps = 0.0;
     if (powertrain_.electric) {
         manifold_ = throttle;
         cut_ = off;
@@ -1217,6 +1286,8 @@ void DrivingModel::updateEngine(double throttle, bool off) {
     if (turboEngine_) stepTurbo(rpmNow, !cut_ || fuelOnCut_);
     else if (superchargerEngine_) stepSupercharger(rpmNow);
     else boost_ = 0.0;
+    // L'échangeur, l'eau, le protoxyde : l'air admis pèse autrement. Rien de cela au défaut.
+    if (chargeAirEngine_) indicated *= stepChargeAir(rpmNow, throttle, indicated);
 
     double produced = cut_ ? 0.0 : manifold_ * indicated * torqueScale_;
     if (knockEngine_) produced *= stepKnock(rpmNow);
@@ -1266,6 +1337,8 @@ void DrivingModel::updateEngine(double throttle, bool off) {
         produced *= egrEfficiencyShare(diesel, egrShare_, lambda);
         if (!diesel) fresh = std::min(manifold_ / (1.0 - egrShare_), 1.0);
     }
+    // Le protoxyde : sa propre combustion, plein gaz seulement, en plus de ce que donne l'air.
+    if (chargeAirEngine_ && chargeAir_.nitrousOn()) produced += chargeAir_.nitrousNm() * torqueScale_;
     // Rupteur : le papillon reste ouvert, donc peu de pompage. Le moteur ne redescend que sur ses frottements.
     // Sur un turbo, s'y ajoute le gaz à pousser contre la turbine.
     // Sur un compresseur, ce que coûte son entraînement : la combustion le paie, et il s'ajoute au frein moteur.
@@ -1315,6 +1388,8 @@ void DrivingModel::updateEngine(double throttle, bool off) {
     }
     // La post-injection d'une régénération : elle ne fait aucun couple, mais elle se paie.
     if (dpfEngine_) burnt_.extraFuelGps = (antiLagEngine_ ? burnt_.extraFuelGps : 0.0) + dpf_.extraFuelGps();
+    // Tout le gicleur d'essence du kit se paie, qu'il brûle ou non ; le couple ci-dessus, lui, ne suit que l'air.
+    if (chargeAirEngine_) burnt_.extraFuelGps += chargeAir_.nitrousFuelGps();
     lugging_ = manual_ && gear_ != 0 && meshed_ && locked_ && rpmNow < idle_ * 1.3 && speedMs_ > 0.5;
     // Trop bas en prise : chaque explosion donne un à-coup que rien n'amortit, ça broute.
     if (lugging_) {
