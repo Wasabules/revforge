@@ -7,10 +7,6 @@
 #include "exhaust_line.hpp"
 #include "portable_math.hpp"
 
-#ifdef REVFORGE_TWO_STROKE_TRACE
-#include <cstdio>
-std::FILE* g_trace = nullptr;
-#endif
 
 namespace revforge {
 
@@ -519,9 +515,6 @@ Revolution revolution(CycleState& s, const CycleGeometry& g, double rpm) {
             sent = incoming + z * exhaustDm / kStepS;
         }
         s.pipe.advance(sent);
-#ifdef REVFORGE_TWO_STROKE_TRACE
-        if (g_trace != nullptr) std::fprintf(g_trace, "%.2f %.0f %.0f %.0f %.3e %.3e %.3e %.4f\n", s.phi, pCyl, pCase, kAtmosphere + incoming + sent, exhaustDm / kStepS, transferDm / kStepS, inletDm / kStepS, s.cylinder.mass > 0.0 ? s.cylinder.fresh / s.cylinder.mass : 0.0);
-#endif
 
         // ── Les bilans : ce qui entre et sort de chaque volume, et de quoi c'est fait ──
         if (inletDm > 0.0) s.crankcase.give(inletDm, kAmbientK, 1.0);

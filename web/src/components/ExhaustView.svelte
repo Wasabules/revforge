@@ -405,13 +405,19 @@
         }
         chamberIndex++;
       } else {
-        // Un tube : une température par cellule, c'est le calcul à une dimension tel quel.
+        // Un tube : une température par cellule, c'est le calcul à une dimension tel quel. Les marches d'un cône de chambre de détente se
+        // dessinent en pente, d'une marche à l'autre : le calcul les voit en marches, la chambre réelle est un cône.
+        const cone = section.part === 'diffuser' || section.part === 'baffle';
+        const tallIn = cone && s > 0 ? 0.5 * (view.sectionTall[s - 1] + tall) : tall;
+        const tallOut = cone && s + 1 < net.sections.length ? 0.5 * (tall + view.sectionTall[s + 1]) : tall;
         for (let k = 0; k < section.count; k++) {
           const cell = section.first + k;
           const cellX = view.lineX[offset + k];
           const cellW = view.lineX[offset + k + 1] - cellX + 0.5;
+          const cellTall = tallIn + ((tallOut - tallIn) * (k + 0.5)) / section.count;
+          const cellTop = y - cellTall / 2;
           ctx.fillStyle = painter.gasStyle(theme, net.temp[cell], net.y[cell]);
-          ctx.fillRect(cellX, top, cellW, tall);
+          ctx.fillRect(cellX, cellTop, cellW, cellTall);
           // Par-dessus, l'onde : plus clair en surpression, plus sombre en dépression.
           const wave = (net.p[cell] - meanPressure[offset + k]) / 1e5;
           const size = wave < 0 ? -wave : wave;
@@ -419,18 +425,20 @@
             const alpha = Math.sqrt(size) * 0.75;
             ctx.globalAlpha = alpha > 0.6 ? 0.6 : alpha;
             ctx.fillStyle = wave > 0 ? '#ffffff' : '#000000';
-            ctx.fillRect(cellX, top, cellW, tall);
+            ctx.fillRect(cellX, cellTop, cellW, cellTall);
             ctx.globalAlpha = 1;
           }
         }
         ctx.strokeStyle = wallStyles[Math.round(clamp(motion.heat * 15 * Math.exp(-section.from / 2.6), 0, 15))];
         ctx.lineWidth = 1.25;
         ctx.beginPath();
-        ctx.moveTo(x0, top);
-        ctx.lineTo(x1, top);
-        ctx.moveTo(x0, top + tall);
-        ctx.lineTo(x1, top + tall);
+        ctx.moveTo(x0, y - tallIn / 2);
+        ctx.lineTo(x1, y - tallOut / 2);
+        ctx.moveTo(x0, y + tallIn / 2);
+        ctx.lineTo(x1, y + tallOut / 2);
         ctx.stroke();
+        // Le ventre d'une chambre de détente porte son nom : les marches de part et d'autre sont ses deux cônes.
+        if (section.part === 'belly') label(ctx, theme, t('part.chamber'), (x0 + x1) / 2, top - 4);
       }
     }
     // La sortie : un petit bord, et rien après.

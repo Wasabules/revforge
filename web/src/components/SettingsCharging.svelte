@@ -2,7 +2,7 @@
   import Choices from './Choices.svelte';
   import SettingsSection from './SettingsSection.svelte';
   import Slider from './Slider.svelte';
-  import { ANTI_LAGS, ASPIRATIONS, BOOST_CONTROLS, INTERCOOLERS, LIMITS, ON_OFF, RELEASES, SUPERCHARGER_KINDS, TURBO_LAYOUTS, TURBO_SIZES, isRotary, type EngineConfig } from '../lib/config';
+  import { ANTI_LAGS, ASPIRATIONS, BOOST_CONTROLS, INTERCOOLERS, LIMITS, ON_OFF, RELEASES, SUPERCHARGER_KINDS, TURBO_LAYOUTS, TURBO_SIZES, isRotary, isTwoStroke, type EngineConfig } from '../lib/config';
   import { fixed, t } from '../lib/i18n.svelte';
 
   /** Suralimentation : turbo ou compresseur, leur régulation, l'air de charge, l'eau et le protoxyde d'azote. */
@@ -20,7 +20,12 @@
 </script>
 
 <SettingsSection id="charging" title={t('builder.section.charging')}>
-  <Choices label={t('builder.aspiration')} options={ASPIRATIONS} value={config.aspiration} onchange={(aspiration) => onapply({ aspiration })} />
+  <!-- Un deux-temps balayé par son carter : rien ne balaierait au démarrage sous un turbo seul (voir docs/modele.md). -->
+  {#if isTwoStroke(config)}
+    <p class="help" data-testid="two-stroke-charging">{t('builder.twoStroke.charging')}</p>
+  {:else}
+    <Choices label={t('builder.aspiration')} options={ASPIRATIONS} value={config.aspiration} onchange={(aspiration) => onapply({ aspiration })} />
+  {/if}
   {#if config.aspiration === 'turbo'}
     <div>
       <Slider label={t('builder.boost')} value={config.boostBar} {...LIMITS.boostBar} format={(value) => `${fixed(value, 1)} bar`}

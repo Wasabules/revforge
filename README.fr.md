@@ -13,6 +13,7 @@ Il n'y a aucun échantillon sonore. Tout ce qu'on entend est calculé, échantil
 ## Ce qu'on peut faire
 
 - **Construire le moteur.** Cylindres (de 2 à 12), architecture, cylindrée, alésage et course (le curseur ajuste la cylindrée), régime maximal, essence ou diesel, injection ou carburateurs, un turbo avec sa taille et sa pression, et un filtre à air (papier d'origine, panneau sport, cône à l'air libre, cornets). Puissance, couple, 0 à 100 km/h et vitesse de pointe découlent de ces réglages : rien n'est saisi à la main. Le temps de réponse du turbo vient d'un vrai bilan de puissance sur son arbre, et se sent dans la voiture.
+- **Ou un deux-temps.** Des lumières calées par leur hauteur au lieu des soupapes, un carter qui pompe le mélange, une explosion par tour, de l'huile dans l'essence, des ratés au ralenti, et une chambre de détente accordée sur le moteur : son onde de retour fait la bande de puissance. Le couple vient du cycle intégré pas à pas.
 - **Ou un compresseur.** Roots, à vis ou centrifuge, entraîné par une courroie : de la pression dès le bas ou seulement en haut, pas d'arbre à lancer, sa puissance prise au vilebrequin, et un sifflement qui suit le moteur.
 - **Choisir l'échappement.** Confort, origine, sans résonateur, sport, sans silencieux ou ligne directe, avec une ou deux sorties, et un pont en H ou en X sur un moteur en V. Chaque ligne est calculée depuis sa géométrie.
 - **Choisir la boîte, indépendamment du moteur.** Synchros, crabots, séquentielle, double embrayage ou convertisseur ; nombre de rapports, rapports issus de vrais nombres de dents, couple final, denture hélicoïdale ou droite, volant simple ou bi-masse. Une boîte mal adaptée a de vraies conséquences : on peut caler, manquer de vitesse ou la casser.
@@ -105,6 +106,7 @@ Limites connues :
 - Le claquement de boîte n'a aucun vrai enregistrement isolé pour comparaison, et plusieurs paramètres de boîte (module, angle d'hélice, jeu, vitesse d'usure) sont supposés.
 - La longueur du tube du turbo change son retard, son gaz et ses vues, mais le sifflement vient toujours du compartiment moteur, même sur un turbo déporté à l'arrière, et les réflexions d'onde dans ce tube ne sont pas dans le son.
 - Le moteur rotatif ne simule ni usure ni segments d'apex, et son calage de lumières et son dosage d'huile viennent de mémoire, sans recoupement sur un manuel constructeur. Sa vue du moteur ne montre qu'en schéma ce qui se branche sur ses lumières.
+- Le deux-temps lit environ 28 % sous la Saab 96 dont il s'inspire, en couple et en puissance ; ses largeurs de lumières, son taux réel et sa limite d'allumage sont supposés. Seuls l'essence, l'atmosphérique et l'admission par la jupe du piston sont simulés, et son ralenti ring-ding n'a pas été écouté.
 - La vue du gaz suit le modèle de conduite sans agir sur lui : ses pressions ne recoupent donc pas exactement le couple affiché.
 - Le niveau du sifflement du compresseur est supposé, sans enregistrement de référence ; ni la détonation à forte pression ni l'inertie des rotors ne sont modélisées.
 - Certaines valeurs réglementaires (ONU R51.03 et UE 540/2014) restent à contrôler sur les textes officiels.

@@ -2,7 +2,8 @@
   import Choices from './Choices.svelte';
   import SettingsSection from './SettingsSection.svelte';
   import Slider from './Slider.svelte';
-  import { CYLINDERS, ENGINE_CYCLES, LAYOUTS, LIMITS, ROTOR_COUNTS, coherentConfig, isRotary, strokeMm, type EngineConfig } from '../lib/config';
+  import { CYLINDERS, ENGINE_CYCLES, LAYOUTS, LIMITS, ROTOR_COUNTS, coherentConfig, isRotary, isTwoStroke, strokeMm, type EngineConfig } from '../lib/config';
+  import { TWO_STROKE_MAX_CYLINDERS } from '../lib/twoStroke';
   import { fixed, t } from '../lib/i18n.svelte';
   import { PISTON_SPEED_LIMIT, moveStroke, pistonSpeed, strokeOutside, strokeRange, strokeShape, strokeThumb, type StrokeAnchor } from '../lib/stroke';
 
@@ -29,15 +30,21 @@
   /** Passer à un rotatif garde ce qui a un sens, et ramène le reste à ce qui existe : 2 rotors, essence. */
   function chooseLayout(layout: EngineConfig['layout']) {
     const next = coherentConfig({ ...config, layout });
-    onapply({ layout, cylinders: next.cylinders, fuel: next.fuel });
+    onapply({ layout: next.layout, cylinders: next.cylinders, fuel: next.fuel, aspiration: next.aspiration });
   }
+  /** Un deux-temps balayé par son carter : essence, sans suralimentation, au plus 6 cylindres. */
+  function chooseCycle(cycle: EngineConfig['cycle']) {
+    const next = coherentConfig({ ...config, cycle });
+    onapply({ cycle, layout: next.layout, cylinders: next.cylinders, fuel: next.fuel, aspiration: next.aspiration });
+  }
+  const cylinderChoices = $derived(isTwoStroke(config) ? CYLINDERS.filter((value) => value <= TWO_STROKE_MAX_CYLINDERS) : CYLINDERS);
 </script>
 
 <SettingsSection id="block" title={t('builder.section.block')}>
   {#if rotary}
     <Choices label={t('builder.rotors')} options={ROTOR_COUNTS.map((value) => ({ value, label: String(value) }))} value={config.cylinders} onchange={(cylinders) => onapply({ cylinders })} />
   {:else}
-    <Choices label={t('builder.cylinders')} options={CYLINDERS.map((value) => ({ value, label: String(value) }))} value={config.cylinders} onchange={(cylinders) => onapply({ cylinders })} />
+    <Choices label={t('builder.cylinders')} options={cylinderChoices.map((value) => ({ value, label: String(value) }))} value={config.cylinders} onchange={(cylinders) => onapply({ cylinders })} />
   {/if}
   <Choices label={t('builder.layout')} options={LAYOUTS} value={config.layout} onchange={chooseLayout} />
   <Slider label={t('builder.displacement')} value={shown.displacementCc} {...LIMITS.displacementCc} format={(value) => `${value} ${t('unit.cc')}`}
@@ -66,7 +73,7 @@
   <!-- Un rotatif a son propre cycle : ni deux ni quatre temps à choisir. -->
   {#if !rotary}
     <div data-testid="cycle">
-      <Choices label={t('builder.cycle')} options={ENGINE_CYCLES} value={config.cycle} onchange={(cycle) => onapply({ cycle })} />
+      <Choices label={t('builder.cycle')} options={ENGINE_CYCLES} value={config.cycle} onchange={chooseCycle} />
       <p class="help">{ENGINE_CYCLES.find((item) => item.value === config.cycle)?.help}</p>
     </div>
   {/if}

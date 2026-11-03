@@ -44,7 +44,8 @@ const MAX_PULSES = 90;
 const TURBINE_EXTRA_SLOW = 60;
 /** Énergie d'une détonation (J) : un milligramme de carburant ou deux, selon ce que la ligne laisse sortir. */
 // Socle : la chambre de détente comme la ligne directe.
-const POP_JOULES: Record<Exhaust, number> = { stock: 45, sport: 90, straight: 130, no_muffler: 120, no_resonator: 50, quiet: 25, expansion: 130 };
+// La chambre de détente finit par une pointe et un silencieux garni : autant qu'une ligne sport.
+const POP_JOULES: Record<Exhaust, number> = { stock: 45, sport: 90, straight: 130, no_muffler: 120, no_resonator: 50, quiet: 25, expansion: 90 };
 const CLUTCH_AMBIENT = 60;
 /** Inerties thermiques (J/K) et conductances (W/K) : un embrayage à sec encaisse un démarrage, pas une minute de patinage. */
 const CLUTCH_SURFACE_J = 900;

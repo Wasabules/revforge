@@ -13,6 +13,9 @@ import { GasNetwork, type GasInputs, type PlacedSection, T_AMB } from './fluidGa
 /** Panache : 1,4 m sur 0,9 m derrière la voiture. */
 const PLUME_NX = 84;
 const PLUME_NY = 56;
+/** L'épaisseur de la fumée bleue d'un deux-temps à l'écran, quand tout le gaz qui sort est du mélange frais (une échelle d'affichage). */
+const TWO_STROKE_SMOKE = 0.5;
+
 export const PLUME_CELL_M = 0.0165;
 /** Hauteur de la sortie au-dessus du sol, en cellules. */
 export const PLUME_EXIT_ROW = 19;
@@ -129,7 +132,7 @@ class Lfsr {
 
 /** Ce qui impose de reconstruire le réseau : les réglages qui changent ses pièces. */
 export const gasKey = (config: EngineConfig): string =>
-  `${config.cylinders}|${config.layout}|${config.displacementCc}|${config.boreMm}|${config.exhaust}|${config.aspiration}|${config.fuel}|${config.body}|${config.boostBar}|${config.turboRelease}|${config.turboSize}|${config.redlineRpm}|${config.turboPipeMm}|${config.camshaft}|${config.fuelSystem}|${config.airFilter}|${config.placement}|${config.superchargerKind}|${config.antiLag}`;
+  `${config.cylinders}|${config.layout}|${config.displacementCc}|${config.boreMm}|${config.exhaust}|${config.aspiration}|${config.fuel}|${config.body}|${config.boostBar}|${config.turboRelease}|${config.turboSize}|${config.redlineRpm}|${config.turboPipeMm}|${config.camshaft}|${config.fuelSystem}|${config.airFilter}|${config.placement}|${config.superchargerKind}|${config.antiLag}|${config.cycle}`;
 
 export class GasFlow {
   readonly net = new GasNetwork();
@@ -362,7 +365,9 @@ export class GasFlow {
     const burnt = net.exitY;
     const coldness = Math.max(0, Math.min(1, (0.32 - inputs.heat) / 0.26));
     const light = speed > 0 ? burnt * (0.17 + 0.75 * coldness * coldness) : 0;
-    const dark = speed > 0 && net.isDiesel ? burnt * Math.max(0, inputs.load - 0.45) * 1.8 : 0;
+    // Un deux-temps brûle son huile avec son essence : la brume d'huile sort avec tout ce qui passe, surtout avec le mélange frais qui
+    // file droit à l'échappement, et l'huile ne brûle qu'à moitié dans la charge enfermée (supposé). Le peintre la teinte en bleu.
+    const dark = speed > 0 && net.isDiesel ? burnt * Math.max(0, inputs.load - 0.45) * 1.8 : speed > 0 && net.isTwoStroke ? TWO_STROKE_SMOKE * (1 - 0.5 * burnt) : 0;
     const flame = speed > -5 ? this.flame : 0;
     // Au-delà, le panache est de toute façon balayé : inutile de faire remonter le calcul hors du tube.
     field.windX = this.carSpeed < 30 ? this.carSpeed : 30;

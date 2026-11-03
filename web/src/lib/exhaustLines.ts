@@ -1,10 +1,17 @@
 import type { Exhaust } from './config';
+import { baseLineArea, expansionLine } from './twoStroke';
 
 /**
  * Ce qui compose chaque ligne, pour la dessiner : longueur (m, à l'échelle d'une compacte), section par rapport
  * au tube d'entrée, et nature. Les mêmes valeurs que dans core/src/exhaust_line.cpp, où elles font le son.
  */
-export type LinePart = 'pipe' | 'cat' | 'resonator' | 'muffler';
+export type LinePart = 'pipe' | 'cat' | 'resonator' | 'muffler' | 'diffuser' | 'belly' | 'baffle' | 'stinger';
+
+/**
+ * La chambre de détente se calcule sur chaque moteur (`expansionLine`, recopie d'`expansionChamberFor`) : celle-ci est celle du
+ * préréglage deux-temps (trois cylindres, 841 cm³, alésage 70, 5000 tr/min), pour qui n'a pas de moteur sous la main.
+ */
+const REFERENCE_CHAMBER = { layout: 'inline' as const, cycle: 'two_stroke' as const, cylinders: 3, displacementCc: 841, boreMm: 70, redlineRpm: 5000 };
 export const EXHAUST_LINES: Record<Exhaust, { length: number; area: number; part: LinePart }[]> = {
   stock: [
     { length: 0.4, area: 1, part: 'pipe' },
@@ -51,11 +58,8 @@ export const EXHAUST_LINES: Record<Exhaust, { length: number; area: number; part
     { length: 0.5, area: 13, part: 'muffler' },
     { length: 0.5, area: 1, part: 'pipe' },
   ],
-  // Socle : la chambre de détente d'un deux-temps se dessine et se calcule comme la ligne directe, comme dans le son.
-  expansion: [
-    { length: 0.4, area: 1, part: 'pipe' },
-    { length: 1.6, area: 1.3, part: 'pipe' },
-  ],
+  // La chambre de détente : collecteur, diffuseur, ventre, cône de retour, pointe, silencieux garni, sortie.
+  expansion: expansionLine(REFERENCE_CHAMBER, baseLineArea(2 * REFERENCE_CHAMBER.displacementCc / 1000)),
 };
 
 /** Le diamètre des roues, rapporté au turbo moyen : recopie de `kSizeSmall` et `kSizeLarge` en C++. Il dimensionne le gaz et les dessins. */

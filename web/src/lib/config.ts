@@ -2,8 +2,10 @@ import presetData from '../../../presets/presets.json';
 import { presetText, t } from './i18n.svelte';
 import { DISPLACEMENT_LIMITS, STROKE_LIMITS, engineStroke } from './stroke';
 import { isRotary, ROTOR_COUNTS } from './rotary';
+import { isTwoStroke, TWO_STROKE_MAX_CYLINDERS } from './twoStroke';
 
 export { isRotary } from './rotary';
+export { isTwoStroke } from './twoStroke';
 
 export type Layout = 'inline' | 'v' | 'cross_plane' | 'boxer' | 'rotary' | 'vr' | 'w';
 export type Exhaust = 'stock' | 'sport' | 'straight' | 'no_muffler' | 'no_resonator' | 'quiet' | 'expansion';
@@ -498,9 +500,20 @@ export function strokeMm(c: EngineConfig): number {
   return engineStroke(c);
 }
 
-/** Un rotatif n'a que 2, 3 ou 4 rotors et ne brûle que de l'essence : tout ce qui change d'architecture ou lit un lien passe par ici. */
+/**
+ * Un rotatif n'a que 2, 3 ou 4 rotors et ne brûle que de l'essence. Un deux-temps balayé par son carter n'a ni diesel ni
+ * suralimentation, ni vilebrequin à plat croisé, et au plus 6 cylindres (`coherentTwoStroke` en C++). Tout ce qui change
+ * d'architecture ou lit un lien passe par ici.
+ */
 export function coherentConfig(c: EngineConfig): EngineConfig {
-  if (!isRotary(c) || c.electric) return c;
+  if (c.electric) return c;
+  if (isTwoStroke(c)) {
+    const cylinders = Math.min(c.cylinders, TWO_STROKE_MAX_CYLINDERS);
+    const layout = c.layout === 'cross_plane' ? 'v' : c.layout;
+    if (cylinders === c.cylinders && layout === c.layout && c.fuel === 'petrol' && c.aspiration === 'natural') return c;
+    return { ...c, cylinders, layout, fuel: 'petrol', aspiration: 'natural' };
+  }
+  if (!isRotary(c)) return c;
   const cylinders = ROTOR_COUNTS.includes(c.cylinders) ? c.cylinders : 2;
   if (cylinders === c.cylinders && c.fuel === 'petrol') return c;
   return { ...c, cylinders, fuel: 'petrol' };

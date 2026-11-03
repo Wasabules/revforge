@@ -595,4 +595,21 @@ for (const [name, system] of [['single', 1], ['multi', 2]]) {
   rf.rf_set_mode(3);
   check('socle moteur, électrique', render(rf, 20, 128), native('--preset', 'electric', '--ambient', '40', '--altitude', '1500', '--traction', 'full', '--scenario', 'lap', '--seconds', '20'));
 }
+// Deux-temps : le cycle intégré, ses ratés à son propre générateur, l'huile mélangée, puis la chambre de détente accordée sur lui.
+{
+  const twoStroke = (exhaust) => {
+    const rf = load();
+    rf.rf_set_car(BODY.retro, 813, 15, DRIVE.front, PLACEMENT.front, INSULATION.light);
+    rf.rf_set_gearbox(BOX.synchro, 4, 0, 0, 0, 0, 0, 0, 0);
+    tune(rf, { cycle: 1 });
+    rf.rf_set_config(3, LAYOUT.inline, 841, 70, 5000, exhaust, 0, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0, FUEL_SYSTEM.single);
+    rf.rf_set_mode(3);
+    return rf;
+  };
+  check('deux-temps, tour complet', render(twoStroke(EXHAUST.stock), 30, 128), native('--preset', 'two_stroke_triple', '--scenario', 'lap', '--seconds', '30'));
+  check('deux-temps, chambre de détente', render(twoStroke(EXHAUST.expansion), 30, 128), native('--preset', 'two_stroke_triple', '--exhaust', 'expansion', '--scenario', 'lap', '--seconds', '30'));
+  const rf = twoStroke(EXHAUST.stock);
+  driveLikeNative(rf, 30);
+  checkFigures('deux-temps, consommation et huile', rf, nativeFigures('--preset', 'two_stroke_triple', '--scenario', 'lap', '--seconds', '30'));
+}
 process.exit(failed ? 1 : 0);
