@@ -40,7 +40,7 @@ export function rotaryShape(chamberCc: number): { radius: number; eccentricity: 
   return { radius, eccentricity: radius * ECCENTRICITY_SHARE, width: radius * WIDTH_SHARE };
 }
 
-export const rotaryCompression = (aspiration: EngineConfig['aspiration']): number => (aspiration === 'turbo' ? 8.5 : 9.4);
+export const rotaryCompression = (aspiration: EngineConfig['aspiration']): number => (aspiration !== 'natural' ? 8.5 : 9.4);
 
 /**
  * Calage en degrés d'arbre depuis le point mort haut d'explosion de la chambre, sur son cycle de 1080° : `kPortEvo`… du son.

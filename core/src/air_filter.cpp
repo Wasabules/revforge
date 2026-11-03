@@ -85,7 +85,7 @@ double naturalFilterCoefficient(double displacementM3, double ratedFlowKgS) {
     return sized < ceiling ? sized : ceiling;
 }
 
-double stackRadiusM(const EngineConfig& engine) { return 0.5 * kRunnerToBore * static_cast<double>(engine.boreMm) / 1000.0; }
+double stackRadiusM(const EngineConfig& engine) { return 0.5 * kRunnerToBore * engine.effectiveBoreMm() / 1000.0; }
 
 double stackLengthM(const EngineConfig& engine) {
     // Le maximum d'accord tombe là où l'aller-retour a duré ce qu'il faut : f·25/N = 1,5.

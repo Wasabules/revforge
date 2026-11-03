@@ -403,6 +403,7 @@ struct EngineSound::State {
     bool carbActive = false;
     bool carbMulti = false;
     bool carbOpensBox = false;
+    float carbCrestShare = 1.0f;
     bool carbTuned = false;
     Svf carbBand;
     float carbTop = 0.0f;
@@ -680,7 +681,9 @@ struct EngineSound::State {
         carbArea = static_cast<float>(km::kPi) * radius * radius;
         const float mouthOut = km::sqrt(kCarbHissK * carbArea / (4.0f * static_cast<float>(km::kPi))) * acoustics::kAirDensity / kCarbSoundMs;
         carbPa = mouthOut * (carbMulti ? kCarbOpenHiss : kCarbBoxedHiss);
-        carbLobeMean = 2.0f / static_cast<float>(km::kPi) * (kIvc - kIvo);
+        carbLobeMean = 2.0f / static_cast<float>(km::kPi) * (p.rotary ? kPortIvc - kPortIvo : kIvc - kIvo);
+        // La crête d'une bouffée dans un corps : un rotor en fait passer deux par cycle.
+        carbCrestShare = carbLobeMean * (carbMulti ? static_cast<float>(p.firingCount / p.carbThroats) : 1.0f);
         if (carbMulti) {
             inletTone.set(kCarbSoundMs / (4.0f * (p.carbRunnerM + 0.6f * radius)), 1.3f, sr);
             carbTuned = true;
@@ -699,7 +702,7 @@ struct EngineSound::State {
         const float heard = (carbTop + (carbBand.bp - carbTop) * bright) * carbNorm;
         if (carbMulti) {
             // Chacun son col : les puissances s'ajoutent, et chacune suit sa propre crête.
-            const float peak = carbSpeed / carbLobeMean;
+            const float peak = carbSpeed / carbCrestShare;
             return heard * carbPa * km::sqrt(sixthLobes) * peak * peak * peak;
         }
         // Un col pour tous : c'est le débit total qui passe.
@@ -1089,7 +1092,7 @@ struct EngineSound::State {
         const float admitted = kCarbVolumetric * (0.08f + 0.92f * load);
         carbSpeed = displacement * rpmNow / 120.0f * admitted / static_cast<float>(a.carbThroats) / carbArea;
         // Strouhal : la turbulence du col se tient autour de 0,5 v/d. Elle monte avec la crête des bouffées.
-        const float crest = carbMulti ? carbSpeed / carbLobeMean : carbSpeed;
+        const float crest = carbMulti ? carbSpeed / carbCrestShare : carbSpeed;
         const float hz = km::coerceIn(kCarbStrouhal * crest / a.carbThroatM, 300.0f, km::min(6000.0f, sr * 0.4f));
         carbBand.set(hz, kCarbQ, sr);
         // Un filtre passe-bande laisse passer d'autant moins de bruit blanc qu'il est étroit : on ramène sa sortie à une valeur efficace de 1.

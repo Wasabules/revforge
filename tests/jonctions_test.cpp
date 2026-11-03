@@ -2,6 +2,8 @@
 // Voir « Quand les réglages se rencontrent » dans docs/modele.md.
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <utility>
 #include <vector>
 
 #include "doctest.h"
@@ -327,4 +329,190 @@ TEST_CASE("le tube court ne fait pas fondre le gaz d'un moteur entraîné") {
         hottest = std::max(hottest, model.turbo().state().turbineInK);
     }
     CHECK(hottest < 1200.0);
+}
+
+namespace {
+
+Powertrain rotaryWith(Aspiration aspiration = Aspiration::Natural, FuelSystem system = FuelSystem::Injection, AirFilter filter = AirFilter::Stock) {
+    Powertrain p = findPreset("twin_rotor_13")->powertrain();
+    p.engine.aspiration = aspiration;
+    p.engine.boostBar = 0.8f;
+    p.engine.fuelSystem = system;
+    p.engine.airFilter = filter;
+    return p;
+}
+
+/** Le moteur à pistons qui avale le même volume en deux tours, au même régime : le rotatif doit respirer comme lui. */
+Powertrain pistonOfSameSwept(const Powertrain& rotary) {
+    Powertrain p = rotary;
+    p.engine.layout = Layout::Inline;
+    p.engine.displacementCc = 2 * rotary.engine.displacementCc;
+    // Très super-carré : à ce régime, un piston plus long y perdrait son souffle.
+    p.engine.boreMm = 110;
+    p.engine.cylinders = 4;
+    return p;
+}
+
+}  // namespace
+
+TEST_CASE("jonction rotatif : course, alésage et arbre à cames n'y existent pas") {
+    Powertrain plain = rotaryWith();
+    Powertrain other = plain;
+    other.engine.boreMm = 70;
+    other.engine.camshaft = Camshaft::Sohc;
+    CHECK(other.engine.valvetrain() == Camshaft::Dohc);
+    CHECK(other.profile().camshaft == Camshaft::Dohc);
+    CHECK(other.engine.strokeMm() == plain.engine.strokeMm());
+    CHECK(static_cast<double>(other.engine.strokeMm()) / 1000.0 == doctest::Approx(static_cast<double>(other.profile().strokeM)).epsilon(1e-5));
+    for (const double rpm : {2000.0, 5000.0, 8500.0}) {
+        CHECK(torqueCurveNm(other, rpm) == torqueCurveNm(plain, rpm));
+        CHECK(frictionTorqueNm(other, rpm) == frictionTorqueNm(plain, rpm));
+    }
+    CHECK(engineInertia(other) == engineInertia(plain));
+    // Le son, au bit près.
+    const test::Samples a = heardHeld(plain, 5000.0f);
+    const test::Samples b = heardHeld(other, 5000.0f);
+    REQUIRE(a.size() == b.size());
+    bool same = true;
+    for (std::size_t i = 0; i < a.size(); ++i) same = same && a[i] == b[i];
+    CHECK(same);
+    // Les cornets non plus ne lisent pas un alésage qui n'existe pas.
+    plain.engine.airFilter = AirFilter::Stacks;
+    other.engine.airFilter = AirFilter::Stacks;
+    CHECK(other.profile().stackRadiusM == plain.profile().stackRadiusM);
+    CHECK(torqueCurveNm(other, 5000.0) == torqueCurveNm(plain, 5000.0));
+}
+
+TEST_CASE("jonction rotatif : tout débit passe par le volume balayé en deux tours") {
+    const Powertrain charged = rotaryWith(Aspiration::Supercharger);
+    const SuperchargerSpec chargedSpec = superchargerSpecOf(charged);
+    CHECK(chargedSpec.displacementM3 == doctest::Approx(2.0 * static_cast<double>(charged.engine.displacementCc) * 1e-6));
+    const SuperchargerSpec pistonSpec = superchargerSpecOf(pistonOfSameSwept(charged));
+    MESSAGE("compresseur : " << chargedSpec.ratedFlow << " kg/s sur le rotatif, " << pistonSpec.ratedFlow << " sur le piston ; rotor " << chargedSpec.rotorVolumeM3 << " et " << pistonSpec.rotorVolumeM3);
+    CHECK(chargedSpec.ratedFlow / pistonSpec.ratedFlow > 0.9);
+    CHECK(chargedSpec.ratedFlow / pistonSpec.ratedFlow < 1.1);
+    CHECK(chargedSpec.rotorVolumeM3 / pistonSpec.rotorVolumeM3 > 0.9);
+    CHECK(chargedSpec.rotorVolumeM3 / pistonSpec.rotorVolumeM3 < 1.1);
+
+    const Powertrain turbo = rotaryWith(Aspiration::Turbo);
+    CHECK(turboSpecOf(turbo).displacementM3 == doctest::Approx(chargedSpec.displacementM3));
+    Powertrain piped = turbo;
+    piped.engine.turboPipeMm = 2000;
+    CHECK(turboSpecOf(piped).pipe.cylinders == 4);
+    CHECK(turboSpecOf(piped).pipe.volumeM3 == doctest::Approx(turboSpecOf(pistonOfSameSwept(piped)).pipe.volumeM3));
+
+    // Le carburateur : le col d'un corps se dimensionne sur ce que ce corps avale, deux chambres en deux tours.
+    const CarburetorSpec multi = carburetorSpecOf(rotaryWith(Aspiration::Natural, FuelSystem::MultiCarb).engine);
+    Powertrain twoCylinders = pistonOfSameSwept(rotaryWith());
+    twoCylinders.engine.cylinders = 2;
+    twoCylinders.engine.fuelSystem = FuelSystem::MultiCarb;
+    CHECK(multi.throats == 2);
+    CHECK(multi.sharing == 2);
+    CHECK(multi.throatM == doctest::Approx(carburetorSpecOf(twoCylinders.engine).throatM));
+    const CarburetorSpec single = carburetorSpecOf(rotaryWith(Aspiration::Natural, FuelSystem::Carburetor).engine);
+    CHECK(single.sharing == 4);
+    const Powertrain singleCarb = rotaryWith(Aspiration::Natural, FuelSystem::Carburetor);
+    CHECK(torqueCurveNm(singleCarb, 7500.0) < torqueCurveNm(rotaryWith(), 7500.0));
+    CHECK(torqueCurveNm(singleCarb, 7500.0) > 0.8 * torqueCurveNm(rotaryWith(), 7500.0));
+
+    // Le filtre : la perte suit ce débit-là, pas la moitié.
+    const Powertrain paper = rotaryWith();
+    CHECK(intakeDropPa(paper, 7500.0) / intakeDropPa(pistonOfSameSwept(paper), 7500.0) > 0.8);
+    CHECK(intakeDropPa(paper, 7500.0) / intakeDropPa(pistonOfSameSwept(paper), 7500.0) < 1.2);
+    const Powertrain chargedCone = rotaryWith(Aspiration::Supercharger, FuelSystem::Injection, AirFilter::Cone);
+    CHECK(intakeDropPa(chargedCone, 7500.0) < 0.6 * intakeDropPa(charged, 7500.0));
+    CHECK(intakeDropPa(charged, 7500.0) > 1500.0);
+}
+
+TEST_CASE("jonction rotatif : le motif de coupure reste un motif sur deux rotors") {
+    // Cinq est impair : sur deux rotors, le motif passe de l'un à l'autre, comme d'un cylindre à l'autre sur un 4 ou un 6.
+    int fired[2] = {0, 0};
+    for (std::uint32_t event = 0; event < 40; ++event) {
+        if (antiLagFires(event)) ++fired[event % 2];
+    }
+    CHECK(fired[0] == 8);
+    CHECK(fired[1] == 8);
+
+    Powertrain p = rotaryWith(Aspiration::Turbo);
+    p.engine.antiLag = AntiLag::CylinderCut;
+    DrivingModel model(p);
+    pullInFourth(model);
+    const double before = shaftRpmOf(model);
+    for (int i = 0; i < 200; ++i) model.stepPedal(0.01, 0.0, 0.0);
+    CHECK(model.antiLagActive());
+    Powertrain plain = p;
+    plain.engine.antiLag = AntiLag::Off;
+    DrivingModel without(plain);
+    pullInFourth(without);
+    for (int i = 0; i < 200; ++i) without.stepPedal(0.01, 0.0, 0.0);
+    MESSAGE("birotor turbo, arbre : " << before << " en pleine charge, " << shaftRpmOf(model) << " après 2 s en coupure, " << shaftRpmOf(without) << " sans");
+    CHECK(shaftRpmOf(model) > 1.5 * shaftRpmOf(without));
+
+    // À 3600 tr/min, 120 explosions par seconde, comme un 4 cylindres : un motif de 5 fait 24 Hz, et ses raies à 72 et 96 Hz.
+    const auto rhythm = [&](AntiLag kind) {
+        EngineSound sound(test::kRate);
+        sound.setProfile(p.profile());
+        TurboDrive d = model.turboDrive();
+        d.antiLag.kind = kind;
+        d.antiLag.active = true;
+        d.antiLag.heatW = 0.0f;
+        d.antiLag.heatShare = 0.0f;
+        d.antiLag.ignition = 0.0f;
+        test::Samples out(256 * 512);
+        for (std::size_t at = 0; at < out.size(); at += 256) {
+            sound.setTargetRpm(3600.0f);
+            sound.setDrive(0.35f, 0.3f, false, false, 0.0f);
+            sound.setTurbo(d);
+            sound.render(out.data() + at, 256);
+        }
+        return test::slice(out, out.size() / 2, out.size());
+    };
+    const test::Samples round = rhythm(AntiLag::Retard);
+    const test::Samples chopped = rhythm(AntiLag::CylinderCut);
+    const double gained = std::max(bandDb(chopped, 66.0, 78.0) - bandDb(round, 66.0, 78.0), bandDb(chopped, 90.0, 102.0) - bandDb(round, 90.0, 102.0));
+    MESSAGE("raies du motif, en plus du moteur rond : " << gained << " dB");
+    CHECK(gained > 3.0);
+}
+
+TEST_CASE("toutes les rencontres tournent, sans NaN ni calage") {
+    const std::vector<std::pair<Layout, int>> engines = {{Layout::Inline, 4}, {Layout::Boxer, 4}, {Layout::CrossPlane, 8}, {Layout::Rotary, 2}};
+    // Un tirage déterministe sur le produit des réglages : le tout prendrait des heures.
+    std::uint32_t seed = 12345;
+    const auto pickOf = [&seed](std::uint32_t count) {
+        seed = seed * 1664525u + 1013904223u;
+        return (seed >> 16) % count;
+    };
+    for (int round = 0; round < 60; ++round) {
+        Powertrain p = findPreset("hot_hatch_turbo")->powertrain();
+        const auto& engine = engines[pickOf(4)];
+        p.engine.layout = engine.first;
+        p.engine.cylinders = engine.second;
+        p.engine.displacementCc = engine.first == Layout::Rotary ? 1308 : (engine.second == 8 ? 5000 : 2000);
+        p.engine.boreMm = engine.second == 8 ? 92 : 84;
+        p.engine.aspiration = static_cast<Aspiration>(pickOf(3));
+        p.engine.superchargerKind = static_cast<SuperchargerKind>(pickOf(3));
+        p.engine.airFilter = static_cast<AirFilter>(pickOf(4));
+        p.engine.fuelSystem = static_cast<FuelSystem>(pickOf(3));
+        p.engine.camshaft = static_cast<Camshaft>(pickOf(2));
+        p.engine.antiLag = static_cast<AntiLag>(pickOf(4));
+        p.engine.turboPipeMm = pickOf(2) ? 400 : 3000;
+        CAPTURE(round);
+        DrivingModel model(p);
+        for (int i = 0; i < 300; ++i) model.stepPedal(0.01, 1.0, 0.0);
+        const double spinning = model.rpm();
+        for (int i = 0; i < 100; ++i) model.stepPedal(0.01, 0.0, 0.0);
+        CHECK(std::isfinite(model.rpm()));
+        CHECK(std::isfinite(model.torqueNm()));
+        CHECK(std::isfinite(model.consumption().fuelTripL()));
+        CHECK(spinning > 1000.0);
+        CHECK_FALSE(model.stalled());
+        EngineSound sound(test::kRate);
+        sound.setProfile(p.profile());
+        test::Samples out(2048);
+        sound.setTargetRpm(static_cast<float>(spinning));
+        sound.setDrive(1.0f, 0.5f, false, false, 1.0f);
+        if (p.engine.aspiration == Aspiration::Turbo) sound.setTurbo(model.turboDrive());
+        sound.render(out.data(), static_cast<int>(out.size()));
+        CHECK(std::isfinite(test::rms(out)));
+    }
 }

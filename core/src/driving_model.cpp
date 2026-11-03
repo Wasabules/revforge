@@ -128,7 +128,7 @@ void DrivingModel::setPowertrain(const Powertrain& powertrain) {
     superchargerEngine_ = !powertrain.electric && powertrain.engine.aspiration == Aspiration::Supercharger;
     if (superchargerEngine_) supercharger_.setSpec(superchargerSpecOf(powertrain));
     carbEngine_ = !powertrain.electric && fuelSystemOf(powertrain.engine) != FuelSystem::Injection;
-    if (carbEngine_) carb_.configure(carburetorSpecOf(powertrain.engine), litres * 1e-3);
+    if (carbEngine_) carb_.configure(carburetorSpecOf(powertrain.engine), powertrain.engine.sweptCcPerTwoTurns() * 1e-6);
     if (gear_ > gearing_.gears) gear_ = gearing_.gears;
     step_ = ShiftStep::None;
     ignitionCut_ = false;

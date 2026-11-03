@@ -3,6 +3,7 @@
  * Une erreur ici ne change rien au son ni au couple, seulement ce qu'on voit.
  */
 import type { EngineConfig } from './config';
+import { sweptCc } from './rotary';
 
 export interface CarbGeometry {
   kind: 'single' | 'multi';
@@ -22,7 +23,8 @@ const PIPE_OVER_THROAT = 1.25;
 /** `null` : pas de carburateur sur ce moteur (injection, diesel ou électrique). */
 export function carburetorOf(config: EngineConfig): CarbGeometry | null {
   if (config.electric || config.fuel === 'diesel' || !config.fuelSystem || config.fuelSystem === 'injection') return null;
-  const litres = config.displacementCc / 1000;
+  // Le volume avalé en deux tours d'arbre : un rotatif en balaie deux fois sa cylindrée.
+  const litres = sweptCc(config) / 1000;
   const krpm = (RATED_SHARE * config.redlineRpm) / 1000;
   const shared = config.fuelSystem === 'single';
   const throatM = (shared ? SHARED_CHOKE * Math.sqrt(litres * krpm) : PER_CYLINDER_CHOKE * Math.sqrt((litres / config.cylinders) * krpm)) / 1000;

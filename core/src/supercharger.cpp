@@ -221,7 +221,8 @@ Point pointAt(const SuperchargerSpec& spec, double rpm, double breathing, double
 SuperchargerSpec superchargerSpecFor(const EngineConfig& e, double breathingAtSizing, double breathingAtRated) {
     SuperchargerSpec s;
     s.kind = e.superchargerKind;
-    s.displacementM3 = static_cast<double>(e.displacementCc) * 1e-6;
+    // Le volume avalé en deux tours d'arbre : tous les débits ci-dessous s'en déduisent avec rpm/120.
+    s.displacementM3 = e.sweptCcPerTwoTurns() * 1e-6;
     s.targetBar = static_cast<double>(e.boostBar);
     s.redlineRpm = static_cast<double>(e.redlineRpm);
     s.chargeVolumeM3 = clamp(1.0e-3 + 0.8 * s.displacementM3, 1.5e-3, 8e-3);

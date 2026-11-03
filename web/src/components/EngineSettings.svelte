@@ -106,7 +106,7 @@
         oninput={(turboPipeMm) => onlive({ turboPipeMm })} onchange={(turboPipeMm) => onapply({ turboPipeMm })} />
       <p class="help" data-testid="turbo-pipe-help">{t('builder.turboPipe.help')}</p>
     </div>
-    {#if config.fuel === 'petrol'}
+    {#if rotary || config.fuel === 'petrol'}
       <div>
         <Choices label={t('builder.antiLag')} options={ANTI_LAGS} value={config.antiLag} onchange={(antiLag) => onapply({ antiLag })} />
         <p class="help" data-testid="antilag-help">{ANTI_LAGS.find((item) => item.value === config.antiLag)?.help}</p>
@@ -129,10 +129,12 @@
     <p class="help" data-testid="air-filter-help">{AIR_FILTERS.find((item) => item.value === config.airFilter)?.help}</p>
     <p class="help" data-testid="air-filter-figures">{t('builder.airFilter.figures', { kpa: fixed(spec.intakeDropKpa, 1), c: Math.round(spec.intakeAirC) })}</p>
   </div>
-  <div>
-    <Choices label={t('builder.camshaft')} options={CAMSHAFTS} value={config.camshaft} onchange={(camshaft) => onapply({ camshaft })} />
-    <p class="help" data-testid="camshaft-help">{CAMSHAFTS.find((item) => item.value === config.camshaft)?.help}</p>
-  </div>
+  {#if !rotary}
+    <div>
+      <Choices label={t('builder.camshaft')} options={CAMSHAFTS} value={config.camshaft} onchange={(camshaft) => onapply({ camshaft })} />
+      <p class="help" data-testid="camshaft-help">{CAMSHAFTS.find((item) => item.value === config.camshaft)?.help}</p>
+    </div>
+  {/if}
 {/if}
 
 <style>

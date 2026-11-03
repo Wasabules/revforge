@@ -333,7 +333,7 @@ const float* rf_line_impulse() {
     static ExhaustLine* line = nullptr;
     if (!line) line = new ExhaustLine(g_sampleRate);
     const EngineProfile profile = g_powertrain.profile();
-    return line->compute(profile.exhaust, profile.exhaustScale, static_cast<double>(g_powertrain.engine.displacementCc) * 1e-6, profile.cylinders).data();
+    return line->compute(profile.exhaust, profile.exhaustScale, g_powertrain.engine.sweptCcPerTwoTurns() * 1e-6, profile.cylinders).data();
 }
 int rf_line_impulse_length() { return ExhaustLine::kImpulseLength; }
 
@@ -365,7 +365,7 @@ float rf_carb_drop_kpa() {
     Powertrain injected = g_powertrain;
     injected.engine.fuelSystem = FuelSystem::Injection;
     const double rpm = powerSummary(g_powertrain).peakPowerRpm;
-    return static_cast<float>(carburetorDropPa(carb, static_cast<double>(g_powertrain.engine.displacementCc) * 1e-6, rpm, 0.9 * breathingOf(injected, rpm)) / 1000.0);
+    return static_cast<float>(carburetorDropPa(carb, g_powertrain.engine.sweptCcPerTwoTurns() * 1e-6, rpm, 0.9 * breathingOf(injected, rpm)) / 1000.0);
 }
 int rf_gears() { return g_model->gearing().gears; }
 float rf_overall_ratio(int gear) {

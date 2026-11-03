@@ -33,7 +33,7 @@ void applyCarburetor(const EngineConfig& engine, EngineProfile& p) {
     p.carbThroatM = static_cast<float>(carb.throatM);
     p.carbRunnerM = static_cast<float>(carb.pipeLengthM + 0.15);
     p.overrunFuel = kOverrunBurn;
-    if (carb.sharing < 2) return;
+    if (carb.throats > 1) return;
     // Sur une pipe commune, les cylindres du bout sont plus pauvres que ceux du milieu : un sur deux dans l'ordre d'allumage d'un 4 en ligne.
     const double settled = 1.0 / carb.partLambda;
     const double lean = torqueOfRichness(settled * (1.0 - carb.spread)) / torqueOfRichness(settled);
@@ -70,7 +70,7 @@ double cubeRoot(double value) {
     return x;
 }
 
-double compressionOf(Aspiration aspiration, double natural, double boosted) { return aspiration == Aspiration::Turbo ? boosted : natural; }
+double compressionOf(Aspiration aspiration, double natural, double boosted) { return aspiration != Aspiration::Natural ? boosted : natural; }
 
 /** Le rendement du cycle idéal, à ce taux de compression. */
 double ottoEfficiency(double ratio) { return 1.0 - portable::pow(ratio, 1.0 - kExpansionGamma); }
@@ -201,7 +201,14 @@ float EngineConfig::cylinderCc() const {
     return static_cast<float>(displacementCc) / static_cast<float>(cylinders);
 }
 
+double EngineConfig::effectiveBoreMm() const {
+    if (layout != Layout::Rotary) return static_cast<double>(boreMm);
+    return cubeRoot(static_cast<double>(displacementCc) / rotors() * 1000.0 / 0.7854);
+}
+
 float EngineConfig::strokeMm() const {
+    // Un rotatif n'a pas de course : le cylindre carré de sa chambre, celui que son profil donne déjà à la ligne.
+    if (layout == Layout::Rotary) return static_cast<float>(effectiveBoreMm());
     const float boreCm = static_cast<float>(boreMm) / 10.0f;
     return cylinderCc() / (static_cast<float>(km::kPi) / 4.0f * boreCm * boreCm) * 10.0f;
 }
@@ -284,7 +291,7 @@ EngineProfile EngineConfig::toProfile() const {
         p.stackM = static_cast<float>(stackLengthM(*this));
         p.stackRadiusM = static_cast<float>(revforge::stackRadiusM(*this));
     }
-    p.camshaft = camshaft;
+    p.camshaft = valvetrain();
 
     // Le démarreur dépend de ce qu'il doit lancer : la puissance suit la cylindrée et la compression.
     // Un rotatif se lance comme le quatre temps de deux fois sa cylindrée : il comprime autant à chaque tour.
@@ -311,8 +318,9 @@ EngineProfile EngineConfig::toProfile() const {
         s.motorFreeRpm = 16500.0f;
         s.motorInertia = 0.00008f + 0.00001f * litres;
     }
-    if (fuelSystemOf(*this) != FuelSystem::Injection) applyCarburetor(*this, p);
     if (layout == Layout::Rotary) applyRotary(*this, p);
+    // Après le rotatif : les explosions inégales d'une pipe commune se posent sur les siennes.
+    if (fuelSystemOf(*this) != FuelSystem::Injection) applyCarburetor(*this, p);
     return p;
 }
 

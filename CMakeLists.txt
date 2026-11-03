@@ -97,6 +97,8 @@ else()
   golden(stroke_preset_bore 7f3a02ce --preset v10_open --stroke 95 --bore 70 --cylinders 4 --scenario steady --seconds 1)
   # Le rotatif : son calage, ses rangs, et le débit de deux fois sa cylindrée.
   golden(lap_twin_rotor 5174c427 --preset twin_rotor_13 --scenario lap --seconds 20)
+  # Un rotatif n'a pas de course : l'option ne change rien, même empreinte que sans elle.
+  golden(lap_twin_rotor_stroke 5174c427 --preset twin_rotor_13 --scenario lap --seconds 20 --stroke 95)
   golden(steady_three_rotor_turbo a454f216 --layout rotary --cylinders 3 --cc 1962 --redline 8000 --exhaust sport --aspiration turbo --boost 0.8 --scenario steady --rpm 5000)
   # Les trajets et les modes de boîte : un moteur sans turbo, sur 40 s.
   golden(drive_stop_go_eco 40a3403c --preset inline_six --scenario lap --seconds 40 --drive-scenario stop_go --shift-mode eco)

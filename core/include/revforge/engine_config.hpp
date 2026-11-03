@@ -256,6 +256,10 @@ struct EngineConfig {
      * quatre temps ; deux fois celle d'un rotatif, dont chaque rotor balaie une chambre à chaque tour.
      */
     double sweptCcPerTwoTurns() const { return (layout == Layout::Rotary ? 2.0 : 1.0) * static_cast<double>(displacementCc); }
+    /** La distribution réelle : un rotatif n'a ni soupapes ni arbre à cames, quoi que dise `camshaft`. Le double arbre est le modèle d'origine. */
+    Camshaft valvetrain() const { return layout == Layout::Rotary ? Camshaft::Dohc : camshaft; }
+    /** Le diamètre d'un cylindre : `boreMm`, sauf sur un rotatif, qui n'a pas d'alésage et prend le cylindre carré de sa chambre (voir `applyRotary`). */
+    double effectiveBoreMm() const;
     /** Un rotatif ne brûle que de l'essence : un réglage diesel y reste sans effet. */
     bool burnsDiesel() const { return fuel == Fuel::Diesel && layout != Layout::Rotary; }
 };

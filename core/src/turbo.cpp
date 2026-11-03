@@ -279,7 +279,7 @@ TurboSpec turboSpecFor(const EngineConfig& e, double breathingAtRated) {
     s.tipLimit = 1.1 * tipSpeed > kTipLimit ? 1.1 * tipSpeed : kTipLimit;
 
     // Le tube jusqu'à la turbine. Déporté plus loin, le compresseur part avec elle : l'air revient d'autant vers le papillon.
-    s.pipe = turboPipeSpecFor(e.turboPipeMm, s.displacementM3, e.cylinders);
+    s.pipe = turboPipeSpecFor(e.turboPipeMm, s.displacementM3, e.firingsPerTwoTurns());
     if (s.pipe.extraM > 0.0) {
         s.chargeVolumeM3 += area * s.pipe.extraM;
         s.ductInertance += s.pipe.extraM / area;

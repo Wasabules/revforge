@@ -68,7 +68,7 @@ double carburetorBrakeShare(const EngineConfig& e, double rpm, double shape) {
     constexpr double kAtmosphereBar = 1e5;
     const double drop = carburetorDropPa(carb, liters(e) * 1e-3, rpm, kCarburetorVolumetric * shape) / kAtmosphereBar;
     const double k = rpm / 1000.0;
-    const double friction = 0.9 + 0.12 * k + 0.03 * k * k;
+    const double friction = (0.9 + 0.12 * k + 0.03 * k * k) * (isRotary(e) ? kRotaryFrictionShare : 1.0);
     const double brake = naturalBmep(e) * shape;
     return std::max(((brake + friction) * (1.0 - drop) - friction - drop) / brake, 0.3);
 }
@@ -79,7 +79,7 @@ double breathing(const EngineConfig& e, double rpm) {
     // Un moteur suralimenté, turbo ou compresseur, a des cames plus sages : son couple culmine un peu plus tôt.
     double peakAt = (e.aspiration == Aspiration::Natural ? 0.62 : 0.6) * redline;
     // Moins de section, un gaz plus rapide : l'admission s'accorde plus bas (voir « Le simple arbre »).
-    if (e.camshaft == Camshaft::Sohc) peakAt *= sohcTuningRatio(static_cast<double>(e.boreMm));
+    if (e.valvetrain() == Camshaft::Sohc) peakAt *= sohcTuningRatio(static_cast<double>(e.boreMm));
     double shape;
     if (rpm <= peakAt) {
         const double below = 1.0 - rpm / peakAt;
@@ -94,7 +94,7 @@ double breathing(const EngineConfig& e, double rpm) {
         const double excess = std::max(pistonSpeed - kPistonSpeedLimit, 0.0);
         shape *= std::max(1.0 - 0.012 * excess * excess, 0.55);
         // Deux soupapes au lieu de quatre : le gaz qui passe mal, calculé depuis la section et la vitesse du piston.
-        if (e.camshaft == Camshaft::Sohc) shape *= sohcBreathingRatio(static_cast<double>(e.boreMm), static_cast<double>(e.strokeMm()), rpm);
+        if (e.valvetrain() == Camshaft::Sohc) shape *= sohcBreathingRatio(static_cast<double>(e.boreMm), static_cast<double>(e.strokeMm()), rpm);
     }
     // Une ligne libre gagne en haut, mais perd la contre-pression qui aide en bas.
     const double fraction = clamp(rpm / redline, 0.0, 1.0);
@@ -389,7 +389,7 @@ double frictionTorqueNm(const Powertrain& p, double rpm) {
     if (p.electric) return 0.6 + rpm * 0.00035;
     const double k = rpm / 1000.0;
     double bar = 0.9 + 0.12 * k + 0.03 * k * k + (p.engine.burnsDiesel() ? 0.3 : 0.0);
-    if (p.engine.camshaft == Camshaft::Sohc && !isRotary(p.engine)) bar += sohcFrictionDeltaBar(static_cast<double>(p.engine.strokeMm()), rpm);
+    if (p.engine.valvetrain() == Camshaft::Sohc) bar += sohcFrictionDeltaBar(static_cast<double>(p.engine.strokeMm()), rpm);
     return bmepToNm(p.engine, isRotary(p.engine) ? bar * kRotaryFrictionShare : bar);
 }
 
@@ -404,7 +404,7 @@ double engineInertia(const Powertrain& p) {
     if (p.electric) return 0.05;
     const double light = clamp(6500.0 / static_cast<double>(p.engine.redlineRpm), 0.6, 1.2);
     const double inertia = (0.03 + 0.055 * liters(p.engine)) * light;
-    return p.engine.camshaft == Camshaft::Sohc ? inertia + sohcInertiaDelta(p.engine) : inertia;
+    return p.engine.valvetrain() == Camshaft::Sohc ? inertia + sohcInertiaDelta(p.engine) : inertia;
 }
 
 double idleRpmOf(const Powertrain& p) { return static_cast<double>(p.profile().idleRpm); }

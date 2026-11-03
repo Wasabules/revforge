@@ -42,6 +42,7 @@ void usage() {
         "          --cam dohc|sohc --filter stock|panel|cone|stacks\n"
         "          --stroke MM  sets --cc from the bore and the cylinders, in any order, and replaces --cc if both are given.\n"
         "                       On a --preset: applied to the preset's own bore and cylinders, which --bore and --cylinders do not change.\n"
+        "                       Ignored on a rotary, which has no stroke; --bore and --cam are ignored there too.\n"
         "Car:      --body city|compact|coupe|supercar|van|retro --mass KG --rim INCHES --drive front|rear|all\n"
         "          --placement front|mid|rear --insulation stripped|light|standard|comfort|luxury --windows open|closed\n"
         "Gearbox:  --gearbox synchro|dog|sequential|dual_clutch|converter --gears N --family matched|short|close|long\n"
@@ -647,7 +648,11 @@ int main(int argc, char** argv) {
     if (airFilterChoice) powertrain.engine.airFilter = *airFilterChoice;
     if (fuelSystemChoice) powertrain.engine.fuelSystem = *fuelSystemChoice;
     // À la fin : la course se lit sur l'alésage et les cylindres retenus, ceux du préréglage s'il y en a un.
-    if (strokeChoice) powertrain.engine.displacementCc = displacementForStroke(powertrain.engine.boreMm, powertrain.engine.cylinders, *strokeChoice);
+    if (strokeChoice) {
+        // Un rotatif n'a pas de course : l'option ne dit rien de sa cylindrée.
+        if (isRotary(powertrain.engine)) std::fprintf(stderr, "--stroke ignored: a rotary engine has no stroke, use --cc\n");
+        else powertrain.engine.displacementCc = displacementForStroke(powertrain.engine.boreMm, powertrain.engine.cylinders, *strokeChoice);
+    }
     if (customCar) {
         if (!presetId.empty()) {
             if (car.placement != EnginePlacement::Natural) powertrain.car.placement = car.placement;

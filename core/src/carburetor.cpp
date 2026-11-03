@@ -90,13 +90,15 @@ CarburetorSpec carburetorSpecOf(const EngineConfig& e) {
     CarburetorSpec s;
     s.kind = fuelSystemOf(e);
     if (s.kind == FuelSystem::Injection) return s;
-    const double litres = static_cast<double>(e.displacementCc) / 1000.0;
+    // Le volume avalé en deux tours d'arbre, et le nombre de bouffées qu'il fait : un rotor en donne deux, chacune d'une chambre.
+    const double litres = e.sweptCcPerTwoTurns() / 1000.0;
     const double cylinders = static_cast<double>(e.cylinders);
+    const int induction = e.firingsPerTwoTurns();
     s.redlineRpm = static_cast<double>(e.redlineRpm);
     const double krpm = kRatedShare * s.redlineRpm / 1000.0;
     const bool shared = s.kind == FuelSystem::Carburetor;
     s.throats = shared ? 1 : e.cylinders;
-    s.sharing = shared ? e.cylinders : 1;
+    s.sharing = shared ? induction : induction / e.cylinders;
     s.throatM = (shared ? kSharedChoke * std::sqrt(litres * krpm) : kPerCylinderChoke * std::sqrt(litres / cylinders * krpm)) / 1000.0;
     s.pipeM = s.throatM * kPipeOverThroat;
     // Une pipe commune se partage et se coude pour atteindre chaque soupape ; un corps par cylindre va presque droit.
