@@ -258,7 +258,9 @@ TurboSpec turboSpecFor(const EngineConfig& e, double breathingAtRated) {
     switch (e.exhaust) {
         case Exhaust::Stock: lineFactor = 1.0; break;
         case Exhaust::Sport: lineFactor = 0.6; break;
-        case Exhaust::Straight: lineFactor = 0.25; break;
+        // Socle : la chambre de détente se comporte comme la ligne directe.
+        case Exhaust::Straight:
+        case Exhaust::Expansion: lineFactor = 0.25; break;
         case Exhaust::MufflerDelete: lineFactor = 0.4; break;
         case Exhaust::ResonatorDelete: lineFactor = 0.9; break;
         case Exhaust::Quiet: lineFactor = 1.3; break;

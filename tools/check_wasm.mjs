@@ -18,8 +18,10 @@ function load() {
   return rf;
 }
 
-const LAYOUT = { inline: 0, v: 1, cross_plane: 2, boxer: 3, rotary: 4 };
-const EXHAUST = { stock: 0, sport: 1, straight: 2, no_muffler: 3, no_resonator: 4, quiet: 5 };
+const LAYOUT = { inline: 0, v: 1, cross_plane: 2, boxer: 3, rotary: 4, vr: 5, w: 6 };
+const EXHAUST = { stock: 0, sport: 1, straight: 2, no_muffler: 3, no_resonator: 4, quiet: 5, expansion: 6 };
+const CAMSHAFT = { dohc: 0, sohc: 1, ohv: 2 };
+const FUEL_SYSTEM = { injection: 0, single: 1, multi: 2, direct: 3 };
 const BODY = { city: 0, compact: 1, coupe: 2, supercar: 3, van: 4, retro: 5 };
 const DRIVE = { front: 0, rear: 1, all: 2 };
 const PLACEMENT = { front: 0, mid: 1, rear: 2 };
@@ -35,6 +37,44 @@ const TEETH = { helical: 0, spur: 1 };
 // Même ordre que `ShiftMode` et `DriveScenario` en C++.
 const SHIFT = { normal: 0, eco: 1, sport: 2, track: 3, paddles: 4 };
 const SCENARIO = { city: 0, stop_go: 1, country: 2, motorway: 3, mountain: 4, drag: 5, track: 6, hill_start: 7, towing: 8 };
+
+// ── Les réglages du socle moteur : même ordre que les énumérations C++ et les tableaux de config.ts ──
+const START = { warm: 0, cold: 1 };
+const GRADE = { ron95: 0, ron98: 1, race102: 2, e85: 3, methanol: 4 };
+const LIMITER = { stock: 0, soft: 1, ignition_cut: 2 };
+const TRACTION = { off: 0, sport: 1, full: 2 };
+const DIESEL_INJECTION = { mechanical: 0, common_rail: 1 };
+const VVT = { fixed: 0, phased: 1, two_step: 2, phased_two_step: 3 };
+const SPRINGS = { stock: 0, stiff: 1 };
+const TURBO_LAYOUT = { single: 0, twin_parallel: 1, twin_sequential: 2, twincharger: 3 };
+const BOOST_CONTROL = { spring: 0, electronic: 1, by_gear: 2 };
+const INTERCOOLER = { air: 0, water: 1, none: 2 };
+const CYCLE = { four_stroke: 0, two_stroke: 1 };
+/** Les arguments de `rf_set_tuning`, dans son ordre, à leur défaut : le moteur d'aujourd'hui. */
+const TUNING = {
+  ambientC: 20, altitudeM: 0, startTemp: 0, compressionRatio: 0, fuelGrade: 0, ignitionOffsetDeg: 0, fullLoadLambda: 0, revLimiter: 0,
+  launchRpm: 0, flatShift: 0, tractionControl: 0, dieselInjection: 0, egr: 0, particulateFilter: 0, camDurationDeg: 0, camLiftMm: 0,
+  lobeSeparationDeg: 0, valveTiming: 0, valveSprings: 0, turboLayout: 0, variableGeometry: 0, boostControl: 0, intercooler: 0,
+  waterInjection: 0, nitrousKw: 0, cycle: 0,
+};
+// Les noms et l'ordre de `TUNING` sont ceux de la signature de `rf_set_tuning` : un écart décalerait tous les réglages qui suivent.
+{
+  const source = readFileSync(new URL('../wasm/exports.cpp', import.meta.url), 'utf-8');
+  const signature = source.match(/void rf_set_tuning\(([^)]*)\)/)?.[1] ?? '';
+  const names = signature.split(',').map((param) => param.trim().split(/\s+/).pop());
+  if (names.join(',') !== Object.keys(TUNING).join(',')) {
+    console.log(`DIFFÉRENT  rf_set_tuning : ${names.join(',')}\n           check_wasm  : ${Object.keys(TUNING).join(',')}`);
+    process.exit(1);
+  }
+}
+/**
+ * Pose les réglages du socle : seuls ceux qui changent sont à écrire, `tune(rf, { altitudeM: 2000 })`. À appeler AVANT
+ * `rf_set_config` (ou `rf_set_electric`), qui les applique : après, ils attendraient le prochain moteur.
+ */
+function tune(rf, changes) {
+  for (const key of Object.keys(changes)) if (!(key in TUNING)) throw new Error(`réglage inconnu : ${key}`);
+  rf.rf_set_tuning(...Object.keys(TUNING).map((key) => changes[key] ?? TUNING[key]));
+}
 
 function fnv(state, samples) {
   let hash = state;
@@ -509,5 +549,50 @@ for (const [name, system] of [['single', 1], ['multi', 2]]) {
   rf.rf_set_config(2, LAYOUT.rotary, 1308, 84, 8000, EXHAUST.sport, 2, 0, 0, 0, 0, 0.7, ROUTING.single, TURBO.medium, 1, 0, 400, 1, 2, 1);
   rf.rf_set_mode(3);
   check('birotor à vis, cône, carburateur', render(rf, 20, 128), native('--layout', 'rotary', '--cylinders', '2', '--cc', '1308', '--redline', '8000', '--exhaust', 'sport', '--aspiration', 'supercharger', '--boost', '0.7', '--supercharger', 'twin_screw', '--cam', 'sohc', '--filter', 'cone', '--carb', 'single', '--body', 'coupe', '--mass', '1300', '--rim', '18', '--drive', 'rear', '--insulation', 'standard', '--scenario', 'lap', '--seconds', '20'));
+}
+// Le socle moteur : tous ses réglages changés à la fois, et les valeurs ajoutées aux énumérations, au son comme à la consommation.
+{
+  const changed = {
+    ambientC: 35, altitudeM: 2000, startTemp: START.cold, compressionRatio: 11.5, fuelGrade: GRADE.e85, ignitionOffsetDeg: -4, fullLoadLambda: 0.85,
+    revLimiter: LIMITER.ignition_cut, launchRpm: 4500, flatShift: 1, tractionControl: TRACTION.full, dieselInjection: DIESEL_INJECTION.common_rail, egr: 1,
+    particulateFilter: 1, camDurationDeg: 270, camLiftMm: 11.5, lobeSeparationDeg: 108, valveTiming: VVT.phased_two_step, valveSprings: SPRINGS.stiff,
+    turboLayout: TURBO_LAYOUT.twincharger, variableGeometry: 1, boostControl: BOOST_CONTROL.by_gear, intercooler: INTERCOOLER.water, waterInjection: 1, nitrousKw: 75,
+    cycle: CYCLE.two_stroke,
+  };
+  const options = ['--ambient', '35', '--altitude', '2000', '--start', 'cold', '--compression', '11.5', '--grade', 'e85', '--advance', '-4', '--lambda', '0.85',
+    '--limiter', 'ignition_cut', '--launch', '4500', '--flat-shift', '1', '--traction', 'full', '--diesel-injection', 'common_rail', '--egr', '1', '--dpf', '1',
+    '--cam-duration', '270', '--cam-lift', '11.5', '--lsa', '108', '--vvt', 'phased_two_step', '--springs', 'stiff', '--turbo-layout', 'twincharger', '--vgt', '1',
+    '--boost-control', 'by_gear', '--intercooler', 'water', '--water', '1', '--nitrous', '75', '--cycle', 'two_stroke'];
+  const engineArgs = ['--cylinders', '6', '--layout', 'vr', '--cc', '2800', '--bore', '81', '--redline', '6500', '--exhaust', 'expansion', '--aspiration', 'turbo', '--boost', '1.2',
+    '--cam', 'ohv', '--fuel-system', 'direct', '--body', 'compact', '--mass', '1450', '--rim', '18', '--drive', 'all', '--placement', 'front', '--insulation', 'standard'];
+  const socle = () => {
+    const rf = load();
+    rf.rf_set_car(BODY.compact, 1450, 18, DRIVE.all, PLACEMENT.front, INSULATION.standard);
+    tune(rf, changed);
+    rf.rf_set_config(6, LAYOUT.vr, 2800, 81, 6500, EXHAUST.expansion, 1, 0, 0, 0, 0, 1.2, ROUTING.single, TURBO.medium, 0, 0, 400, CAMSHAFT.ohv, 0, FUEL_SYSTEM.direct);
+    rf.rf_set_mode(3);
+    return rf;
+  };
+  check('socle moteur, tout changé', render(socle(), 20, 128), native(...engineArgs, ...options, '--scenario', 'lap', '--seconds', '20'));
+  const rf = socle();
+  driveLikeNative(rf, 20);
+  checkFigures('socle moteur, consommation', rf, nativeFigures(...engineArgs, ...options, '--scenario', 'lap', '--seconds', '20'));
+}
+// Le socle moteur, sur un préréglage : les options l'emportent sur lui, et une voiture électrique reçoit aussi ses réglages.
+{
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1450, 18, DRIVE.all, PLACEMENT.front, INSULATION.standard);
+  tune(rf, { ambientC: -10, altitudeM: 3000, startTemp: START.cold, launchRpm: 5000, tractionControl: TRACTION.sport, flatShift: 1 });
+  rf.rf_set_config(4, LAYOUT.boxer, 2500, 99, 6800, EXHAUST.sport, 1, 0, 0, 1, 1, 1.2, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+  rf.rf_set_mode(3);
+  check('socle moteur, sur un préréglage', render(rf, 20, 128), native('--preset', 'boxer_four_turbo', '--ambient', '-10', '--altitude', '3000', '--start', 'cold', '--launch', '5000', '--traction', 'sport', '--flat-shift', '1', '--scenario', 'lap', '--seconds', '20'));
+}
+{
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1800, 19, DRIVE.rear, PLACEMENT.front, INSULATION.standard);
+  tune(rf, { ambientC: 40, altitudeM: 1500, tractionControl: TRACTION.full });
+  rf.rf_set_electric();
+  rf.rf_set_mode(3);
+  check('socle moteur, électrique', render(rf, 20, 128), native('--preset', 'electric', '--ambient', '40', '--altitude', '1500', '--traction', 'full', '--scenario', 'lap', '--seconds', '20'));
 }
 process.exit(failed ? 1 : 0);

@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -34,15 +35,27 @@ void usage() {
         "  --kmh N           speed held by cruise (the trip is measured once settled, after 60 s)\n"
         "  --rate N          sample rate (44100)\n"
         "  --volume X        volume (0.7)\n"
-        "Engine:   --cylinders N --layout inline|v|cross_plane|boxer|rotary --cc N --bore N --redline N\n"
-        "          --exhaust stock|sport|straight|no_muffler|no_resonator|quiet --routing single|dual|h|x\n"
+        "Engine:   --cylinders N --layout inline|v|cross_plane|boxer|rotary|vr|w --cc N --bore N --redline N\n"
+        "          --exhaust stock|sport|straight|no_muffler|no_resonator|quiet|expansion --routing single|dual|h|x\n"
         "          --aspiration natural|turbo|supercharger --fuel petrol|diesel\n"
         "          --pops off|light|strong --release dump_valve|flutter --boost BAR --turbo small|medium|large\n"
         "          --supercharger roots|twin_screw|centrifugal --antilag off|retard|air|cut --turbo-pipe MM\n"
-        "          --cam dohc|sohc --filter stock|panel|cone|stacks --carb injection|single|multi\n"
+        "          --cam dohc|sohc|ohv --filter stock|panel|cone|stacks --fuel-system injection|single|multi|direct (or --carb)\n"
         "          --stroke MM  sets --cc from the bore and the cylinders, in any order, and replaces --cc if both are given.\n"
         "                       On a --preset: applied to the preset's own bore and cylinders, which --bore and --cylinders do not change.\n"
         "                       Ignored on a rotary, which has no stroke; --bore and --cam are ignored there too.\n"
+        "          Each option below overrides a --preset, as --exhaust, --routing, --supercharger, --antilag, --turbo-pipe,\n"
+        "          --cam, --filter and --fuel-system do. A number at 0 keeps the engine's own value.\n"
+        "          Architecture: --cycle four_stroke|two_stroke\n"
+        "          Combustion:   --compression X (6 to 24) --grade ron95|ron98|race102|e85|methanol\n"
+        "          Valvetrain:   --cam-duration DEG --cam-lift MM --lsa DEG --vvt fixed|phased|two_step|phased_two_step\n"
+        "                        --springs stock|stiff\n"
+        "          Fueling:      --diesel-injection mechanical|common_rail --egr 0|1 --dpf 0|1\n"
+        "          Charging:     --turbo-layout single|twin_parallel|twin_sequential|twincharger --vgt 0|1\n"
+        "                        --boost-control spring|electronic|by_gear --intercooler air|water|none --water 0|1 --nitrous KW\n"
+        "          ECU:          --advance DEG --lambda X --limiter stock|soft|ignition_cut --launch RPM --flat-shift 0|1\n"
+        "                        --traction off|sport|full\n"
+        "          Conditions:   --ambient C --altitude M --start warm|cold\n"
         "Car:      --body city|compact|coupe|supercar|van|retro --mass KG --rim INCHES --drive front|rear|all\n"
         "          --placement front|mid|rear --insulation stripped|light|standard|comfort|luxury --windows open|closed\n"
         "Gearbox:  --gearbox synchro|dog|sequential|dual_clutch|converter --gears N --family matched|short|close|long\n"
@@ -495,6 +508,11 @@ int main(int argc, char** argv) {
     std::optional<AirFilter> airFilterChoice;
     std::optional<double> strokeChoice;
     std::optional<FuelSystem> fuelSystemChoice;
+    // Les réglages du socle moteur : retenus ici, posés après le préréglage, qu'ils remplacent.
+    std::vector<std::function<void(EngineConfig&)>> tuning;
+    auto later = [&tuning](auto field, auto value) { tuning.push_back([field, value](EngineConfig& e) { e.*field = value; }); };
+    auto number = [](const std::string& text) { return static_cast<float>(std::atof(text.c_str())); };
+    auto whole = [](const std::string& text) { return std::atoi(text.c_str()); };
     bool customListener = false;
     Powertrain powertrain = referencePowertrain();
     EngineConfig& config = powertrain.engine;
@@ -596,14 +614,14 @@ int main(int argc, char** argv) {
             else if (arg == "--redline") config.redlineRpm = std::atoi(value.c_str());
             else if (arg == "--boost") config.boostBar = static_cast<float>(std::atof(value.c_str()));
             else if (arg == "--turbo") config.turboSize = pick<TurboSize>(value, {{"small", TurboSize::Small}, {"medium", TurboSize::Medium}, {"large", TurboSize::Large}});
-            else if (arg == "--layout") config.layout = pick<Layout>(value, {{"inline", Layout::Inline}, {"v", Layout::V}, {"cross_plane", Layout::CrossPlane}, {"boxer", Layout::Boxer}, {"rotary", Layout::Rotary}});
-            else if (arg == "--exhaust") { config.exhaust = pick<Exhaust>(value, {{"stock", Exhaust::Stock}, {"sport", Exhaust::Sport}, {"straight", Exhaust::Straight}, {"no_muffler", Exhaust::MufflerDelete}, {"no_resonator", Exhaust::ResonatorDelete}, {"quiet", Exhaust::Quiet}}); exhaustChoice = config.exhaust; }
+            else if (arg == "--layout") config.layout = pick<Layout>(value, {{"inline", Layout::Inline}, {"v", Layout::V}, {"cross_plane", Layout::CrossPlane}, {"boxer", Layout::Boxer}, {"rotary", Layout::Rotary}, {"vr", Layout::Vr}, {"w", Layout::W}});
+            else if (arg == "--exhaust") { config.exhaust = pick<Exhaust>(value, {{"stock", Exhaust::Stock}, {"sport", Exhaust::Sport}, {"straight", Exhaust::Straight}, {"no_muffler", Exhaust::MufflerDelete}, {"no_resonator", Exhaust::ResonatorDelete}, {"quiet", Exhaust::Quiet}, {"expansion", Exhaust::Expansion}}); exhaustChoice = config.exhaust; }
             else if (arg == "--routing") { config.routing = pick<ExhaustRouting>(value, {{"single", ExhaustRouting::Single}, {"dual", ExhaustRouting::Dual}, {"h", ExhaustRouting::HPipe}, {"x", ExhaustRouting::XPipe}}); routing = config.routing; }
             else if (arg == "--aspiration") config.aspiration = pick<Aspiration>(value, {{"natural", Aspiration::Natural}, {"turbo", Aspiration::Turbo}, {"supercharger", Aspiration::Supercharger}});
             else if (arg == "--supercharger") superchargerChoice = pick<SuperchargerKind>(value, {{"roots", SuperchargerKind::Roots}, {"twin_screw", SuperchargerKind::TwinScrew}, {"centrifugal", SuperchargerKind::Centrifugal}});
             else if (arg == "--antilag") antiLagChoice = pick<AntiLag>(value, {{"off", AntiLag::Off}, {"retard", AntiLag::Retard}, {"air", AntiLag::AirInjection}, {"cut", AntiLag::CylinderCut}});
             else if (arg == "--turbo-pipe") turboPipeChoice = std::atoi(value.c_str());
-            else if (arg == "--cam") camshaftChoice = pick<Camshaft>(value, {{"dohc", Camshaft::Dohc}, {"sohc", Camshaft::Sohc}});
+            else if (arg == "--cam") camshaftChoice = pick<Camshaft>(value, {{"dohc", Camshaft::Dohc}, {"sohc", Camshaft::Sohc}, {"ohv", Camshaft::Ohv}});
             else if (arg == "--filter") airFilterChoice = pick<AirFilter>(value, {{"stock", AirFilter::Stock}, {"panel", AirFilter::Panel}, {"cone", AirFilter::Cone}, {"stacks", AirFilter::Stacks}});
             else if (arg == "--stroke") {
                 strokeChoice = std::atof(value.c_str());
@@ -612,7 +630,34 @@ int main(int argc, char** argv) {
                     return 2;
                 }
             }
-            else if (arg == "--carb") fuelSystemChoice = pick<FuelSystem>(value, {{"injection", FuelSystem::Injection}, {"single", FuelSystem::Carburetor}, {"multi", FuelSystem::MultiCarb}});
+            else if (arg == "--carb" || arg == "--fuel-system") fuelSystemChoice = pick<FuelSystem>(value, {{"injection", FuelSystem::Injection}, {"single", FuelSystem::Carburetor}, {"multi", FuelSystem::MultiCarb}, {"direct", FuelSystem::Direct}});
+            // Les réglages du socle moteur, dans l'ordre d'EngineConfig : une ligne par réglage.
+            else if (arg == "--ambient") later(&EngineConfig::ambientC, number(value));
+            else if (arg == "--altitude") later(&EngineConfig::altitudeM, whole(value));
+            else if (arg == "--start") later(&EngineConfig::startTemp, pick<StartTemp>(value, {{"warm", StartTemp::Warm}, {"cold", StartTemp::Cold}}));
+            else if (arg == "--compression") later(&EngineConfig::compressionRatio, number(value));
+            else if (arg == "--grade") later(&EngineConfig::fuelGrade, pick<FuelGrade>(value, {{"ron95", FuelGrade::Ron95}, {"ron98", FuelGrade::Ron98}, {"race102", FuelGrade::Race102}, {"e85", FuelGrade::E85}, {"methanol", FuelGrade::Methanol}}));
+            else if (arg == "--advance") later(&EngineConfig::ignitionOffsetDeg, whole(value));
+            else if (arg == "--lambda") later(&EngineConfig::fullLoadLambda, number(value));
+            else if (arg == "--limiter") later(&EngineConfig::revLimiter, pick<RevLimiter>(value, {{"stock", RevLimiter::Stock}, {"soft", RevLimiter::Soft}, {"ignition_cut", RevLimiter::IgnitionCut}}));
+            else if (arg == "--launch") later(&EngineConfig::launchRpm, whole(value));
+            else if (arg == "--flat-shift") later(&EngineConfig::flatShift, value != "0");
+            else if (arg == "--traction") later(&EngineConfig::tractionControl, pick<TractionControl>(value, {{"off", TractionControl::Off}, {"sport", TractionControl::Sport}, {"full", TractionControl::Full}}));
+            else if (arg == "--diesel-injection") later(&EngineConfig::dieselInjection, pick<DieselInjection>(value, {{"mechanical", DieselInjection::Mechanical}, {"common_rail", DieselInjection::CommonRail}}));
+            else if (arg == "--egr") later(&EngineConfig::egr, value != "0");
+            else if (arg == "--dpf") later(&EngineConfig::particulateFilter, value != "0");
+            else if (arg == "--cam-duration") later(&EngineConfig::camDurationDeg, whole(value));
+            else if (arg == "--cam-lift") later(&EngineConfig::camLiftMm, number(value));
+            else if (arg == "--lsa") later(&EngineConfig::lobeSeparationDeg, whole(value));
+            else if (arg == "--vvt") later(&EngineConfig::valveTiming, pick<ValveTiming>(value, {{"fixed", ValveTiming::Fixed}, {"phased", ValveTiming::Phased}, {"two_step", ValveTiming::TwoStep}, {"phased_two_step", ValveTiming::PhasedTwoStep}}));
+            else if (arg == "--springs") later(&EngineConfig::valveSprings, pick<ValveSprings>(value, {{"stock", ValveSprings::Stock}, {"stiff", ValveSprings::Stiff}}));
+            else if (arg == "--turbo-layout") later(&EngineConfig::turboLayout, pick<TurboLayout>(value, {{"single", TurboLayout::Single}, {"twin_parallel", TurboLayout::TwinParallel}, {"twin_sequential", TurboLayout::TwinSequential}, {"twincharger", TurboLayout::Twincharger}}));
+            else if (arg == "--vgt") later(&EngineConfig::variableGeometry, value != "0");
+            else if (arg == "--boost-control") later(&EngineConfig::boostControl, pick<BoostControl>(value, {{"spring", BoostControl::Spring}, {"electronic", BoostControl::Electronic}, {"by_gear", BoostControl::ByGear}}));
+            else if (arg == "--intercooler") later(&EngineConfig::intercooler, pick<Intercooler>(value, {{"air", Intercooler::AirToAir}, {"water", Intercooler::AirToWater}, {"none", Intercooler::None}}));
+            else if (arg == "--water") later(&EngineConfig::waterInjection, value != "0");
+            else if (arg == "--nitrous") later(&EngineConfig::nitrousKw, whole(value));
+            else if (arg == "--cycle") later(&EngineConfig::cycle, pick<EngineCycle>(value, {{"four_stroke", EngineCycle::FourStroke}, {"two_stroke", EngineCycle::TwoStroke}}));
             else if (arg == "--fuel") config.fuel = pick<Fuel>(value, {{"petrol", Fuel::Petrol}, {"diesel", Fuel::Diesel}});
             else if (arg == "--pops") config.pops = pick<PopLevel>(value, {{"off", PopLevel::Off}, {"light", PopLevel::Light}, {"strong", PopLevel::Strong}});
             else if (arg == "--release") config.turboRelease = pick<TurboRelease>(value, {{"dump_valve", TurboRelease::DumpValve}, {"flutter", TurboRelease::Flutter}});
@@ -647,6 +692,7 @@ int main(int argc, char** argv) {
     if (camshaftChoice) powertrain.engine.camshaft = *camshaftChoice;
     if (airFilterChoice) powertrain.engine.airFilter = *airFilterChoice;
     if (fuelSystemChoice) powertrain.engine.fuelSystem = *fuelSystemChoice;
+    for (const auto& apply : tuning) apply(powertrain.engine);
     // À la fin : la course se lit sur l'alésage et les cylindres retenus, ceux du préréglage s'il y en a un.
     if (strokeChoice) {
         // Un rotatif n'a pas de course : l'option ne dit rien de sa cylindrée.

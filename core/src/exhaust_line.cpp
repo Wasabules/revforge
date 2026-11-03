@@ -205,7 +205,7 @@ const std::vector<float>& ExhaustLine::compute(Exhaust exhaust, float scale, dou
     if (exhaust == Exhaust::Sport) {
         sections = kSport.data();
         count = kSport.size();
-    } else if (exhaust == Exhaust::Straight) {
+    } else if (exhaust == Exhaust::Straight || exhaust == Exhaust::Expansion) {  // Socle : la chambre de détente comme la ligne directe.
         sections = kStraight.data();
         count = kStraight.size();
     } else if (exhaust == Exhaust::MufflerDelete) {

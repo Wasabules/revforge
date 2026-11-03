@@ -6,10 +6,14 @@ namespace revforge {
 
 inline constexpr int kMaxCylinders = 12;
 
-/** `Rotary` : moteur à pistons rotatifs (Wankel). `cylinders` y compte les rotors, et `displacementCc` une chambre par rotor. */
-enum class Layout { Inline, V, CrossPlane, Boxer, Rotary };
+/**
+ * `Rotary` : moteur à pistons rotatifs (Wankel). `cylinders` y compte les rotors, et `displacementCc` une chambre par rotor.
+ * `Vr` : un V très fermé sous une seule culasse (VR5, VR6). `W` : deux bancs VR (W8, W12). Socle : tous deux se comportent comme `V`.
+ */
+enum class Layout { Inline, V, CrossPlane, Boxer, Rotary, Vr, W };
 // L'ordre compte : la position donne la valeur envoyée par le site (web/src/lib/config.ts). On ajoute à la fin.
-enum class Exhaust { Stock, Sport, Straight, MufflerDelete, ResonatorDelete, Quiet };
+/** `Expansion` : la chambre de détente d'un deux-temps. Socle : elle se comporte comme `Straight`. */
+enum class Exhaust { Stock, Sport, Straight, MufflerDelete, ResonatorDelete, Quiet, Expansion };
 /** Le chemin des gaz : une seule ligne, deux lignes séparées (une par rangée), reliées par un pont en H ou en X. */
 enum class ExhaustRouting { Single, Dual, HPipe, XPipe };
 enum class Aspiration { Natural, Turbo, Supercharger };
@@ -22,12 +26,42 @@ enum class TurboSize { Small, Medium, Large };
 enum class SuperchargerKind { Roots, TwinScrew, Centrifugal };
 /** L'anti-lag : aucun, retard d'allumage, air injecté au collecteur, coupure de cylindres. N'agit que sur un turbo. */
 enum class AntiLag { Off, Retard, AirInjection, CylinderCut };
-/** L'arbre à cames : deux en tête, quatre soupapes par cylindre ; un seul en tête, deux soupapes. */
-enum class Camshaft { Dohc, Sohc };
+/**
+ * L'arbre à cames : deux en tête, quatre soupapes par cylindre ; un seul en tête, deux soupapes ; un seul dans le bloc,
+ * avec poussoirs, tiges et culbuteurs (`Ohv`), deux soupapes. Socle : `Ohv` se comporte comme `Sohc` (voir `valvetrain()`).
+ */
+enum class Camshaft { Dohc, Sohc, Ohv };
 /** Le filtre à air : papier d'origine dans sa boîte, panneau sport dans la boîte, cône à l'air libre, cornets sans boîte. */
 enum class AirFilter { Stock, Panel, Cone, Stacks };
-/** L'alimentation en essence : injection, carburateur unique sur une pipe commune, un corps de carburateur par cylindre. */
-enum class FuelSystem { Injection, Carburetor, MultiCarb };
+/**
+ * L'alimentation en essence : injection indirecte, carburateur unique sur une pipe commune, un corps de carburateur par
+ * cylindre, injection directe dans la chambre. Socle : `Direct` se comporte comme `Injection` (voir `fuelSystemOf`).
+ */
+enum class FuelSystem { Injection, Carburetor, MultiCarb, Direct };
+
+// ── Les réglages du socle moteur : posés de bout en bout, sans effet sur le calcul. Voir CLAUDE.md. ──
+/** Moteur chaud au démarrage, ou à la température de l'air ambiant. */
+enum class StartTemp { Warm, Cold };
+/** Le carburant d'un moteur à essence : indice d'octane recherche, éthanol E85, méthanol. */
+enum class FuelGrade { Ron95, Ron98, Race102, E85, Methanol };
+/** Le rupteur : celui d'aujourd'hui, un retard puis une coupure partielle, ou une coupure d'allumage qui laisse passer l'essence. */
+enum class RevLimiter { Stock, Soft, IgnitionCut };
+/** L'antipatinage : aucun, une cible de glissement sportive, ou serrée. */
+enum class TractionControl { Off, Sport, Full };
+/** L'injection d'un diesel : pompe mécanique, ou rampe commune avec injection pilote. */
+enum class DieselInjection { Mechanical, CommonRail };
+/** Le calage variable : fixe, déphaseur d'admission, deux profils, ou les deux. */
+enum class ValveTiming { Fixed, Phased, TwoStep, PhasedTwoStep };
+/** Les ressorts de soupape : d'origine, ou plus raides. */
+enum class ValveSprings { Stock, Stiff };
+/** Les turbos : un seul, deux en parallèle, deux en séquence, ou un compresseur et un turbo en série. */
+enum class TurboLayout { Single, TwinParallel, TwinSequential, Twincharger };
+/** La régulation de pression : wastegate à ressort, électrovanne pilotée, ou cible selon le rapport. */
+enum class BoostControl { Spring, Electronic, ByGear };
+/** L'échangeur de l'air de charge : air-air, air-eau, ou aucun. */
+enum class Intercooler { AirToAir, AirToWater, None };
+/** Le cycle : quatre temps, ou deux. Socle : `TwoStroke` se comporte comme un quatre-temps. */
+enum class EngineCycle { FourStroke, TwoStroke };
 
 /**
  * Ce qui dépend de l'échappement en dehors de sa géométrie, calculée par ExhaustLine :
@@ -240,6 +274,45 @@ struct EngineConfig {
     AirFilter airFilter = AirFilter::Stock;
     FuelSystem fuelSystem = FuelSystem::Injection;
 
+    // ── Les réglages du socle moteur, dans l'ordre de `rf_set_tuning` : sans effet sur le calcul pour l'instant. ──
+    // Leur défaut est le moteur d'aujourd'hui ; un nombre à 0 marqué « d'origine » laisse au moteur ce qu'il a.
+    /** Conditions : air ambiant (°C), altitude (m), moteur chaud ou froid au démarrage. */
+    float ambientC = 20.0f;
+    int altitudeM = 0;
+    StartTemp startTemp = StartTemp::Warm;
+    /** Combustion : taux de compression géométrique (0 : d'origine), carburant. */
+    float compressionRatio = 0.0f;
+    FuelGrade fuelGrade = FuelGrade::Ron95;
+    /**
+     * Calculateur : décalage de la carte d'avance (°), richesse à pleine charge (0 : carte d'origine), rupteur, régime tenu
+     * par le launch control (tr/min, 0 : sans), passage des rapports sans lever le pied, antipatinage.
+     */
+    int ignitionOffsetDeg = 0;
+    float fullLoadLambda = 0.0f;
+    RevLimiter revLimiter = RevLimiter::Stock;
+    int launchRpm = 0;
+    bool flatShift = false;
+    TractionControl tractionControl = TractionControl::Off;
+    /** Alimentation : injection d'un diesel, recirculation des gaz d'échappement, filtre à particules. */
+    DieselInjection dieselInjection = DieselInjection::Mechanical;
+    bool egr = false;
+    bool particulateFilter = false;
+    /** Distribution : durée (°) et levée (mm) de came, angle entre cames (°), tous à 0 : d'origine ; calage variable, ressorts. */
+    int camDurationDeg = 0;
+    float camLiftMm = 0.0f;
+    int lobeSeparationDeg = 0;
+    ValveTiming valveTiming = ValveTiming::Fixed;
+    ValveSprings valveSprings = ValveSprings::Stock;
+    /** Suralimentation : turbos, géométrie variable, régulation, échangeur, injection d'eau, protoxyde d'azote (kW, 0 : sans). */
+    TurboLayout turboLayout = TurboLayout::Single;
+    bool variableGeometry = false;
+    BoostControl boostControl = BoostControl::Spring;
+    Intercooler intercooler = Intercooler::AirToAir;
+    bool waterInjection = false;
+    int nitrousKw = 0;
+    /** Architecture : le cycle. */
+    EngineCycle cycle = EngineCycle::FourStroke;
+
     bool operator==(const EngineConfig&) const = default;
 
     float cylinderCc() const;
@@ -256,8 +329,11 @@ struct EngineConfig {
      * quatre temps ; deux fois celle d'un rotatif, dont chaque rotor balaie une chambre à chaque tour.
      */
     double sweptCcPerTwoTurns() const { return (layout == Layout::Rotary ? 2.0 : 1.0) * static_cast<double>(displacementCc); }
-    /** La distribution réelle : un rotatif n'a ni soupapes ni arbre à cames, quoi que dise `camshaft`. Le double arbre est le modèle d'origine. */
-    Camshaft valvetrain() const { return layout == Layout::Rotary ? Camshaft::Dohc : camshaft; }
+    /**
+     * La distribution réelle : un rotatif n'a ni soupapes ni arbre à cames, quoi que dise `camshaft`. Le double arbre est le
+     * modèle d'origine. Socle : les culbuteurs (`Ohv`, deux soupapes) se comportent comme le simple arbre.
+     */
+    Camshaft valvetrain() const { return layout == Layout::Rotary ? Camshaft::Dohc : (camshaft == Camshaft::Ohv ? Camshaft::Sohc : camshaft); }
     /** Le diamètre d'un cylindre : `boreMm`, sauf sur un rotatif, qui n'a pas d'alésage et prend le cylindre carré de sa chambre (voir `applyRotary`). */
     double effectiveBoreMm() const;
     /** Un rotatif ne brûle que de l'essence : un réglage diesel y reste sans effet. */

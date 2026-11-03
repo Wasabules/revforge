@@ -164,7 +164,9 @@ const ExhaustSpec& exhaustSpec(Exhaust exhaust) {
     static const ExhaustSpec quiet{2.8f, 0.3f, 0.3f, 500.0f, 0.055f, 0.6f, 0.6f};
     switch (exhaust) {
         case Exhaust::Sport: return sport;
-        case Exhaust::Straight: return straight;
+        // Socle : la chambre de détente se comporte comme la ligne directe.
+        case Exhaust::Straight:
+        case Exhaust::Expansion: return straight;
         case Exhaust::MufflerDelete: return noMuffler;
         case Exhaust::ResonatorDelete: return noResonator;
         case Exhaust::Quiet: return quiet;
@@ -240,7 +242,10 @@ EngineProfile EngineConfig::toProfile() const {
         const float spread = kCylinderSpread[i % kCylinderSpread.size()];
         switch (layout) {
             case Layout::Inline: p.firingGain[i] = spread; break;
-            case Layout::V: p.firingGain[i] = spread * (i % 2 == 0 ? 1.0f : 0.96f); break;
+            // Socle : un VR et un W se comportent comme un V.
+            case Layout::V:
+            case Layout::Vr:
+            case Layout::W: p.firingGain[i] = spread * (i % 2 == 0 ? 1.0f : 0.96f); break;
             case Layout::Boxer: p.firingGain[i] = spread * (i % 2 == 0 ? 1.0f : 0.76f); break;
             // Deux explosions de suite sur une même rangée : le « glouglou ».
             case Layout::CrossPlane: p.firingGain[i] = spread * kCrossPlaneCrowded[i % kCrossPlaneCrowded.size()]; break;
@@ -250,7 +255,9 @@ EngineProfile EngineConfig::toProfile() const {
         const float headerSpread = kHeaderSpread[i % kHeaderSpread.size()];
         switch (layout) {
             case Layout::Inline: p.headerM[i] = 0.62f + 0.05f * headerSpread; break;
-            case Layout::V: p.headerM[i] = (i % 2 == 0 ? 0.55f : 0.72f) + 0.04f * headerSpread; break;
+            case Layout::V:
+            case Layout::Vr:
+            case Layout::W: p.headerM[i] = (i % 2 == 0 ? 0.55f : 0.72f) + 0.04f * headerSpread; break;
             case Layout::CrossPlane: p.headerM[i] = (kCrossPlaneLeft[i % kCrossPlaneLeft.size()] ? 0.5f : 0.86f) + 0.04f * headerSpread; break;
             case Layout::Boxer: p.headerM[i] = i % 2 == 0 ? 0.48f : 1.05f; break;
             case Layout::Rotary: break;

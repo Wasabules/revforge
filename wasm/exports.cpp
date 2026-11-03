@@ -64,7 +64,8 @@ float* rf_buffer_right() { return g_bufferRight; }
 void rf_set_config(int cylinders, int layout, int displacementCc, int boreMm, int redlineRpm, int exhaust, int aspiration, int fuel,
                    float multiplier, int pops, int release, float boostBar, int routing, int turboSize,
                    int superchargerKind, int antiLag, int turboPipeMm, int camshaft, int airFilter, int fuelSystem) {
-    EngineConfig c;
+    // Les réglages du socle, posés par rf_set_tuning, restent : tous les autres champs sont écrits ici.
+    EngineConfig c = g_powertrain.engine;
     c.cylinders = cylinders;
     c.layout = static_cast<Layout>(layout);
     c.displacementCc = displacementCc;
@@ -88,6 +89,44 @@ void rf_set_config(int cylinders, int layout, int displacementCc, int boreMm, in
     g_powertrain.engine = c;
     g_powertrain.electric = false;
     applyPowertrain();
+}
+
+/**
+ * Les réglages du socle moteur, dans l'ordre d'`EngineConfig` et de `tuningArgs` (config.ts). Ne reconstruit rien : à
+ * appeler juste avant rf_set_config ou rf_set_electric, qui les appliquent, comme rf_set_gear_ratio avant rf_set_gearbox.
+ * Un seul changement de moteur, donc, et jamais un moteur à moitié réglé entre deux appels.
+ */
+void rf_set_tuning(float ambientC, int altitudeM, int startTemp, float compressionRatio, int fuelGrade, int ignitionOffsetDeg,
+                   float fullLoadLambda, int revLimiter, int launchRpm, int flatShift, int tractionControl, int dieselInjection, int egr,
+                   int particulateFilter, int camDurationDeg, float camLiftMm, int lobeSeparationDeg, int valveTiming, int valveSprings,
+                   int turboLayout, int variableGeometry, int boostControl, int intercooler, int waterInjection, int nitrousKw, int cycle) {
+    EngineConfig& c = g_powertrain.engine;
+    c.ambientC = ambientC;
+    c.altitudeM = altitudeM;
+    c.startTemp = static_cast<StartTemp>(startTemp);
+    c.compressionRatio = compressionRatio;
+    c.fuelGrade = static_cast<FuelGrade>(fuelGrade);
+    c.ignitionOffsetDeg = ignitionOffsetDeg;
+    c.fullLoadLambda = fullLoadLambda;
+    c.revLimiter = static_cast<RevLimiter>(revLimiter);
+    c.launchRpm = launchRpm;
+    c.flatShift = flatShift != 0;
+    c.tractionControl = static_cast<TractionControl>(tractionControl);
+    c.dieselInjection = static_cast<DieselInjection>(dieselInjection);
+    c.egr = egr != 0;
+    c.particulateFilter = particulateFilter != 0;
+    c.camDurationDeg = camDurationDeg;
+    c.camLiftMm = camLiftMm;
+    c.lobeSeparationDeg = lobeSeparationDeg;
+    c.valveTiming = static_cast<ValveTiming>(valveTiming);
+    c.valveSprings = static_cast<ValveSprings>(valveSprings);
+    c.turboLayout = static_cast<TurboLayout>(turboLayout);
+    c.variableGeometry = variableGeometry != 0;
+    c.boostControl = static_cast<BoostControl>(boostControl);
+    c.intercooler = static_cast<Intercooler>(intercooler);
+    c.waterInjection = waterInjection != 0;
+    c.nitrousKw = nitrousKw;
+    c.cycle = static_cast<EngineCycle>(cycle);
 }
 
 void rf_set_electric() {

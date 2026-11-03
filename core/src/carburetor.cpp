@@ -84,7 +84,8 @@ double filmTauAt(double speed, double fill) {
 
 }  // namespace
 
-FuelSystem fuelSystemOf(const EngineConfig& e) { return e.fuel == Fuel::Diesel ? FuelSystem::Injection : e.fuelSystem; }
+// Socle : l'injection directe se comporte comme l'injection indirecte.
+FuelSystem fuelSystemOf(const EngineConfig& e) { return e.fuel == Fuel::Diesel || e.fuelSystem == FuelSystem::Direct ? FuelSystem::Injection : e.fuelSystem; }
 
 CarburetorSpec carburetorSpecOf(const EngineConfig& e) {
     CarburetorSpec s;

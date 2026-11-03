@@ -101,7 +101,9 @@ double breathing(const EngineConfig& e, double rpm) {
     switch (e.exhaust) {
         case Exhaust::Stock: shape *= 0.96 - 0.04 * fraction; break;
         case Exhaust::Sport: break;
-        case Exhaust::Straight: shape *= 1.0 + 0.04 * fraction - 0.08 * (1.0 - fraction) * (1.0 - fraction); break;
+        // Socle : la chambre de détente se comporte comme la ligne directe.
+        case Exhaust::Straight:
+        case Exhaust::Expansion: shape *= 1.0 + 0.04 * fraction - 0.08 * (1.0 - fraction) * (1.0 - fraction); break;
         case Exhaust::MufflerDelete: shape *= 1.0 + 0.02 * fraction - 0.04 * (1.0 - fraction) * (1.0 - fraction); break;
         case Exhaust::ResonatorDelete: shape *= 0.97 - 0.03 * fraction; break;
         case Exhaust::Quiet: shape *= 0.95 - 0.05 * fraction; break;
