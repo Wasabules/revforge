@@ -134,6 +134,7 @@ EngineProfile EngineConfig::toProfile() const {
     p.popBodyHz = 520.0f / (2.0f * spec.pipeM) * km::pow(km::coerceIn(500.0f / cc, 0.3f, 2.5f), 0.2f);
     p.turboRelease = turboRelease;
     p.boostBar = boostBar;
+    p.camshaft = camshaft;
 
     // Le démarreur dépend de ce qu'il doit lancer : la puissance suit la cylindrée et la compression.
     const float litres = static_cast<float>(displacementCc) / 1000.0f;

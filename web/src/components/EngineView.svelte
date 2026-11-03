@@ -176,6 +176,7 @@
       pan: t('engine.part.pan'),
       head: t('engine.part.head'),
       block: t('engine.part.block'),
+      ...(layout?.valve.sohc ? { rocker: t('engine.part.rocker') } : {}),
       ...(layout?.turbo ? {
         compressor: t('engine.part.compressor'),
         turbine: t('engine.part.turbine'),
@@ -370,6 +371,7 @@
     const parts = [t('engine.caption.crank', { angles: shape.throwAngles.map((value) => `${value}°`).join(' ') })];
     if (shape.splitDeg > 0) parts.push(t('engine.caption.split', { angle: shape.splitDeg }));
     if (shape.strokeClamped) parts.push(t('engine.caption.clamped'));
+    if (shape.valve.sohc) parts.push(t('engine.caption.sohc', { valves: shape.count * shape.valve.perCylinder }));
     return parts.join(' · ');
   });
   const caption = $derived(

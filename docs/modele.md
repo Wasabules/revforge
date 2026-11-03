@@ -607,6 +607,51 @@ La boîte automatique du modèle joue peu : un conducteur qui suit des rapports 
 
 **Les réglages de turbo et de boîte comptent** : ces chiffres suivent le couple et la pression réels du modèle, et bougeront si ces parties changent.
 
+## Le simple arbre
+
+Le modèle d'origine est un double arbre : `Camshaft::Dohc` ne passe par aucun calcul de cette section, et aucune empreinte n'a bougé. `Camshaft::Sohc` lui compare un arbre en tête par rangée, deux soupapes par cylindre et des culbuteurs (`core/src/valvetrain.cpp`, recopié pour le dessin et le gaz dans `web/src/lib/valves.ts`).
+
+**La section, depuis ce qui tient dans l'alésage.** Deux soupapes côte à côte : d = (alésage − 2 × 2,5 mm de bord − 5 mm de pont) / 1,83, l'échappement faisant 83 % de l'admission. Quatre soupapes, chacune dans son quart, les admissions écartées de 100° et les échappements de 80°, avec un pont de 4 mm. Ces marges sont supposées, mais elles retrouvent de vrais moteurs à 6 % près : 41,5 mm à 86 d'alésage (C20NE, 41,8, de mémoire), 36,1 et 32,2 mm à 93,4 (S38, 37 et 32, lu). La levée suit l'alésage (0,12 fois). La section efficace moyenne met en série la jupe de la levée moyenne et la gorge du siège, avec Cd = 0,7 ; ramenée à la tête, elle donne 0,35, dans le coefficient de 0,3 à 0,4 de Taylor. À 86 mm : 473 mm² à l'admission contre 676, 363 à l'échappement contre 566. Deux grandes soupapes laissent 30 % de section de moins que quatre petites, et leur rapport bouge à peine avec l'alésage : c'est **la vitesse du piston, donc la course, qui décide** quand cela devient gênant.
+
+**Le remplissage décroche selon la vitesse du gaz.** L'indice de Mach de Taylor (SAE 520259, vu cité) Z = Ap·Sp / (Aeff·a) vaut 0,53 sur un 8 soupapes de 2 L à 5200 tr/min, et 0,43 sur un 16 soupapes à 6000 tr/min : de vrais moteurs sont dimensionnés sous 0,55 environ à leur régime de puissance. `tools/valve_filling.py` intègre le remplissage quasi stationnaire d'un cylindre, sans résonance : fill(Z) = (1 + (Z/0,8)⁴)^(−1/4), à 1,8 % près de Z = 0,2 à 2. Sa limite étranglée, 0,76/Z, recoupe le 0,75/Z des cours de moteurs (vu cité). `breathing` multiplie sa forme par le rapport des deux remplissages, ce qui ne touche rien du double arbre.
+
+**L'échappement coûte en haut.** Le même script vide un cylindre ouvert sur 5 bar et 1250 K : trop tôt, on perd de la détente ; trop tard, le piston pousse. Le travail perdu passe par un creux, puis monte vite : 0,3 bar à Z = 0,35, 1,2 bar à Z = 0,5 (`kExhaustLossTable`). Rapporté à 12 bar de pression moyenne indiquée (supposé), il entre dans `breathing`.
+
+**Le couple vient plus tôt.** L'accord d'admission suit la racine de section sur longueur et volume (Engelman, de mémoire) : le pic descend de √(section) = 0,84. En bas, le simple arbre est donc devant, ce que disent aussi de vrais couples de moteurs. Ce décalage suppose des conduits proportionnés aux soupapes.
+
+**Frottement et inertie, modestes.** Le ressort total reste le même, deux soupapes deux fois plus lourdes ayant un ressort deux fois plus fort, mais le culbuteur charge la came de son rapport et ajoute son axe : 50 % de plus sur le contact came-poussoir, environ 0,03 bar à 90 mm de course (Patton, Nitschke et Heywood, 1989, de mémoire : leur article n'a pas pu être relu). Le palier d'un arbre en moins pèse moins de 0,01 bar (Petroff), négligé. Un arbre et sa roue de moins par rangée, à demi-vitesse : −0,1 % d'inertie.
+
+| Moteur | Arbre | Couple maximal | Puissance maximale | 0 à 100 km/h | WLTC |
+|---|---|---|---|---|---|
+| 2 L, 86 × 86, 6500 tr/min, compacte de 1200 kg | double | 168,5 Nm à 3900 | 122 ch à 5950 | 9,95 s | 8,40 L/100 |
+| | simple | 166,9 Nm à 3050 | 108 ch à 5700 | 10,38 s | 8,48 L/100 |
+| `hot_hatch_na` | double | 194,1 Nm à 4500 | 160 ch à 6750 | 8,72 s | 9,07 L/100 |
+| | simple | 188,8 Nm à 3400 | 131 ch à 6100 | 9,42 s | 9,07 L/100 |
+| `inline_six`, haut régime (8000) | double | 335,3 Nm à 4950 | 303 ch à 7400 | 6,48 s | 13,08 L/100 |
+| | simple | 325,0 Nm à 3650 | 243 ch à 6600 | 6,47 s | 13,24 L/100 |
+| `v8_cross_plane` | double | 428,9 Nm à 3700 | 291 ch à 5550 | 6,95 s | 13,90 L/100 |
+| | simple | 424,0 Nm à 3000 | 264 ch à 5400 | 6,78 s | 14,13 L/100 |
+
+Le 0 à 100 km/h ne suit pas toujours la puissance : `gearingOf` raccourcit le pont quand la vitesse maximale baisse, et le V8 gagne ainsi 0,17 s. Une vraie voiture déclinée garderait souvent son pont.
+
+Face à de vrais moteurs déclinés, à cylindrée égale :
+
+| | 8 ou 12 soupapes | 16 ou 24 soupapes | Écart |
+|---|---|---|---|
+| Opel 2,0 L, 86 × 86 (lu, régimes sur un forum) | 115 ch à 5200, 170 Nm à 2600 | 150 ch à 6000, 196 Nm à 4500 | −23 %, −13 %, pic ×0,58 |
+| Mercedes 2,3 L (lu, sources en désaccord sur le 8 soupapes) | 136 ch à 5200, 200 Nm à 3500 | 185 ch à 6200, 235 Nm à 4500 | −26 %, −15 %, pic ×0,78 |
+| BMW 3,4 L et 3,5 L (M30 lu, M88 de mémoire) | 218 ch à 5800, 310 Nm à 4200 | 286 ch à 6500, 340 Nm à 4500 | −24 %, −9 %, pic ×0,93 |
+
+Le modèle donne de −9 à −20 % de puissance, de −1 à −3 % de couple, et un pic à ×0,74 à ×0,81. **Le sens et le haut régime sont justes ; l'écart sur un 2 L à régime modeste et sur le couple maximal reste plus faible qu'en réel.** Ces couples réels ne diffèrent pas que par leurs soupapes : le 16 soupapes a aussi des cames plus pointues, plus de compression et un rupteur plus haut, que ce réglage ne touche pas. Aucune constante n'a été ajustée pour coller à ce tableau.
+
+**Le son.** La bouffée se vide par une section plus petite : sa durée croît comme la section (τ = V / (Cd·A·a)), soit ×1,56, et son débit de crête baisse d'autant, à gaz égal. Le débit que pousse le piston, lui, ne change pas. S'y ajoute le remplissage perdu vers le rupteur. Mesuré à régime tenu, `hot_hatch_na`, dehors : −2,7 dB(A) à 900 tr/min, −3,1 à 4000, −3,3 à 6000 ; `v8_cross_plane` : −1,7, −2,3, −2,7. Rien de mesuré ne dit qu'un vrai 8 soupapes est 3 dB plus discret : **c'est la conséquence du calcul, et l'écoute tranchera.** Les raies gardent leur structure : peigne de 13,8 à 13,4 dB, sur un tour.
+
+La distribution change de voix, et chaque part est un choix marqué. Sous une tête plus grande, le siège résonne plus bas (raideur en d, masse en d³) : 2,85 kHz au lieu de 3,6. Chaque fermeture ne frappe qu'une tête ; la masse totale étant presque égale, l'énergie du choc reste la même. Le souffle mécanique perd 0,7 dB, la distribution y comptant pour 30 % (supposé) avec deux fois moins de cames. Surtout, le culbuteur rattrape son jeu à chaque ouverture : un tic autour de 2,4 kHz (supposé), à son propre générateur, qui vit dans le plancher du ralenti et suit la vitesse de la came, bien moins vite que le bloc. Sa force (`kRockerShare`) n'est pas dérivée : elle est choisie pour se détacher sous le capot au ralenti, sans ressortir de la voiture. Relief de 1,8 à 3,2 kHz, en fenêtres de 1 ms : sous le capot de 10,0 à 12,6 dB à 800 tr/min, de 9,2 à 13,2 à 1500, de 6,1 à 6,2 à 6000 ; dehors à 800 tr/min, de 9,6 à 8,4. **Le bruit mécanique ne passe donc pas devant l'échappement**, mais l'échappement étant plus discret, le rapport 8-16 kHz sur 500-2000 Hz monte de 2,4 dB au ralenti dehors (−21,1 à −18,7) : à surveiller à l'écoute. Un rattrapage hydraulique supprimerait ce tic ; le modèle suppose un jeu mécanique.
+
+**Ce qui n'est pas modélisé.** La chambre elle-même : bougie décentrée, combustion un peu plus lente, moins d'avance. La consommation n'en sait donc rien, et ne bouge que par le frottement, la démultiplication et la charge : de 0 à +1,7 % au WLTC. Les gaz résiduels, plus nombreux quand le cylindre se vide mal à très haut régime, ne réduisent pas le remplissage suivant. Le bruit de l'air dans la soupape reste celui du double arbre. Le calage reste le même, et la chaîne ne fait pas de bruit à elle, sur aucun des deux.
+
+**La vue.** `engineLayout` déduit tout de la queue de soupape : le culbuteur est perpendiculaire à la queue à mi-levée, son patin perpendiculaire au rayon de came à mi-levée, et l'angle est résolu exactement à chaque image (`rockerAngle`), car il atteint une vingtaine de degrés. Le bossage vaut la levée divisée par le rapport du culbuteur (1,4). L'arbre au milieu de la culasse prend la place de la bougie : elle passe à côté, penchée de 30° vers l'échappement. La chaîne ne fait le tour que du vilebrequin et d'une roue. Le gaz à l'écran reçoit les mêmes rapports de section, sans allocation ni changement de `EVO`, `EVC`, `IVO`, `IVC`.
+
 ## Calibration
 
 Le réglage est comparé à dix enregistrements de voitures de Wikimedia Commons (série « engine and

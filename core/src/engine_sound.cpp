@@ -10,6 +10,7 @@
 #include "exhaust_line.hpp"
 #include "gearbox_sound.hpp"
 #include "kotlin_math.hpp"
+#include "revforge/valvetrain.hpp"
 #include "starter_sound.hpp"
 
 namespace revforge {
@@ -60,6 +61,15 @@ constexpr float kHashLevel = 0.007f;
 // ils restaient derrière le moteur comme un bruit blanc à part, dès que l'échappement se faisait discret.
 constexpr float kNoiseTopHz = 3000.0f;
 constexpr float kValveLevel = 0.005f;
+// Le culbuteur d'un simple arbre, qui rattrape son jeu à chaque ouverture : son bras vibre autour de 2,4 kHz (supposé). Il vit
+// dans le plancher du ralenti, celui de la distribution ; son choc suit la vitesse de la came, bien moins vite que le bloc.
+// Sa part dans ce plancher est supposée : de quoi se détacher sous le capot au ralenti, sans ressortir de la voiture.
+constexpr float kRockerHz = 2400.0f;
+constexpr float kRockerQ = 1.2f;
+constexpr float kRockerDecayS = 0.0007f;
+constexpr float kRockerShare = 3.0f;
+// Le souffle mécanique, où la distribution compte pour 30 % de l'énergie (supposé) et a deux fois moins de cames.
+constexpr float kSohcHash = 0.92f;
 constexpr float kDieselKnock = 0.05f;
 constexpr float kEvLevel = 1.0f;
 constexpr float kOverrunLoad = 0.45f;
@@ -333,6 +343,17 @@ struct EngineSound::State {
     float valveEnv = 0.0f;
     float valveRise = 1.0f;
     float valveDecay;
+    // Le simple arbre : le culbuteur a son propre générateur, et ne décale jamais les tirages du moteur.
+    bool sohc = false;
+    float blowStretch = 1.0f;
+    float seatLevel = 1.0f;
+    float rockerEnv = 0.0f;
+    float rockerRise = 1.0f;
+    float rockerDecay = 0.0f;
+    float rockerTop = 0.0f;
+    float rockerLevel = 0.0f;
+    std::uint32_t rockerRng = 0x51ED270Bu;
+    Svf rockerBand;
     Svf knockBand;
     float knockEnv = 0.0f;
     float knockDecay;
@@ -470,7 +491,7 @@ struct EngineSound::State {
     static bool sameParts(const EngineProfile& a, const EngineProfile& b) {
         return a.firingCount == b.firingCount && a.firing == b.firing && a.firingGain == b.firingGain && a.headerM == b.headerM &&
                a.exhaust == b.exhaust && a.exhaustScale == b.exhaustScale && a.diesel == b.diesel && a.turbo == b.turbo &&
-               a.electric == b.electric && a.routing == b.routing && a.bank == b.bank && a.twoBanks == b.twoBanks && sameShell(a.car, b.car);
+               a.electric == b.electric && a.routing == b.routing && a.bank == b.bank && a.twoBanks == b.twoBanks && sameShell(a.car, b.car) && a.camshaft == b.camshaft;
     }
 
     /** La même caisse aux mêmes endroits : seule l'isolation change, et l'habitacle se recalcule sans couper le moteur. */
@@ -481,12 +502,40 @@ struct EngineSound::State {
         return a == other;
     }
 
+    /**
+     * Le simple arbre : une soupape d'échappement au lieu de deux, donc une section plus petite pour vider le même volume.
+     * Le double arbre est le modèle d'origine : il ne passe par rien de ce qui suit, sauf les réglages d'origine des filtres.
+     */
+    void applyValves(const EngineProfile& p) {
+        sohc = p.camshaft == Camshaft::Sohc && !p.electric;
+        if (!sohc) {
+            valveBand.set(3600.0f, 1.1f, sr);
+            valveBandHigh.set(7400.0f, 1.4f, sr);
+            return;
+        }
+        const double boreMm = static_cast<double>(p.boreM) * 1000.0;
+        blowStretch = static_cast<float>(sohcBlowdownStretch(boreMm));
+        const ValveTrainGeometry two = valveTrainOf(Camshaft::Sohc, boreMm);
+        const ValveTrainGeometry four = valveTrainOf(Camshaft::Dohc, boreMm);
+        // Le siège résonne plus bas sous une tête plus grande (raideur en d, masse en d³), et chaque fermeture
+        // ne frappe qu'une tête : à masse totale presque égale, l'énergie du choc reste la même.
+        const float deeper = static_cast<float>(four.intakeMm / two.intakeMm);
+        valveBand.set(3600.0f * deeper, 1.1f, sr);
+        valveBandHigh.set(7400.0f * deeper, 1.4f, sr);
+        const double massTwo = two.intakeMm * two.intakeMm * two.intakeMm;
+        const double massFour = 2.0 * four.intakeMm * four.intakeMm * four.intakeMm;
+        seatLevel = km::sqrt(static_cast<float>(massTwo / massFour));
+        rockerBand.set(kRockerHz, kRockerQ, sr);
+        rockerDecay = km::exp(-1.0f / (kRockerDecayS * sr));
+    }
+
     /** Ce qui découle des dimensions du moteur, recalculé sans toucher aux ondes en cours. */
     void applyDimensions(const EngineProfile& p) {
         // Bouffée d'échappement : le cylindre se vide d'autant plus vite que la soupape
         // est grande face au volume à vider, soit une durée qui croît avec la course.
         // Elle s'allonge moins vite que la course : la soupape s'ouvre sur une pression déjà plus forte.
         blowdownBase = km::coerceAtLeast(0.002f * km::sqrt(p.strokeM / 0.09f), 0.0005f);
+        applyValves(p);
         backStroke = 0.22f * km::sqrt(km::max(p.boreM * p.boreM * p.strokeM, 1e-6f) / kReferenceCylinder);
         const float volume = p.boreM * p.boreM * p.strokeM * static_cast<float>(p.cylinders);
         const float sizeScale = km::pow(km::coerceIn(4.0f * kReferenceCylinder / km::max(volume, 1e-6f), 0.2f, 4.0f), 0.27f);
@@ -569,6 +618,24 @@ struct EngineSound::State {
         x ^= x << 5;
         turboRng = x;
         return static_cast<float>(static_cast<std::int32_t>(x)) * 4.656613e-10f;
+    }
+
+    /** Le culbuteur qui rattrape son jeu : un tic sourd comme celui du siège, plus grave, à son propre tirage. */
+    float rockerSample(bool hit) {
+        std::uint32_t x = rockerRng;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        rockerRng = x;
+        const float draw = static_cast<float>(static_cast<std::int32_t>(x)) * 4.656613e-10f;
+        if (hit) {
+            rockerEnv = 0.5f + 0.25f * (draw + 1.0f);
+            rockerRise = 0.0f;
+        }
+        rockerRise = km::min(rockerRise + 1.0f / (0.0005f * sr), 1.0f);
+        rockerBand.process(draw * rockerEnv * rockerRise);
+        rockerEnv *= rockerDecay;
+        return rockerBand.bp;
     }
 
     float addedRandom() {
@@ -655,6 +722,7 @@ struct EngineSound::State {
         idleShake = (1.0f - rpmFrac) * (1.0f - rpmFrac) * (1.0f - rpmFrac) * (1.0f - rpmFrac);
         // À faible charge, le cylindre s'ouvre sur peu de pression : il se vide lentement, sans coup de bélier.
         blowRate = 1.0f / (blowdownBase * (1.0f + 3.5f * (1.0f - km::min(load, 1.0f))) * sr);
+        if (sohc) blowRate /= blowStretch;
 
         // Le moteur ne tourne jamais rond : lente dérive, plus marquée au ralenti.
         const float driftNoise = random();
@@ -676,6 +744,8 @@ struct EngineSound::State {
         const float boostFill = driven ? 0.4f * driveBoost * km::coerceIn(a.boostBar, 0.3f, 2.5f) : 0.0f;
         const float fill = 0.2f + 0.8f * load * load + boostFill;
         openPressure = fill * (1.0f - kOverrunPressureDrop * overrun);
+        // Ce qui n'est pas entré par une section trop petite ne ressort pas : la bouffée s'affaiblit vers le rupteur.
+        if (sohc) openPressure *= static_cast<float>(sohcFillingRatio(static_cast<double>(a.boreM) * 1000.0, static_cast<double>(a.strokeM) * 1000.0, static_cast<double>(km::max(rpm, 0.0f))));
         // Le piston continue de pomper de l'air, combustion ou non.
         pumpLevel += (km::max(openPressure, 0.25f) - pumpLevel) * smoothing(0.004f);
         // Rupteur : la combustion s'arrête net, explosion par explosion. Le papillon, lui, reste ouvert,
@@ -708,6 +778,7 @@ struct EngineSound::State {
         tyreLevel = kTyrePa * km::pow(at70, 1.7f);
         windLevel = kWindPa * at70 * at70 * at70;
         hashLevel = (0.8f + 0.2f * km::sqrt(rpmFrac)) * (0.6f + 0.4f * load) * (a.diesel ? 3.0f : 2.0f);
+        if (sohc) hashLevel *= kSohcHash;
         updateLevels();
 
         if (a.electric) tone.set(km::min(a.lowpassIdleHz + (a.lowpassRedlineHz - a.lowpassIdleHz) * rpmFrac, sr * 0.3f), 0.707f, sr);
@@ -779,6 +850,7 @@ struct EngineSound::State {
         // Au ralenti, accessoires et distribution tiennent un plancher.
         const float floorDb = 65.0f + 15.0f * km::log10(bore / 86.0f) + (a.diesel ? 7.0f : 0.0f);
         blockLevel = kBlockPa * km::sqrt(km::pow(10.0f, blockDb / 10.0f) + km::pow(10.0f, floorDb / 10.0f));
+        if (sohc) rockerLevel = kBlockPa * km::pow(10.0f, floorDb / 20.0f) * kRockerShare * rpmNow / a.idleRpm;
         // La caisse ne suit pas le bloc : les supports filtrent, et sa part recule quand le régime monte.
         bodyShare = kBodyShare * km::min(km::pow(a.idleRpm / rpmNow, 0.7f), 1.0f);
 
@@ -975,6 +1047,7 @@ struct EngineSound::State {
         float collector[2] = {0.0f, 0.0f};
         float intake = 0.0f;
         bool valve = false;
+        bool rockerHit = false;
         for (int c = 0; c < cylinders; ++c) {
             float theta = phase + p.firing[c] + timing[c];
             if (theta >= 1.0f) theta -= 1.0f;
@@ -984,6 +1057,7 @@ struct EngineSound::State {
             if (theta >= kEvo && theta < kEvc) {
                 if (!exhaustOpen[c]) {
                     exhaustOpen[c] = true;
+                    rockerHit = true;
                     // Aucune combustion n'est identique à la précédente.
                     const float first = random();
                     const float second = random();
@@ -1007,8 +1081,9 @@ struct EngineSound::State {
                 const float lift = km::sqrt(km::max(sinFast((theta - kEvo) / (kEvc - kEvo) * 0.5f), 0.0f)) * ramp * ramp * (3.0f - 2.0f * ramp);
                 const float escape = pressure[c] * lift;
                 pressure[c] = km::max(pressure[c] - escape * blowRate, 0.0f);
-                // La bouffée, puis le piston qui chasse ce qui reste.
-                flow = escape + backStroke * lift * pumpLevel;
+                // La bouffée, puis le piston qui chasse ce qui reste. Une section plus petite étale la bouffée (même gaz, plus
+                // longtemps, donc un débit de crête plus bas) mais ne change rien à ce que le piston déplace.
+                flow = (sohc ? escape / blowStretch : escape) + backStroke * lift * pumpLevel;
             } else if (exhaustOpen[c]) {
                 // Une soupape ne s'entend qu'en retombant sur son siège.
                 exhaustOpen[c] = false;
@@ -1016,7 +1091,10 @@ struct EngineSound::State {
             }
 
             if (theta >= kIvo && theta < kIvc) {
-                if (!intakeOpen[c]) intakeOpen[c] = true;
+                if (!intakeOpen[c]) {
+                    intakeOpen[c] = true;
+                    rockerHit = true;
+                }
                 intake += sinFast((theta - kIvo) / (kIvc - kIvo) * 0.5f);
             } else if (intakeOpen[c]) {
                 intakeOpen[c] = false;
@@ -1093,7 +1171,8 @@ struct EngineSound::State {
         const float tick = random() * valveEnv * valveRise;
         valveBand.process(tick);
         valveBandHigh.process(tick);
-        mechanical += (valveBand.bp + 0.35f * valveBandHigh.bp) * kValveLevel * (0.5f + 0.5f * rpmFrac) * metal;
+        const float seatTick = (valveBand.bp + 0.35f * valveBandHigh.bp) * kValveLevel * (0.5f + 0.5f * rpmFrac) * metal;
+        mechanical += sohc ? seatTick * seatLevel : seatTick;
         valveEnv *= valveDecay;
 
         if (p.diesel) {
@@ -1136,7 +1215,12 @@ struct EngineSound::State {
         stem(Source::ExhaustB) += twoOutlets ? (gasB + tail * 0.7f) * gain + pops * 0.5f : 0.0f;
         // Le compresseur et sa décharge sont sur le conduit d'admission : ils sortent avec lui.
         stem(Source::Intake) += (inducted * cutGate * kIntakePa + inletTone.bp * inletLevel * cutGate) * gain + turboBus * kTurboPa * eventGain;
-        const float engineNoise = (mechanical * (0.4f + 0.6f * cutGate) * kMechanicalPa + block) * blockLevel * gain;
+        float engineNoise = (mechanical * (0.4f + 0.6f * cutGate) * kMechanicalPa + block) * blockLevel * gain;
+        if (sohc) {
+            // Le couvre-culasse rayonne ce choc comme le bloc : peu au-dessus de 4 à 5 kHz.
+            rockerTop += (rockerSample(rockerHit) - rockerTop) * blockTopCoef;
+            engineNoise += rockerTop * rockerLevel * crankHush * gain;
+        }
         stem(Source::Bay) += engineNoise;
         // Le moteur fait vibrer toute la caisse : elle en rayonne une part, de partout, mais pas les aigus.
         bodyDamp += (engineNoise - bodyDamp) * bodyDampCoef;

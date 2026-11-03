@@ -24,7 +24,7 @@
   import Spectrum from './components/Spectrum.svelte';
   import Tachometer from './components/Tachometer.svelte';
   import Trends from './components/Trends.svelte';
-  import { BODIES, BOX_KINDS, CUSTOM_ID, DRIVES, EXHAUSTS, PRESETS, ROUTINGS, decodeConfig, encodeConfig, findPreset, type EngineConfig, type ShiftModeId } from './lib/config';
+  import { BODIES, BOX_KINDS, CAMSHAFTS, CUSTOM_ID, DRIVES, EXHAUSTS, PRESETS, ROUTINGS, decodeConfig, encodeConfig, findPreset, type EngineConfig, type ShiftModeId } from './lib/config';
   import { heated, updateHeat, wallCelsius } from './lib/heat';
   import { TelemetryHistory } from './lib/history';
   import { Readings } from './lib/instruments';
@@ -393,7 +393,7 @@
     const hp = Math.round(spec.peakHp);
     const label = <T extends string>(list: { value: T; label: string }[], value: T) => list.find((item) => item.value === value)?.label ?? '';
     return {
-      engine: c.electric ? t('summary.electric', { hp }) : t('summary.engine', { litres: decimal(c.displacementCc / 1000), cylinders: c.cylinders, hp }),
+      engine: c.electric ? t('summary.electric', { hp }) : t('summary.engine', { litres: decimal(c.displacementCc / 1000), cylinders: c.cylinders, hp }) + (c.camshaft === 'sohc' ? ` · ${label(CAMSHAFTS, c.camshaft)}` : ''),
       exhaust: c.electric ? t('summary.noExhaust') : t('summary.exhaust', { line: label(EXHAUSTS, c.exhaust), outlets: label(ROUTINGS, c.routing) }),
       gearbox: spec.gears === 1 ? t('spec.gears.one') : t('summary.gearbox', { gears: t('spec.gears.many', { gears: spec.gears }), kind: label(BOX_KINDS, c.boxKind) }),
       car: t('summary.car', { body: label(BODIES, c.body), mass: c.massKg, drive: label(DRIVES, c.drive) }),

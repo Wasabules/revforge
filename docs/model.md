@@ -589,6 +589,51 @@ The model's automatic gearbox matters little: a driver following longer gears, a
 
 **Turbo and gearbox settings count:** these figures follow the model's real torque and pressure, and will move if those parts change.
 
+## The single cam
+
+The original model is a twin cam: `Camshaft::Dohc` goes through none of the calculations in this section, and no fingerprint moved. `Camshaft::Sohc` compares it with one overhead camshaft per bank, two valves per cylinder and rocker arms (`core/src/valvetrain.cpp`, copied for the drawing and the gas in `web/src/lib/valves.ts`).
+
+**The section, from what fits in the bore.** Two valves side by side: d = (bore − 2 × 2.5 mm of edge − 5 mm of bridge) / 1.83, the exhaust being 83% of the intake. Four valves, each in its quarter, the intakes 100° apart and the exhausts 80°, with a 4 mm bridge. These margins are assumed, but they find real engines within 6%: 41.5 mm at 86 mm of bore (C20NE, 41.8, from memory), 36.1 and 32.2 mm at 93.4 (S38, 37 and 32, read). Lift follows the bore (0.12 times). The mean effective section puts the curtain at mean lift in series with the seat throat, with Cd = 0.7; referred to the head it gives 0.35, within Taylor's coefficient of 0.3 to 0.4. At 86 mm: 473 mm² of intake against 676, 363 of exhaust against 566. Two large valves leave 30% less section than four small ones, and that ratio barely moves with the bore: **piston speed, and so the stroke, decides** when it starts to matter.
+
+**Filling falls off with gas speed.** Taylor's Mach index (SAE 520259, seen cited) Z = Ap·Sp / (Aeff·a) is 0.53 on a 2 L 8-valve at 5200 rpm, and 0.43 on a 16-valve at 6000 rpm: real engines are sized at about 0.55 or less at peak power. `tools/valve_filling.py` integrates the quasi-steady filling of a cylinder, with no resonance: fill(Z) = (1 + (Z/0.8)⁴)^(−1/4), within 1.8% from Z = 0.2 to 2. Its choked limit, 0.76/Z, agrees with the 0.75/Z of engine courses (seen cited). `breathing` multiplies its shape by the ratio of the two fillings, which touches nothing of the twin cam.
+
+**The exhaust costs at the top.** The same script empties a cylinder opened on 5 bar and 1250 K: too early, you lose expansion; too late, the piston pushes. The lost work goes through a dip, then climbs fast: 0.3 bar at Z = 0.35, 1.2 bar at Z = 0.5 (`kExhaustLossTable`). Referred to 12 bar of indicated mean pressure (assumed), it enters `breathing`.
+
+**Torque comes earlier.** Intake tuning follows the root of section over length and volume (Engelman, from memory): the peak comes down by √(section) = 0.84. Low down, the single cam is therefore ahead, as real engine pairs also say. This shift assumes ports sized to the valves.
+
+**Friction and inertia, modest.** Total spring force stays the same, two valves twice as heavy having a spring twice as strong, but the rocker loads the cam by its ratio and adds its shaft: 50% more on the cam-follower contact, about 0.03 bar at 90 mm of stroke (Patton, Nitschke and Heywood, 1989, from memory: their paper could not be re-read). The bearings of one less camshaft weigh under 0.01 bar (Petroff), neglected. One less camshaft and wheel per bank, at half speed: −0.1% of inertia.
+
+| Engine | Cam | Peak torque | Peak power | 0 to 100 km/h | WLTC |
+|---|---|---|---|---|---|
+| 2 L, 86 × 86, 6500 rpm, 1200 kg compact | twin | 168.5 Nm at 3900 | 122 hp at 5950 | 9.95 s | 8.40 L/100 |
+| | single | 166.9 Nm at 3050 | 108 hp at 5700 | 10.38 s | 8.48 L/100 |
+| `hot_hatch_na` | twin | 194.1 Nm at 4500 | 160 hp at 6750 | 8.72 s | 9.07 L/100 |
+| | single | 188.8 Nm at 3400 | 131 hp at 6100 | 9.42 s | 9.07 L/100 |
+| `inline_six`, high revs (8000) | twin | 335.3 Nm at 4950 | 303 hp at 7400 | 6.48 s | 13.08 L/100 |
+| | single | 325.0 Nm at 3650 | 243 hp at 6600 | 6.47 s | 13.24 L/100 |
+| `v8_cross_plane` | twin | 428.9 Nm at 3700 | 291 hp at 5550 | 6.95 s | 13.90 L/100 |
+| | single | 424.0 Nm at 3000 | 264 hp at 5400 | 6.78 s | 14.13 L/100 |
+
+The 0 to 100 km/h does not always follow power: `gearingOf` shortens the final drive when top speed falls, and the V8 gains 0.17 s that way. A real car in two versions would often keep its final drive.
+
+Against real engines in two versions, at equal displacement:
+
+| | 8 or 12 valves | 16 or 24 valves | Gap |
+|---|---|---|---|
+| Opel 2.0 L, 86 × 86 (read, revs from a forum) | 115 hp at 5200, 170 Nm at 2600 | 150 hp at 6000, 196 Nm at 4500 | −23%, −13%, peak ×0.58 |
+| Mercedes 2.3 L (read, sources disagree on the 8-valve) | 136 hp at 5200, 200 Nm at 3500 | 185 hp at 6200, 235 Nm at 4500 | −26%, −15%, peak ×0.78 |
+| BMW 3.4 L and 3.5 L (M30 read, M88 from memory) | 218 hp at 5800, 310 Nm at 4200 | 286 hp at 6500, 340 Nm at 4500 | −24%, −9%, peak ×0.93 |
+
+The model gives −9 to −20% of power, −1 to −3% of torque, and a peak at ×0.74 to ×0.81. **The direction and the high-rev case are right; the gap on a modest-revving 2 L and on peak torque stays smaller than in reality.** These real pairs differ by more than their valves: the 16-valve also has sharper cams, more compression and a higher limiter, which this setting does not touch. No constant was adjusted to match this table.
+
+**The sound.** The blowdown empties through a smaller section: its duration grows with it (τ = V / (Cd·A·a)), ×1.56, and its peak flow falls as much, for the same gas. The flow pushed by the piston does not change. Lost filling towards the limiter adds to this. Measured at held revs, `hot_hatch_na`, outside: −2.7 dB(A) at 900 rpm, −3.1 at 4000, −3.3 at 6000; `v8_cross_plane`: −1.7, −2.3, −2.7. Nothing measured says a real 8-valve is 3 dB quieter: **this is what the calculation gives, and listening will decide.** The lines keep their structure: comb from 13.8 to 13.4 dB, over a lap.
+
+The valvetrain changes voice, and each part is a marked choice. Under a larger head, the seat resonates lower (stiffness in d, mass in d³): 2.85 kHz instead of 3.6. Each closing strikes only one head; the total mass being nearly equal, the impact energy stays the same. Mechanical hiss loses 0.7 dB, the valvetrain being 30% of it (assumed) with half as many cams. Above all, the rocker takes up its lash at each opening: a tick around 2.4 kHz (assumed), with its own generator, living in the idle floor and following cam speed, far more slowly than the block. Its strength (`kRockerShare`) is not derived: it is chosen to stand out under the bonnet at idle without coming out of the car. Relief from 1.8 to 3.2 kHz, in 1 ms windows: under the bonnet from 10.0 to 12.6 dB at 800 rpm, from 9.2 to 13.2 at 1500, from 6.1 to 6.2 at 6000; outside at 800 rpm, from 9.6 to 8.4. **Mechanical noise therefore does not pass in front of the exhaust**, but with a quieter exhaust the 8-16 kHz over 500-2000 Hz ratio rises by 2.4 dB at idle outside (−21.1 to −18.7): to watch when listening. Hydraulic lash adjusters would remove this tick; the model assumes mechanical lash.
+
+**What is not modelled.** The chamber itself: off-centre plug, slightly slower combustion, less advance. Consumption therefore knows nothing of it, and moves only through friction, gearing and load: 0 to +1.7% over the WLTC. Residual gas, more plentiful when the cylinder empties badly at very high revs, does not reduce the next filling. Air noise in the valve stays that of the twin cam. Timing stays the same, and the chain makes no noise of its own, on either.
+
+**The view.** `engineLayout` deduces everything from the valve stem: the rocker is perpendicular to the stem at mid-lift, its pad perpendicular to the cam radius at mid-lift, and the angle is solved exactly at each frame (`rockerAngle`), as it reaches some twenty degrees. The lobe is the lift divided by the rocker ratio (1.4). The camshaft in the middle of the head takes the spark plug's place: it passes beside it, leaning 30° towards the exhaust. The chain goes round only the crankshaft and one wheel. The gas on screen receives the same section ratios, with no allocation and no change to `EVO`, `EVC`, `IVO`, `IVC`.
+
 ## Calibration
 
 The tuning is compared to ten car recordings from Wikimedia Commons ("engine and exhaust sound" series, CC BY 3.0: Shelby Cobra, Mustang GT, Shelby GT500,

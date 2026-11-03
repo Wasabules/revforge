@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "revforge/driving_model.hpp"
+#include "revforge/valvetrain.hpp"
 
 namespace revforge {
 
@@ -44,7 +45,9 @@ double naturalBmep(const EngineConfig& e) {
 /** La respiration selon le régime : 1 au pic de couple. */
 double breathing(const EngineConfig& e, double rpm) {
     const double redline = static_cast<double>(e.redlineRpm);
-    const double peakAt = (e.aspiration == Aspiration::Turbo ? 0.6 : 0.62) * redline;
+    double peakAt = (e.aspiration == Aspiration::Turbo ? 0.6 : 0.62) * redline;
+    // Moins de section, un gaz plus rapide : l'admission s'accorde plus bas (voir « Le simple arbre »).
+    if (e.camshaft == Camshaft::Sohc) peakAt *= sohcTuningRatio(static_cast<double>(e.boreMm));
     double shape;
     if (rpm <= peakAt) {
         const double below = 1.0 - rpm / peakAt;
@@ -57,6 +60,8 @@ double breathing(const EngineConfig& e, double rpm) {
     const double pistonSpeed = 2.0 * e.strokeMm() / 1000.0 * rpm / 60.0;
     const double excess = std::max(pistonSpeed - kPistonSpeedLimit, 0.0);
     shape *= std::max(1.0 - 0.012 * excess * excess, 0.55);
+    // Deux soupapes au lieu de quatre : le gaz qui passe mal, calculé depuis la section et la vitesse du piston.
+    if (e.camshaft == Camshaft::Sohc) shape *= sohcBreathingRatio(static_cast<double>(e.boreMm), static_cast<double>(e.strokeMm()), rpm);
     // Une ligne libre gagne en haut, mais perd la contre-pression qui aide en bas.
     const double fraction = clamp(rpm / redline, 0.0, 1.0);
     switch (e.exhaust) {
@@ -247,7 +252,8 @@ double frictionTorqueNm(const Powertrain& p, double rpm) {
     // Fer et ventilation d'un moteur électrique, de l'ordre du kilowatt à 5000 tr/min : le reste est dans le rendement.
     if (p.electric) return 0.6 + rpm * 0.00035;
     const double k = rpm / 1000.0;
-    const double bar = 0.9 + 0.12 * k + 0.03 * k * k + (p.engine.fuel == Fuel::Diesel ? 0.3 : 0.0);
+    double bar = 0.9 + 0.12 * k + 0.03 * k * k + (p.engine.fuel == Fuel::Diesel ? 0.3 : 0.0);
+    if (p.engine.camshaft == Camshaft::Sohc) bar += sohcFrictionDeltaBar(static_cast<double>(p.engine.strokeMm()), rpm);
     return bmepToNm(p.engine, bar);
 }
 
@@ -261,7 +267,8 @@ double pumpingTorqueNm(const Powertrain& p, double rpm, double manifold) {
 double engineInertia(const Powertrain& p) {
     if (p.electric) return 0.05;
     const double light = clamp(6500.0 / static_cast<double>(p.engine.redlineRpm), 0.6, 1.2);
-    return (0.03 + 0.055 * liters(p.engine)) * light;
+    const double inertia = (0.03 + 0.055 * liters(p.engine)) * light;
+    return p.engine.camshaft == Camshaft::Sohc ? inertia + sohcInertiaDelta(p.engine) : inertia;
 }
 
 double idleRpmOf(const Powertrain& p) { return static_cast<double>(p.profile().idleRpm); }

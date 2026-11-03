@@ -1,7 +1,7 @@
 <script lang="ts">
   import Choices from './Choices.svelte';
   import Slider from './Slider.svelte';
-  import { ASPIRATIONS, CYLINDERS, FUELS, LAYOUTS, LIMITS, RELEASES, TURBO_SIZES, cylinderCc, strokeMm, type EngineConfig } from '../lib/config';
+  import { ASPIRATIONS, CAMSHAFTS, CYLINDERS, FUELS, LAYOUTS, LIMITS, RELEASES, TURBO_SIZES, cylinderCc, strokeMm, type EngineConfig } from '../lib/config';
   import { fixed, t } from '../lib/i18n.svelte';
 
   interface Props {
@@ -41,6 +41,10 @@
     </div>
     <Choices label={t('builder.release')} options={RELEASES} value={config.turboRelease} onchange={(turboRelease) => onapply({ turboRelease })} />
   {/if}
+  <div>
+    <Choices label={t('builder.camshaft')} options={CAMSHAFTS} value={config.camshaft} onchange={(camshaft) => onapply({ camshaft })} />
+    <p class="help" data-testid="camshaft-help">{CAMSHAFTS.find((item) => item.value === config.camshaft)?.help}</p>
+  </div>
 {/if}
 
 <style>

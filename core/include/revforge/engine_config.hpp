@@ -165,6 +165,8 @@ struct EngineProfile {
     /** Deux rangées séparées ? Sinon, tous les cylindres rejoignent la même ligne. */
     bool twoBanks = false;
     CarAcoustics car;
+    /** Deux soupapes par cylindre au lieu de quatre : la bouffée s'allonge, la distribution change de voix. */
+    Camshaft camshaft = Camshaft::Dohc;
 
     /**
      * Régime simulé pour un régime réel de la voiture. Au ralenti, les deux ralentis
