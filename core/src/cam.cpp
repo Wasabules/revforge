@@ -389,7 +389,7 @@ void fillCurve(const Geometry& g, const Tables& t, const CamProfile& cam, bool p
             c.open[at] = cycle.openPa;
             continue;
         }
-        // Le déphaseur : cinq calages, puis le sommet d'une parabole par les trois meilleurs.
+        // Le déphaseur : tout retardé, de base, tout avancé, puis le sommet de la parabole qui passe par eux.
         std::array<Cycle, kPhases> tried{};
         int best = 0;
         for (int k = 0; k < kPhases; ++k) {

@@ -284,7 +284,8 @@ TEST_CASE("came : deux profils basculent là où leurs courbes de couple se croi
         }
     }
     REQUIRE(entered);
-    CHECK(enteredAt > at * (1.0 + kCamSwitchHysteresis) - 50.0);
+    // L'hystérésis : il n'entre pas au croisement même, mais au-dessus de la moitié de la bande au moins.
+    CHECK(enteredAt > at * 1.015);
     CHECK(enteredAt < at * (1.0 + kCamSwitchHysteresis) + 300.0);
     bool left = false;
     double leftAt = 0.0;

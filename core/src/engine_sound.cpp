@@ -703,14 +703,14 @@ struct EngineSound::State {
             inletTone.set(220.0f, 1.3f, sr);
             carbTuned = false;
         }
-        applyCam(p);
+        applyCamProfile(p);
     }
 
     /**
      * La came : son calage, sa bouffée, la dispersion de ses combustions. Sur la came d'origine, le calage d'origine, tel
      * quel : rien d'autre ne change.
      */
-    void applyCam(const EngineProfile& p) {
+    void applyCamProfile(const EngineProfile& p) {
         camTuned = p.camTuned && !p.electric && !p.rotary;
         if (!camTuned) {
             if (!p.rotary) {
@@ -725,6 +725,7 @@ struct EngineSound::State {
         camPhaser = camIn.phaserDeg;
         applyCamTiming(p);
         camPinBand.set(kCamPinHz, kCamPinQ, sr);
+        camPinPending.fill(false);
         camPinDecay = km::exp(-1.0f / (kCamPinDecayS * sr));
         camLopeDecay = km::exp(-1.0f / (kDriftTauS * sr));
     }
