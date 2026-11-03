@@ -28,6 +28,9 @@ constexpr double kTrailerRolling = 0.012;
 constexpr double kTrailerDragArea = 1.2;
 // Le pied est au plancher depuis ce temps, et rien ne vient : la voiture n'en a pas la force.
 constexpr double kStrainS = 2.0;
+// Une étape où le conducteur appuie au moins à ce point est une étape où il veut sa vitesse ; la pédale est à son plafond à ce jeu près.
+constexpr double kEagerPedal = 0.7;
+constexpr double kCeilingSlack = 0.02;
 constexpr double kNeutralBelowKmh = 8.0;
 constexpr double kLimiterDropShare = 0.04;
 constexpr double kLimiterMinCutS = 0.03;
@@ -291,7 +294,16 @@ void DrivingModel::pilot(double& pedal, double& brakePedal) {
     brakePedal = order.brake;
     legTarget_ = order.targetKmh;
 
-    const bool flatOut = throttle_ > 0.9 && order.targetKmh < kFlatOutKmh && order.targetKmh - view.kmh > 5.0 && acceleration_ < 0.1;
+    const bool stuck = throttle_ > 0.9 && order.targetKmh < kFlatOutKmh && order.targetKmh - view.kmh > 5.0 && acceleration_ < 0.1;
+    // Ou bien le conducteur, pressé, appuie autant que l'étape le lui permet, et à ce train la voiture n'atteindra pas la vitesse de
+    // l'étape avant qu'elle finisse : elle accélère encore, mais n'en a pas la force. Un conducteur qui ne veut pas aller vite ne dit rien.
+    const ScenarioLeg& now = scenario.legs[legIndex_];
+    const double legKmh = legTargetKmh(scenario, now);
+    const double ceiling = std::max(now.eagerness, view.holdPedal);
+    const double legLeft = (legIndex_ + 1 < scenario.legCount ? scenario.legs[legIndex_ + 1].fromSec : scenario.loopSec) - cycleSec_;
+    const bool pressing = ceiling >= kEagerPedal && throttle_ >= std::min(ceiling, 1.0) - kCeilingSlack;
+    const bool late = legKmh < kFlatOutKmh && legKmh - view.kmh > 5.0 && acceleration_ * legLeft < (legKmh - view.kmh) / 3.6;
+    const bool flatOut = stuck || (pressing && late);
     strain_ = flatOut ? std::min(strain_ + kStep, kStrainS * 2.0) : std::max(strain_ - 2.0 * kStep, 0.0);
     underpowered_ = strain_ > kStrainS;
 }
