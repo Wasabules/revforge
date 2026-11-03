@@ -3,8 +3,10 @@ import { presetText, t } from './i18n.svelte';
 import { DISPLACEMENT_LIMITS, STROKE_LIMITS, engineStroke } from './stroke';
 import { isRotary, ROTOR_COUNTS } from './rotary';
 import { builtLayout, VR_CYLINDERS, W_CYLINDERS } from './architecture';
+import { isTwoStroke, TWO_STROKE_MAX_CYLINDERS } from './twoStroke';
 
 export { isRotary } from './rotary';
+export { isTwoStroke } from './twoStroke';
 
 export type Layout = 'inline' | 'v' | 'cross_plane' | 'boxer' | 'rotary' | 'vr' | 'w';
 export type Exhaust = 'stock' | 'sport' | 'straight' | 'no_muffler' | 'no_resonator' | 'quiet' | 'expansion';
@@ -505,11 +507,18 @@ const nearest = (list: number[], value: number) => list.reduce((best, item) => (
 
 /**
  * Un rotatif n'a que 2, 3 ou 4 rotors et ne brûle que de l'essence ; un VR a 5 ou 6 cylindres, un W 8, 12 ou 16, et au-delà de
- * 12 seuls un V et un W existent : tout ce qui change d'architecture ou lit un lien passe par ici. La disposition choisie reste,
- * le nombre de cylindres va au plus proche qui existe.
+ * 12 seuls un V et un W existent. Un deux-temps balayé par son carter n'a ni diesel ni suralimentation, ni vilebrequin à plat
+ * croisé, ni VR, ni W, et au plus 6 cylindres (`coherentTwoStroke` en C++). Tout ce qui change d'architecture ou lit un lien passe
+ * par ici. La disposition choisie reste quand elle existe, le nombre de cylindres va au plus proche qui existe.
  */
 export function coherentConfig(c: EngineConfig): EngineConfig {
   if (c.electric) return c;
+  if (isTwoStroke(c)) {
+    const cylinders = Math.min(c.cylinders, TWO_STROKE_MAX_CYLINDERS);
+    const layout = c.layout === 'cross_plane' || c.layout === 'vr' || c.layout === 'w' ? 'v' : c.layout;
+    if (cylinders === c.cylinders && layout === c.layout && c.fuel === 'petrol' && c.aspiration === 'natural') return c;
+    return { ...c, cylinders, layout, fuel: 'petrol', aspiration: 'natural' };
+  }
   if (!isRotary(c)) {
     const counts = c.layout === 'vr' ? VR_CYLINDERS : c.layout === 'w' ? W_CYLINDERS : c.layout === 'v' ? CYLINDERS : CYLINDERS.filter((n) => n <= 12);
     const cylinders = counts.includes(c.cylinders) ? c.cylinders : nearest(counts, c.cylinders);

@@ -46,9 +46,12 @@ test.describe('le lien de partage', () => {
       };
       const start = config();
       // Tout à la fois, sur un moteur qui prend les nouvelles valeurs des anciennes listes, avec et sans boîte réglée.
-      const all = { ...start, ...changed, layout: 'w', cylinders: 12, exhaust: 'expansion', camshaft: 'ohv', fuelSystem: 'direct', aspiration: 'turbo' };
+      // Un deux-temps n'est ni un W12 ni un turbo (`coherentConfig`) : le W12 suralimenté garde le quatre-temps, et le deux-temps
+      // prend un trois cylindres atmosphérique. À eux deux, ils changent chaque champ.
+      const all = { ...start, ...changed, layout: 'w', cylinders: 12, exhaust: 'expansion', camshaft: 'ohv', fuelSystem: 'direct', aspiration: 'turbo', cycle: 'four_stroke' };
       compare(all);
       compare({ ...all, boxKind: 'sequential', boxGears: 6 });
+      compare({ ...start, ...changed, layout: 'inline', cylinders: 3, exhaust: 'expansion', fuelSystem: 'direct' });
       compare({ ...start, layout: 'vr', cylinders: 6 });
       // Chacun seul : le groupe ne s'écrit que pour lui, et ne décale aucun autre champ.
       for (const [key, value] of Object.entries(changed)) {

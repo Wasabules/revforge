@@ -1,6 +1,7 @@
 #include "revforge/driving_model.hpp"
 
 #include "revforge/architecture.hpp"
+#include "revforge/two_stroke.hpp"
 
 #include "portable_math.hpp"
 #include "revforge/atmosphere.hpp"
@@ -29,6 +30,9 @@ constexpr double kTrailerRolling = 0.012;
 constexpr double kTrailerDragArea = 1.2;
 // Le pied est au plancher depuis ce temps, et rien ne vient : la voiture n'en a pas la force.
 constexpr double kStrainS = 2.0;
+// Une étape où le conducteur appuie au moins à ce point est une étape où il veut sa vitesse ; la pédale est à son plafond à ce jeu près.
+constexpr double kEagerPedal = 0.7;
+constexpr double kCeilingSlack = 0.02;
 constexpr double kNeutralBelowKmh = 8.0;
 constexpr double kLimiterDropShare = 0.04;
 constexpr double kLimiterMinCutS = 0.03;
@@ -170,6 +174,7 @@ void DrivingModel::setPowertrain(const Powertrain& powertrain) {
     superchargerEngine_ = !powertrain.electric && powertrain.engine.aspiration == Aspiration::Supercharger;
     if (superchargerEngine_) supercharger_.setSpec(superchargerSpecOf(powertrain));
     carbEngine_ = !powertrain.electric && hasCarburetor(powertrain.engine);
+    twoStrokeEngine_ = !powertrain.electric && isTwoStroke(powertrain.engine);
     if (carbEngine_) carb_.configure(carburetorSpecOf(powertrain.engine), powertrain.engine.sweptCcPerTwoTurns() * 1e-6);
     // Le cliquetis : seulement quand la combustion n'est plus celle d'origine. Sinon la carte d'origine reste sous sa limite, et rien ne tourne.
     const KnockMap* knock = knockMapOf(powertrain);
@@ -390,7 +395,16 @@ void DrivingModel::pilot(double& pedal, double& brakePedal) {
     brakePedal = order.brake;
     legTarget_ = order.targetKmh;
 
-    const bool flatOut = throttle_ > 0.9 && order.targetKmh < kFlatOutKmh && order.targetKmh - view.kmh > 5.0 && acceleration_ < 0.1;
+    const bool stuck = throttle_ > 0.9 && order.targetKmh < kFlatOutKmh && order.targetKmh - view.kmh > 5.0 && acceleration_ < 0.1;
+    // Ou bien le conducteur, pressé, appuie autant que l'étape le lui permet, et à ce train la voiture n'atteindra pas la vitesse de
+    // l'étape avant qu'elle finisse : elle accélère encore, mais n'en a pas la force. Un conducteur qui ne veut pas aller vite ne dit rien.
+    const ScenarioLeg& now = scenario.legs[legIndex_];
+    const double legKmh = legTargetKmh(scenario, now);
+    const double ceiling = std::max(now.eagerness, view.holdPedal);
+    const double legLeft = (legIndex_ + 1 < scenario.legCount ? scenario.legs[legIndex_ + 1].fromSec : scenario.loopSec) - cycleSec_;
+    const bool pressing = ceiling >= kEagerPedal && throttle_ >= std::min(ceiling, 1.0) - kCeilingSlack;
+    const bool late = legKmh < kFlatOutKmh && legKmh - view.kmh > 5.0 && acceleration_ * legLeft < (legKmh - view.kmh) / 3.6;
+    const bool flatOut = stuck || (pressing && late);
     strain_ = flatOut ? std::min(strain_ + kStep, kStrainS * 2.0) : std::max(strain_ - 2.0 * kStep, 0.0);
     underpowered_ = strain_ > kStrainS;
 }
@@ -944,8 +958,40 @@ double DrivingModel::rotaryCompressionLoadNm() const {
     return load;
 }
 
+double DrivingModel::twoStrokeCompressionLoadNm() const {
+    // Chaque cylindre comprime à chaque tour, mais seulement une fois la lumière d'échappement fermée : du volume qu'elle enferme.
+    const EngineConfig& e = powertrain_.engine;
+    const TwoStrokePorts ports = twoStrokePortsOf(e);
+    const int count = e.pistons();
+    const double swept = static_cast<double>(e.displacementCc) * 1e-6 / count;
+    const double clearance = swept / (ports.geometricCompression - 1.0);
+    const double closed = clearance + swept * (1.0 - ports.exhaustHeight);
+    const double closesAt = (360.0 - ports.exhaustOpenDeg) * kPi / 180.0;
+    const double opensAt = ports.exhaustOpenDeg * kPi / 180.0;
+    constexpr double kAtmosphere = 1e5;
+    // Mêmes fuites et même retour qu'un quatre-temps (voir `compressionLoadNm`).
+    constexpr double kCrankPolytropic = 1.13;
+    constexpr double kExpansionReturn = 0.8;
+    double load = 0.0;
+    for (int i = 0; i < count; ++i) {
+        const double phi = std::fmod(crankAngle_ + 2.0 * kPi * i / count, 2.0 * kPi);
+        const bool compressing = phi >= closesAt;
+        if (!compressing && phi >= opensAt) continue;
+        const double travel = pistonTravelShare(phi * 180.0 / kPi, ports.rodOverStroke);
+        const double volume = clearance + swept * travel;
+        const double pressure = kAtmosphere * portable::pow(closed / volume, kCrankPolytropic);
+        // Le bras de levier : dV/dφ, calculé par la même cinématique.
+        const double ahead = pistonTravelShare(phi * 180.0 / kPi + 0.5, ports.rodOverStroke);
+        const double lever = swept * (ahead - travel) / (0.5 * kPi / 180.0);
+        const double push = (pressure - kAtmosphere) * lever;
+        load += compressing ? -push : -kExpansionReturn * push;
+    }
+    return load;
+}
+
 double DrivingModel::compressionLoadNm() const {
     if (isRotary(powertrain_.engine)) return rotaryCompressionLoadNm();
+    if (twoStrokeEngine_) return twoStrokeCompressionLoadNm();
     // Chaque cylindre comprime l'air enfermé, puis le gaz lui rend presque tout en se détendant.
     const double swept = static_cast<double>(powertrain_.engine.displacementCc) * 1e-6 / powertrain_.engine.cylinders;
     const double ratio = static_cast<double>(starter_.compressionRatio);
@@ -1294,6 +1340,8 @@ void DrivingModel::updateEngine(double throttle, bool off) {
     // Le calculateur : ce que retirent le retard et les cylindres coupés, et la richesse, qui ne s'écarte qu'à pleine charge.
     if (ecuEngine_ && ecuShare_ != 1.0) produced *= ecuShare_;
     if (lambdaRatio_ != 1.0) produced *= lambdaLoadRatio(powertrain_.engine, manifold_) / lambdaRatio_;
+    // Un deux-temps balaie mieux à faible débit, mais il rate : ce que son air frais enfermé donne vraiment (voir docs/modele.md).
+    if (twoStrokeEngine_ && !cut_) produced *= twoStrokePartLoad(powertrain_.engine, rpmNow, manifold_).torqueShare;
     antiLagLostNm_ = 0.0;
     if (antiLag_.active) {
         const double kept = produced * antiLagTorqueShare(antiLag_.kind);

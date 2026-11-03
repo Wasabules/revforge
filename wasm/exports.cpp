@@ -11,6 +11,7 @@
 #include "revforge/powertrain.hpp"
 #include "revforge/sound_sheet.hpp"
 #include "revforge/valve_float.hpp"
+#include "revforge/two_stroke.hpp"
 #include "../core/src/exhaust_line.hpp"
 
 using namespace revforge;
@@ -91,6 +92,8 @@ void rf_set_config(int cylinders, int layout, int displacementCc, int boreMm, in
     c.camshaft = static_cast<Camshaft>(camshaft);
     c.airFilter = static_cast<AirFilter>(airFilter);
     c.fuelSystem = static_cast<FuelSystem>(fuelSystem);
+    // Le site y veille déjà (`coherentConfig`) : un deux-temps ne garde que ce qui existe pour lui.
+    coherentTwoStroke(c);
     g_powertrain.engine = c;
     g_powertrain.electric = false;
     applyPowertrain();

@@ -2,9 +2,10 @@
   import Choices from './Choices.svelte';
   import SettingsSection from './SettingsSection.svelte';
   import TunedSlider from './TunedSlider.svelte';
-  import { FUEL_GRADES, FUELS, LIMITS, isRotary, type EngineConfig } from '../lib/config';
+  import { FUEL_GRADES, FUELS, LIMITS, isRotary, type EngineConfig, isTwoStroke } from '../lib/config';
   import type { Spec } from '../lib/engine';
   import { fixed, t, whole } from '../lib/i18n.svelte';
+  import { GEOMETRIC_COMPRESSION } from '../lib/twoStroke';
 
   /** Combustion : le carburant, le taux de compression, l'indice d'octane. */
   interface Props {
@@ -17,9 +18,10 @@
   let { config, shown, spec, onapply, onlive }: Props = $props();
 
   const rotary = $derived(isRotary(config));
-  const diesel = $derived(config.fuel === 'diesel' && !rotary);
-  /** Le taux que suppose le moteur d'aujourd'hui (`stockCompressionRatio` en C++) : le point de départ du curseur. */
-  const stockRatio = $derived(diesel ? 18 : rotary ? (config.aspiration === 'natural' ? 9.4 : 8.5) : config.aspiration === 'natural' ? 10.5 : 9.5);
+  const twoStroke = $derived(isTwoStroke(config));
+  const diesel = $derived(config.fuel === 'diesel' && !rotary && !twoStroke);
+  /** Le taux que suppose le moteur d'aujourd'hui (`StarterSpec::compressionRatio`, `rotaryCompressionRatio`) : le point de départ du curseur. */
+  const stockRatio = $derived(diesel ? 18 : twoStroke ? GEOMETRIC_COMPRESSION : rotary ? (config.aspiration === 'natural' ? 9.4 : 8.5) : config.aspiration === 'natural' ? 10.5 : 9.5);
   /**
    * Ce qui existe (`compressionRatioOf` en C++) : un diesel ne s'allume plus sous 14:1 (Mazda Skyactiv-D, le plus bas de série), et un
    * rotor n'a plus de creux au-delà de 11,9:1 (Mazda 8C, le plus haut de série).
@@ -40,7 +42,7 @@
 </script>
 
 <SettingsSection id="combustion" title={t('builder.section.combustion')}>
-  {#if !rotary}
+  {#if !rotary && !twoStroke}
     <Choices label={t('builder.fuel')} options={FUELS} value={config.fuel} onchange={(fuel) => onapply({ fuel })} />
   {/if}
   <TunedSlider label={t('builder.compression')} value={shown.compressionRatio} min={ratioMin} max={ratioMax} step={LIMITS.compressionRatio.step} start={stockRatio} testid="compression"

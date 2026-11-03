@@ -115,6 +115,9 @@ public:
     float limiterGain() const;
     /** Nombre de détonations depuis le début : pour faire jaillir une flamme à l'écran. */
     std::uint32_t pops() const;
+    /** Deux temps : la part des explosions manquées depuis le début (0 sur un quatre-temps), et leur nombre. */
+    float misfireShare() const;
+    std::uint32_t twoStrokeEvents() const;
     /** Vitesse de la turbine, 0 à 1 : elle garde son élan quand la pression retombe. */
     float turbine() const;
     /** Décharge du turbo en cours (0 : aucune). */

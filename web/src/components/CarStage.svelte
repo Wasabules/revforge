@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { BODIES, EXHAUST_LINES, TURBO_SCALE, isRotary, type Body, type EngineConfig } from '../lib/config';
+  import { BODIES, EXHAUST_LINES, TURBO_SCALE, isRotary, isTwoStroke, type Body, type EngineConfig } from '../lib/config';
+  import { expansionChamber } from '../lib/twoStroke';
   import { animate, fit, gasColor, heatedPart, mix, pipeColor, readTheme, type Theme } from '../lib/canvas';
   import type { Telemetry } from '../lib/engine';
   import { fixed, t } from '../lib/i18n.svelte';
@@ -712,8 +713,9 @@
       ctx.stroke();
       // Chaque case s'allume quand c'est le tour de son cylindre, à la même horloge que les autres vues.
       const rotary = isRotary(config);
-      // Un rotor s'allume à chaque tour d'arbre : son horloge va deux fois plus vite, et chacun a sa case.
+      // Un rotor, comme un cylindre de deux-temps, s'allume à chaque tour d'arbre : son horloge va deux fois plus vite, et chacun a sa case.
       // Une culasse (en ligne, VR) : une case par cylindre. Deux : une par paire.
+      const everyTurn = rotary || isTwoStroke(config);
       const architecture = rotary ? null : architectureOf(config);
       const row = rotary || architecture?.heads === 1 ? config.cylinders : Math.ceil(config.cylinders / 2);
       const perCell = config.cylinders / row;
@@ -723,7 +725,7 @@
         const cell = Math.floor(i / perCell);
         // Le rang de ce cylindre dans le cycle : à son angle d'allumage, inégal sur un V14.
         const firing = architecture ? architecture.firingDeg[order.indexOf(i + 1)] / 720 : order.indexOf(i + 1) / config.cylinders;
-        const phase = ((motion.cycle * (rotary ? 2 : 1)) + 1 - firing) % 1;
+        const phase = ((motion.cycle * (everyTurn ? 2 : 1)) + 1 - firing) % 1;
         if (i % perCell !== 0 && !(motion.burning && phase < 0.25)) continue;
         ctx.fillStyle = motion.burning && phase < 0.25 ? gasColor(0.4 + 0.6 * motion.load) : theme.bg;
         ctx.fillRect(X(left) + 3 + cell * cellWidth, Y(engineY + blockHeight) + 3, Math.max(cellWidth - 2, 1), blockHeight * scale * 0.42);
@@ -752,8 +754,7 @@
       const line: [number, number][] = behind
         ? [toCar(Math.max(left, tail + 0.1), engineY + 0.1), toCar(Math.max(left - 0.12, tail + 0.05), floor), toCar(tail, floor + 0.02)]
         : [toCar(left, engineY + 0.1), toCar(left - 0.1, floor), toCar(rearX + 0.1, floor), toCar(rearX, floor + 0.14), toCar(tail + 0.2, floor + 0.12), toCar(tail, floor + 0.04)];
-      // Socle : la chambre de détente se dessine comme la ligne directe.
-      const pipeWidth = Math.max(3, (config.exhaust === 'straight' || config.exhaust === 'expansion' ? 0.075 : 0.06) * scale);
+      const pipeWidth = Math.max(3, (config.exhaust === 'straight' ? 0.075 : 0.06) * scale);
       tube(ctx, line, pipeWidth, pipeColor(theme, motion.heat));
 
       // Le panache d'abord, derrière la ligne : il sort de la grille de calcul, à l'échelle de la voiture.
@@ -795,6 +796,44 @@
       if (parts.includes('resonator')) box(startX + span * 0.32, Math.min(0.32, span * 0.3), 0.11, t('part.res'), 'res');
       if (parts.includes('muffler') && !behind) box(0.28, 0.42, quietLine ? 0.2 : 0.15, t('part.muffler'), 'muffler');
       if (parts.includes('muffler') && behind) box(0.2, 0.3, 0.14, t('part.muffler'), 'muffler');
+      // La chambre de détente, à ses vraies dimensions (celle d'un cylindre, les autres derrière elle) : du collecteur, le long du
+      // plancher vers l'arrière, diffuseur, ventre et cône de retour, puis la pointe.
+      if (config.exhaust === 'expansion') {
+        const c = expansionChamber(config);
+        const room = behind ? Math.max(left - 0.2, 0.4) : Math.max(left - rearX, 0.4);
+        const fit = Math.min(1, room / (c.header + c.diffuser + c.belly + c.baffle + c.stinger));
+        const from = (behind ? Math.max(left - 0.12, 0.3) : left - 0.1) - c.header * fit;
+        const xs = [from, from - c.diffuser * fit, from - (c.diffuser + c.belly) * fit, from - (c.diffuser + c.belly + c.baffle) * fit];
+        const rs = [c.headerDiameter / 2, c.bellyDiameter / 2, c.bellyDiameter / 2, c.stingerDiameter / 2];
+        const middle = floor + c.bellyDiameter / 2 + 0.01;
+        ctx.beginPath();
+        for (let k = 0; k < 4; k++) {
+          const [x, y] = toCar(xs[k], middle + rs[k]);
+          if (k === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        for (let k = 3; k >= 0; k--) {
+          const [x, y] = toCar(xs[k], middle - rs[k]);
+          ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+        let style = theme.raised;
+        if (gasReady()) {
+          // Le gaz du ventre, tel que le calcule le réseau.
+          const net = motion.gas.net;
+          for (const section of net.sections) {
+            if (section.part !== 'belly') continue;
+            const at = section.first + (section.count >> 1);
+            style = motion.painter.gasStyle(theme, net.temp[at], net.y[at]);
+          }
+        }
+        ctx.fillStyle = style;
+        ctx.strokeStyle = theme.metal;
+        ctx.lineWidth = 1.5;
+        ctx.fill();
+        ctx.stroke();
+        labels.push({ x: (xs[0] + xs[3]) / 2, text: t('part.chamber') });
+      }
 
     }
     ctx.restore();

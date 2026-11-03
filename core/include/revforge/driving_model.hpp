@@ -301,6 +301,7 @@ private:
     double ratio(int gear) const;
     double compressionLoadNm() const;
     double rotaryCompressionLoadNm() const;
+    double twoStrokeCompressionLoadNm() const;
     void stepTurbo(double rpmNow, bool burning);
     void updateAntiLag(double throttle, double rpmNow, bool off);
     void stepSupercharger(double rpmNow);
@@ -384,6 +385,8 @@ private:
     ChargeAir chargeAir_;
     bool chargeAirEngine_ = false;
     double chargeFill_ = 0.0;
+    /** Un deux-temps : à charge partielle, son balayage et ses ratés changent le couple (`twoStrokePartLoad`). */
+    bool twoStrokeEngine_ = false;
     double torque_ = 0.0;
     bool cut_ = false;
     bool limiterCut_ = false;

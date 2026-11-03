@@ -58,6 +58,7 @@ add_library(revforge_core STATIC
   core/src/valvetrain_sound.cpp
   core/src/boost_control.cpp
   core/src/charge_air.cpp
+  core/src/two_stroke.cpp
   ${GENERATED_DIR}/presets_data.inc
 )
 target_include_directories(revforge_core PUBLIC core/include PRIVATE core/src ${GENERATED_DIR})
@@ -83,7 +84,7 @@ else()
   target_link_libraries(revforge-render PRIVATE revforge_core)
 
   enable_testing()
-  add_executable(revforge_tests tests/main.cpp tests/engine_sound_test.cpp tests/engine_config_test.cpp tests/driving_model_test.cpp tests/powertrain_test.cpp tests/gearbox_test.cpp tests/acoustics_test.cpp tests/starter_test.cpp tests/shift_modes_test.cpp tests/turbo_test.cpp tests/consumption_test.cpp tests/retro_body_test.cpp tests/air_filter_test.cpp tests/turbo_pipe_test.cpp tests/anti_lag_test.cpp tests/valvetrain_test.cpp tests/supercharger_test.cpp tests/carburetor_test.cpp tests/rotary_test.cpp tests/jonctions_test.cpp tests/architecture_test.cpp tests/atmosphere_test.cpp tests/thermal_test.cpp tests/combustion_test.cpp tests/ecu_test.cpp tests/injection_test.cpp tests/cam_test.cpp tests/valve_float_test.cpp tests/boost_control_test.cpp tests/twin_turbo_test.cpp tests/charge_air_test.cpp)
+  add_executable(revforge_tests tests/main.cpp tests/engine_sound_test.cpp tests/engine_config_test.cpp tests/driving_model_test.cpp tests/powertrain_test.cpp tests/gearbox_test.cpp tests/acoustics_test.cpp tests/starter_test.cpp tests/shift_modes_test.cpp tests/turbo_test.cpp tests/consumption_test.cpp tests/retro_body_test.cpp tests/air_filter_test.cpp tests/turbo_pipe_test.cpp tests/anti_lag_test.cpp tests/valvetrain_test.cpp tests/supercharger_test.cpp tests/carburetor_test.cpp tests/rotary_test.cpp tests/jonctions_test.cpp tests/architecture_test.cpp tests/atmosphere_test.cpp tests/thermal_test.cpp tests/combustion_test.cpp tests/ecu_test.cpp tests/injection_test.cpp tests/cam_test.cpp tests/valve_float_test.cpp tests/boost_control_test.cpp tests/twin_turbo_test.cpp tests/charge_air_test.cpp tests/two_stroke_test.cpp)
   target_include_directories(revforge_tests PRIVATE tests/vendor core/src)
   target_link_libraries(revforge_tests PRIVATE revforge_core)
   # Avertissement d'un en-tête de la bibliothèque standard inclus par doctest.
@@ -189,4 +190,10 @@ else()
   golden(charge_water_cooler efc2c12e --preset v8_supercharged --intercooler water --scenario launch --seconds 10)
   golden(charge_water_injection 59ac8a9c --preset hot_hatch_turbo --water 1 --scenario launch --seconds 10)
   golden(charge_nitrous bedbec6d --preset hot_hatch_na --nitrous 75 --scenario launch --seconds 10)
+  # Le deux-temps : son cycle intégré, ses lumières, ses ratés (à leur propre générateur), puis sa chambre de détente.
+  golden(lap_two_stroke 6d847fab --preset two_stroke_triple --scenario lap --seconds 20)
+  golden(idle_two_stroke fc2d68ae --preset two_stroke_triple --scenario idle --seconds 10)
+  golden(lap_two_stroke_expansion fde00d9e --preset two_stroke_triple --exhaust expansion --scenario lap --seconds 20)
+  # Un bicylindre comme la Trabant, sans modèle de conduite : la charge déduite du régime, et ses ratés.
+  golden(steady_two_stroke_twin 38e43381 --cylinders 2 --cc 595 --bore 72 --redline 4500 --cycle two_stroke --carb single --scenario steady --rpm 900 --seconds 3)
 endif()

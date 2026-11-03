@@ -17,6 +17,7 @@
 #include "revforge/injection.hpp"
 #include "revforge/cam.hpp"
 #include "revforge/valve_float.hpp"
+#include "revforge/two_stroke.hpp"
 #include "revforge/valvetrain.hpp"
 #include "starter_sound.hpp"
 #include "supercharger_sound.hpp"
@@ -74,6 +75,19 @@ constexpr float kPistonIdleSpread = 1.6f;
 constexpr float kRotaryAcyclism = 0.02f;
 constexpr float kPistonAcyclism = 0.05f;
 constexpr float kRotaryStructure = 0.5f;
+
+// ── Le deux-temps : des lumières, un carter qui balaie, des ratés à faible charge. Voir « Le deux-temps » dans docs/modele.md ──
+// Le bord haut d'une lumière est chanfreiné : le piston la découvre sur 3° de vilebrequin avant d'ouvrir franchement (supposé).
+constexpr float kTwoStrokeEdge = 3.0f / 720.0f;
+// Le balayage pousse vers l'échappement ce qu'il fait entrer, chaud : en volume, 1,3 fois l'air frais (supposé), sur la seule durée du
+// transfert, quand le piston d'un quatre-temps chasse sa cylindrée sur 240°.
+constexpr float kTwoStrokeHot = 1.3f;
+// Pression maximale de 35 à 45 bar au lieu de 70 : 5 dB de moins dans la loi d'Anderton, mais deux fois plus d'explosions, 3 dB de
+// plus (supposé). Sans distribution, le plancher du ralenti baisse comme sur le rotatif, et le souffle mécanique perd la part de la
+// distribution (30 %, comme pour le simple arbre).
+constexpr float kTwoStrokeBlockDb = -2.0f;
+constexpr float kTwoStrokeFloorDb = -3.0f;
+constexpr float kTwoStrokeHash = 0.84f;
 
 constexpr float kSoundHotMS = 520.0f;
 // Une soupape s'ouvre à un angle fixe : deux bouffées restent en phase bien au-delà de 1 kHz.
@@ -554,6 +568,20 @@ struct EngineSound::State {
     float camPinRise = 1.0f;
     float camPinDecay = 0.0f;
     Svf camPinBand;
+    // ── Deux temps : rien de tout cela ne tourne sur un quatre-temps, et ses ratés tirent de leur propre générateur ──
+    bool twoStroke = false;
+    std::uint32_t twoStrokeRng = 0x2545F491u;
+    // La pureté de la charge que chaque cylindre vient d'enfermer : c'est elle qui décide s'il allume.
+    std::array<float, kMaxCylinders> purity{};
+    // Le balayage de ce régime et de cette charge, et le débit qui traverse le cylindre, en part de la pleine charge.
+    float scavengingNow = 1.0f;
+    float deliveryNow = 0.0f;
+    float scavengeStroke = 0.0f;
+    // Où commencent les lumières, en part de la course depuis le point mort haut.
+    float exhaustFrom = 1.0f;
+    float transferFrom = 1.0f;
+    std::uint32_t misfireCount = 0;
+    std::uint32_t twoStrokeEvents = 0;
 
     // ── Anti-lag : rien de tout cela ne tourne sans lui, et son tirage est à part ──
     bool antiLagOn = false;
@@ -675,9 +703,49 @@ struct EngineSound::State {
 
     float smoothing(float tauSeconds) const { return 1.0f - km::exp(-controlDt / tauSeconds); }
 
+    /** La course du piston depuis le point mort haut, en part de la course, à cet instant du cycle de 720° (un tour vaut 0,5). */
+    float pistonTravel(float theta) const {
+        const float turns = theta * 2.0f;
+        const float sine = sinFast(turns);
+        const float cosine = sinFast(turns + 0.25f);
+        const float rod = active.rodOverStroke;
+        const float lever = 0.5f / rod;
+        return 0.5f * (1.0f - cosine) + rod * (1.0f - km::sqrt(km::max(1.0f - lever * lever * sine * sine, 0.0f)));
+    }
+
+    /** La part découverte d'une lumière qui commence à `from` de la course : elle suit le piston, linéairement. */
+    float portShare(float theta, float from) const { return km::max((pistonTravel(theta) - from) / km::max(1.0f - from, 1e-3f), 0.0f); }
+
+    float twoStrokeRandom() {
+        std::uint32_t x = twoStrokeRng;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        twoStrokeRng = x;
+        return static_cast<float>(static_cast<std::int32_t>(x)) * 4.656613e-10f;
+    }
+
+    /**
+     * Le balayage de ce régime et de cette charge : le cycle intégré donne la pureté à pleine charge (`purity`) ; le papillon ne laisse
+     * passer que `load` du débit, et le modèle de Benson et Brandham dit ce que cela change. Même calcul que `twoStrokePartLoad`.
+     */
+    void updateTwoStroke() {
+        const EngineProfile& a = active;
+        const float at = km::coerceIn((rpm / a.redlineRpm - 0.1f) / 1.1f, 0.0f, 1.0f) * static_cast<float>(kTwoStrokePoints - 1);
+        const int low = std::min(static_cast<int>(at), kTwoStrokePoints - 2);
+        const float share = at - static_cast<float>(low);
+        const float delivery = a.delivery[static_cast<std::size_t>(low)] + (a.delivery[static_cast<std::size_t>(low + 1)] - a.delivery[static_cast<std::size_t>(low)]) * share;
+        const float pure = a.purity[static_cast<std::size_t>(low)] + (a.purity[static_cast<std::size_t>(low + 1)] - a.purity[static_cast<std::size_t>(low)]) * share;
+        const float fill = km::coerceIn(load, 0.0f, 1.0f);
+        const float full = static_cast<float>(scavengingEfficiency(delivery, a.scavengeDisplacement, a.scavengeShortCircuit));
+        const float part = static_cast<float>(scavengingEfficiency(delivery * fill, a.scavengeDisplacement, a.scavengeShortCircuit));
+        scavengingNow = full > 0.0f ? km::coerceIn(pure * part / full, 0.0f, 1.0f) : 0.0f;
+        deliveryNow = delivery * fill;
+    }
+
     /** Mêmes pièces, autres dimensions : le changement s'entend sans rien interrompre. */
     static bool sameParts(const EngineProfile& a, const EngineProfile& b) {
-        return a.rotary == b.rotary && a.firingCount == b.firingCount && a.firing == b.firing && a.firingGain == b.firingGain && a.headerM == b.headerM &&
+        return a.rotary == b.rotary && a.twoStroke == b.twoStroke && a.chamber == b.chamber && a.portEvo == b.portEvo && a.portTo == b.portTo && a.portIo == b.portIo && a.firingCount == b.firingCount && a.firing == b.firing && a.firingGain == b.firingGain && a.headerM == b.headerM &&
                a.exhaust == b.exhaust && a.exhaustScale == b.exhaustScale && a.diesel == b.diesel && a.turbo == b.turbo &&
                a.electric == b.electric && a.supercharged == b.supercharged && a.routing == b.routing && a.bank == b.bank && a.twoBanks == b.twoBanks && sameShell(a.car, b.car) &&
                a.airFilter == b.airFilter && (a.airFilter == AirFilter::Stock || (a.boreM == b.boreM && a.strokeM == b.strokeM && a.cylinders == b.cylinders && a.stackM == b.stackM)) && a.camshaft == b.camshaft &&
@@ -735,6 +803,14 @@ struct EngineSound::State {
         if (p.rotary) {
             blowdownBase = km::coerceAtLeast(p.blowdownS, 0.0005f);
             backStroke *= kPortChase;
+        }
+        if (p.twoStroke) {
+            blowdownBase = km::coerceAtLeast(p.blowdownS, 0.0005f);
+            // Pas de course d'échappement : le balayage chasse, sur la durée du transfert seulement.
+            scavengeStroke = backStroke * kTwoStrokeHot * (kEvc - kEvo) / km::max(p.portTc - p.portTo, 1e-3f);
+            backStroke = 0.0f;
+            exhaustFrom = pistonTravel(p.portEvo);
+            transferFrom = pistonTravel(p.portTo);
         }
         const float volume = p.boreM * p.boreM * p.strokeM * static_cast<float>(p.cylinders);
         const float sizeScale = km::pow(km::coerceIn(4.0f * kReferenceCylinder / km::max(volume, 1e-6f), 0.2f, 4.0f), 0.27f);
@@ -811,9 +887,10 @@ struct EngineSound::State {
      * quel : rien d'autre ne change.
      */
     void applyCamProfile(const EngineProfile& p) {
-        camTuned = p.camTuned && !p.electric && !p.rotary;
+        // Un deux-temps n'a pas de came : ses lumières ont leur propre calage (`portEvo`…), que rien ici ne doit remplacer.
+        camTuned = p.camTuned && !p.electric && !p.rotary && !p.twoStroke;
         if (!camTuned) {
-            if (!p.rotary) {
+            if (!p.rotary && !p.twoStroke) {
                 evo = kEvo;
                 evc = kEvc;
                 ivo = kIvo;
@@ -961,7 +1038,11 @@ struct EngineSound::State {
         if (!p.electric) {
             const double displacement = 0.7854 * static_cast<double>(p.boreM) * p.boreM * p.strokeM * p.cylinders;
             // Deux rangées séparées : chacune son tube, de section moitié.
-            const std::vector<float>& impulse = line.compute(p.exhaust, p.exhaustScale, twoPaths ? displacement * 0.5 : displacement, twoPaths ? p.cylinders / 2 : p.cylinders, p.filterResistance);
+            // La chambre de détente a ses propres pièces, accordées sur ce moteur : une par cylindre, en parallèle.
+            const int chambers = (p.twoStroke ? p.pistons : p.cylinders) / (twoPaths ? 2 : 1);
+            const std::vector<float>& impulse = p.exhaust == Exhaust::Expansion
+                ? line.computeExpansion(p.chamber, chambers, p.exhaustScale, twoPaths ? displacement * 0.5 : displacement)
+                : line.compute(p.exhaust, p.exhaustScale, twoPaths ? displacement * 0.5 : displacement, twoPaths ? p.cylinders / 2 : p.cylinders, p.filterResistance);
             lineGain = line.gain();
             gas[0].line.setImpulse(impulse.data(), static_cast<int>(impulse.size()));
             if (twoPaths) gas[1].line.setImpulse(impulse.data(), static_cast<int>(impulse.size()));
@@ -991,6 +1072,15 @@ struct EngineSound::State {
         evc = p.rotary ? kPortEvc : kEvc;
         ivo = p.rotary ? kPortIvo : kIvo;
         ivc = p.rotary ? kPortIvc : kIvc;
+        twoStroke = p.twoStroke && !p.electric;
+        if (twoStroke) {
+            // Les lumières d'un deux-temps : l'échappement autour du point mort bas, l'admission dans le carter autour du haut.
+            evo = p.portEvo;
+            evc = p.portEvc;
+            ivo = p.portIo;
+            ivc = p.portIc;
+            purity.fill(1.0f);
+        }
         idleSpread = p.rotary ? kRotaryIdleSpread : kPistonIdleSpread;
         acyclismDepth = p.rotary ? kRotaryAcyclism : kPistonAcyclism;
         rotorFace.fill(0);
@@ -1171,6 +1261,7 @@ struct EngineSound::State {
 
         const EngineProfile& a = active;
         rpmFrac = km::coerceIn((rpm - a.idleRpm) / (a.redlineRpm - a.idleRpm), 0.0f, 1.0f);
+        if (twoStroke) updateTwoStroke();
         idleShake = (1.0f - rpmFrac) * (1.0f - rpmFrac) * (1.0f - rpmFrac) * (1.0f - rpmFrac);
         // À faible charge, le cylindre s'ouvre sur peu de pression : il se vide lentement, sans coup de bélier.
         blowRate = 1.0f / (blowdownBase * (1.0f + 3.5f * (1.0f - km::min(load, 1.0f))) * sr);
@@ -1268,6 +1359,7 @@ struct EngineSound::State {
         windLevel = kWindPa * at70 * at70 * at70;
         hashLevel = (0.8f + 0.2f * km::sqrt(rpmFrac)) * (0.6f + 0.4f * load) * (a.diesel ? 3.0f : 2.0f);
         if (sohc) hashLevel *= kSohcHash;
+        if (twoStroke) hashLevel *= kTwoStrokeHash;
         updateLevels();
 
         if (a.electric) tone.set(km::min(a.lowpassIdleHz + (a.lowpassRedlineHz - a.lowpassIdleHz) * rpmFrac, sr * 0.3f), 0.707f, sr);
@@ -1337,13 +1429,14 @@ struct EngineSound::State {
         const float logB = km::log10(bore);
         float blockDb = 50.0f * logN + 60.0f * logB - 203.0f;
         if (a.rotary) blockDb += kRotaryBlockDb;
+        if (twoStroke) blockDb += kTwoStrokeBlockDb;
         if (a.diesel) blockDb = (a.turbo || a.supercharged) ? 40.0f * logN + 50.0f * logB - 135.0f : 30.0f * logN + 50.0f * logB - 106.0f;
         // Sans charge, un moteur essence perd un peu ; un diesel presque rien (Austen et Priede, 1959 ; mesures sur une Saturn : presque rien non plus).
         blockDb -= (a.diesel ? 2.0f : 5.0f) * (1.0f - km::min(load, 1.0f));
         // Un délai d'auto-inflammation plus long fait brûler plus de gazole d'un coup : la pente de pression, donc le bruit de combustion, suit.
         if (a.diesel && a.dieselKnockScale != 1.0f) blockDb += 20.0f * km::log10(a.dieselKnockScale);
         // Au ralenti, accessoires et distribution tiennent un plancher.
-        const float floorDb = 65.0f + 15.0f * km::log10(bore / 86.0f) + (a.diesel ? 7.0f : (a.rotary ? kRotaryFloorDb : 0.0f));
+        const float floorDb = 65.0f + 15.0f * km::log10(bore / 86.0f) + (a.diesel ? 7.0f : (a.rotary ? kRotaryFloorDb : (twoStroke ? kTwoStrokeFloorDb : 0.0f)));
         // La rampe commune et la recirculation : une pente de pression plus douce, un bruit de combustion plus bas.
         if (combustionTuned) {
             const float offset = combustionOffsetDb(a, rpmNow);
@@ -1727,6 +1820,20 @@ struct EngineSound::State {
                         }
                         if (!fires && ecuIn.fuelOnCut) maybeEcuPop();
                     }
+                    // Le deux-temps : la charge enfermée part si elle est assez pure. Après un raté, le cylindre garde son mélange, et le
+                    // balayage suivant le complète : la pureté monte, et le tour d'après allume. À faible charge, un tour sur deux ou trois.
+                    if (twoStroke) {
+                        float& pure = purity[static_cast<std::size_t>(c % p.pistons)];
+                        const float spreadDraw = 0.5f * (twoStrokeRandom() + twoStrokeRandom());
+                        const bool lit = pure + static_cast<float>(kPuritySpread) * spreadDraw > static_cast<float>(kPurityMin);
+                        ++twoStrokeEvents;
+                        if (!lit) {
+                            fires = false;
+                            ++misfireCount;
+                            pressure[c] = km::max(pressure[c] * (1.0f - kOverrunPressureDrop), 0.02f);
+                        }
+                        pure = lit ? scavengingNow : 1.0f - (1.0f - scavengingNow) * (1.0f - pure);
+                    }
                     // La combustion frappe la structure : le bloc rayonne un coup à chaque explosion.
                     if (fires) blockEnv = km::max(blockEnv, spread);
                     if (p.diesel) knockEnv = km::max(knockEnv, spread);
@@ -1734,7 +1841,11 @@ struct EngineSound::State {
                 // La soupape s'ouvre vite : la bouffée a un front raide, loin d'une arche arrondie. Mais la came
                 // décolle en douceur, sur un angle fixe : un front long au ralenti, très court à haut régime.
                 float lift;
-                if (p.rotary) {
+                if (twoStroke) {
+                    // Une lumière : le piston la découvre, l'aire suit sa course ; le chanfrein du bord adoucit les tout premiers degrés.
+                    const float edge = km::min((theta - evo) / kTwoStrokeEdge, 1.0f);
+                    lift = portShare(theta, exhaustFrom) * edge * edge * (3.0f - 2.0f * edge);
+                } else if (p.rotary) {
                     // Une lumière : le sommet du rotor la découvre d'un bord à l'autre, sans came. Un front brutal, un plateau, puis la même fermeture.
                     const float swept = km::min(km::min((theta - evo) / kPortSweep, (evc - theta) / kPortSweep), 1.0f);
                     const float edge = km::min((theta - evo) / kPortEdge, 1.0f);
@@ -1749,10 +1860,12 @@ struct EngineSound::State {
                 // La bouffée, puis le piston qui chasse ce qui reste. Une section plus petite étale la bouffée (même gaz, plus
                 // longtemps, donc un débit de crête plus bas) mais ne change rien à ce que le piston déplace.
                 flow = (sohc ? escape / blowStretch : escape) + backStroke * lift * pumpLevel;
+                // Le balayage : ce que les transferts font entrer pousse autant de gaz chaud vers l'échappement.
+                if (twoStroke && theta >= p.portTo && theta < p.portTc) flow += scavengeStroke * portShare(theta, transferFrom) * deliveryNow;
             } else if (exhaustOpen[c]) {
                 // Une soupape ne s'entend qu'en retombant sur son siège. Une lumière ne retombe sur rien.
                 exhaustOpen[c] = false;
-                valve = !p.rotary;
+                valve = !p.rotary && !twoStroke;
             }
 
             if (theta >= ivo && theta < ivc) {
@@ -1765,7 +1878,7 @@ struct EngineSound::State {
                 if (carbMulti) carbSixth += lobe * lobe * lobe * lobe * lobe * lobe;
             } else if (intakeOpen[c]) {
                 intakeOpen[c] = false;
-                valve = !p.rotary;
+                valve = !p.rotary && !twoStroke;
                 // Son culbuteur est revenu sur le cercle de base : la goupille de la bascule peut entrer.
                 if (camPinPending[static_cast<std::size_t>(c)]) {
                     camPinPending[static_cast<std::size_t>(c)] = false;
@@ -2228,6 +2341,12 @@ float EngineSound::levelDbA() const { return s_->meter.db(); }
 float EngineSound::limiterGain() const { return s_->limiterGain; }
 
 std::uint32_t EngineSound::pops() const { return s_->popCount; }
+
+float EngineSound::misfireShare() const {
+    return s_->twoStrokeEvents == 0 ? 0.0f : static_cast<float>(s_->misfireCount) / static_cast<float>(s_->twoStrokeEvents);
+}
+
+std::uint32_t EngineSound::twoStrokeEvents() const { return s_->twoStrokeEvents; }
 
 float EngineSound::turbine() const { return s_->turbine; }
 

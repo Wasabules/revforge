@@ -4,9 +4,27 @@
 #include <array>
 #include <cmath>
 
+#include "portable_math.hpp"
+
 namespace revforge {
 
+/**
+ * Un tronçon : longueur (m), section par rapport au tube, pertes aux parois et absorption. Ou, si `branchLitres` n'est
+ * pas nul, un résonateur de Helmholtz greffé sur le côté, accordé sur le bourdonnement (voir `compute`).
+ */
+struct ExhaustSection {
+    double length;
+    double area;
+    double wallLoss;    // néper/m/√Hz
+    double absorption;  // néper/m/Hz : nid d'abeille d'un catalyseur, chambre garnie
+    bool stretches;     // les tubes suivent la longueur de la voiture, pas les volumes
+    double fibre = 0.0;  // néper/m à 1 kHz, en f^0,45 : tube perforé dans la laine, qui laisse passer les graves
+    double branchLitres = 0.0;
+};
+
 namespace {
+
+using Section = ExhaustSection;
 
 constexpr double kPi = 3.141592653589793;
 constexpr double kSoundSpeed = 500.0;  // m/s, gaz chaud
@@ -17,20 +35,6 @@ constexpr double kAirDensity = 0.6;    // kg/m³, gaz chaud
 constexpr double kBlurFromHz = 700.0;
 constexpr double kBlurPerKhz2 = 1.0;  // néper/m, au carré des kHz au-dessus de kBlurFromHz
 constexpr double kBlurMax = 8.0;      // néper/m : les allers-retours sont déjà éteints, et l'exponentielle reste calculable
-
-/**
- * Un tronçon : longueur (m), section par rapport au tube, pertes aux parois et absorption. Ou, si `branchLitres` n'est
- * pas nul, un résonateur de Helmholtz greffé sur le côté, accordé sur le bourdonnement (voir `compute`).
- */
-struct Section {
-    double length;
-    double area;
-    double wallLoss;    // néper/m/√Hz
-    double absorption;  // néper/m/Hz : nid d'abeille d'un catalyseur, chambre garnie
-    bool stretches;     // les tubes suivent la longueur de la voiture, pas les volumes
-    double fibre = 0.0;  // néper/m à 1 kHz, en f^0,45 : tube perforé dans la laine, qui laisse passer les graves
-    double branchLitres = 0.0;
-};
 
 constexpr double kWall = 0.008;
 // Laine de 100 kg/m³ dans le gaz chaud, autour d'un tube perforé : environ 52 dB/m à 1 kHz (Lee, 2005, et dispersion calculée).
@@ -105,6 +109,55 @@ constexpr std::array<Section, 11> kQuiet{{
     {0.12, 1.0, kWall, 0.0, false},
     {0.45, 1.0, kWall, 0.0, false},
 }};
+
+// ── La chambre de détente d'un deux-temps : voir « Le deux-temps » dans docs/modele.md ──
+// Un cône se calcule par marches de section constante : huit dans le diffuseur, six dans le cône de retour, assez fines pour que
+// l'onde y voie une pente, et non une marche (chacune fait de 4 à 9 cm sur la chambre de la Saab).
+constexpr int kDiffuserSteps = 8;
+constexpr int kBaffleSteps = 6;
+// Derrière la pointe, un silencieux droit garni, comme celui de la ligne sport, de dix fois sa section (supposé : celui d'une
+// moto de route), puis une sortie un peu plus large que la pointe, qui suit la longueur de la voiture.
+constexpr double kChamberSilencerM = 0.40;
+constexpr double kChamberSilencerArea = 10.0;
+constexpr double kChamberTailM = 0.50;
+constexpr double kChamberTailArea = 1.3;
+constexpr int kMaxChamberSections = 6 + kDiffuserSteps + kBaffleSteps;
+
+/** Les tronçons d'une chambre, en part de `baseArea`, pour `chambers` chambres en parallèle. Renvoie leur nombre. */
+int expansionSections(const ExpansionChamber& c, int chambers, double baseArea, std::array<ExhaustSection, kMaxChamberSections>& out) {
+    const double count = static_cast<double>(chambers < 1 ? 1 : chambers);
+    const auto share = [&](double diameter) { return count * kPi * diameter * diameter / 4.0 / baseArea; };
+    const double header = static_cast<double>(c.headerDiameterM);
+    const double belly = static_cast<double>(c.bellyDiameterM);
+    const double stinger = static_cast<double>(c.stingerDiameterM);
+    int n = 0;
+    out[static_cast<std::size_t>(n++)] = {static_cast<double>(c.headerM), share(header), kWall, 0.0, false};
+    // Un cône : le diamètre varie linéairement, la marche prend celui de son milieu.
+    for (int k = 0; k < kDiffuserSteps; ++k) {
+        const double d = header + (belly - header) * (static_cast<double>(k) + 0.5) / kDiffuserSteps;
+        out[static_cast<std::size_t>(n++)] = {static_cast<double>(c.diffuserM) / kDiffuserSteps, share(d), kWall, 0.0, false};
+    }
+    out[static_cast<std::size_t>(n++)] = {static_cast<double>(c.bellyM), share(belly), kWall, 0.0, false};
+    for (int k = 0; k < kBaffleSteps; ++k) {
+        const double d = belly + (stinger - belly) * (static_cast<double>(k) + 0.5) / kBaffleSteps;
+        out[static_cast<std::size_t>(n++)] = {static_cast<double>(c.baffleM) / kBaffleSteps, share(d), kWall, 0.0, false};
+    }
+    out[static_cast<std::size_t>(n++)] = {static_cast<double>(c.stingerM), share(stinger), kWall, 0.0, false};
+    out[static_cast<std::size_t>(n++)] = {kChamberSilencerM, share(stinger) * kChamberSilencerArea, kWall, 0.0006, false, kWool * 0.32};
+    out[static_cast<std::size_t>(n++)] = {kChamberTailM, share(stinger) * kChamberTailArea, kWall, 0.0, true};
+    return n;
+}
+
+/**
+ * La perte d'un tronçon pour une onde qui le parcourt dans le temps, évaluée à 300 Hz, l'essentiel d'une bouffée. Aux parois, la couche
+ * limite de Kirchhoff (de l'ordre de 0,012 Np/m dans un tube de 4 cm de gaz chaud) et le frottement turbulent d'un écoulement de
+ * 100 m/s (Fanning 0,005 : environ 0,04 Np/m) ; la réponse du son, elle, compte plus large (`kWall`), brouillage compris.
+ */
+double lossAt300Hz(const ExhaustSection& s) {
+    constexpr double kHz = 300.0;
+    constexpr double kWallTimeDomain = 0.05;
+    return kWallTimeDomain + s.absorption * kHz + (s.fibre > 0.0 ? s.fibre * portable::pow(kHz / 1000.0, 0.45) : 0.0);
+}
 
 struct Complex {
     double re, im;
@@ -211,7 +264,7 @@ const std::vector<float>& ExhaustLine::compute(Exhaust exhaust, float scale, dou
     if (exhaust == Exhaust::Sport) {
         sections = kSport.data();
         count = kSport.size();
-    } else if (exhaust == Exhaust::Straight || exhaust == Exhaust::Expansion) {  // Socle : la chambre de détente comme la ligne directe.
+    } else if (exhaust == Exhaust::Straight) {
         sections = kStraight.data();
         count = kStraight.size();
     } else if (exhaust == Exhaust::MufflerDelete) {
@@ -232,7 +285,50 @@ const std::vector<float>& ExhaustLine::compute(Exhaust exhaust, float scale, dou
     const double branchOmega = 2.0 * kPi * branchHz;
     // Le filtre suit le catalyseur ; sans catalyseur, le premier tube.
     const std::size_t filterAfter = count > 1 && sections[1].absorption > 0.0 ? 1 : 0;
+    return respond(sections, count, scale, baseArea, branchOmega, filterResistance, filterAfter);
+}
 
+const std::vector<float>& ExhaustLine::computeExpansion(const ExpansionChamber& chamber, int chambers, float scale, double displacementM3) {
+    const double diameter = std::clamp(0.05 * std::sqrt(displacementM3 / 0.002), 0.032, 0.09);
+    const double baseArea = kPi * diameter * diameter / 4.0;
+    std::array<ExhaustSection, kMaxChamberSections> sections{};
+    const int count = expansionSections(chamber, chambers, baseArea, sections);
+    // Pas de résonateur greffé : la pulsation de la branche ne sert à rien.
+    return respond(sections.data(), static_cast<std::size_t>(count), scale, baseArea, 2.0 * kPi * 100.0, 0.0, 0);
+}
+
+int lineStretches(Exhaust exhaust, float scale, double displacementM3, const ExpansionChamber& chamber, int chambers, LineStretch* out, int capacity) {
+    const double diameter = std::clamp(0.05 * std::sqrt(displacementM3 / 0.002), 0.032, 0.09);
+    const double baseArea = kPi * diameter * diameter / 4.0;
+    std::array<ExhaustSection, kMaxChamberSections> built{};
+    const ExhaustSection* sections = kStock.data();
+    std::size_t count = kStock.size();
+    switch (exhaust) {
+        case Exhaust::Sport: sections = kSport.data(); count = kSport.size(); break;
+        case Exhaust::Straight: sections = kStraight.data(); count = kStraight.size(); break;
+        case Exhaust::MufflerDelete: sections = kNoMuffler.data(); count = kNoMuffler.size(); break;
+        case Exhaust::ResonatorDelete: sections = kNoResonator.data(); count = kNoResonator.size(); break;
+        case Exhaust::Quiet: sections = kQuiet.data(); count = kQuiet.size(); break;
+        case Exhaust::Expansion:
+            count = static_cast<std::size_t>(expansionSections(chamber, chambers, baseArea, built));
+            sections = built.data();
+            break;
+        case Exhaust::Stock: break;
+    }
+    int written = 0;
+    for (std::size_t i = 0; i < count && written < capacity; ++i) {
+        const ExhaustSection& s = sections[i];
+        if (s.branchLitres > 0.0) continue;
+        LineStretch& stretch = out[written++];
+        stretch.lengthM = s.length * (s.stretches ? static_cast<double>(scale) : 1.0);
+        stretch.areaM2 = baseArea * s.area;
+        stretch.lossPerM = lossAt300Hz(s);
+    }
+    return written;
+}
+
+const std::vector<float>& ExhaustLine::respond(const ExhaustSection* sections, std::size_t count, float scale, double baseArea, double branchOmega,
+                                               double filterResistance, std::size_t filterAfter) {
     const int half = kFftSize / 2;
     for (int k = 0; k <= half; ++k) {
         const double hz = static_cast<double>(k) * static_cast<double>(sr_) / kFftSize;

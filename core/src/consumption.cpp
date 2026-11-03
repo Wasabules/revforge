@@ -6,6 +6,7 @@
 #include "revforge/combustion.hpp"
 #include "revforge/ecu.hpp"
 #include "revforge/powertrain.hpp"
+#include "revforge/two_stroke.hpp"
 
 namespace revforge {
 
@@ -99,6 +100,11 @@ void ConsumptionModel::configure(const Powertrain& p) {
     if (isRotary(p.engine)) baseEfficiency_ *= rotaryEfficiencyShare(p.engine.aspiration);
     // Un autre taux de compression : le rendement que le couple a déjà reçu, pour que le carburant par kilogramme d'air ne change pas.
     if (!electric_ && p.engine.compressionRatio > 0.0f) baseEfficiency_ *= compressionEfficiencyShare(p.engine);
+    // Un deux-temps ne comprime que ce que la lumière d'échappement enferme : le même rendement de cycle que son couple.
+    twoStroke_ = !p.electric && isTwoStroke(p.engine);
+    injectedInCylinder_ = p.engine.fuelSystem == FuelSystem::Direct;
+    engine_ = p.engine;
+    if (twoStroke_) baseEfficiency_ *= twoStrokeEfficiencyShare(p.engine);
     fullRichness_ = diesel_ ? 1.0 : 1.0 / (boosted ? kFullLoadLambdaTurbo : kFullLoadLambda);
     // Le papillon fermé retient au plus l'atmosphère du jour : en altitude, moins de pompage à charge partielle.
     throttlingNm_ = diesel_ ? 0.0 : kThrottlingBar * kAtmosphere * ambientAirOf(p.engine).pressureRatio * litres_ * 1e-3 / (4.0 * kPi);
@@ -204,9 +210,16 @@ double ConsumptionModel::fuelGps(double rpm, double brakeNm, double frictionNm, 
 
     const double omega = rpm * 2.0 * kPi / 60.0;
     double richness = 1.0;
+    // Un deux-temps : une part du mélange file droit à l'échappement, et une charge qui rate repart en partie au balayage suivant.
+    // Injectée dans le cylindre, l'essence arrive après la fermeture de la lumière : seuls les ratés coûtent.
+    double lost = 1.0;
+    if (twoStroke_) {
+        const TwoStrokePartLoad part = twoStrokePartLoad(engine_, rpm, pressure);
+        lost = (injectedInCylinder_ ? 1.0 : part.trapping) * part.burnt;
+    }
     if (carburetor_) {
         const double mixture = carburetorRichness(carbSpec_, gross / fullGross, rpm);
-        return std::max(gross * omega / efficiency * mixture / fuel_->lowerHeatingJPerG, idleCircuit);
+        return std::max(gross * omega / efficiency * mixture / fuel_->lowerHeatingJPerG / lost, idleCircuit);
     }
     // Une carte réglée pauvre à pleine charge (λ au-dessus de 1) suit la même rampe, dans l'autre sens.
     if (fullRichness_ != 1.0) {
@@ -214,7 +227,8 @@ double ConsumptionModel::fuelGps(double rpm, double brakeNm, double frictionNm, 
         const double heat = clamp(gross * omega / peakGrossW_, 0.0, 1.0);
         richness = 1.0 + (fullRichness_ - 1.0) * nearFull * (kEnrichAtAnyPower + (1.0 - kEnrichAtAnyPower) * heat);
     }
-    return gross * omega / efficiency * richness / fuel_->lowerHeatingJPerG;
+    const double burnt = gross * omega / efficiency * richness / fuel_->lowerHeatingJPerG;
+    return twoStroke_ ? burnt / lost : burnt;
 }
 
 double ConsumptionModel::airGps(double rpm, double load, double fullGrossNm) const {
@@ -231,6 +245,11 @@ double ConsumptionModel::oilGps(double rpm, double brakeNm) const {
     const double kw = std::max(brakeNm, 0.0) * rpm * 2.0 * kPi / 60.0 / 1000.0;
     const double perHour = oilPerKrpm_ * rpm / 1000.0 + kOilGPerKwh * kw;
     return perHour * (turbo_ ? kOilTurbo : 1.0) * (diesel_ ? kOilDiesel : 1.0) / 3600.0;
+}
+
+double ConsumptionModel::premixOilGps(double fuelGps) const {
+    // Un volume d'huile pour `kPremixRatio` d'essence : en masse, le rapport des densités.
+    return fuelGps / kPremixRatio * kOilDensityKgPerL / fuel_->densityKgPerL;
 }
 
 double ConsumptionModel::batteryW(double motorNm, double omega) const {
@@ -272,7 +291,8 @@ void ConsumptionMeter::step(const ConsumptionInput& in, double dt) {
         fuelGps_ += in.extraFuelGps;
         airGps_ += in.extraAirGps;
     }
-    oilGps_ = model_.oilGps(in.rpm, in.burning ? in.brakeNm : 0.0);
+    // Le deux-temps brûle son huile avec son essence : sans mélange qui passe, pas d'huile non plus.
+    oilGps_ = model_.twoStroke() ? model_.premixOilGps(fuelGps_) : model_.oilGps(in.rpm, in.burning ? in.brakeNm : 0.0);
     fuelG_ += fuelGps_ * dt;
     airG_ += airGps_ * dt;
     oilG_ += oilGps_ * dt;

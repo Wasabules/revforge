@@ -449,5 +449,25 @@
     "boxKind": "synchro",
     "boxGears": 3,
     "boxFinal": 4.39
+  },
+  {
+    "id": "two_stroke_triple",
+    "name": "Two-stroke triple 841",
+    "description": "A 1960s three-cylinder two-stroke, after the Saab 96: ports instead of valves, oil in the petrol, a ring-ding idle.",
+    "cylinders": 3,
+    "layout": "inline",
+    "displacementCc": 841,
+    "boreMm": 70,
+    "redlineRpm": 5000,
+    "exhaust": "stock",
+    "fuelSystem": "single",
+    "cycle": "two_stroke",
+    "body": "retro",
+    "massKg": 813,
+    "rimInch": 15,
+    "drive": "front",
+    "placement": "front",
+    "insulation": "light",
+    "boxGears": 4
   }
 ]

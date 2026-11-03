@@ -192,6 +192,19 @@ int decideShift(const ShiftMap& m, ShiftMode mode, const ShiftView& v) {
         if (below > here * kKickdownGain) return -1;
     }
 
+    // La route a changé sous le rapport : une côte, une remorque. Il ne tient plus la réserve qu'on lui demandait pour y monter, le pied
+    // demande plus que cette réserve n'en laisse (au-delà de 1/réserve de la pleine charge), et la voiture n'avance plus : on reprend le
+    // rapport inférieur, s'il tire plus aux roues et ne remonterait pas aussitôt. Sous le seuil du kickdown, rien d'autre ne le ferait.
+    if (canDown && !traction && gapOver && v.coupled && v.throttle * traits.reserve >= 1.0 && v.accelMs2 < kBoggedMs2) {
+        const double toWheels = m.efficiency / m.radius;
+        const double pull = m.torqueAt(v.roadRpm) * m.overall[static_cast<std::size_t>(v.gear - 1)] * toWheels;
+        if (pull < traits.reserve * v.resistanceN && rpmBelow < upshiftPoint(m, mode, v.gear - 1, v.demand) * kKickdownMargin) {
+            const double here = std::min(pull, v.tractionN);
+            const double below = std::min(m.torqueAt(rpmBelow) * m.overall[static_cast<std::size_t>(v.gear - 2)] * toWheels, v.tractionN);
+            if (below > here * kKickdownGain) return -1;
+        }
+    }
+
     if (!canUp || !gapOver || rpmAbove < floor * kLandingMargin) return 0;
     // Le rapport suivant doit tenir la route, même si la vitesse fléchit un peu : c'est ce qui évite d'hésiter dans une côte,
     // surtout sous un turbo, dont le couple s'effondre avec le régime.

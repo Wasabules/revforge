@@ -10,6 +10,7 @@
  * En haut, les bougies et le point mort haut d'explosion ; en bas, le point mort haut d'échange, entre les deux lumières.
  */
 import type { EngineConfig } from './config';
+import { isTwoStroke } from './twoStroke';
 
 const DEG = Math.PI / 180;
 
@@ -23,11 +24,13 @@ export const ROTOR_COUNTS = [2, 3, 4];
 const ROTOR_ORDERS: Record<number, number[]> = { 2: [1, 2], 3: [1, 3, 2], 4: [1, 3, 4, 2] };
 export const rotorOrder = (rotors: number): number[] => ROTOR_ORDERS[rotors] ?? ROTOR_ORDERS[2];
 
-/** Explosions en un cycle de deux tours d'arbre : une par cylindre, deux par rotor. */
-export const firingsPerCycle = (config: Pick<EngineConfig, 'layout' | 'cylinders'>): number => (isRotary(config) ? 2 * config.cylinders : config.cylinders);
+/** Explosions en un cycle de deux tours d'arbre : une par cylindre, deux par rotor ou par cylindre d'un deux-temps (`firingsPerTwoTurns`). */
+export const firingsPerCycle = (config: Pick<EngineConfig, 'layout' | 'cylinders'> & { cycle?: EngineConfig['cycle'] }): number =>
+  isRotary(config) || isTwoStroke(config) ? 2 * config.cylinders : config.cylinders;
 
-/** Le volume balayé en deux tours d'arbre (cm³) : deux fois la cylindrée d'un rotatif. Recopie de `sweptCcPerTwoTurns`. */
-export const sweptCc = (config: Pick<EngineConfig, 'layout' | 'displacementCc'>): number => (isRotary(config) ? 2 : 1) * config.displacementCc;
+/** Le volume balayé en deux tours d'arbre (cm³) : deux fois la cylindrée d'un rotatif ou d'un deux-temps. Recopie de `sweptCcPerTwoTurns`. */
+export const sweptCc = (config: Pick<EngineConfig, 'layout' | 'displacementCc'> & { cycle?: EngineConfig['cycle'] }): number =>
+  (isRotary(config) || isTwoStroke(config) ? 2 : 1) * config.displacementCc;
 
 // ── Les chiffres communs : recopies de core/src/engine_config.cpp et engine_sound.cpp ──
 

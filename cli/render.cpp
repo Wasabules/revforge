@@ -16,6 +16,7 @@
 #include "revforge/engine_sound.hpp"
 #include "revforge/presets.hpp"
 #include "revforge/valve_float.hpp"
+#include "revforge/two_stroke.hpp"
 
 using namespace revforge;
 
@@ -954,6 +955,8 @@ int main(int argc, char** argv) {
         }
     }
     if (customBox) powertrain.gearbox = box;
+    // Un deux-temps balayé par son carter n'a ni diesel ni suralimentation : ce qui n'existe pas revient à ce qui existe.
+    if (coherentTwoStroke(powertrain.engine)) std::fprintf(stderr, "two-stroke: crankcase-scavenged, petrol and naturally aspirated only (at most %d cylinders)\n", powertrain.engine.pistons());
     const EngineProfile profile = powertrain.profile();
     DrivingModel model(powertrain);
     g_warmUp.active = !powertrain.electric;

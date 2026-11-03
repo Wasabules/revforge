@@ -10,12 +10,16 @@
  * de β quand φ+θ = β. D'où φ = β − 720·s/N, modulo 360.
  *
  * Ce calcul donne une vraie manivelle à condition de placer chaque numéro sur la bonne rangée : voir `placementOf`.
+ *
+ * Un deux-temps allume à chaque tour : son cycle dure 360°, le cylindre au rang s passe au point mort haut à 360·s/N, et
+ * φ = β − 360·s/N. Ni soupape ni came : le piston découvre des lumières dans la paroi (`TwoStrokeGeometry`).
  */
 import { carburetorOf, type CarbGeometry } from './carburetor';
 import type { EngineConfig, SuperchargerKind } from './config';
 import { TURBO_SCALE } from './exhaustLines';
 import { EVC, EVO, ignitionAdvance, IVC, IVO } from './fluidGas';
 import { architectureOf, type Architecture } from './architecture';
+import { EXHAUST_WIDTH, INLET_WIDTH, isTwoStroke, ROD_OVER_STROKE, TRANSFER_WIDTH, twoStrokePorts, type TwoStrokePorts } from './twoStroke';
 import { valveSizes } from './valves';
 import { camKey, camShift } from './cam';
 
@@ -25,6 +29,15 @@ export const DEG = Math.PI / 180;
 const PETROL_INJECTION_DEG = IVO + 40;
 /** Module des dents de couronne (mm) : 12 au pouce diamétral, la norme des démarreurs. */
 const RING_MODULE = 2.117;
+/**
+ * Longueur d'un piston de deux-temps, rapportée à la course : plus que la course, pour qu'au point mort haut sa jupe recouvre
+ * encore la lumière d'échappement, sans quoi le carter s'y viderait.
+ */
+const TWO_STROKE_PISTON = 1.12;
+/** La place d'un conduit de transfert de chaque côté d'un cylindre : les cylindres d'un deux-temps s'écartent d'autant. */
+const TWO_STROKE_PITCH = 1.25;
+/** Demi-largeur du bloc d'un deux-temps, en part de l'alésage : là où les lumières sortent du cylindre. */
+const TWO_STROKE_MOUTH = 0.66;
 
 /** Le placement des numéros : rangée A (β = −b), rangée B (β = +b), de l'avant vers l'arrière. */
 interface Placement {
@@ -58,7 +71,7 @@ export interface Cylinder {
   /** Rangée dessinée. */
   bank: number;
   row: number;
-  /** Rang dans l'ordre d'allumage, et angle du moteur à son point mort haut d'allumage (0 à 720). */
+  /** Rang dans l'ordre d'allumage, et angle du moteur à son point mort haut d'allumage (0 à 720 ; 0 à 360 sur un deux-temps, qui allume encore 360° plus tard). */
   slot: number;
   firingDeg: number;
   /** Inclinaison de l'axe, depuis la verticale, vue de face. Sur un VR ou un W, celle de sa rangée, pas de sa culasse. */
@@ -173,8 +186,45 @@ export interface EngineLayout {
   /** Couronne du volant : dents du C++ (`EngineConfig::toProfile`), rayon primitif. */
   ring: { z: number; width: number; teeth: number; radius: number };
   pinion: { teeth: number; radius: number; angle: number; x: number; y: number };
+  /** Sans chaîne de distribution, sur un deux-temps : `z` est vide. */
   sprocket: { crankTeeth: number; camTeeth: number; crankRadius: number; camRadius: number; z: number[] };
   pulleyZ: number;
+  /** Un cycle de chaque cylindre, en degrés de vilebrequin : 720, ou 360 sur un deux-temps. */
+  cycleDeg: number;
+  /** Les lumières et le carter d'un deux-temps ; `null` sur un quatre-temps, qui a des soupapes. */
+  twoStroke: TwoStrokeGeometry | null;
+}
+
+/**
+ * Le deux-temps, en repère de rangée : y sur l'axe du cylindre, depuis l'axe du vilebrequin (mm). Les hauteurs viennent de
+ * `twoStrokePorts` : le haut d'une lumière est là où passe la tête du piston à son angle d'ouverture, son bas là où elle est au
+ * point mort bas ; l'admission du carter s'ouvre quand le bas de la jupe dépasse son bord inférieur, et l'est en grand au point mort haut.
+ */
+export interface TwoStrokeGeometry {
+  ports: TwoStrokePorts;
+  /** La course depuis le point mort haut (part de la course) au-delà de laquelle l'échappement et les transferts s'ouvrent, et en deçà de laquelle l'admission l'est : celles du gaz. */
+  exhaustFrom: number;
+  transferFrom: number;
+  inletTravel: number;
+  exhaustFloor: number;
+  exhaustTop: number;
+  transferFloor: number;
+  transferTop: number;
+  inletFloor: number;
+  inletTop: number;
+  /** Largeurs (mm) : l'échappement, chacun des deux transferts, l'admission. */
+  exhaustWidth: number;
+  transferWidth: number;
+  inletWidth: number;
+  /** Où les conduits sortent du cylindre, en travers (mm), et à quelle hauteur : le milieu de leur lumière. */
+  mouthX: number;
+  exhaustMouthY: number;
+  inletMouthY: number;
+  /** Le carter fermé : le rayon de sa paroi autour du vilebrequin. Les transferts y puisent, au bas du cylindre. */
+  caseRadius: number;
+  ductBottom: number;
+  /** La paroi de chaque côté du cylindre, le long du vilebrequin, qui loge un conduit de transfert (mm). */
+  ductWall: number;
 }
 
 export interface ValveGeometry {
@@ -363,7 +413,46 @@ export function layoutKey(config: EngineConfig): string {
   if (config.electric) return 'electric';
   // La longueur des cornets dépend du régime qu'on vise : eux seuls font reconstruire le moteur quand il change.
   const filter = config.airFilter === 'stacks' ? `stacks${config.redlineRpm}` : config.airFilter ?? 'stock';
-  return `${config.cylinders}|${config.layout}|${config.displacementCc}|${config.boreMm}|${config.fuel}|${config.aspiration}|${config.turboSize}|${config.turboRelease}|${config.boxFlywheel}|${filter}|${config.turboPipeMm}|${config.camshaft ?? 'dohc'}|${config.superchargerKind}|${carburetorOf(config)?.kind ?? ''}|${carburetorOf(config) ? config.redlineRpm : ''}|${config.intercooler ?? 'air_to_air'}${twinCharged(config) ? `|${config.turboLayout}|${config.variableGeometry ? 'vgt' : ''}` : ''}|${camKey(config)}`;
+  // Sur un deux-temps, la hauteur des lumières suit aussi le régime maximal.
+  const cycle = isTwoStroke(config) ? `two_stroke${config.redlineRpm}` : 'four_stroke';
+  return `${config.cylinders}|${config.layout}|${config.displacementCc}|${config.boreMm}|${config.fuel}|${config.aspiration}|${config.turboSize}|${config.turboRelease}|${config.boxFlywheel}|${filter}|${config.turboPipeMm}|${config.camshaft ?? 'dohc'}|${config.superchargerKind}|${carburetorOf(config)?.kind ?? ''}|${carburetorOf(config) ? config.redlineRpm : ''}|${config.intercooler ?? 'air_to_air'}${twinCharged(config) ? `|${config.turboLayout}|${config.variableGeometry ? 'vgt' : ''}` : ''}|${camKey(config)}|${cycle}`;
+}
+
+/**
+ * La culasse d'un deux-temps : ni soupape, ni came, ni couvre-culasse. Une plaque, sa chambre en dôme et la bougie au milieu.
+ * Elle garde la forme de `ValveGeometry` pour que les vues lisent les mêmes champs, mais rien n'y bouge.
+ */
+function twoStrokeHead(bore: number, deck: number): ValveGeometry {
+  const headTop = deck + bore * 0.42;
+  return {
+    tiltDeg: 0,
+    x: 0,
+    zOffset: 0,
+    seatRise: 0,
+    radiusIn: 0,
+    radiusEx: 0,
+    stem: 0,
+    stemRadius: 0,
+    lift: 0,
+    camBase: 0,
+    camFromSeat: 0,
+    camX: 0,
+    camY: headTop,
+    roofRise: bore * 0.12,
+    sohc: false,
+    perCylinder: 0,
+    slots: [],
+    followerDeg: 0,
+    camLift: 0,
+    headTop,
+    coverW: bore * 0.8,
+    coverTop: headTop,
+    plugZ: 0,
+    plugTiltDeg: 0,
+    rocker: null,
+    inline: false,
+    pushrod: null,
+  };
 }
 
 /** Deux arbres, chacun au-dessus de ses soupapes, qu'il attaque directement par un poussoir. `liftScale` : la levée de la came sur celle d'origine. */
@@ -599,6 +688,10 @@ export function engineLayout(config: EngineConfig): EngineLayout {
   // vilebrequin, deux bielles par manivelle comme un V.
   const zigzag = architecture.layout === 'vr';
   const narrow = architecture.rowAngleDeg > 0;
+  const twoStroke = isTwoStroke(config);
+  // Le cycle d'un cylindre : deux tours, ou un seul sur un deux-temps. L'architecture compte en cycles de 720°.
+  const cycleDeg = twoStroke ? 360 : 720;
+  const firingOf = (slot: number) => (twoStroke ? (architecture.firingDeg[slot] * cycleDeg) / 720 : architecture.firingDeg[slot]);
   const bore = config.boreMm;
   const boreCm = bore / 10;
   const strokeReal = ((config.displacementCc / count) / ((Math.PI / 4) * boreCm * boreCm)) * 10;
@@ -606,9 +699,10 @@ export function engineLayout(config: EngineConfig): EngineLayout {
   // Elles couvrent tout ce que le curseur de course atteint : 40 mm sur 110 d'alésage, 130 mm sur 60.
   const stroke = Math.min(bore * 2.2, Math.max(bore * 0.36, strokeReal));
   const crank = stroke / 2;
-  const rod = stroke * 1.6;
+  // Le deux-temps a la bielle du gaz et du C++ (`ROD_OVER_STROKE`) : les lumières s'ouvrent ainsi aux angles de `twoStrokePorts`.
+  const rod = stroke * (twoStroke ? ROD_OVER_STROKE : 1.6);
   const pistonTop = bore * 0.36;
-  const pistonBottom = bore * 0.3;
+  const pistonBottom = twoStroke ? Math.max(bore * 0.3, stroke * TWO_STROKE_PISTON - pistonTop) : bore * 0.3;
   const deck = crank + rod + pistonTop;
 
   const placement: Placement = placementOf(architecture);
@@ -645,6 +739,7 @@ export function engineLayout(config: EngineConfig): EngineLayout {
     mainWidth = bore * 0.28;
     webWidth = bore * 0.18;
   }
+  if (twoStroke) rowPitch *= TWO_STROKE_PITCH;
   const rowZ = (row: number) => ((rows - 1) / 2 - row) * rowPitch;
 
   // Le maneton de chaque cylindre. On calcule d'abord, pour savoir qui partage quoi : il est au point mort haut de son
@@ -656,7 +751,7 @@ export function engineLayout(config: EngineConfig): EngineLayout {
     const offset = rowOffset(n);
     return offset === 0 ? beta : beta + Math.asin(offset / (rod + crank)) / DEG;
   };
-  const pinFor = (n: number) => wrap360(tdcOf(n) - architecture.firingDeg[slotOf(n)]);
+  const pinFor = (n: number) => wrap360(tdcOf(n) - firingOf(slotOf(n)));
 
   const throws: CrankThrow[] = [];
   const cylinders: Cylinder[] = new Array(count);
@@ -670,7 +765,7 @@ export function engineLayout(config: EngineConfig): EngineLayout {
       bank,
       row,
       slot,
-      firingDeg: architecture.firingDeg[slot],
+      firingDeg: firingOf(slot),
       betaDeg: architecture.axisDeg[n - 1],
       narrowRow: architecture.row[n - 1],
       offset: rowOffset(n),
@@ -757,12 +852,49 @@ export function engineLayout(config: EngineConfig): EngineLayout {
 
   // ── Distribution : deux arbres à cames en tête, quatre soupapes par cylindre ; un seul, deux soupapes et des culbuteurs ; ou un
   // seul dans le bloc, des poussoirs, des tiges et deux soupapes en ligne ──
+  // Un deux-temps n'a rien de tout cela : une culasse en plaque, et ses lumières.
   // La came : sa levée fait la hauteur des bossages, son calage leur largeur et leur place (cam.ts).
   const cam = camShift(config);
   const pushrods = config.camshaft === 'ohv';
-  const valve = pushrods
-    ? pushrodValves(bore, deck, blockCamPosition(bore, crank, deck, stroke, banks, halfDeg), cam.lift)
-    : config.camshaft === 'sohc' ? singleCamValves(bore, deck, cam.lift) : twinCamValves(bore, deck, cam.lift);
+  const valve = twoStroke
+    ? twoStrokeHead(bore, deck)
+    : pushrods
+      ? pushrodValves(bore, deck, blockCamPosition(bore, crank, deck, stroke, banks, halfDeg), cam.lift)
+      : config.camshaft === 'sohc' ? singleCamValves(bore, deck, cam.lift) : twinCamValves(bore, deck, cam.lift);
+
+  // ── Les lumières d'un deux-temps, à la hauteur que leur donne le régime maximal ──
+  let ported: TwoStrokeGeometry | null = null;
+  if (twoStroke) {
+    const ports = twoStrokePorts(config);
+    // La tête du piston au point mort bas, et le bas de sa jupe au point mort haut.
+    const crownLow = rod - crank + pistonTop;
+    const skirtHigh = crank + rod - pistonBottom;
+    const swing = Math.max(crank * 1.25 + bore * 0.1, mainRadius * 1.6);
+    const exhaustTop = crownLow + ports.exhaustHeight * stroke;
+    const inletFloor = skirtHigh - ports.inletTravel * stroke;
+    ported = {
+      ports,
+      exhaustFrom: 1 - ports.exhaustHeight,
+      transferFrom: 1 - ports.transferHeight,
+      inletTravel: ports.inletTravel,
+      exhaustFloor: crownLow,
+      exhaustTop,
+      transferFloor: crownLow,
+      transferTop: crownLow + ports.transferHeight * stroke,
+      inletFloor,
+      inletTop: skirtHigh,
+      exhaustWidth: EXHAUST_WIDTH * bore,
+      transferWidth: (TRANSFER_WIDTH * bore) / 2,
+      inletWidth: INLET_WIDTH * bore,
+      mouthX: bore * TWO_STROKE_MOUTH,
+      exhaustMouthY: (crownLow + exhaustTop) / 2,
+      inletMouthY: (inletFloor + skirtHigh) / 2,
+      caseRadius: swing + bore * 0.08,
+      // Le bas du cylindre, sous la jupe au point mort bas : le conduit y puise dans le carter.
+      ductBottom: deck - stroke - pistonTop - pistonBottom - bore * 0.02,
+      ductWall: (rowPitch - bore) / 2,
+    };
+  }
 
   const crankTeeth = 19;
   const camTeeth = 38;
@@ -826,9 +958,26 @@ export function engineLayout(config: EngineConfig): EngineLayout {
     ring: { z: ringZ, width: bore * 0.14, teeth: teeth.ring, radius: ringRadius },
     pinion: { teeth: teeth.pinion, radius: pinionRadius, angle: pinionAngle, x: Math.cos(pinionAngle) * pinionDistance, y: Math.sin(pinionAngle) * pinionDistance },
     // Un seul arbre dans le bloc : une seule chaîne, courte.
-    sprocket: { crankTeeth, camTeeth, crankRadius: crankSprocket, camRadius: crankSprocket * 2, z: banks === 2 && !pushrods ? [frontZ + bore * 0.3, frontZ + bore * 0.12] : [frontZ + bore * 0.18] },
+    sprocket: { crankTeeth, camTeeth, crankRadius: crankSprocket, camRadius: crankSprocket * 2, z: twoStroke ? [] : banks === 2 && !pushrods ? [frontZ + bore * 0.3, frontZ + bore * 0.12] : [frontZ + bore * 0.18] },
     pulleyZ: frontZ + bore * 0.62,
+    cycleDeg,
+    twoStroke: ported,
   };
+}
+
+/**
+ * Où l'admission et l'échappement quittent le moteur, en repère de rangée, du côté +1 : `out[0]` en travers, `out[1]` sur l'axe.
+ * Sur la culasse d'un quatre-temps ; sur le cylindre d'un deux-temps, à la hauteur de leur lumière.
+ */
+export function portMouth(out: { [i: number]: number }, layout: EngineLayout, exhaust: boolean): void {
+  const ported = layout.twoStroke;
+  if (ported) {
+    out[0] = ported.mouthX;
+    out[1] = exhaust ? ported.exhaustMouthY : ported.inletMouthY;
+    return;
+  }
+  out[0] = layout.bore * 1.04;
+  out[1] = layout.deck + layout.bore * 0.62;
 }
 
 /** D'un repère de rangée (x en travers, y sur l'axe) vers la vue de face. `out[0]`, `out[1]` : x, y. */
@@ -844,6 +993,15 @@ export function bankToFront(out: { [i: number]: number }, betaDeg: number, x: nu
 export function plenumPosition(layout: EngineLayout): { x: number; y: number; radius: number } {
   const { bore, deck } = layout;
   const radius = bore * 0.3;
+  const ported = layout.twoStroke;
+  if (ported) {
+    // Un deux-temps aspire dans son carter, par une lumière basse : le plénum se met à sa hauteur, ou au-dessus des deux rangées.
+    if (layout.banks === 1) return { x: -bore * 2.09, y: ported.inletMouthY, radius };
+    const p = [0, 0];
+    const first = layout.byBank[0][0];
+    bankToFront(p, first.betaDeg, first.intakeSide * ported.mouthX, ported.inletMouthY);
+    return { x: 0, y: Math.max(p[1], 0) + bore * 0.9, radius };
+  }
   if (layout.banks === 1) return { x: -bore * 2.09, y: deck + bore * 0.62, radius };
   if (layout.flat) return { x: 0, y: bore * 2.0, radius };
   const p = [0, 0];
@@ -862,7 +1020,9 @@ export function stackOf(layout: EngineLayout, cylinder: Cylinder): { from: [numb
   if (layout.banks === 2) out[1] += 1.4;
   const norm = Math.hypot(out[0], out[1]) || 1;
   const from = [0, 0];
-  bankToFront(from, cylinder.betaDeg, cylinder.intakeSide * bore * 1.04, deck + bore * 0.62);
+  // Sur un deux-temps, le cornet part de la lumière d'admission, sur le cylindre.
+  const mouth = layout.twoStroke;
+  bankToFront(from, cylinder.betaDeg, cylinder.intakeSide * (mouth ? mouth.mouthX : bore * 1.04), mouth ? mouth.inletMouthY : deck + bore * 0.62);
   const visible = Math.max(layout.stackMm - bore * 0.7, bore * 1.2);
   return { from: [from[0], from[1]], to: [from[0] + (out[0] / norm) * visible, from[1] + (out[1] / norm) * visible], radius: bore * 0.15 };
 }
@@ -873,7 +1033,8 @@ export function collectorPosition(layout: EngineLayout, bank: number): { x: numb
   const beta = layout.banks === 1 ? 0 : bank === 0 ? -layout.halfDeg : layout.halfDeg;
   const side = -layout.byBank[bank][0].intakeSide;
   const p = [0, 0];
-  bankToFront(p, beta, side * (bore * 1.76), deck - bore * 0.45);
+  // Sur un deux-temps, le collecteur est à la hauteur de la lumière d'échappement.
+  bankToFront(p, beta, side * (bore * 1.76), layout.twoStroke ? layout.twoStroke.exhaustMouthY - bore * 0.2 : deck - bore * 0.45);
   return { x: p[0], y: p[1] };
 }
 
@@ -1019,7 +1180,10 @@ export interface PoseGas {
   cylBurn: ArrayLike<number>;
   cylFired: ArrayLike<number>;
   cylExhaust: ArrayLike<number>;
+  /** Sur un deux-temps, ce qui passe par les transferts. */
   cylIntake: ArrayLike<number>;
+  /** Sur un deux-temps, ce que le carter aspire par sa lumière d'admission. */
+  caseInlet?: ArrayLike<number>;
 }
 
 export type EngineState = 'stopped' | 'cranking' | 'cut' | 'stalled' | 'running';
@@ -1057,7 +1221,10 @@ export class EnginePose {
   camDeg = 0;
   /** Tours de vilebrequin depuis le début, continus : la chaîne avance sans à-coup au repli des 720°. */
   chainTurns = 0;
-  /** Par cylindre, indice de `GasNetwork`. */
+  /**
+   * Par cylindre, indice de `GasNetwork`. `theta` : l'angle depuis son point mort haut d'allumage, de 0 à 720, ou de 0 à 360
+   * sur un deux-temps (le gaz le compte double, sur 720 par tour).
+   */
   theta: Float64Array;
   alpha: Float64Array;
   piston: Float64Array;
@@ -1069,8 +1236,13 @@ export class EnginePose {
   wristY: Float64Array;
   /** Angle de la bielle dans la vue de face (radians, depuis la verticale, sens horaire), du maneton vers le piston. */
   rodAngle: Float64Array;
+  /**
+   * Levée des soupapes (0 à 1). Sur un deux-temps, la part découverte des transferts et de la lumière d'échappement, comme
+   * `cylLiftIn` et `cylLiftEx` du gaz ; `inlet`, celle de la lumière d'admission du carter, 1 au point mort haut.
+   */
   liftIn: Float64Array;
   liftEx: Float64Array;
+  inlet: Float64Array;
   /** L'angle de chaque culbuteur (radians), s'il y en a : voir `rockerAngle`. */
   rockerIn: Float64Array;
   rockerEx: Float64Array;
@@ -1085,6 +1257,8 @@ export class EnginePose {
   flame: Float64Array;
   jetIn: Float64Array;
   jetEx: Float64Array;
+  /** Sur un deux-temps : le mélange qui entre dans le carter (−1 à 1). */
+  jetCase: Float64Array;
   gasLive = false;
   /** Pignon de démarreur : 0 en retrait, 1 engagé. Son angle, tiré de la couronne quand il est en prise (radians). */
   starter = 0;
@@ -1126,6 +1300,7 @@ export class EnginePose {
     this.rodAngle = array();
     this.liftIn = array();
     this.liftEx = array();
+    this.inlet = array();
     this.rockerIn = array();
     this.rockerEx = array();
     this.spark = array();
@@ -1135,6 +1310,7 @@ export class EnginePose {
     this.flame = array();
     this.jetIn = array();
     this.jetEx = array();
+    this.jetCase = array();
     this.solve(0);
   }
 
@@ -1142,11 +1318,12 @@ export class EnginePose {
   solve(crankDeg: number): void {
     const layout = this.layout;
     const { crank, rod } = layout;
+    const ported = layout.twoStroke;
     this.crankDeg = wrap720(crankDeg);
     this.camDeg = this.crankDeg / 2;
     for (const cylinder of layout.cylinders) {
       const i = cylinder.index;
-      const theta = wrap720(crankDeg - cylinder.firingDeg);
+      const theta = ported ? wrap360(crankDeg - cylinder.firingDeg) : wrap720(crankDeg - cylinder.firingDeg);
       const pinDeg = cylinder.pinDeg + crankDeg;
       const alpha = pinDeg - cylinder.betaDeg;
       const offset = cylinder.offset;
@@ -1166,6 +1343,14 @@ export class EnginePose {
       this.wristX[i] = wristX;
       this.wristY[i] = wristY;
       this.rodAngle[i] = Math.atan2(wristX - pinX, wristY - pinY);
+      if (ported) {
+        // Le piston découvre les lumières : la même loi que `GasNetwork.stepTwoStroke`, sur la course depuis le point mort haut.
+        const travel = (crank + rod - distance) / (2 * crank);
+        this.liftEx[i] = travel > ported.exhaustFrom ? (travel - ported.exhaustFrom) / (1 - ported.exhaustFrom) : 0;
+        this.liftIn[i] = travel > ported.transferFrom ? (travel - ported.transferFrom) / (1 - ported.transferFrom) : 0;
+        this.inlet[i] = travel < ported.inletTravel ? (ported.inletTravel - travel) / ported.inletTravel : 0;
+        continue;
+      }
       this.liftIn[i] = valveLift(theta, layout.timing.ivo, layout.timing.ivc);
       this.liftEx[i] = valveLift(theta, layout.timing.evo, layout.timing.evc);
       if (layout.valve.sohc) {
@@ -1212,6 +1397,8 @@ export class EnginePose {
     const fade = seconds > 0 ? seconds : 0;
     const advance = ignitionAdvance(diesel, clock.rpm);
     const fromAngle = crankDeg - advanced;
+    // Un deux-temps allume à chaque tour, et son mélange arrive déjà fait par le carter : pas d'injecteur dans la chambre.
+    const twoStroke = layout.twoStroke !== null;
     for (let i = 0; i < layout.count; i++) {
       const cylinder = layout.cylinders[i];
       this.spark[i] = Math.max(0, this.spark[i] - fade / SPARK_SECONDS);
@@ -1219,7 +1406,7 @@ export class EnginePose {
       if (!firing || advanced <= 0) continue;
       // L'étincelle (ou le début de l'injection d'un diesel) tombe avant le point mort haut. Elle ne doit pas être manquée
       // même si une image saute plusieurs dizaines de degrés.
-      const sparkAt = wrap720(cylinder.firingDeg - advance - fromAngle);
+      const sparkAt = twoStroke ? wrap360(cylinder.firingDeg - advance - fromAngle) : wrap720(cylinder.firingDeg - advance - fromAngle);
       if (sparkAt < advanced) {
         if (diesel) {
           this.spray[i] = 1;
@@ -1230,7 +1417,7 @@ export class EnginePose {
           this.lastSparkCylinder = i;
         }
       }
-      if (!diesel && !layout.carb) {
+      if (!diesel && !layout.carb && !twoStroke) {
         const sprayAt = wrap720(cylinder.firingDeg + PETROL_INJECTION_DEG - fromAngle);
         if (sprayAt < advanced) {
           this.spray[i] = 1;
@@ -1262,11 +1449,13 @@ export class EnginePose {
         this.flame[i] = gas.cylFired[i] === 1 && burn > 0.002 && burn < 0.998 && firing ? burn : 0;
         this.jetIn[i] = gas.cylIntake[i] / (mass * rate);
         this.jetEx[i] = gas.cylExhaust[i] / (mass * rate);
+        this.jetCase[i] = twoStroke && gas.caseInlet && gas.caseInlet.length > i ? gas.caseInlet[i] / (mass * rate) : 0;
       }
     } else {
       this.flame.fill(0);
       this.jetIn.fill(0);
       this.jetEx.fill(0);
+      this.jetCase.fill(0);
     }
   }
 }
