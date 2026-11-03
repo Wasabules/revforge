@@ -1121,14 +1121,14 @@ The presets, against published figures; nothing is tuned to match:
 |---|---|---|---|---|---|---|
 | VR6 2.8 (Golf III) | 233 Nm at 3050 | 235 Nm at 4200 | 110 kW at 5650 | 128 kW at 5800 | 9.1 s | 7.8 s |
 | Twin-turbo W12 (Continental GT 2003) | 778 Nm | 650 Nm from 1600 to 6100 | 406 kW at 5950 | 412 kW at 6100 | 5.5 s | 4.8 s |
-| W16 (Veyron 16.4) | 1306 Nm | 1250 Nm | 671 kW at 5900 | 736 kW at 6000 | 4.7 s | 2.5 s |
-| V16 (Cadillac 452, 1930) | 579 Nm | 367 to 432 Nm | 171 kW at 3500 | 123 to 138 kW | 10.3 s | — |
+| W16 (Veyron 16.4) | 1306 Nm | 1250 Nm | 671 kW at 5900 | 736 kW at 6000 | 3.8 s | 2.5 s |
+| V16 (Cadillac 452, 1930) | 578 Nm | 367 to 432 Nm | 179 kW at 3700 | 123 to 138 kW | 10.1 s | — |
 
 - The VR6 breathes less well than the real one, with its two valves per cylinder (`camshaft: sohc`, the 12-valve).
 - The W12 and the W16 have one turbo in the simulator until the twin-turbo work lands: `turboLayout: twin_parallel` is already written, without effect.
 - The Cadillac's compression was 5.35 (Old Cars Weekly), below the range of the engine settings (6 to 24): its torque is that of a modern engine of the same displacement.
-- Preset sources: auto-motor-und-sport and auto-data for the Golf VR6 (ratios 3.30, 1.94, 1.31, 1.03, 0.84, final 3.68, 1285 kg); supercars.net (ZF 6HP26 from 4.17 to 0.69, final 3.52, 2385 kg) and australiancar.reviews (0.7 bar) for the Continental GT; Bugatti, auto-motor-und-sport (Super Sport ratios, final 3.64) and conceptcarz (about 18 psi) for the Veyron; Wikipedia and Old Cars Weekly for the Cadillac (3 × 4 in, final 4.39, 2400 to 3000 kg).
-- The redlines of the VR6 (6500), the W12 (6500), the W16 (6400) and the Cadillac (3800) are assumed.
+- Preset sources: auto-motor-und-sport and auto-data for the Golf VR6 (ratios 3.30, 1.94, 1.31, 1.03, 0.84, final 3.68, 1285 kg); supercars.net (ZF 6HP26 from 4.17 to 0.69, final 3.52, 2385 kg) and australiancar.reviews (0.7 bar) for the Continental GT; Bugatti, auto-motor-und-sport (Super Sport ratios) and conceptcarz (about 18 psi) for the Veyron; its published final drive (3.64) would give 306 km/h at the limiter in seventh, far from 407 km/h, so the gearbox computes it; Wikipedia and Old Cars Weekly for the Cadillac (3 × 4 in, final 4.39, 2400 to 3000 kg).
+- The redlines of the VR6 (6500), the W12 (6500), the W16 (6400) and the Cadillac (4000, peak power being at 3400) are assumed. At 3800, the automatic shift modes of `shift_modes_test.cpp` lost their hysteresis on this three-speed box.
 
 ### Sixteen cylinders
 

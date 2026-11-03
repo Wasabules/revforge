@@ -427,8 +427,7 @@
     "boxKind": "dual_clutch",
     "boxGears": 7,
     "boxFamily": "custom",
-    "boxRatios": "3.18,2.24,1.68,1.29,1.06,0.88,0.78",
-    "boxFinal": 3.64
+    "boxRatios": "3.18,2.24,1.68,1.29,1.06,0.88,0.78"
   },
   {
     "id": "v16_cadillac",
@@ -438,7 +437,7 @@
     "layout": "v",
     "displacementCc": 7413,
     "boreMm": 76,
-    "redlineRpm": 3800,
+    "redlineRpm": 4000,
     "exhaust": "stock",
     "camshaft": "ohv",
     "body": "coupe",
