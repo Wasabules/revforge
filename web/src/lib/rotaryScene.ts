@@ -237,6 +237,16 @@ export class RotaryScene {
       turboParts.transform(onZ(volute[0], volute[1], volute[2] + r * 0.28)).lathe([[r * 0.06, -r * 0.08], [r * 0.24, -r * 0.05], [r * 0.26, r * 0.02], [r * 0.18, r * 0.08], [r * 0.07, r * 0.09]], 22, 60);
       turboParts.transform(null).tube([[volute[0], volute[1] - r * 0.1, volute[2] + r * 0.3], [volute[0] * 0.3, volute[1] - r * 0.5, volute[2] + r * 0.3], inletAt(mouthD, midZ)], r * 0.06, 10);
       this.labels.push({ key: 'engine.part.turbine', x: volute[0], y: volute[1], z: volute[2] }, { key: 'engine.part.compressor', x: volute[0], y: volute[1], z: volute[2] + r * 0.3 });
+      // Le second turbo d'un 13B-REW : sous le premier, sur le même collecteur, et son compresseur sur la même admission.
+      if (layout.turbos === 2) {
+        const below = outletAt(ventD + r * 0.28, midZ);
+        below[1] -= r * 0.62;
+        exhaustPipes.transform(onZ(below[0], below[1], below[2])).lathe([[r * 0.06, -r * 0.1], [r * 0.24, -r * 0.09], [r * 0.28, -r * 0.01], [r * 0.25, r * 0.08], [r * 0.08, r * 0.1]], 22, 60);
+        exhaustPipes.transform(null).tube([[volute[0], volute[1] - r * 0.2, volute[2]], [below[0], below[1] + r * 0.2, below[2]]], r * 0.08, 10);
+        turboParts.transform(onZ(below[0], below[1], below[2] + r * 0.28)).lathe([[r * 0.06, -r * 0.08], [r * 0.24, -r * 0.05], [r * 0.26, r * 0.02], [r * 0.18, r * 0.08], [r * 0.07, r * 0.09]], 22, 60);
+        turboParts.transform(null).tube([[below[0], below[1] - r * 0.1, below[2] + r * 0.3], [below[0] * 0.3, below[1] - r * 0.3, below[2] + r * 0.3], inletAt(mouthD, midZ)], r * 0.06, 10);
+        this.labels.push({ key: 'engine.part.turbine2', x: below[0], y: below[1], z: below[2] });
+      }
     }
     if (layout.charger) {
       const at = inletAt(mouthD + r * 0.42, midZ);

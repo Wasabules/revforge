@@ -113,10 +113,31 @@ export interface Telemetry {
   energyKwhPer100km: number;
   energyAvgKwhPer100km: number;
   energyTripKwh: number;
+  /**
+   * Deux turbos, twincharger, aubes (twin_turbo.cpp). Le second arbre (tr/min), sa pression avant turbine (bar relatifs), sa
+   * soupape, son débit (kg/s), son gaz (°C) ; l'ouverture des aubes de chacun (0 fermées, 1 grandes ouvertes) ; l'étape d'un
+   * séquentiel (0 le primaire seul, 1 le secondaire lancé à part, 2 les deux), sa vanne d'échappement (0 à 1) et son clapet
+   * d'admission ouvert (0 ou 1) ; l'embrayage du compresseur d'un twincharger (0 ou 1), son volet (1 ouvert) et la pression
+   * entre les deux étages. Tout à zéro sur un turbo simple.
+   */
+  turbo2Rpm: number;
+  turbo2Exhaust: number;
+  turbo2Wastegate: number;
+  turbo2Flow: number;
+  turbo2GasC: number;
+  turboVane: number;
+  turbo2Vane: number;
+  twinStage: number;
+  twinValve: number;
+  twinOnline: number;
+  chargerClutch: number;
+  chargerFlap: number;
+  chargerInterstage: number;
 }
 
 export const IDLE_TELEMETRY: Telemetry = {
   rpm: 0, speed: 0, gear: 0, throttle: 0, load: 0, boost: 0, turbine: 0, turboRelease: 0, turboRpm: 0, turboCharge: 0, turboPlenum: 0, turboOutlet: 0, turboInlet: 0, turboExhaust: 0, turboWastegate: 0, turboBlowoff: 0, turboFlow: 0, turboOutC: 20, turboCoolC: 20, intakeAirC: 20, turboGasC: 20, antiLag: 0, antiLagHeatKw: 0, antiLagAirFlow: 0, antiLagLostNm: 0, chargerRpm: 0, chargerKw: 0, chargerSpill: 0, torque: 0, power: 0, clutch: 0, clutchInputRpm: 0, clutchSlipKw: 0, clutchTorque: 0, wheelRpm: 0, slip: 0, pops: 0, cut: 0, shifting: 0, cranking: 0, stalled: 0, lugging: 0, legKind: 0, legTarget: 0, gradePct: 0, underpowered: 0, levelDbA: 0, listenerX: 0, listenerY: 0, listenerZ: 0, peak: 0, outputRpm: 0, meshed: 0, shiftStep: 0, grinding: 0, overload: 0, boxWear: 0, boxBroken: 0, boxPending: 0, boxConeSlip: 0, boxRattle: 0, boxLoose0: 0, boxLoose1: 0, boxLoose2: 0, boxLoose3: 0, fuelLph: 0, fuelLper100km: 0, fuelTripL: 0, fuelAvgLper100km: 0, tripKm: 0, co2GPerKm: 0, oilGph: 0, oilTripMl: 0, oilMlPer1000km: 0, energyKwhPer100km: 0, energyAvgKwhPer100km: 0, energyTripKwh: 0,
+  turbo2Rpm: 0, turbo2Exhaust: 0, turbo2Wastegate: 0, turbo2Flow: 0, turbo2GasC: 20, turboVane: 0, turbo2Vane: 0, twinStage: 0, twinValve: 0, twinOnline: 0, chargerClutch: 0, chargerFlap: 0, chargerInterstage: 0,
 };
 
 export interface CurvePoint {
@@ -182,9 +203,12 @@ export interface Spec {
   peakHpRpm: number;
   gears: number;
   ratios: number[];
-  /** Le turbo monté : diamètre de la roue (mm), inertie de l'arbre (kg·m²). */
+  /** Le turbo monté : diamètre de la roue (mm), inertie de l'arbre (kg·m²). Sur un biturbo, ceux de l'un des deux. */
   turboWheelMm: number;
   turboInertia: number;
+  /** Le nombre d'arbres de turbo (0, 1 ou 2), et le régime où s'ouvre l'embrayage du compresseur d'un twincharger (0 sans). */
+  turboUnits: number;
+  chargerOffRpm: number;
   /** À la puissance maximale : la perte du filtre (kPa) et la température de l'air admis (°C). */
   intakeDropKpa: number;
   intakeAirC: number;
@@ -224,7 +248,7 @@ export interface SoundSheet {
   lineLoss: { hz: number; db: number }[];
 }
 
-export const EMPTY_SPEC: Spec = { idle: 0, redline: 7000, peakTorque: 0, peakTorqueRpm: 0, peakHp: 0, peakHpRpm: 0, gears: 0, ratios: [], turboWheelMm: 0, turboInertia: 0, intakeDropKpa: 0, intakeAirC: 20, chargerRatio: 0, chargerVolume: 0, chargerWheelMm: 0, zeroTo100: 0, topSpeed: 0, starter: { direct: false, kw: 0, ring: 0, pinion: 0, helix: 0 }, carb: { throats: 0, throatMm: 0, dropKpa: 0 }, curve: [], box: EMPTY_BOX };
+export const EMPTY_SPEC: Spec = { idle: 0, redline: 7000, peakTorque: 0, peakTorqueRpm: 0, peakHp: 0, peakHpRpm: 0, gears: 0, ratios: [], turboWheelMm: 0, turboInertia: 0, turboUnits: 0, chargerOffRpm: 0, intakeDropKpa: 0, intakeAirC: 20, chargerRatio: 0, chargerVolume: 0, chargerWheelMm: 0, zeroTo100: 0, topSpeed: 0, starter: { direct: false, kw: 0, ring: 0, pinion: 0, helix: 0 }, carb: { throats: 0, throatMm: 0, dropKpa: 0 }, curve: [], box: EMPTY_BOX };
 
 interface RfExports {
   memory: WebAssembly.Memory;
@@ -289,6 +313,21 @@ interface RfExports {
   rf_carb_throats(): number;
   rf_carb_throat_mm(): number;
   rf_carb_drop_kpa(): number;
+  rf_turbo_units(): number;
+  rf_turbo2_rpm(): number;
+  rf_turbo2_exhaust(): number;
+  rf_turbo2_wastegate(): number;
+  rf_turbo2_flow(): number;
+  rf_turbo2_gas_c(): number;
+  rf_turbo_vane(): number;
+  rf_turbo2_vane(): number;
+  rf_twin_stage(): number;
+  rf_twin_valve(): number;
+  rf_twin_online(): number;
+  rf_charger_clutch(): number;
+  rf_charger_flap(): number;
+  rf_charger_interstage(): number;
+  rf_charger_off_rpm(): number;
   rf_starter_ring(): number;
   rf_starter_pinion(): number;
   rf_starter_helix(): number;
@@ -587,6 +626,8 @@ export class Engine {
       ratios: Array.from({ length: gears }, (_, i) => rf.rf_overall_ratio(i + 1)),
       turboWheelMm: rf.rf_turbo_wheel_mm(),
       turboInertia: rf.rf_turbo_inertia(),
+      turboUnits: rf.rf_turbo_units(),
+      chargerOffRpm: rf.rf_charger_off_rpm(),
       intakeDropKpa: rf.rf_intake_drop_kpa(rf.rf_peak_power_rpm()),
       intakeAirC: rf.rf_intake_air_c(rf.rf_peak_power_rpm()),
       chargerRatio: rf.rf_supercharger_ratio(),

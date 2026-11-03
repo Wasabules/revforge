@@ -108,6 +108,22 @@ export class Motion {
   release = 0;
   /** L'arbre du turbo (tr/min) et les soupapes : ce que le modèle de conduite calcule, lissé comme le reste. */
   turboRpm = 0;
+  /**
+   * Le second arbre d'un biturbo (tr/min) et son angle (radians), comme le premier ; sa soupape. Les aubes (0 fermées, 1
+   * ouvertes), l'étape d'un séquentiel et sa vanne, l'embrayage et le volet d'un twincharger : lus de la simulation.
+   */
+  turbo2Rpm = 0;
+  turbine2Angle = 0;
+  wastegate2 = 0;
+  vane = 0;
+  vane2 = 0;
+  twinStage = 0;
+  twinValve = 0;
+  chargerClutch = false;
+  chargerFlap = 1;
+  /** Le rapport de pression du second compresseur : même roue, la hauteur suit le carré de la vitesse. Le clapet du secondaire. */
+  compressorRatio2 = 1;
+  twinOnline = true;
   /** L'arbre du compresseur mécanique (tr/min), son angle (radians) et ce qu'il prend au vilebrequin (kW) : ce que le modèle calcule, lissé comme le reste. */
   chargerRpm = 0;
   chargerAngle = 0;
@@ -175,7 +191,7 @@ export class Motion {
   reduced = !wantsAnimations();
   /** Facteur de ralenti de toutes les vues et du gaz : 1, c'est le temps réel. */
   slow = storedSpeed();
-  private gasInputs: GasInputs = { rpm: 0, load: 0, boost: 0, release: 0, burning: false, heat: 0, compressorRatio: 1, compressorOutK: 293, wastegate: 0, antiLag: 0, antiLagHeatW: 0, antiLagAirFlow: 0 };
+  private gasInputs: GasInputs = { rpm: 0, load: 0, boost: 0, release: 0, burning: false, heat: 0, compressorRatio: 1, compressorOutK: 293, wastegate: 0, antiLag: 0, antiLagHeatW: 0, antiLagAirFlow: 0, compressorRatio2: 1, wastegate2: 0, twinValve: 1, secondaryOnline: true };
   private gasConfig: EngineConfig | null = null;
   // Ce qu'il reste à faire avancer au gaz pour l'image en cours : une jauge sans gaz peut passer la première.
   private gasDue = false;
@@ -219,6 +235,18 @@ export class Motion {
     this.turbine += (t.turbine - this.turbine) * glide;
     this.release += (t.turboRelease - this.release) * glide;
     this.turboRpm += (t.turboRpm - this.turboRpm) * glide;
+    this.turbo2Rpm += (t.turbo2Rpm - this.turbo2Rpm) * glide;
+    this.wastegate2 += (t.turbo2Wastegate - this.wastegate2) * glide;
+    this.vane += (t.turboVane - this.vane) * glide;
+    this.vane2 += (t.turbo2Vane - this.vane2) * glide;
+    this.twinStage = t.twinStage;
+    this.twinValve += (t.twinValve - this.twinValve) * glide;
+    this.chargerClutch = t.chargerClutch > 0;
+    this.chargerFlap += (t.chargerFlap - this.chargerFlap) * glide;
+    // Deux roues pareilles : la hauteur suit U², donc le carré du rapport des vitesses d'arbre.
+    const shaftShare = this.turboRpm > 1000 ? this.turbo2Rpm / this.turboRpm : 1;
+    this.compressorRatio2 = 1 + (this.compressorRatio - 1) * shaftShare * shaftShare;
+    this.twinOnline = t.twinOnline > 0 || config.turboLayout !== 'twin_sequential';
     this.chargerRpm += (t.chargerRpm - this.chargerRpm) * glide;
     this.chargerKw += (t.chargerKw - this.chargerKw) * glide;
     this.chargerSpill += (t.chargerSpill - this.chargerSpill) * glide;
@@ -285,6 +313,7 @@ export class Motion {
       const turbineTurns = this.turboRpm / 60 / this.slow / TURBINE_EXTRA_SLOW;
       this.turbineAngle = (this.turbineAngle + turbineTurns * 2 * Math.PI * seconds) % (Math.PI * 2);
       this.turbineBlur = Math.min(1, Math.max(0, (turbineTurns - 6) / 10));
+      this.turbine2Angle = (this.turbine2Angle + (this.turbo2Rpm / 60 / this.slow / TURBINE_EXTRA_SLOW) * 2 * Math.PI * seconds) % (Math.PI * 2);
       // Le compresseur : à sa vraie vitesse, comme le vilebrequin. Seule la roue d'un centrifuge a besoin du ralenti de la turbine.
       const chargerTurns = this.chargerRpm / 60 / this.slow / (config.superchargerKind === 'centrifugal' ? TURBINE_EXTRA_SLOW : 1);
       this.chargerAngle = (this.chargerAngle + chargerTurns * 2 * Math.PI * seconds) % (Math.PI * 2);
@@ -373,6 +402,10 @@ export class Motion {
     inputs.antiLag = this.antiLag ? ANTI_LAG_CODE[config.antiLag ?? 'off'] : 0;
     inputs.antiLagHeatW = this.antiLagHeatW;
     inputs.antiLagAirFlow = this.antiLagAirFlow;
+    inputs.compressorRatio2 = this.compressorRatio2;
+    inputs.wastegate2 = this.wastegate2;
+    inputs.twinValve = this.twinValve;
+    inputs.secondaryOnline = this.twinOnline;
     if (this.reduced) {
       this.gas.active = false;
       if (this.meterWanted) this.advanceMeters(seconds, config, inputs);

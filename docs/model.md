@@ -1063,3 +1063,105 @@ such as the Cobra.
 
 The render is bit-identical between native and WebAssembly: calculations in `double` rounded to `float`, frozen order of random draws, no floating-point
 contraction, fixed-step physics. Parity with the original Kotlin version (CANCitroen) was abandoned during this rework. `tools/compare_wav.py` compares two renders.
+
+## Two turbos, twincharger and variable geometry
+
+`turboLayout` (`single`, `twin_parallel`, `twin_sequential`, `twincharger`) and `variableGeometry` choose the layout. The single wastegated turbo stays `TurboCharger`, bit for bit: `TwinTurbo` (`core/src/twin_turbo.cpp`) only runs for the other layouts, and for a single turbo with vanes (`usesTwinTurbo`). It uses the laws of `turbo.cpp` (Moore-Greitzer compressor, Stodola turbine, bearings, windage, intercooler, blow-off valve) through a forwarding header, `turbo_laws.hpp`, and those of the supercharger through `supercharger_laws.hpp`: nothing is copied.
+
+### Each shaft, one shared volume
+
+Each shaft integrates its own power balance, like the single turbo:
+
+    J_i · ω_i · dω_i/dt = P_turbine,i − P_compressor,i − P_bearings,i
+
+Each compressor blows through its own duct, with the inertia of its air column (`ductInertance`), into one volume before the throttle:
+
+    dp_charge/dt = R·T / V_charge · (Σ ṁ_compressor,i − ṁ_engine − ṁ_blow-off)
+
+This shared volume couples the shafts: the slower one delivers less, and can surge. The filter and the intercooler are shared, their losses follow the total flow; so is the blow-off valve.
+
+### Parallel
+
+Each turbo is the one of half an engine (`turboSpecFor` on half the displacement): half the rated flow. At the same pressure and tip speed, flow goes as D², so the wheel is √2 smaller, and the shaft spins √2 faster.
+
+**Inertia as D⁵.** With similar geometry, mass goes as D³ and the squared radius of gyration as D²: J ∝ D⁵, the law the sizes of `turbo.cpp` already use. Each shaft has 2^(−5/2) = 0.177 of the single turbo's inertia. Spool time goes as J·ω²/P, that is D^(n−4) for J ∝ Dⁿ: with n = 5, two small turbos spool in 0.71 times the time of a large one; with n = 3, they would be 1.41 times slower, which contradicts all twin-turbo experience. n must exceed 4; a real small rotor is a bit heavier than similarity says (shaft, nut, bearings), so between 4 and 5. We keep 5.
+
+Two air paths, each with its compressor and hot pipe: the volume before the throttle is that of two halves, 3 L + 2.5·V instead of 1.5 L + 2.5·V. That is 1.5 L more to fill, which takes back part of the gain.
+
+**Two shaft speeds.** Each turbine gets its bank; an inline engine is split front and rear. Gas loses heat along the header, as exp(−k·L) of its excess over ambient, with k = 0.27 /m (about 15 % over 0.6 m between the valve and the turbine, assumed). A bank with longer headers sends slightly cooler gas to its turbine: on a V6, 110,495 and 110,090 rpm one second after the stab at 2500 rpm. These 0.4 % are enough for the two whistles to beat.
+
+Inline six, 3 L, 1 bar:
+
+| | single turbo | parallel twins |
+|---|---|---|
+| wheel | 60.7 mm | 42.9 mm each |
+| inertia | 8.39·10⁻⁵ kg·m² | 1.48·10⁻⁵ kg·m² each |
+| 90 % of the boost, `--scenario turbo` | 2.55 s | 2.07 s (−19 %) |
+| 90 % of the boost at a held 2500 rpm | 1.62 s | 1.19 s (−27 %) |
+| steady boost, torque | — | within 3 % |
+
+On a small engine, two half turbos hit the smallest wheel made (`kSmallestWheel`, 34 mm): on the 2 L diesel they lose the inertia advantage and keep the volume of two paths, and boost arrives later (3.9 s against 2.6 s). This is why small diesels went sequential or variable-geometry.
+
+### Sequential
+
+Two identical turbos, as on the Toyota 2JZ-GTE, the Porsche 959 (two KKK) and the Mazda 13B-REW (two Hitachi). Three stages:
+
+- **0, primary alone.** Both headers are joined; the secondary's exhaust valve, downstream of its turbine, is shut: all the gas goes through the primary, a small turbo on a big engine, which spools very fast.
+- **1, pre-spool.** A small valve lets some gas to the secondary turbine (16 % of the section, the ratio of a 20 mm valve to a 50 mm one, assumed), its wastegate shut. Its compressor blows into a small volume (0.3 L per 2 L, assumed), returned to its inlet by a recirculation valve.
+- **2, both.** The exhaust valve opens in 0.12 s (vacuum actuator, assumed): gas splits between the turbines by their sections, through the ellipse law at a common pressure. The recirculation valve closes, and the intake check valve opens by itself once the secondary pushes harder than the charge.
+
+The switch follows engine air flow, as a share of one turbo's rated flow: pre-spool at 1.25, opening at 1.42, back to the primary below 1.10, as the primary nears its choke. The threshold is set on the 2JZ-GTE (second turbo's exhaust valve near 3800 rpm, from published Aristo logs), then checked without retouching on the other two:
+
+| | published | model, full throttle in second |
+|---|---|---|
+| 2JZ-GTE (2997 cm³, 0.8 bar) | near 3800 rpm | 3670 rpm, pre-spool at 3230 |
+| Porsche 959 (2849 cm³, 1 bar) | near 4000 rpm | 4030 rpm |
+| Mazda 13B-REW (2 × 654 cm³, 0.7 bar) | 4000 to 4500 rpm | 4340 rpm |
+
+The boost dip is not written in: it comes from the switch. The primary loses half its gas at once while the secondary is only at three quarters of its speed: on the 2JZ, boost goes from 1.02 to 0.91 of the target. At a held 2500 rpm, 90 % of the boost arrives in 0.51 s, against 1.19 s in parallel.
+
+### Twincharger
+
+As on VW's 1.4 TSI (1390 cm³, 125 kW, 240 Nm from 1750 rpm; Self-Study Programme 359): an Eaton Roots ahead of the turbo, belt-driven through an electromagnetic clutch, and a flap that bypasses it. Air → filter → supercharger or flap → volume between the stages → turbo → intercooler → throttle. That volume, tied to the inlet by the open flap, is stepped implicitly: explicit, the 1 ms step oscillated.
+
+- **The clutch.** VW keeps it engaged under load up to 2400 rpm, only when needed up to 3500 rpm, and open beyond. Here, `turboAloneRpm` is where the turbo alone holds the target in steady state; below it, the clutch closes as soon as boost is asked for; above, only when more than 10 % is missing; it opens once the flap has held nothing back for 0.5 s, and always beyond `clutchOffRpm`, in VW's ratio (3500/2400). 10 % hysteresis.
+- **The supercharger** is sized to hold the target alone at 40 % of the cut-off speed, like `superchargerSpecFor`, and its ratio brings its rotors to 16,000 rpm (an Eaton Roots) at the cut-off. Rotor inertia goes as V^(5/3) (4·10⁻⁴ kg·m² for 0.5 L per turn, assumed); the clutch carries 1.5 times their torque at the sizing point (assumed). While it slips, the crank pays that torque times the ratio.
+- **The flap** returns to the inlet what exceeds the target; while the supercharger is engaged, the turbo's wastegate stays shut (unless 10 % over) to spool it.
+
+On the 1.4: the turbo holds alone from 2000 rpm, cut-off at 2920 rpm, ratio 5.5, 0.51 L per turn (VW: cut-off near 3500 rpm per Autozine, 3000 per Top Gear; the model's turbo, sized by `turboSpecFor`, is a little quicker than VW's). At a held 1600 rpm, 90 % of the boost in 0.41 s; the turbo alone never gets there. The data-sheet equilibrium multiplies the two stages' ratios, giving the turbo the ratio it would have alone: an approximation, as the denser air actually gives it a little more gas.
+
+### Variable geometry
+
+Vanes ahead of the turbine change its section: K_eff = K·v, with no wastegate. The widest opening is the one that holds the target at redline, plus 15 % (assumed); the travel spans 1 to 4 in section (order of magnitude of modern vane turbines, assumed). Efficiency is best near 60 % of the travel:
+
+    η(v) = η₀ · (1 − 0.4 · (x − 0.6)²),   x = (v − v_min) / (v_max − v_min)
+
+that is 14 % less with the vanes shut, 6 % wide open (assumed, from the shape of published maps). The vanes follow the same law as the single turbo's wastegate, with its anticipation, and a 0.08 s actuator.
+
+| | closed vanes, as a share of the fixed turbine | 90 % of the boost |
+|---|---|---|
+| 2 L diesel, 2000 rpm | 0.53 | 1.21 s against 2.10 s (−42 %) |
+| inline-six petrol, 2500 rpm | 0.95 | 2.21 s against 1.62 s |
+
+On the diesel, steady boost at 1500 rpm rises from 0.36 to 0.80. On petrol, hotter gas and a wider flow range need a much larger widest opening: shut, the vanes are no smaller than the small wastegated fixed turbine, and less efficient. They only win at the top, through lower back pressure. That is what their rarity on petrol says: the Porsche 911 Turbo (997, 2006) was the first production petrol engine with vane turbines (BorgWarner), with materials for exhaust gas around 1000 °C. Variable geometry does not show in the on-screen gas, whose turbine stays fixed.
+
+### Sound
+
+The second shaft has its whistle, at 2 and 1 times its speed, with its own filters and its own generator (`setTurboB`): the first is not shifted, and nothing runs without it. Two small compressors together make the noise of one large one: each whistle is scaled by √(ṁ_turbo / ṁ_single turbo) (`TurboDrive::levelShare`, exactly 1 for a single turbo). A twincharger's supercharger goes through `SuperchargerSound`, at its rotors' real speed, silent when declutched. **Listening is still to be done**: `revforge-render --out twin.wav --cylinders 6 --layout v --cc 3000 --bore 86 --redline 6800 --aspiration turbo --boost 1 --exhaust sport --turbo-layout twin_parallel --scenario turbo`, then `twin_sequential`, `--preset hot_hatch_turbo --turbo-layout twincharger --scenario launch`, `--preset diesel_four --vgt 1 --scenario turbo`.
+
+### On-screen gas
+
+With two turbos, `GasNetwork` has two headers (an inline engine split front and rear), a turbine at the end of each, pipes that merge before the line, and two air paths from airbox to plenum, each with its compressor and throttle. Their total volume is the C++ one. The second compressor's ratio follows the square of the shaft speed ratio (same wheel, head as U²). Sequential: a pipe joins both headers, the secondary turbine is throttled by its valve, and its air path stays shut while its check valve is. The single turbo keeps its own code path.
+
+### Not modelled
+
+- Anti-lag and the remote turbo pipe, single turbo only: the panel hides them on the other layouts.
+- Pulse energy is the same per turbine (`kPulsePa`): the gain of split headers with better-spaced pulses is not counted.
+- A single turbo on a V is still drawn one per bank in the views (earlier choice).
+
+### From elsewhere
+
+- Target boost and wastegate opening are parameters (`TwinTurboInput::targetBar`, `wastegate`): negative, they are today's (the spring). Boost control will provide them.
+- Ambient air goes through `turbo_laws::constants()` (`atmosphere`, `ambientK`), the same as `turbo.cpp`.
+- Banks and header lengths come from `EngineConfig::toProfile` (`bank`, `headerM`).
+- `DrivingModel::turboState()` and `turboStateB()` expose each shaft, with the shared charge pressure and temperature; `twinTurboSteady` the equilibrium.

@@ -1167,12 +1167,21 @@ export class Engine2D {
 
   private drawUnitFront(ctx: CanvasRenderingContext2D, unit: TurboUnit, pose: EnginePose, painter: GasPainter, theme: Theme, px: number, stroke: (from: number[], cx: number, cy: number, to: number[], width: number, color: string) => void, hot: string): void {
     const { bore } = this.layout;
-    // La boîte à air et son conduit, avec le débitmètre.
-    const [ax, ay] = unit.airbox;
-    const [ahx, ahy] = unit.airboxSize;
-    const fresh = painter.airStyle(theme, 293, 1.2);
-    stroke([ax, ay - ahy], unit.x + unit.side * bore * 0.6, unit.y + bore * 0.6, [unit.x, unit.y + unit.compressorHousing * 0.2], bore * 0.18, fresh);
-    this.drawFilterBody(ctx, ax, ay, ahx, ahy, theme, px);
+    const chain = this.chain;
+    const feeder = chain && chain.charged ? this.charger : null;
+    if (feeder) {
+      // Twincharger : le compresseur mécanique a la boîte à air, et souffle dans l'œil du turbo.
+      const toward = Math.sign(unit.x - feeder.x) || 1;
+      const from = feeder.volumetric ? [feeder.x + toward * feeder.halfX, feeder.y] : feeder.outFrom;
+      stroke(from, (from[0] + unit.x) / 2, Math.max(from[1], unit.y) + bore * 0.4, [unit.x, unit.y + unit.compressorHousing * 0.2], bore * 0.18, painter.airStyle(theme, pose.compressorOutK, 1.4));
+    } else {
+      // La boîte à air et son conduit, avec le débitmètre.
+      const [ax, ay] = unit.airbox;
+      const [ahx, ahy] = unit.airboxSize;
+      const fresh = painter.airStyle(theme, 293, 1.2);
+      stroke([ax, ay - ahy], unit.x + unit.side * bore * 0.6, unit.y + bore * 0.6, [unit.x, unit.y + unit.compressorHousing * 0.2], bore * 0.18, fresh);
+      this.drawFilterBody(ctx, ax, ay, ahx, ahy, theme, px);
+    }
     // Le tube chaud, jusqu'à l'échangeur.
     stroke(unit.hotFrom, unit.hotFrom[0] + unit.side * bore * 0.2, unit.hotTo[1], unit.hotTo, bore * 0.2, hot);
     // Déporté, le tube d'échappement descend du collecteur à la turbine.
@@ -1196,10 +1205,30 @@ export class Engine2D {
     ctx.fill();
     ctx.strokeStyle = theme.text;
     ctx.stroke();
-    this.drawWheelFront(ctx, unit.x, unit.y, unit.turbineWheel, pose.turbineAngle, 9, 0.5, blur, theme, px);
+    this.drawWheelFront(ctx, unit.x, unit.y, unit.turbineWheel, unit.shaft === 1 ? pose.turbine2Angle : pose.turbineAngle, 9, 0.5, blur, theme, px);
+    if (chain && chain.vanes) {
+      // Les aubes autour de la roue : couchées fermées, dressées vers l'axe grandes ouvertes. Pas de wastegate.
+      const open = Math.min(Math.max(unit.shaft === 1 ? pose.vane2 : pose.vane, 0), 1);
+      const tilt = (1 - open) * 1.35;
+      const r = unit.turbineHousing * 0.8;
+      const length = bore * 0.16;
+      ctx.strokeStyle = theme.text;
+      ctx.lineWidth = 1.6 * px;
+      ctx.beginPath();
+      for (let k = 0; k < 10; k++) {
+        const a = (k / 10) * Math.PI * 2;
+        const vx = unit.x + Math.cos(a) * r;
+        const vy = unit.y + Math.sin(a) * r;
+        ctx.moveTo(vx, vy);
+        ctx.lineTo(vx - Math.cos(a + tilt) * length, vy - Math.sin(a + tilt) * length);
+      }
+      ctx.stroke();
+      return;
+    }
     // L'actionneur de la wastegate : sa tige sort selon l'ouverture réelle.
     const [wx, wy] = unit.actuator;
-    const out = bore * 0.2 * pose.wastegate;
+    const gate = unit.shaft === 1 ? pose.wastegate2 : pose.wastegate;
+    const out = bore * 0.2 * gate;
     ctx.fillStyle = theme.metal;
     ctx.strokeStyle = theme.text;
     ctx.lineWidth = px;
@@ -1208,7 +1237,7 @@ export class Engine2D {
     ctx.fill();
     ctx.stroke();
     ctx.lineWidth = 1.5 * px;
-    ctx.strokeStyle = pose.wastegate > 0.05 ? theme.accent : theme.text;
+    ctx.strokeStyle = gate > 0.05 ? theme.accent : theme.text;
     ctx.beginPath();
     ctx.moveTo(wx, wy - bore * 0.13);
     ctx.lineTo(wx - unit.side * bore * 0.08, wy - bore * 0.3 - out);
@@ -1283,6 +1312,16 @@ export class Engine2D {
     ctx.moveTo(coolerZ, coolerY + coolerHalfY);
     ctx.lineTo(coolerZ, this.layout.deck + bore * 1.2);
     ctx.stroke();
+    for (let u = 0; u < chain.units.length; u++) {
+      // Sur un V, le second turbo est derrière le premier dans cette coupe ; sur un collecteur coupé, il est plus en avant.
+      if (u > 0 && !chain.split) break;
+      this.drawShaftSide(ctx, chain.units[u], y, pose, hot, theme, px);
+    }
+  }
+
+  /** Un arbre vu de côté : le palier, les deux carters en coupe, et les aubes qui passent. */
+  private drawShaftSide(ctx: CanvasRenderingContext2D, unit: TurboUnit, y: number, pose: EnginePose, hot: string, theme: Theme, px: number): void {
+    const { bore } = this.layout;
     // L'arbre : il traverse le palier, avec une roue à chaque bout.
     ctx.fillStyle = theme.metal;
     ctx.strokeStyle = theme.text;
@@ -1308,8 +1347,9 @@ export class Engine2D {
     ctx.globalAlpha = 1 - 0.8 * pose.turbineBlur;
     ctx.lineWidth = 1.1 * px;
     ctx.beginPath();
+    const angle = unit.shaft === 1 ? pose.turbine2Angle : pose.turbineAngle;
     for (let k = 0; k < 5; k++) {
-      const a = pose.turbineAngle + (k / 5) * Math.PI;
+      const a = angle + (k / 5) * Math.PI;
       const h1 = Math.cos(a) * unit.turbineWheel;
       const h2 = Math.cos(a) * unit.compressorWheel;
       ctx.moveTo(unit.sideZ - bore * 0.14, y + h1);
@@ -1387,15 +1427,17 @@ export class Engine2D {
       rotor(unit.x - unit.rotorSpacing, unit.lobesA, pose.chargerAngle);
       rotor(unit.x + unit.rotorSpacing, unit.lobesB, -pose.chargerAngle * (unit.lobesA / unit.lobesB));
     } else {
-      // De la volute au papillon, et la roue.
-      ctx.strokeStyle = hot;
-      ctx.lineCap = 'round';
-      ctx.lineWidth = bore * 0.2;
-      ctx.beginPath();
-      ctx.moveTo(unit.outFrom[0], unit.outFrom[1]);
-      ctx.lineTo(unit.outTo[0], unit.outTo[1]);
-      ctx.stroke();
-      ctx.lineCap = 'butt';
+      // De la volute au papillon, et la roue. Sur un twincharger, l'air va au turbo : voir `drawUnitFront`.
+      if (!this.layout.turbo) {
+        ctx.strokeStyle = hot;
+        ctx.lineCap = 'round';
+        ctx.lineWidth = bore * 0.2;
+        ctx.beginPath();
+        ctx.moveTo(unit.outFrom[0], unit.outFrom[1]);
+        ctx.lineTo(unit.outTo[0], unit.outTo[1]);
+        ctx.stroke();
+        ctx.lineCap = 'butt';
+      }
       ctx.fillStyle = hot;
       ctx.strokeStyle = theme.text;
       ctx.lineWidth = 1.2 * px;
@@ -1420,6 +1462,14 @@ export class Engine2D {
       ctx.lineTo(unit.pulleyX + Math.cos(a) * unit.pulleyRadius, unit.pulleyY + Math.sin(a) * unit.pulleyRadius);
     }
     ctx.stroke();
+    // L'embrayage électromagnétique d'un twincharger : sa bobine, en couleur quand elle tient les rotors.
+    if (this.layout.twincharger) {
+      ctx.strokeStyle = pose.chargerClutch ? theme.accent : theme.text;
+      ctx.lineWidth = (pose.chargerClutch ? 2.5 : 1.2) * px;
+      ctx.beginPath();
+      ctx.arc(unit.pulleyX, unit.pulleyY, unit.pulleyRadius * 0.6, 0, Math.PI * 2);
+      ctx.stroke();
+    }
   }
 
   private lobeCache: { three: Path2D | null; five: Path2D | null } = { three: null, five: null };

@@ -595,4 +595,42 @@ for (const [name, system] of [['single', 1], ['multi', 2]]) {
   rf.rf_set_mode(3);
   check('socle moteur, électrique', render(rf, 20, 128), native('--preset', 'electric', '--ambient', '40', '--altitude', '1500', '--traction', 'full', '--scenario', 'lap', '--seconds', '20'));
 }
+// Deux turbos, twincharger, aubes (twin_turbo.cpp) : chaque montage, avec son second sifflement et son compresseur.
+{
+  const v6 = ['--cylinders', '6', '--layout', 'v', '--cc', '3000', '--bore', '86', '--redline', '6800', '--aspiration', 'turbo', '--boost', '1', '--exhaust', 'sport',
+    '--body', 'coupe', '--mass', '1500', '--rim', '18', '--drive', 'rear', '--placement', 'front', '--insulation', 'standard', '--scenario', 'turbo', '--seconds', '24'];
+  for (const [layout, vanes] of [['twin_parallel', 0], ['twin_sequential', 0], ['twin_parallel', 1]]) {
+    const rf = load();
+    rf.rf_set_car(BODY.coupe, 1500, 18, DRIVE.rear, PLACEMENT.front, INSULATION.standard);
+    tune(rf, { turboLayout: TURBO_LAYOUT[layout], variableGeometry: vanes });
+    rf.rf_set_config(6, LAYOUT.v, 3000, 86, 6800, EXHAUST.sport, 1, 0, 0, 0, 0, 1.0, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0, 0);
+    check(`biturbo, V6 ${layout}${vanes ? ', aubes' : ''}`, turboStab(rf, 24), native(...v6, '--turbo-layout', layout, '--vgt', String(vanes)));
+  }
+}
+{
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1300, 17, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  tune(rf, { turboLayout: TURBO_LAYOUT.twincharger });
+  rf.rf_set_config(4, LAYOUT.inline, 1390, 77, 7000, EXHAUST.stock, 1, 0, 0, 0, 0, 1.5, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0, 0);
+  check('twincharger, 1.4 à Roots', turboStab(rf, 24), native('--cylinders', '4', '--cc', '1390', '--bore', '77', '--redline', '7000', '--aspiration', 'turbo', '--boost', '1.5', '--exhaust', 'stock',
+    '--body', 'compact', '--mass', '1300', '--rim', '17', '--drive', 'front', '--placement', 'front', '--insulation', 'standard', '--turbo-layout', 'twincharger', '--scenario', 'turbo', '--seconds', '24'));
+}
+{
+  const rf = load();
+  rf.rf_set_car(BODY.coupe, 1300, 18, DRIVE.rear, PLACEMENT.front, INSULATION.standard);
+  tune(rf, { turboLayout: TURBO_LAYOUT.twin_sequential });
+  rf.rf_set_config(2, LAYOUT.rotary, 1308, 84, 8000, EXHAUST.sport, 1, 0, 0, 0, 0, 0.7, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0, 0);
+  rf.rf_set_mode(3);
+  check('séquentiel, birotor', render(rf, 20, 128), native('--layout', 'rotary', '--cylinders', '2', '--cc', '1308', '--redline', '8000', '--exhaust', 'sport', '--aspiration', 'turbo', '--boost', '0.7',
+    '--turbo-layout', 'twin_sequential', '--body', 'coupe', '--mass', '1300', '--rim', '18', '--drive', 'rear', '--insulation', 'standard', '--scenario', 'lap', '--seconds', '20'));
+}
+{
+  // `--fuel` de la CLI est l'affichage de la consommation : le diesel vient du préréglage, comme pour sa consommation plus haut.
+  const rf = load();
+  rf.rf_set_car(BODY.van, 1950, 16, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  rf.rf_set_gearbox(BOX.synchro, 0, 0, 0, 0, 0, 0, 0, 1);
+  tune(rf, { variableGeometry: 1 });
+  rf.rf_set_config(4, LAYOUT.inline, 2000, 85, 4500, EXHAUST.stock, 1, 1, 0, 0, 0, 1.8, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+  check('diesel à aubes', turboStab(rf, 24), native('--preset', 'diesel_four', '--vgt', '1', '--scenario', 'turbo', '--seconds', '24'));
+}
 process.exit(failed ? 1 : 0);

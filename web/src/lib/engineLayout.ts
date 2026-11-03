@@ -130,6 +130,13 @@ export interface EngineLayout {
   turboScale: number;
   /** Le tube entre les cylindres et la turbine (mm) : 400 est la place où le turbo a toujours été dessiné. */
   turboPipeMm: number;
+  /**
+   * Deux turbos, chacun sur son arbre (parallèle ou séquentiel) ; des aubes devant la turbine ; un compresseur mécanique qui
+   * souffle dans le turbo (twincharger, `charger` dit alors lequel). Tout faux sur un turbo simple : rien n'y change.
+   */
+  twinTurbo: boolean;
+  turboVanes: boolean;
+  twincharger: boolean;
   /** Une soupape de décharge : sans elle (flutter), l'air revient par le compresseur. */
   releaseValve: boolean;
   /** Le filtre à air, et la longueur de ses cornets s'il en a, de la soupape à la bouche (mm) : recopie `stackLengthM`. */
@@ -327,11 +334,16 @@ export function hasOpenStacks(layout: EngineLayout): boolean {
   return layout.airFilter === 'stacks' && !layout.turbo && !layout.charger && !layout.carb;
 }
 
+/** Deux turbos, un twincharger ou des aubes : le modèle de `twin_turbo.cpp`, qui ne connaît pas le tube déporté. */
+function twinCharged(config: EngineConfig): boolean {
+  return config.aspiration === 'turbo' && ((config.turboLayout ?? 'single') !== 'single' || !!config.variableGeometry);
+}
+
 export function layoutKey(config: EngineConfig): string {
   if (config.electric) return 'electric';
   // La longueur des cornets dépend du régime qu'on vise : eux seuls font reconstruire le moteur quand il change.
   const filter = config.airFilter === 'stacks' ? `stacks${config.redlineRpm}` : config.airFilter ?? 'stock';
-  return `${config.cylinders}|${config.layout}|${config.displacementCc}|${config.boreMm}|${config.fuel}|${config.aspiration}|${config.turboSize}|${config.turboRelease}|${config.boxFlywheel}|${filter}|${config.turboPipeMm}|${config.camshaft ?? 'dohc'}|${config.superchargerKind}|${carburetorOf(config)?.kind ?? ''}|${carburetorOf(config) ? config.redlineRpm : ''}`;
+  return `${config.cylinders}|${config.layout}|${config.displacementCc}|${config.boreMm}|${config.fuel}|${config.aspiration}|${config.turboSize}|${config.turboRelease}|${config.boxFlywheel}|${filter}|${config.turboPipeMm}|${config.camshaft ?? 'dohc'}|${config.superchargerKind}|${carburetorOf(config)?.kind ?? ''}|${carburetorOf(config) ? config.redlineRpm : ''}${twinCharged(config) ? `|${config.turboLayout}|${config.variableGeometry ? 'vgt' : ''}` : ''}`;
 }
 
 /** Deux arbres, chacun au-dessus de ses soupapes, qu'il attaque directement par un poussoir. */
@@ -590,9 +602,13 @@ export function engineLayout(config: EngineConfig): EngineLayout {
     fuel: config.fuel,
     carb: carburetorOf(config),
     turbo: config.aspiration === 'turbo',
-    charger: config.aspiration === 'supercharger' ? (config.superchargerKind ?? 'roots') : null,
+    charger: config.aspiration === 'supercharger' || (config.aspiration === 'turbo' && config.turboLayout === 'twincharger') ? (config.superchargerKind ?? 'roots') : null,
     turboScale: TURBO_SCALE[config.turboSize ?? 'medium'],
-    turboPipeMm: config.turboPipeMm ?? 400,
+    // Le modèle à deux turbos garde le tube à sa longueur de référence : le dessin aussi.
+    turboPipeMm: twinCharged(config) ? 400 : config.turboPipeMm ?? 400,
+    twinTurbo: config.aspiration === 'turbo' && (config.turboLayout === 'twin_parallel' || config.turboLayout === 'twin_sequential'),
+    turboVanes: config.aspiration === 'turbo' && !!config.variableGeometry,
+    twincharger: config.aspiration === 'turbo' && config.turboLayout === 'twincharger',
     releaseValve: config.turboRelease !== 'flutter',
     airFilter: config.airFilter ?? 'stock',
     stackMm: stackLengthMm(config.boreMm, config.redlineRpm),
@@ -776,6 +792,12 @@ export interface PoseClock {
   turbineAngle: number;
   /** Angle de l'arbre du compresseur mécanique (radians). */
   chargerAngle?: number;
+  /** Le second arbre d'un biturbo (radians), sa soupape (0 à 1) ; l'ouverture des aubes (0 fermées, 1 grandes ouvertes) ; l'embrayage d'un twincharger. */
+  turbine2Angle?: number;
+  wastegate2?: number;
+  vane?: number;
+  vane2?: number;
+  chargerClutch?: boolean;
   /** Disque flou quand l'œil ne suit plus les aubes, wastegate et décharge ouvertes (0 à 1), températures de l'air (K). */
   turbineBlur?: number;
   wastegate?: number;
@@ -880,6 +902,12 @@ export class EnginePose {
   chargerAngle = 0;
   turbineBlur = 0;
   wastegate = 0;
+  /** Le second arbre d'un biturbo, sa soupape ; les aubes de chacun ; l'embrayage du compresseur d'un twincharger. */
+  turbine2Angle = 0;
+  wastegate2 = 0;
+  vane = 0;
+  vane2 = 0;
+  chargerClutch = false;
   blowoff = 0;
   compressorOutK = 293;
   coolerOutK = 293;
@@ -975,6 +1003,11 @@ export class EnginePose {
     this.turbineBlur = clock.turbineBlur ?? 0;
     this.wastegate = clock.wastegate ?? 0;
     this.blowoff = clock.blowoff ?? 0;
+    this.turbine2Angle = clock.turbine2Angle ?? 0;
+    this.wastegate2 = clock.wastegate2 ?? 0;
+    this.vane = clock.vane ?? 0;
+    this.vane2 = clock.vane2 ?? 0;
+    this.chargerClutch = clock.chargerClutch ?? false;
     this.compressorOutK = clock.compressorOutK ?? 293;
     this.coolerOutK = clock.coolerOutK ?? 293;
 

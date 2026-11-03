@@ -47,6 +47,8 @@
 
   /** La vitesse de l'arbre si la télémétrie la donne, sinon l'estimation de `Motion`. */
   const turbineRpm = () => (charged ? telemetry().chargerRpm : (telemetry() as Telemetry & { turbineRpm?: number }).turbineRpm ?? motion.turbineRpm(config));
+  /** Deux turbos : les deux arbres, chacun à sa vitesse. */
+  const twin = $derived(turbo && (config.turboLayout === 'twin_parallel' || config.turboLayout === 'twin_sequential'));
 
   onMount(() => {
     const stop = animate(root, (_seconds, now) => {
@@ -65,10 +67,11 @@
         if (!text) return;
         if (!turbineNode) return;
         const rpm = Math.round(turbineRpm() / 1000);
-        if (rpm === lastTurbine && lang() === lastLang) return;
-        lastTurbine = rpm;
+        const second = twin ? Math.round(motion.turbo2Rpm / 1000) : 0;
+        if (rpm + second * 1e4 === lastTurbine && lang() === lastLang) return;
+        lastTurbine = rpm + second * 1e4;
         lastLang = lang();
-        turbineNode.textContent = t(charged ? 'gauge.charger' : 'gauge.turbine', { rpm: whole(rpm * 1000) });
+        turbineNode.textContent = twin ? t('gauge.turbines', { a: whole(rpm * 1000), b: whole(second * 1000) }) : t(charged ? 'gauge.charger' : 'gauge.turbine', { rpm: whole(rpm * 1000) });
       }),
       clock.add((text) => {
         if (!text) return;
