@@ -66,7 +66,8 @@ constexpr double kLaunchBrake = 0.05;
 // Passage à fond : pied au-delà de 80 % à la montée.
 constexpr double kFlatPedal = 0.8;
 // Antipatinage : une régulation proportionnelle et intégrale du glissement (m/s) vers la part du couple retirée.
-// Réglée pour s'établir en une centaine de millisecondes en première, sans osciller (voir docs/modele.md).
+// Réglée à l'essai pour ne pas battre avec la torsion des arbres de roue (2 à 3 Hz en première) : elle s'établit en
+// moins d'une seconde (supposé, voir docs/modele.md).
 constexpr double kTractionKp = 0.1;
 constexpr double kTractionKi = 1.0;
 // Le gaz à la sortie des cylindres : le modèle de la turbine (turbo.cpp), à l'air de référence.
