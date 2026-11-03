@@ -14,6 +14,7 @@ There are no audio samples. Everything you hear is computed sample by sample fro
 
 - **Build the engine.** Cylinders (2 to 12), layout, displacement, bore and stroke (the slider adjusts the displacement), redline, petrol or diesel, injection or carburetors, a turbo with its size and boost, and an air filter (stock paper, sport panel, open cone, velocity stacks). Power, torque, 0–100 km/h and top speed all follow from these settings; none of them is typed in by hand. Turbo lag comes from a real shaft power balance, and you feel it in the car.
 - **Or a supercharger.** Roots, twin-screw or centrifugal, driven by a belt: pressure from low revs or only near the top, no shaft to spin up, its power taken from the crank, and a whine that follows the engine.
+- **Choose the fuel injection.** Petrol direct injection cools the charge and ticks under the bonnet at idle; a diesel's common rail and its pilot injection soften the knock and add torque low down; exhaust gas recirculation and a particulate filter, with its soot, back-pressure and regeneration, each change power, fuel use and sound.
 - **Choose the exhaust.** Comfort, stock, no resonator, sport, muffler delete or straight pipe, with one or two outlets and an H or X pipe on V engines. Each line is computed from its geometry.
 - **Choose the gearbox, independently of the engine.** Synchromesh, dog box, sequential, dual clutch or torque converter; number of gears, ratios built from real tooth counts, final drive, helical or straight-cut gears, single or dual-mass flywheel. A badly matched gearbox has real consequences: you can stall, run out of speed, or break it.
 - **Drive it.** Starter, stalling, a clutch you can slip, rev-matching, grinding when you shift without the clutch, reverse, rev limiter, fuel cut, pops and bangs, turbo blow-off. Automatics offer Eco, Normal, Sport, Track and paddle shift modes, with shift points derived from the engine's curves.
@@ -127,6 +128,7 @@ Known limits:
 - The supercharger's whine level is assumed, not fitted to recordings, and heat soak, knock at high boost and the rotors' inertia are not modelled.
 - Some regulatory values (UN R51.03 and EU 540/2014) still need checking against the official texts.
 - The 80s coupe body keeps the rolling resistance and grip of recent tyres, and its frontal area and light soundproofing are assumptions.
+- The port-injection fuel film only acts away from 90 °C coolant, which nothing computes yet; the injector tick levels are calibrated on one published study, and at full load the common rail's combustion noise comes out 2 to 4 dB above the pump's, a model result nobody has checked. A particulate filter starts halfway between regenerations, so a regeneration rarely shows in a trip.
 
 ## Repository layout
 
