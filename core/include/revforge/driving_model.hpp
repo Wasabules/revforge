@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "revforge/cam.hpp"
 #include "revforge/carburetor.hpp"
 #include "revforge/combustion.hpp"
 #include "revforge/consumption.hpp"
@@ -224,6 +225,10 @@ public:
     bool launchHolding() const { return launchHold_; }
     /** Le passage à fond coupe l'allumage en ce moment. */
     bool flatShifting() const { return ecu_.flat; }
+    /** La distribution variable : le profil en prise, le calage du déphaseur. À donner à `EngineSound::setCam`. */
+    CamDrive camDrive() const { return camDrive_; }
+    /** Le régime où la came à deux profils bascule (0 : sans). */
+    double camSwitchRpm() const { return camSwitchRpm_; }
 
 private:
     enum class Driver { Pilot, Pedal, Neutral, Off };
@@ -448,6 +453,14 @@ private:
     double wheelOmega_ = 0.0;
     double brake_ = 0.0;
     double acceleration_ = 0.0;
+
+    // La came : deux profils, un déphaseur. Voir cam.hpp.
+    void stepCam(double rpmNow);
+    bool camVariable_ = false;
+    bool camTwoStep_ = false;
+    bool camPhased_ = false;
+    double camSwitchRpm_ = 0.0;
+    CamDrive camDrive_;
 };
 
 }  // namespace revforge

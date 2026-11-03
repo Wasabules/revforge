@@ -973,7 +973,7 @@ export const en = {
   'gauge.dpf.regen': 'Regenerating: {kpa} kPa, {c} °C',
   // ── Cam profile and variable valve timing ──
   'builder.camDuration': 'Cam duration',
-  'builder.camDuration.help': 'How long each valve stays open, in crank degrees. Longer moves the torque higher up the rev range.',
+  'builder.camDuration.help': 'How long each valve stays open, in crank degrees, read at 1 mm of lift. Longer closes the intake later: the torque moves up the rev range.',
   'builder.camDuration.value': '{deg}°',
   'builder.camLift': 'Valve lift',
   'builder.camLift.help': 'How far each valve opens: more lift, more flow area.',
@@ -993,6 +993,14 @@ export const en = {
   'summary.camDuration': '{deg}° cam',
   'summary.camLift': '{mm} mm lift',
   'summary.lsa': 'LSA {deg}°',
+  'builder.cam.timing': 'At 1 mm of lift, the intake opens {ivo}° before top dead centre and closes {ivc}° after bottom dead centre; the exhaust opens {evo}° before bottom dead centre and closes {evc}° after top dead centre.',
+  'builder.cam.figures': 'Overlap {overlap}°, effective compression {ratio}:1. At idle: {kpa} kPa in the manifold, {residual} % burnt gas left over, combustion spread {cov} % from one cycle to the next.',
+  'builder.cam.switch': 'Switches to the wild profile at {rpm} rpm, where both torque curves cross.',
+  'builder.cam.noSwitch': 'The wild profile never gives more torque below the redline: the engine stays on the mild one.',
+  'gauge.cam.low': 'Mild cam',
+  'gauge.cam.high': 'Wild cam',
+  'gauge.cam.phaser': 'intake {deg}°',
+  'gauge.cam.join': '{a} · {b}',
   // ── Pushrods and valve springs ──
   'camshaft.ohv': 'Pushrods',
   'camshaft.ohv.help': 'One camshaft in the block, lifters, pushrods and rocker arms: two valves per cylinder, a compact engine.',

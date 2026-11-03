@@ -2,6 +2,7 @@
 #include <new>
 
 #include "revforge/atmosphere.hpp"
+#include "revforge/cam.hpp"
 #include "revforge/carburetor.hpp"
 #include "revforge/driving_model.hpp"
 #include "revforge/engine_sound.hpp"
@@ -253,6 +254,7 @@ static void advance(int frames) {
         g_sound->setRoad(static_cast<float>(g_model->speedKmh() / 3.6), static_cast<float>(g_model->wheelSlip()));
         g_sound->setGearbox(g_model->box(), g_model->gearboxDrive());
         g_sound->setKnock(g_model->knockDrive());
+        g_sound->setCam(g_model->camDrive());
         if (g_mode == kOff && g_powertrain.electric) target = 0.0f;
     }
     // Régime imposé de l'extérieur : plus de voiture, donc plus de boîte qui tourne.
@@ -591,5 +593,42 @@ float rf_dpf_kpa() { return g_model->filtered() ? static_cast<float>(g_model->pa
 int rf_dpf_regen() { return g_model->filtered() && g_model->particulateFilter().regenerating() ? 1 : 0; }
 float rf_dpf_c() { return g_model->filtered() ? static_cast<float>(g_model->particulateFilter().temperatureK() - 273.15) : 0.0f; }
 float rf_egr_share() { return static_cast<float>(g_model->egrShare()); }
+
+// ── La came : sa fiche, calculée, et ce que fait la distribution variable en ce moment ──
+
+/**
+ * 0 à 3 : ouverture et fermeture de l'admission, puis de l'échappement (degrés du cycle de 720°, à 1 mm, profil de base) ;
+ * 4 : levée (mm) ; 5 : croisement (°) ; 6 : fermeture de l'admission après le point mort bas (°) ; 7 : compression effective ;
+ * 8 : régime de bascule (0 : sans) ; 9, 10, 11 : au ralenti, pression au collecteur (kPa), gaz résiduels, COV (parts) ;
+ * 12 : durée siège à siège (°) ; 13 à 16 : ouvertures et fermetures du second profil. 0 sans soupapes.
+ */
+float rf_cam_spec(int which) {
+    if (g_powertrain.electric || !camHasValves(g_powertrain.engine)) return 0.0f;
+    const EngineConfig& e = g_powertrain.engine;
+    const CamProfile cam = camProfileOf(e);
+    const CamProfile high = highCamProfileOf(e);
+    switch (which) {
+        case 0: return static_cast<float>(cam.ivoDeg);
+        case 1: return static_cast<float>(cam.ivcDeg);
+        case 2: return static_cast<float>(cam.evoDeg);
+        case 3: return static_cast<float>(cam.evcDeg);
+        case 4: return static_cast<float>(cam.liftMm);
+        case 5: return static_cast<float>(valveOverlapDeg(cam));
+        case 6: return static_cast<float>(intakeClosingAbdcDeg(cam));
+        case 7: return static_cast<float>(effectiveCompressionRatio(e.compressionRatio > 0.0f ? e.compressionRatio : g_powertrain.profile().starter.compressionRatio, intakeClosingAbdcDeg(cam)));
+        case 8: return static_cast<float>(camSwitchRpm(e));
+        case 9: return static_cast<float>(camIdle(e).manifoldKpa);
+        case 10: return static_cast<float>(camIdle(e).residual);
+        case 11: return static_cast<float>(camIdle(e).cov);
+        case 12: return static_cast<float>(2.0 * cam.halfSpanDeg);
+        case 13: return static_cast<float>(high.ivoDeg);
+        case 14: return static_cast<float>(high.ivcDeg);
+        case 15: return static_cast<float>(high.evoDeg);
+        case 16: return static_cast<float>(high.evcDeg);
+        default: return 0.0f;
+    }
+}
+int rf_cam_high() { return g_model->camDrive().high ? 1 : 0; }
+float rf_cam_phaser() { return g_model->camDrive().phaserDeg; }
 
 }  // extern "C"

@@ -219,6 +219,7 @@ void play(EngineSound& sound, DrivingModel& model, Output& out, int rate, Drive 
         sound.setRoad(static_cast<float>(model.speedKmh() / 3.6), static_cast<float>(model.wheelSlip()));
         sound.setGearbox(model.box(), model.gearboxDrive());
         sound.setKnock(model.knockDrive());
+        sound.setCam(model.camDrive());
         const int n = static_cast<int>(std::min<std::size_t>(tick, out.frames() - done));
         out.render(sound, done, n);
         done += static_cast<std::size_t>(n);

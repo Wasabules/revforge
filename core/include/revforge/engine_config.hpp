@@ -178,6 +178,9 @@ struct CarAcoustics {
     bool operator==(const CarAcoustics&) const = default;
 };
 
+/** Les régimes où la came est calculée, du bas jusqu'à 1,25 fois le régime maximal (voir cam.hpp). */
+inline constexpr int kCamPoints = 14;
+
 /** Le moteur vu par EngineSound : sa géométrie, d'où découle le son. */
 struct EngineProfile {
     int cylinders = 0;
@@ -263,6 +266,34 @@ struct EngineProfile {
     bool egr = false;
     /** Le filtre à particules dans la ligne : sa résistance, rapportée à ρc/S du tube. 0 : pas de filtre. */
     float filterResistance = 0.0f;
+    /**
+     * La came, quand elle n'est pas celle d'origine ou que son calage varie (voir `applyCam`, cam.hpp). Sans elle, rien de
+     * ce qui suit n'est lu. Calage à 1 mm de levée, en part du cycle (ouverture et fermeture de l'échappement, puis de
+     * l'admission), du profil de base et du second profil ; pression à l'ouverture de l'échappement face à la came
+     * d'origine, régime par régime ; durée de la bouffée face à elle ; de quoi calculer les gaz résiduels.
+     */
+    bool camTuned = false;
+    std::array<float, 4> camTiming{};
+    std::array<float, 4> camHighTiming{};
+    float camFirstRpm = 0.0f;
+    float camStepRpm = 1.0f;
+    std::array<float, kCamPoints> camOpening{};
+    std::array<float, kCamPoints> camOpeningHigh{};
+    float camBlowStretch = 1.0f;
+    float camBlowStretchHigh = 1.0f;
+    float camOverlapFactor = 0.0f;
+    float camOverlapFactorHigh = 0.0f;
+    float camStockOverlapFactor = 0.0f;
+    float camCompression = 10.5f;
+    float camRatedRpm = 6000.0f;
+    /** La pression au collecteur que demande le ralenti (kPa), avec cette came, son second profil, et la came d'origine. */
+    float camIdleKpa = 40.0f;
+    float camIdleKpaHigh = 40.0f;
+    float camStockIdleKpa = 40.0f;
+    /** La dispersion des combustions selon les gaz résiduels : un moteur à étincelle seulement. */
+    bool camDispersion = false;
+    bool camTwoStep = false;
+    float camSwitchRpm = 0.0f;
 
     /**
      * Régime simulé pour un régime réel de la voiture. Au ralenti, les deux ralentis

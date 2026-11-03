@@ -174,6 +174,8 @@ class RevforgeProcessor extends AudioWorkletProcessor {
         dpfRegen: rf.rf_dpf_regen(),
         dpfC: rf.rf_dpf_c(),
         egrShare: rf.rf_egr_share(),
+        camHigh: rf.rf_cam_high(),
+        camPhaser: rf.rf_cam_phaser(),
         peak: this.peak,
       });
       this.peak = 0;

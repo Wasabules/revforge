@@ -5,7 +5,6 @@
  */
 import type * as T from 'three';
 import type { Theme } from './canvas';
-import { EVC, EVO, IVC, IVO } from './fluidGas';
 import { bankToFront, chainCircles, chainPath, type ChainPath, collectorPosition, DEG, type Cylinder, type EngineLayout, type EnginePose, lobeNoseDeg, lobeRadius, plenumPosition, stackOf, rockerOutline, hasOpenStacks } from './engineLayout';
 import { chargerUnit, lobedOutline } from './superchargerLayout';
 import { turboChain } from './turboChain';
@@ -306,8 +305,8 @@ function buildRetainer(layout: EngineLayout): MeshBuilder {
 /** Le contour d'un bossage, dans le repère de la vue de face. */
 function lobeOutline(layout: EngineLayout, cylinder: Cylinder, side: number, exhaust: boolean): P2[] {
   const { valve } = layout;
-  const open = exhaust ? EVO : IVO;
-  const close = exhaust ? EVC : IVC;
+  const open = exhaust ? layout.timing.evo : layout.timing.ivo;
+  const close = exhaust ? layout.timing.evc : layout.timing.ivc;
   const nose = lobeNoseDeg(cylinder, valve.followerDeg, side, open, close);
   const outline: P2[] = [];
   const points = seg(44, 24);

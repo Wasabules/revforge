@@ -7,6 +7,7 @@
 
 #include "revforge/combustion.hpp"
 #include "revforge/ecu.hpp"
+#include "revforge/cam.hpp"
 #include "revforge/engine_config.hpp"
 #include "revforge/gearbox.hpp"
 #include "revforge/supercharger.hpp"
@@ -69,6 +70,8 @@ public:
      * sans cet appel, rien ne change au son.
      */
     void setEcu(const EcuDrive& drive);
+    /** La distribution variable : le profil en prise et le déphaseur. Sans effet sur une came d'origine. */
+    void setCam(const CamDrive& drive);
     /** Le démarreur : alimenté ; pignon engagé dans la couronne. Le contact des dents fait le son. */
     void setStarter(bool powered, bool meshed, float load = 0.5f);
     /** Vitesse de la voiture et glissement des pneus : vent, roulement, crissement. */

@@ -11,6 +11,7 @@
 #include "revforge/combustion.hpp"
 #include "revforge/injection.hpp"
 #include "revforge/particulate_filter.hpp"
+#include "revforge/cam.hpp"
 #include "portable_math.hpp"
 
 namespace revforge {
@@ -422,6 +423,8 @@ EngineProfile EngineConfig::toProfile() const {
     // Après le rotatif : les explosions inégales d'une pipe commune se posent sur les siennes.
     if (hasCarburetor(*this)) applyCarburetor(*this, p);
     if (directInjected(*this) || particulateFiltered(*this) || commonRailed(*this) || recirculated(*this)) applyInjection(*this, p);
+    // La came, si ce n'est pas celle d'origine : son calage, sa bouffée, ses gaz résiduels.
+    if (!camIsStock(*this)) applyCam(*this, p);
     return p;
 }
 

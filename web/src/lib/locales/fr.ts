@@ -972,7 +972,7 @@ export const fr: Record<MessageKey, string> = {
   'gauge.dpf.regen': 'Régénération : {kpa} kPa, {c} °C',
   // ── Came : profil et calage variable ──
   'builder.camDuration': 'Durée de came',
-  'builder.camDuration.help': "Le temps d'ouverture de chaque soupape, en degrés de vilebrequin. Plus longue, elle fait monter le couple dans les tours.",
+  'builder.camDuration.help': "Le temps d'ouverture de chaque soupape, en degrés de vilebrequin, lu à 1 mm de levée. Plus longue, elle ferme l'admission plus tard : le couple monte dans les tours.",
   'builder.camDuration.value': '{deg}°',
   'builder.camLift': 'Levée',
   'builder.camLift.help': "De combien chaque soupape s'ouvre : plus de levée, plus de section de passage.",
@@ -992,6 +992,14 @@ export const fr: Record<MessageKey, string> = {
   'summary.camDuration': 'came {deg}°',
   'summary.camLift': 'levée {mm} mm',
   'summary.lsa': 'angle entre cames {deg}°',
+  'builder.cam.timing': "À 1 mm de levée, l'admission ouvre {ivo}° avant le point mort haut et ferme {ivc}° après le point mort bas ; l'échappement ouvre {evo}° avant le point mort bas et ferme {evc}° après le point mort haut.",
+  'builder.cam.figures': "Croisement {overlap}°, compression effective {ratio}. Au ralenti : {kpa} kPa au collecteur, {residual} % de gaz brûlés restés dans le cylindre, combustions dispersées de {cov} % d'un cycle à l'autre.",
+  'builder.cam.switch': 'Bascule sur le profil pointu à {rpm} tr/min, là où les deux courbes de couple se croisent.',
+  'builder.cam.noSwitch': "Le profil pointu ne donne jamais plus de couple sous le régime maximal : le moteur reste sur le doux.",
+  'gauge.cam.low': 'Came douce',
+  'gauge.cam.high': 'Came pointue',
+  'gauge.cam.phaser': 'admission {deg}°',
+  'gauge.cam.join': '{a} · {b}',
   // ── Culbuteurs et ressorts de soupape ──
   'camshaft.ohv': 'Culbuteurs',
   'camshaft.ohv.help': "Un arbre dans le bloc, des poussoirs, des tiges et des culbuteurs : deux soupapes par cylindre, un moteur compact.",

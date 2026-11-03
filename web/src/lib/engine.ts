@@ -152,6 +152,9 @@ export interface Telemetry {
   dpfC: number;
   /** Part de gaz d'échappement recirculés dans la charge, en ce moment. */
   egrShare: number;
+  /** La distribution variable : le second profil est en prise (0 ou 1), et l'avance du déphaseur d'admission (degrés de vilebrequin). */
+  camHigh: number;
+  camPhaser: number;
 }
 
 export const IDLE_TELEMETRY: Telemetry = {
@@ -160,6 +163,7 @@ export const IDLE_TELEMETRY: Telemetry = {
   sparkAdvance: 0, knockLimit: 0, knockRetard: 0, knockShare: 0,
   ecuAdvance: 0, ecuLambda: 0, ecuFired: 1, ecuLimiter: 0, ecuLaunch: 0, ecuFlat: 0, ecuTraction: 0,
   dpfLoad: 0, dpfKpa: 0, dpfRegen: 0, dpfC: 0, egrShare: 0,
+  camHigh: 0, camPhaser: 0,
 };
 
 export interface CurvePoint {
@@ -255,7 +259,28 @@ export interface Spec {
    * au ralenti face à la pompe mécanique (dB), recirculation la plus forte (part), contre-pression du filtre propre et plein (kPa).
    */
   injection: { coolingK: number; fillGain: number; railBar: number; lowEnd: number; knockDb: number; egr: number; dpfCleanKpa: number; dpfFullKpa: number };
+  /** La came, telle que le C++ la calcule (voir `rf_cam_spec`) : calage à 1 mm du profil de base et du second, croisement, fermeture de l'admission après le point mort bas, compression effective, régime de bascule, et le ralenti qu'elle donne. */
+  cam: CamSpec;
 }
+
+export interface CamSpec {
+  ivo: number;
+  ivc: number;
+  evo: number;
+  evc: number;
+  liftMm: number;
+  overlap: number;
+  ivcAbdc: number;
+  effectiveRatio: number;
+  switchRpm: number;
+  idleKpa: number;
+  idleResidual: number;
+  idleCov: number;
+  seatDeg: number;
+  high: { ivo: number; ivc: number; evo: number; evc: number };
+}
+
+export const EMPTY_CAM: CamSpec = { ivo: 0, ivc: 0, evo: 0, evc: 0, liftMm: 0, overlap: 0, ivcAbdc: 0, effectiveRatio: 0, switchRpm: 0, idleKpa: 0, idleResidual: 0, idleCov: 0, seatDeg: 0, high: { ivo: 0, ivc: 0, evo: 0, evc: 0 } };
 
 /** La voiture vue de dessus, en mètres (voir `Telemetry.listenerX`), pour la placer sur le plan. */
 export interface CarPlan {
@@ -280,7 +305,7 @@ export interface SoundSheet {
   lineLoss: { hz: number; db: number }[];
 }
 
-export const EMPTY_SPEC: Spec = { idle: 0, redline: 7000, peakTorque: 0, peakTorqueRpm: 0, peakHp: 0, peakHpRpm: 0, gears: 0, ratios: [], turboWheelMm: 0, turboInertia: 0, intakeDropKpa: 0, intakeAirC: 20, chargerRatio: 0, chargerVolume: 0, chargerWheelMm: 0, zeroTo100: 0, topSpeed: 0, starter: { direct: false, kw: 0, ring: 0, pinion: 0, helix: 0 }, carb: { throats: 0, throatMm: 0, dropKpa: 0 }, combustion: { ratio: 0, efficiency: 1, marginDeg: 0, marginRpm: 0, sensor: false }, ecu: { rpm: 0, sparkDeg: 0, fullShare: 1, exhaustC: 0, stockExhaustC: 0 }, curve: [], box: EMPTY_BOX, injection: { coolingK: 0, fillGain: 0, railBar: 0, lowEnd: 0, knockDb: 0, egr: 0, dpfCleanKpa: 0, dpfFullKpa: 0 } };
+export const EMPTY_SPEC: Spec = { idle: 0, redline: 7000, peakTorque: 0, peakTorqueRpm: 0, peakHp: 0, peakHpRpm: 0, gears: 0, ratios: [], turboWheelMm: 0, turboInertia: 0, intakeDropKpa: 0, intakeAirC: 20, chargerRatio: 0, chargerVolume: 0, chargerWheelMm: 0, zeroTo100: 0, topSpeed: 0, starter: { direct: false, kw: 0, ring: 0, pinion: 0, helix: 0 }, carb: { throats: 0, throatMm: 0, dropKpa: 0 }, combustion: { ratio: 0, efficiency: 1, marginDeg: 0, marginRpm: 0, sensor: false }, ecu: { rpm: 0, sparkDeg: 0, fullShare: 1, exhaustC: 0, stockExhaustC: 0 }, curve: [], box: EMPTY_BOX, injection: { coolingK: 0, fillGain: 0, railBar: 0, lowEnd: 0, knockDb: 0, egr: 0, dpfCleanKpa: 0, dpfFullKpa: 0 }, cam: EMPTY_CAM };
 
 interface RfExports {
   memory: WebAssembly.Memory;
@@ -361,6 +386,9 @@ interface RfExports {
   rf_dpf_regen(): number;
   rf_dpf_c(): number;
   rf_egr_share(): number;
+  rf_cam_spec(which: number): number;
+  rf_cam_high(): number;
+  rf_cam_phaser(): number;
   rf_starter_ring(): number;
   rf_starter_pinion(): number;
   rf_starter_helix(): number;
@@ -705,6 +733,11 @@ export class Engine {
         sensor: rf.rf_knock_sensor() === 1,
       },
       ecu: this.ecuSpec(rf),
+      cam: {
+        ivo: rf.rf_cam_spec(0), ivc: rf.rf_cam_spec(1), evo: rf.rf_cam_spec(2), evc: rf.rf_cam_spec(3), liftMm: rf.rf_cam_spec(4), overlap: rf.rf_cam_spec(5),
+        ivcAbdc: rf.rf_cam_spec(6), effectiveRatio: rf.rf_cam_spec(7), switchRpm: rf.rf_cam_spec(8), idleKpa: rf.rf_cam_spec(9), idleResidual: rf.rf_cam_spec(10),
+        idleCov: rf.rf_cam_spec(11), seatDeg: rf.rf_cam_spec(12), high: { ivo: rf.rf_cam_spec(13), ivc: rf.rf_cam_spec(14), evo: rf.rf_cam_spec(15), evc: rf.rf_cam_spec(16) },
+      },
       curve,
       box: this.boxSpec(rf, gears, redline),
       injection: {

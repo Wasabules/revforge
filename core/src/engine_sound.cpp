@@ -15,6 +15,7 @@
 #include "kotlin_math.hpp"
 #include "revforge/air_filter.hpp"
 #include "revforge/injection.hpp"
+#include "revforge/cam.hpp"
 #include "revforge/valvetrain.hpp"
 #include "starter_sound.hpp"
 #include "supercharger_sound.hpp"
@@ -138,6 +139,19 @@ constexpr float kAntiLagPopJoules = 90.0f;
 // La flamme au collecteur : du bruit de combustion, grave, qui traverse la ligne comme le reste du gaz.
 constexpr float kAntiLagFlameHz = 380.0f;
 constexpr float kAntiLagFlameInPipe = 0.5f;
+// La came : voir « La came » dans docs/modele.md.
+// La bascule d'une came à deux profils : une goupille de quelques grammes que l'huile pousse dans le culbuteur. Une goupille
+// de 5 g à 1 m/s contre une soupape de 40 g à 0,5 m/s : moitié moins d'énergie que le tic du siège (supposés).
+constexpr float kCamPinHz = 4500.0f;
+constexpr float kCamPinQ = 1.6f;
+constexpr float kCamPinDecayS = 0.0004f;
+constexpr float kCamPinShare = 0.707f;
+// Sous ce reste de pression, la combustion est ratée : la flamme ne s'est pas propagée.
+constexpr float kCamMisfire = 0.05f;
+// L'air au collecteur et la ligne, comme dans le calcul du remplissage (cam.cpp) : pression ambiante, contre-pression au nominal.
+constexpr float kCamAmbientKpa = 101.325f;
+constexpr float kCamBackKpa = 8.0f;
+constexpr float kCamIdleLoad = 0.13f;
 constexpr float kTurboSpoolS = 0.75f;
 constexpr float kTurboFallS = 0.22f;
 constexpr float kTurboHoldS = 2.5f;
@@ -502,6 +516,25 @@ struct EngineSound::State {
     bool poppedThisLift = false;
     Svf popBlast, popBody, popBodyHigh;
 
+    // ── La came : rien de tout cela ne tourne sur la came d'origine, et ses tirages sont à part ──
+    bool camTuned = false;
+    CamDrive camIn;
+    bool camHigh = false;
+    float camPhaser = 0.0f;
+    float camStretch = 1.0f;
+    float camCovExcess = 0.0f;
+    // L'écart de vitesse que laissent les combustions irrégulières, que le régulateur de ralenti efface peu à peu.
+    float camLope = 0.0f;
+    float camLopeDecay = 1.0f;
+    std::uint32_t camRng = 0x2545F491u;
+    // La bascule de profil : chaque cylindre verrouille son culbuteur sur son cercle de base, à son propre tirage.
+    std::uint32_t camPinRng = 0x68E31DA5u;
+    std::array<bool, kMaxCylinders> camPinPending{};
+    float camPinEnv = 0.0f;
+    float camPinRise = 1.0f;
+    float camPinDecay = 0.0f;
+    Svf camPinBand;
+
     // ── Anti-lag : rien de tout cela ne tourne sans lui, et son tirage est à part ──
     bool antiLagOn = false;
     std::uint32_t antiLagRng = 0x85EBCA6B;
@@ -708,6 +741,7 @@ struct EngineSound::State {
         combustionTuned = (p.commonRail || p.egr) && !p.electric;
         knockShare = 1.0f;
         if (combustionTuned) applyCombustionNoise(p);
+        applyCamProfile(p);
     }
 
     /** La table du bruit de combustion : 81 points, une fois par moteur, jamais pour chaque échantillon. */
@@ -744,6 +778,112 @@ struct EngineSound::State {
     }
 
     /**
+     * La came : son calage, sa bouffée, la dispersion de ses combustions. Sur la came d'origine, le calage d'origine, tel
+     * quel : rien d'autre ne change.
+     */
+    void applyCamProfile(const EngineProfile& p) {
+        camTuned = p.camTuned && !p.electric && !p.rotary;
+        if (!camTuned) {
+            if (!p.rotary) {
+                evo = kEvo;
+                evc = kEvc;
+                ivo = kIvo;
+                ivc = kIvc;
+            }
+            return;
+        }
+        camHigh = p.camTwoStep && camIn.high;
+        camPhaser = camIn.phaserDeg;
+        applyCamTiming(p);
+        camPinBand.set(kCamPinHz, kCamPinQ, sr);
+        camPinPending.fill(false);
+        camPinDecay = km::exp(-1.0f / (kCamPinDecayS * sr));
+        camLopeDecay = km::exp(-1.0f / (kDriftTauS * sr));
+    }
+
+    /** Le profil en prise, l'admission décalée par le déphaseur. */
+    void applyCamTiming(const EngineProfile& p) {
+        const std::array<float, 4>& timing = camHigh ? p.camHighTiming : p.camTiming;
+        const float shift = camPhaser / 720.0f;
+        evo = timing[0];
+        evc = timing[1];
+        ivo = timing[2] - shift;
+        ivc = timing[3] - shift;
+        camStretch = camHigh ? p.camBlowStretchHigh : p.camBlowStretch;
+    }
+
+    /** La pression à l'ouverture de l'échappement, face à la came d'origine, à ce régime : la table d'`applyCam` (cam.cpp). */
+    float camOpening(float rpmNow) const {
+        const EngineProfile& p = active;
+        const std::array<float, kCamPoints>& table = camHigh ? p.camOpeningHigh : p.camOpening;
+        const float position = (rpmNow - p.camFirstRpm) / p.camStepRpm;
+        if (position <= 0.0f) return table[0];
+        if (position >= static_cast<float>(kCamPoints - 1)) return table[kCamPoints - 1];
+        const int index = static_cast<int>(position);
+        const float a = table[static_cast<std::size_t>(index)];
+        return a + (table[static_cast<std::size_t>(index + 1)] - a) * (position - static_cast<float>(index));
+    }
+
+    /**
+     * Ce que la came ajoute à la dispersion d'origine : les gaz résiduels de Fox, Cheng et Heywood au remplissage du moment,
+     * puis la flamme qu'ils ralentissent (cam.hpp). Seul l'excédent sur la came d'origine s'ajoute : le son en a déjà une.
+     */
+    void updateCamDispersion() {
+        const EngineProfile& p = active;
+        if (camIn.high != camHigh || camIn.phaserDeg != camPhaser) {
+            // La bascule : chaque cylindre verrouillera son culbuteur à sa prochaine fermeture d'admission.
+            if (p.camTwoStep && camIn.high != camHigh) camPinPending.fill(true);
+            camHigh = p.camTwoStep && camIn.high;
+            camPhaser = camIn.phaserDeg;
+            applyCamTiming(p);
+        }
+        camCovExcess = 0.0f;
+        if (!p.camDispersion) return;
+        const double rpmNow = static_cast<double>(km::max(rpm, 300.0f));
+        // La pression au collecteur, du ralenti que demande chaque came jusqu'à l'air ambiant, selon le remplissage : celui du
+        // modèle de conduite au ralenti vaut de 0,11 à 0,15 selon le moteur.
+        const double fill = static_cast<double>(km::coerceIn((load - kCamIdleLoad) / (1.0f - kCamIdleLoad), 0.0f, 1.0f));
+        const double ambient = static_cast<double>(kCamAmbientKpa);
+        const double idleKpa = static_cast<double>(camHigh ? p.camIdleKpaHigh : p.camIdleKpa);
+        const double stockKpa = static_cast<double>(p.camStockIdleKpa);
+        const double share = rpmNow / static_cast<double>(p.camRatedRpm);
+        const double exhaustKpa = ambient + static_cast<double>(kCamBackKpa) * share * share;
+        const double compression = static_cast<double>(p.camCompression);
+        const double factor = static_cast<double>(camHigh ? p.camOverlapFactorHigh : p.camOverlapFactor);
+        const double cov = combustionCov(residualGasFraction(factor, rpmNow, idleKpa + (ambient - idleKpa) * fill, exhaustKpa, compression));
+        const double stock = combustionCov(residualGasFraction(static_cast<double>(p.camStockOverlapFactor), rpmNow, stockKpa + (ambient - stockKpa) * fill, exhaustKpa, compression));
+        camCovExcess = static_cast<float>(std::sqrt(std::fmax(cov * cov - stock * stock, 0.0)));
+    }
+
+    float camRandom() {
+        std::uint32_t x = camRng;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        camRng = x;
+        return static_cast<float>(static_cast<std::int32_t>(x)) * 4.656613e-10f;
+    }
+
+    /** Le verrou d'un culbuteur : un tic bref et aigu, à son propre tirage. */
+    float camPinSample(bool hit) {
+        std::uint32_t x = camPinRng;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        camPinRng = x;
+        const float draw = static_cast<float>(static_cast<std::int32_t>(x)) * 4.656613e-10f;
+        if (hit) {
+            camPinEnv = 0.7f + 0.15f * (draw + 1.0f);
+            camPinRise = 0.0f;
+        }
+        if (camPinEnv < 1e-4f) return 0.0f;
+        camPinRise = km::min(camPinRise + 1.0f / (0.0002f * sr), 1.0f);
+        camPinBand.process(draw * camPinEnv * camPinRise);
+        camPinEnv *= camPinDecay;
+        return camPinBand.bp;
+    }
+
+    /**
      * Ce que le son tire du venturi : sa section donne la vitesse de l'air, donc le souffle. Un corps par cylindre n'a plus
      * ni boîte à air ni collecteur : son conduit droit résonne en quart d'onde, et il rayonne presque sans obstacle.
      */
@@ -752,7 +892,7 @@ struct EngineSound::State {
         carbArea = static_cast<float>(km::kPi) * radius * radius;
         const float mouthOut = km::sqrt(kCarbHissK * carbArea / (4.0f * static_cast<float>(km::kPi))) * acoustics::kAirDensity / (kCarbSoundMs * airSound);
         carbPa = mouthOut * (carbMulti ? kCarbOpenHiss : kCarbBoxedHiss);
-        carbLobeMean = 2.0f / static_cast<float>(km::kPi) * (p.rotary ? kPortIvc - kPortIvo : kIvc - kIvo);
+        carbLobeMean = 2.0f / static_cast<float>(km::kPi) * (p.rotary ? kPortIvc - kPortIvo : (p.camTuned ? p.camTiming[3] - p.camTiming[2] : kIvc - kIvo));
         // La crête d'une bouffée dans un corps : un rotor en fait passer deux par cycle.
         carbCrestShare = carbLobeMean * (carbMulti ? static_cast<float>(p.firingCount / p.carbThroats) : 1.0f);
         if (carbMulti) {
@@ -997,6 +1137,8 @@ struct EngineSound::State {
         // À faible charge, le cylindre s'ouvre sur peu de pression : il se vide lentement, sans coup de bélier.
         blowRate = 1.0f / (blowdownBase * (1.0f + 3.5f * (1.0f - km::min(load, 1.0f))) * sr);
         if (sohc) blowRate /= blowStretch;
+        // Une came qui ouvre plus vite et plus haut vide le cylindre plus vite : τ = V / (Cd·A·a), A la section des premiers degrés.
+        if (camTuned) blowRate /= camStretch;
 
         // Le moteur ne tourne jamais rond : lente dérive, plus marquée au ralenti.
         const float driftNoise = random();
@@ -1034,6 +1176,11 @@ struct EngineSound::State {
         }
         // Ce qui n'est pas entré par une section trop petite ne ressort pas : la bouffée s'affaiblit vers le rupteur.
         if (sohc) openPressure *= static_cast<float>(sohcFillingRatio(static_cast<double>(a.boreM) * 1000.0, static_cast<double>(a.strokeM) * 1000.0, static_cast<double>(km::max(rpm, 0.0f))));
+        // La came : ce qu'elle laisse entrer, et l'instant où elle ouvre l'échappement, tels que les donne le cycle calculé.
+        if (camTuned) {
+            updateCamDispersion();
+            openPressure *= camOpening(km::max(rpm, 0.0f));
+        }
         // Le piston continue de pomper de l'air, combustion ou non.
         pumpLevel += (km::max(openPressure, 0.25f) - pumpLevel) * smoothing(0.004f);
         // Rupteur : la combustion s'arrête net, explosion par explosion. Le papillon, lui, reste ouvert,
@@ -1424,7 +1571,13 @@ struct EngineSound::State {
         turboBus = 0.0f;
         // Le vilebrequin accélère à chaque explosion et ralentit à chaque compression, surtout au ralenti.
         const float acyclism = 1.0f + idleShake * acyclismDepth * sinFast(phase * static_cast<float>(cylinders));
-        phase += phaseInc * acyclism;
+        if (camTuned) {
+            // Des combustions inégales lancent le vilebrequin inégalement : le ralenti galope.
+            phase += phaseInc * acyclism * (1.0f + camLope);
+            camLope *= camLopeDecay;
+        } else {
+            phase += phaseInc * acyclism;
+        }
         if (phase >= 1.0f) phase -= 1.0f;
 
         float collector[2] = {0.0f, 0.0f};
@@ -1432,6 +1585,7 @@ struct EngineSound::State {
         float carbSixth = 0.0f;
         bool valve = false;
         bool rockerHit = false;
+        bool camPinHit = false;
         for (int c = 0; c < cylinders; ++c) {
             float theta = phase + p.firing[c] + timing[c];
             if (theta >= 1.0f) theta -= 1.0f;
@@ -1458,6 +1612,15 @@ struct EngineSound::State {
                     // À bas régime, le mélange brûle mal : les combustions varient bien plus, jusqu'au raté partiel.
                     const float spread = km::max(1.0f + kCombustionSpread * memory * (1.0f + idleSpread * idleShake), 0.25f);
                     pressure[c] = km::max(openPressure * p.firingGain[c] * spread, 0.02f);
+                    if (camTuned && camCovExcess > 0.0f) {
+                        // Les gaz résiduels de la came ralentissent la flamme : la pression moyenne indiquée varie d'un cycle à
+                        // l'autre de ce qu'ajoute la came, en loi normale (somme de trois tirages uniformes, de variance 1).
+                        const float normal = camRandom() + camRandom() + camRandom();
+                        const float burn = km::max(1.0f + camCovExcess * normal, kCamMisfire);
+                        pressure[c] = km::max(pressure[c] * burn, 0.02f);
+                        // Une explosion plus faible lance moins le vilebrequin : de l'ordre de son à-coup au ralenti.
+                        camLope += (burn - 1.0f) * acyclismDepth * idleShake;
+                    }
                     // Chaque bouffée a sa force de souffle : rafales, pas un bruit égal.
                     const float gustDraw = random();
                     gust = 0.75f + 0.5f * gustDraw * gustDraw;
@@ -1495,8 +1658,9 @@ struct EngineSound::State {
                     const float edge = km::min((theta - evo) / kPortEdge, 1.0f);
                     lift = km::sqrt(km::max(swept, 0.0f)) * edge * edge * (3.0f - 2.0f * edge);
                 } else {
-                    const float ramp = km::min((theta - kEvo) / kEvoRamp, 1.0f);
-                    lift = km::sqrt(km::max(sinFast((theta - kEvo) / (kEvc - kEvo) * 0.5f), 0.0f)) * ramp * ramp * (3.0f - 2.0f * ramp);
+                    // Le calage de cette came : celui d'origine, `kEvo` et `kEvc`, sauf si la came en change.
+                    const float ramp = km::min((theta - evo) / kEvoRamp, 1.0f);
+                    lift = km::sqrt(km::max(sinFast((theta - evo) / (evc - evo) * 0.5f), 0.0f)) * ramp * ramp * (3.0f - 2.0f * ramp);
                 }
                 const float escape = pressure[c] * lift;
                 pressure[c] = km::max(pressure[c] - escape * blowRate, 0.0f);
@@ -1520,6 +1684,11 @@ struct EngineSound::State {
             } else if (intakeOpen[c]) {
                 intakeOpen[c] = false;
                 valve = !p.rotary;
+                // Son culbuteur est revenu sur le cercle de base : la goupille de la bascule peut entrer.
+                if (camPinPending[static_cast<std::size_t>(c)]) {
+                    camPinPending[static_cast<std::size_t>(c)] = false;
+                    camPinHit = true;
+                }
                 // Soupapes fermées : on peut décaler la prochaine explosion sans à-coup.
                 timing[c] = nextTiming[c];
             }
@@ -1598,6 +1767,8 @@ struct EngineSound::State {
         const float seatTick = (valveBand.bp + 0.35f * valveBandHigh.bp) * kValveLevel * (0.5f + 0.5f * rpmFrac) * metal;
         mechanical += sohc ? seatTick * seatLevel : seatTick;
         valveEnv *= valveDecay;
+        // La goupille d'une came à deux profils, au niveau du tic du siège.
+        if (camTuned && active.camTwoStep) mechanical += camPinSample(camPinHit) * kCamPinShare * kValveLevel * (0.5f + 0.5f * rpmFrac) * metal;
 
         if (p.diesel) {
             const float knockNoise = random();
@@ -1913,6 +2084,8 @@ void EngineSound::setKnock(const KnockDrive& drive) { s_->knockIn = drive; }
 std::uint32_t EngineSound::knocks() const { return s_->knock.knocks(); }
 
 void EngineSound::setEcu(const EcuDrive& drive) { s_->ecuIn = drive; }
+
+void EngineSound::setCam(const CamDrive& drive) { s_->camIn = drive; }
 
 void EngineSound::setStarter(bool powered, bool meshed, float load) {
     s_->starter.setState(powered, meshed, load);

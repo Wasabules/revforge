@@ -17,6 +17,7 @@ import { TURBO_SCALE } from './exhaustLines';
 import { EVC, EVO, ignitionAdvance, IVC, IVO } from './fluidGas';
 import { architectureOf, type Architecture } from './architecture';
 import { valveSizes } from './valves';
+import { camKey, camShift } from './cam';
 
 export const DEG = Math.PI / 180;
 
@@ -158,6 +159,8 @@ export interface EngineLayout {
   throwAngles: number[];
   // ── Distribution, en repère de rangée : y sur l'axe du cylindre, x en travers ──
   valve: ValveGeometry;
+  /** Le calage de cette came, dans le cycle de 720° : celui d'origine (`EVO`… de `fluidGas.ts`), décalé de ce que la came change. */
+  timing: { evo: number; evc: number; ivo: number; ivc: number };
   /** Couronne du volant : dents du C++ (`EngineConfig::toProfile`), rayon primitif. */
   ring: { z: number; width: number; teeth: number; radius: number };
   pinion: { teeth: number; radius: number; angle: number; x: number; y: number };
@@ -326,11 +329,11 @@ export function layoutKey(config: EngineConfig): string {
   if (config.electric) return 'electric';
   // La longueur des cornets dépend du régime qu'on vise : eux seuls font reconstruire le moteur quand il change.
   const filter = config.airFilter === 'stacks' ? `stacks${config.redlineRpm}` : config.airFilter ?? 'stock';
-  return `${config.cylinders}|${config.layout}|${config.displacementCc}|${config.boreMm}|${config.fuel}|${config.aspiration}|${config.turboSize}|${config.turboRelease}|${config.boxFlywheel}|${filter}|${config.turboPipeMm}|${config.camshaft ?? 'dohc'}|${config.superchargerKind}|${carburetorOf(config)?.kind ?? ''}|${carburetorOf(config) ? config.redlineRpm : ''}`;
+  return `${config.cylinders}|${config.layout}|${config.displacementCc}|${config.boreMm}|${config.fuel}|${config.aspiration}|${config.turboSize}|${config.turboRelease}|${config.boxFlywheel}|${filter}|${config.turboPipeMm}|${config.camshaft ?? 'dohc'}|${config.superchargerKind}|${carburetorOf(config)?.kind ?? ''}|${carburetorOf(config) ? config.redlineRpm : ''}|${camKey(config)}`;
 }
 
-/** Deux arbres, chacun au-dessus de ses soupapes, qu'il attaque directement par un poussoir. */
-function twinCamValves(bore: number, deck: number): ValveGeometry {
+/** Deux arbres, chacun au-dessus de ses soupapes, qu'il attaque directement par un poussoir. `liftScale` : la levée de la came sur celle d'origine. */
+function twinCamValves(bore: number, deck: number, liftScale = 1): ValveGeometry {
   const tiltDeg = 20;
   const tilt = tiltDeg * DEG;
   const valveX = bore * 0.24;
@@ -338,7 +341,7 @@ function twinCamValves(bore: number, deck: number): ValveGeometry {
   const stem = bore * 1.2;
   const camBase = bore * 0.17;
   const camFromSeat = stem + bore * 0.05 + camBase;
-  const lift = bore * 0.115;
+  const lift = bore * 0.115 * liftScale;
   const camX = valveX + Math.sin(tilt) * camFromSeat;
   const camY = deck + seatRise + Math.cos(tilt) * camFromSeat;
   return {
@@ -375,13 +378,13 @@ function twinCamValves(bore: number, deck: number): ValveGeometry {
  * Chaque culbuteur a son axe entre l'arbre et la soupape. Tout se déduit de la queue de soupape : le bras est perpendiculaire
  * à la queue à mi-levée, pour glisser le moins possible, et le patin est perpendiculaire au rayon de came à mi-levée.
  */
-function singleCamValves(bore: number, deck: number): ValveGeometry {
+function singleCamValves(bore: number, deck: number, liftScale = 1): ValveGeometry {
   const tiltDeg = 20;
   const tilt = tiltDeg * DEG;
   const valveX = bore * 0.25;
   const seatRise = (bore * 0.5 - valveX) * Math.tan(tilt);
   const stem = bore * 1.1;
-  const lift = bore * 0.115;
+  const lift = bore * 0.115 * liftScale;
   const sizes = valveSizes('sohc', bore);
   const tipArm = bore * 0.33;
   const padArm = bore * 0.2357;
@@ -597,7 +600,9 @@ export function engineLayout(config: EngineConfig): EngineLayout {
 
   // ── Distribution : deux arbres à cames en tête, quatre soupapes par cylindre ; ou un seul, deux soupapes et des culbuteurs ──
   // Socle : les culbuteurs (`ohv`) se dessinent comme le simple arbre.
-  const valve = config.camshaft === 'sohc' || config.camshaft === 'ohv' ? singleCamValves(bore, deck) : twinCamValves(bore, deck);
+  // La came : sa levée fait la hauteur des bossages, son calage leur largeur et leur place (cam.ts).
+  const cam = camShift(config);
+  const valve = config.camshaft === 'sohc' || config.camshaft === 'ohv' ? singleCamValves(bore, deck, cam.lift) : twinCamValves(bore, deck, cam.lift);
 
   const crankTeeth = 19;
   const camTeeth = 38;
@@ -652,6 +657,7 @@ export function engineLayout(config: EngineConfig): EngineLayout {
     splitDeg: Math.round(splitDeg),
     throwAngles,
     valve,
+    timing: { evo: EVO + cam.evo, evc: EVC + cam.evc, ivo: IVO + cam.ivo, ivc: IVC + cam.ivc },
     ring: { z: ringZ, width: bore * 0.14, teeth: teeth.ring, radius: ringRadius },
     pinion: { teeth: teeth.pinion, radius: pinionRadius, angle: pinionAngle, x: Math.cos(pinionAngle) * pinionDistance, y: Math.sin(pinionAngle) * pinionDistance },
     sprocket: { crankTeeth, camTeeth, crankRadius: crankSprocket, camRadius: crankSprocket * 2, z: banks === 2 ? [frontZ + bore * 0.3, frontZ + bore * 0.12] : [frontZ + bore * 0.18] },
@@ -980,8 +986,8 @@ export class EnginePose {
       this.wristX[i] = wristX;
       this.wristY[i] = wristY;
       this.rodAngle[i] = Math.atan2(wristX - pinX, wristY - pinY);
-      this.liftIn[i] = valveLift(theta, IVO, IVC);
-      this.liftEx[i] = valveLift(theta, EVO, EVC);
+      this.liftIn[i] = valveLift(theta, layout.timing.ivo, layout.timing.ivc);
+      this.liftEx[i] = valveLift(theta, layout.timing.evo, layout.timing.evc);
       if (layout.valve.sohc) {
         this.rockerIn[i] = rockerAngle(layout.valve, this.liftIn[i] * layout.valve.lift);
         this.rockerEx[i] = rockerAngle(layout.valve, this.liftEx[i] * layout.valve.lift);
