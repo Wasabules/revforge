@@ -39,7 +39,7 @@ void usage() {
         "          --aspiration natural|turbo|supercharger --fuel petrol|diesel\n"
         "          --pops off|light|strong --release dump_valve|flutter --boost BAR --turbo small|medium|large\n"
         "          --supercharger roots|twin_screw|centrifugal --antilag off|retard|air|cut --turbo-pipe MM\n"
-        "          --cam dohc|sohc --filter stock|panel|cone|stacks\n"
+        "          --cam dohc|sohc --filter stock|panel|cone|stacks --carb injection|single|multi\n"
         "          --stroke MM  sets --cc from the bore and the cylinders, in any order, and replaces --cc if both are given.\n"
         "                       On a --preset: applied to the preset's own bore and cylinders, which --bore and --cylinders do not change.\n"
         "                       Ignored on a rotary, which has no stroke; --bore and --cam are ignored there too.\n"
