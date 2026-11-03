@@ -26,12 +26,14 @@ const ORDER4 = [1, 3, 4, 2];
 const FRAME = 1 / 60 / 12;
 const WIDE_OPEN: GasInputs = { rpm: 5500, load: 1, boost: 0, release: 0, burning: true, heat: 0.7 };
 
-/** La pression moyenne du plénum, pied au plancher (Pa). */
-function plenumPa(config: EngineConfig): { net: GasNetwork; mean: number } {
+/** Les pressions moyennes, pied au plancher (Pa) : le plénum, la bouche de l'admission, la sortie de la ligne. */
+function plenumPa(config: EngineConfig): { net: GasNetwork; mean: number; mouth: number; exit: number } {
   const net = new GasNetwork();
   net.build(config, ORDER4);
   let cycle = 0;
   let sum = 0;
+  let mouth = 0;
+  let exit = 0;
   let count = 0;
   for (let t = 0; t < 0.12; t += FRAME) {
     const turns = (WIDE_OPEN.rpm / 120) * FRAME;
@@ -39,10 +41,12 @@ function plenumPa(config: EngineConfig): { net: GasNetwork; mean: number } {
     cycle = (cycle + turns) % 1;
     if (t > 0.04) {
       sum += net.zP[net.zonePlenum];
+      mouth += net.p[net.intakeFirst];
+      exit += net.exitP;
       count++;
     }
   }
-  return { net, mean: sum / count };
+  return { net, mean: sum / count, mouth: mouth / count, exit: exit / count };
 }
 
 test('l’atmosphère type est celle du C++, exactement l’ancien air à 20 °C et 0 m', () => {
@@ -66,6 +70,11 @@ test('le gaz à l’écran s’ouvre sur l’air du jour', () => {
   // Pied au plancher, le plénum suit l'atmosphère : la même part d'elle, à quelques pour cent.
   expect(high.mean / sea.mean).toBeGreaterThan(0.69 * 0.95);
   expect(high.mean / sea.mean).toBeLessThan(0.69 * 1.05);
+  // L'air entre par la bouche, et le gaz sort de la ligne, à l'atmosphère du jour.
+  for (const [here, there] of [[high.mouth, sea.mouth], [high.exit, sea.exit]]) {
+    expect(here / there).toBeGreaterThan(0.69 * 0.97);
+    expect(here / there).toBeLessThan(0.69 * 1.03);
+  }
   // Dans l'air froid, l'admission est froide aussi.
   const cold = plenumPa({ ...BASE, ambientC: -25 });
   expect(cold.net.inletK).toBe(248);
