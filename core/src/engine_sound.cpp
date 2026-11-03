@@ -57,8 +57,6 @@ constexpr float kPortChase = 240.0f / 393.0f;
 // La pression maximale reste de l'ordre de 40 bar au lieu de 70 : 5 dB de moins dans la loi d'Anderton (supposé). Sans distribution, un plancher plus bas.
 constexpr float kRotaryBlockDb = -5.0f;
 constexpr float kRotaryFloorDb = -3.0f;
-// Trois faces par rotor, usinées à quelques pour cent près : c'est ce qui crée les rangs en tiers d'ordre (supposé).
-constexpr std::array<float, 3> kFaceSpread{1.0f, 0.965f, 1.03f};
 // Le gaz brûlé repasse d'une lumière à l'autre à faible charge : les combustions varient bien plus au ralenti (supposé).
 constexpr float kRotaryIdleSpread = 3.0f;
 constexpr float kPistonIdleSpread = 1.6f;
@@ -1033,7 +1031,7 @@ struct EngineSound::State {
                     // Aucune combustion n'est identique à la précédente.
                     const float first = random();
                     const float second = random();
-                    // Chaque rotor présente ses trois faces à tour de rôle : leur mémoire et leur petit écart ont une période de trois tours d'arbre.
+                    // Chaque rotor présente ses trois faces à tour de rôle : les gaz résiduels restent dans leur chambre, donc une période de trois tours d'arbre.
                     int chamber = c;
                     if (p.rotary) {
                         const int rotor = c % p.rotors;
@@ -1046,7 +1044,6 @@ struct EngineSound::State {
                     // À bas régime, le mélange brûle mal : les combustions varient bien plus, jusqu'au raté partiel.
                     const float spread = km::max(1.0f + kCombustionSpread * memory * (1.0f + idleSpread * idleShake), 0.25f);
                     pressure[c] = km::max(openPressure * p.firingGain[c] * spread, 0.02f);
-                    if (p.rotary) pressure[c] *= kFaceSpread[static_cast<std::size_t>((chamber + chamber / 3) % 3)];
                     // Chaque bouffée a sa force de souffle : rafales, pas un bruit égal.
                     const float gustDraw = random();
                     gust = 0.75f + 0.5f * gustDraw * gustDraw;

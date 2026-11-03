@@ -610,13 +610,13 @@ The model's automatic gearbox matters little: a driver following longer gears, a
 - The blowdown (`blowdownS`): volume at opening over port area, 14 cm² on the reference (assumed, within 30%), scaled from the 2 ms of the reference cylinder: 1.6 ms. Gas is released at 15% more pressure, from a shorter expansion.
 - The rotor pushes out the same volume over 393° instead of 240°: a more continuous flow.
 - No valvetrain noise: no valve lands. Block at −5 dB (40 bar peak pressure rather than 70, **order of magnitude, not cross-checked**), idle floor at −3 dB, less shaft ripple (assumed).
-- **One memory per chamber, not per firing.** Residual gas passes from one cycle to the next in the same chamber, so every three turns. Three faces within 3% (assumed) share that period. This is where the third orders come from, with no gain added to get them.
+- **One memory per chamber, not per firing.** Residual gas passes from one cycle to the next in the same chamber, so every three turns, where a cylinder meets it again every two. This is where the third orders come from, and why the half orders fade, with no gain added to get them. A fixed difference between a rotor's three faces was tried, then removed: it changed nothing measurable, and the figure would have been invented.
 
 Orders measured at 4000 rpm, sport line, held speed (`tools/analyze_orders.py`, in dB below the strongest order): both engines share order 2, the firing rate, but not the sub-orders.
 
 | Order | 1 | 5/3 | 2 | 5/2 | 3 | 4 | 6 | mean halves | mean thirds |
 |---|---|---|---|---|---|---|---|---|---|
-| Twin-rotor 1.3 L | −31.3 | −23.9 | 0 | −40.8 | −28.2 | −11.6 | −16.3 | −46.8 | −40.2 |
+| Twin-rotor 1.3 L | −31.3 | −24.7 | 0 | −40.8 | −28.2 | −11.6 | −16.3 | −46.7 | −40.8 |
 | 4-cylinder 2.15 L | −24.2 | −31.6 | 0 | −27.9 | −24.9 | −8.6 | −13.7 | −35.7 | −44.2 |
 
 A 360° twin, measured the same way, has its strongest order at 1. `tests/rotary_test.cpp` protects thirds and halves.

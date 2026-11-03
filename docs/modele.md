@@ -628,13 +628,13 @@ La boîte automatique du modèle joue peu : un conducteur qui suit des rapports 
 - La bouffée (`blowdownS`) : volume à l'ouverture sur section de lumière, 14 cm² sur la référence (supposé, à 30 % près), rapportés aux 2 ms du cylindre de référence : 1,6 ms. Le gaz s'ouvre sur 15 % de pression de plus, par une détente plus courte.
 - Le rotor chasse le même volume sur 393° au lieu de 240° : un débit plus continu.
 - Aucun bruit de distribution : aucune soupape ne retombe. Bloc à −5 dB (40 bar de pression maximale au lieu de 70, **ordre de grandeur non recoupé**), plancher au ralenti à −3 dB, moins d'à-coups (supposés).
-- **Une mémoire par chambre, et non par explosion.** Les gaz résiduels passent d'un cycle au suivant dans la même chambre, donc tous les trois tours. Trois faces à 3 % près (supposé) ont la même période. C'est de là que viennent les tiers d'ordre, sans gain ajouté pour les obtenir.
+- **Une mémoire par chambre, et non par explosion.** Les gaz résiduels passent d'un cycle au suivant dans la même chambre, donc tous les trois tours, là où un cylindre les retrouve tous les deux tours. C'est de là que viennent les tiers d'ordre, et que disparaissent les demi-ordres, sans gain ajouté pour les obtenir. Un écart fixe entre les trois faces d'un rotor a été essayé, puis retiré : il ne changeait rien de mesurable, et le chiffre aurait été inventé.
 
 Rangs mesurés à 4000 tr/min, ligne sport, régime tenu (`tools/analyze_orders.py`, en dB sous le rang le plus fort) : les deux moteurs ont le même rang 2, celui de la cadence, mais pas les mêmes sous-rangs.
 
 | Rang | 1 | 5/3 | 2 | 5/2 | 3 | 4 | 6 | moyenne demis | moyenne tiers |
 |---|---|---|---|---|---|---|---|---|---|
-| Birotor 1,3 L | −31,3 | −23,9 | 0 | −40,8 | −28,2 | −11,6 | −16,3 | −46,8 | −40,2 |
+| Birotor 1,3 L | −31,3 | −24,7 | 0 | −40,8 | −28,2 | −11,6 | −16,3 | −46,7 | −40,8 |
 | 4 cylindres 2,15 L | −24,2 | −31,6 | 0 | −27,9 | −24,9 | −8,6 | −13,7 | −35,7 | −44,2 |
 
 Un bicylindre à 360°, mesuré de même, a son plus fort rang à 1. `tests/rotary_test.cpp` protège les tiers et les demis.
