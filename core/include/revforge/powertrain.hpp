@@ -4,6 +4,7 @@
 
 #include "revforge/engine_config.hpp"
 #include "revforge/gearbox.hpp"
+#include "revforge/supercharger.hpp"
 #include "revforge/turbo.hpp"
 
 namespace revforge {
@@ -72,6 +73,10 @@ TurboSpec turboSpecOf(const Powertrain& p);
 double intakeAirK(const Powertrain& p, double rpm);
 /** La perte de pression de ce filtre à pleine charge et à ce régime (Pa), boîte et prise d'air comprises. */
 double intakeDropPa(const Powertrain& p, double rpm);
+/** Le compresseur mécanique que ce moteur monte. */
+SuperchargerSpec superchargerSpecOf(const Powertrain& p);
+/** Ce qu'il prend au vilebrequin à ce régime et à ce remplissage, à l'équilibre (Nm). 0 sans compresseur. */
+double superchargerDriveNm(const Powertrain& p, double rpm, double fill);
 /** Respiration du moteur à ce régime : 1 au pic de couple. */
 double breathingOf(const Powertrain& p, double rpm);
 /** Couple au vilebrequin à pleine charge, net des frottements, pour une pression de turbo donnée (Nm). */

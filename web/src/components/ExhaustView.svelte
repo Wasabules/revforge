@@ -150,7 +150,7 @@
 
     // La ligne : les volumes un peu grossis, pour qu'on y voie l'écoulement.
     // Les roues suivent la taille choisie.
-    const turbineR = turboShare ? clamp(height * 0.055, 8, 17) * TURBO_SCALE[config.turboSize ?? 'medium'] : 0;
+    const turbineR = turboShare ? clamp(height * 0.055, 8, 17) * (net.hasTurbine ? TURBO_SCALE[config.turboSize ?? 'medium'] : 1.1) : 0;
     const compressorR = turbineR * 1.15;
     // Un tube déporté prend sa place, à son échelle jusqu'à un quart de ce qu'il y a jusqu'à la sortie : la ligne se resserre d'autant.
     const pipeSpan = net.pipeCells > 0 ? (exitX - joinX) * 0.25 * Math.min(1, (net.pipeCells * net.cell) / 2.6) : 0;
@@ -160,7 +160,7 @@
       pipePoints[k * 2 + 1] = lineY;
     }
     const turbineX = joinX + pipeSpan + turbineR + 3;
-    const lineStart = turboShare ? turbineX + turbineR + 2 : joinX;
+    const lineStart = turboShare && net.hasTurbine ? turbineX + turbineR + 2 : joinX;
     let weight = 0;
     for (const section of net.sections) weight += section.length * (section.kind === 'tube' || section.kind === 'tail' ? 0.8 : 1.5);
     const lineX = new Float32Array(net.lineCount + 1);
@@ -510,12 +510,79 @@
     ctx.globalAlpha = 1;
   }
 
+  /** Le compresseur mécanique : sur le chemin de l'air, sa courroie qui descend vers le moteur. Les rotors ou la roue suivent le vilebrequin. */
+  function drawCharger(ctx: CanvasRenderingContext2D, theme: Theme, view: Layout) {
+    const net = motion.gas.net;
+    const x = view.turbineX;
+    const y = view.intakeY;
+    const r = view.compressorR;
+    // La courroie, jusqu'à la poulie du vilebrequin, derrière le carter.
+    ctx.strokeStyle = theme.metal;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 4]);
+    ctx.lineDashOffset = -motion.chargerAngle * 4;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.quadraticCurveTo(x, view.lineY - 6, view.engineRight, view.lineY - 6);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    const outCell = net.compressorCell;
+    ctx.fillStyle = motion.painter.airStyle(theme, net.temp[outCell], net.rho[outCell]);
+    ctx.strokeStyle = theme.text;
+    ctx.lineWidth = 1.5;
+    if (config.superchargerKind === 'centrifugal') {
+      voluteOutline(ctx, x, y, r, -0.6);
+      ctx.fill();
+      ctx.stroke();
+      drawWheel(ctx, theme, x, y, r, motion.chargerAngle, 11, -0.55);
+    } else {
+      ctx.beginPath();
+      ctx.roundRect(x - r * 1.5, y - r, r * 3, r * 2, 3);
+      ctx.fill();
+      ctx.stroke();
+      const lobes = config.superchargerKind === 'twin_screw' ? 5 : 3;
+      lobedRotor(ctx, theme, x - r * 0.62, y, r * 0.72, 3, motion.chargerAngle);
+      lobedRotor(ctx, theme, x + r * 0.62, y, r * 0.72, lobes, -motion.chargerAngle * (3 / lobes));
+      ctx.fillStyle = theme.raised;
+      ctx.strokeStyle = theme.text;
+      ctx.lineWidth = 1;
+    }
+    if (view.width > 420) {
+      ctx.font = '11px "Inter Tight", system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      label(ctx, theme, t('gas.compressor'), x, y - r * 1.3 - 4);
+    }
+  }
+
+  function lobedRotor(ctx: CanvasRenderingContext2D, theme: Theme, x: number, y: number, radius: number, lobes: number, angle: number) {
+    ctx.fillStyle = mix(theme.raised, theme.metal, 0.4);
+    ctx.strokeStyle = theme.text;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let k = 0; k <= 36; k++) {
+      const a = (k / 36) * Math.PI * 2;
+      const rr = radius * (0.7 + 0.3 * Math.cos(lobes * a));
+      const px = x + Math.cos(a + angle) * rr;
+      const py = y + Math.sin(a + angle) * rr;
+      if (k === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+
   function drawTurbo(ctx: CanvasRenderingContext2D, theme: Theme, view: Layout) {
     const net = motion.gas.net;
     if (net.compressorCell < 0) return;
     const x = view.turbineX;
     const r = view.turbineR;
     const compressorR = view.compressorR;
+    if (!net.hasTurbine) {
+      drawCharger(ctx, theme, view);
+      return;
+    }
     // L'arbre : turbine et compresseur tournent ensemble, dans leur palier.
     ctx.strokeStyle = theme.metal;
     ctx.lineWidth = 2.5;
@@ -1010,7 +1077,7 @@
 
   const dual = $derived(config.layout !== 'inline' && config.cylinders >= 4);
   const caption = $derived(
-    config.electric ? '' : [t(`gas.line.${config.exhaust}`), ...(dual ? [t('gas.banks')] : []), ...(config.aspiration === 'turbo' ? [t('gas.turboPulses')] : []), ...(config.aspiration === 'turbo' && config.fuel === 'petrol' && config.antiLag === 'air' ? [t('gas.antiLagAir')] : []), t('gas.legend', { speed: speedLabel(slow) })].join(' '),
+    config.electric ? '' : [t(`gas.line.${config.exhaust}`), ...(dual ? [t('gas.banks')] : []), ...(config.aspiration === 'turbo' ? [t('gas.turboPulses')] : []), ...(config.aspiration === 'supercharger' ? [t('gas.chargerNote')] : []), ...(config.aspiration === 'turbo' && config.fuel === 'petrol' && config.antiLag === 'air' ? [t('gas.antiLagAir')] : []), t('gas.legend', { speed: speedLabel(slow) })].join(' '),
   );
 </script>
 
@@ -1023,6 +1090,11 @@
       {t('gas.gauge.turbo')} <strong>{fixed(telemetry.boost * config.boostBar, 2)} / {fixed(config.boostBar, 1)} bar</strong>
       · {t('gas.gauge.turbine', { rpm: whole(Math.round(telemetry.turboRpm / 1000) * 1000) })}{telemetry.turboWastegate > 0.1 ? ` · ${t('gas.gauge.wastegate')}` : ''}
       · {t('gas.gauge.inlet', { celsius: whole(telemetry.turboGasC) })}{telemetry.antiLag ? ` · ${t('gas.gauge.antiLag', { kw: fixed(telemetry.antiLagHeatKw, 0) })}` : ''}
+    </p>
+  {:else if config.aspiration === 'supercharger' && !config.electric}
+    <p class="gauge" data-testid="turbo-readout">
+      {t('gas.gauge.charger')} <strong>{fixed(telemetry.boost * config.boostBar, 2)} / {fixed(config.boostBar, 1)} bar</strong>
+      · {t('gas.gauge.turbine', { rpm: whole(Math.round(telemetry.chargerRpm / 100) * 100) })} · {t('gas.gauge.chargerKw', { kw: fixed(telemetry.chargerKw, 1) })}{telemetry.chargerSpill > 0.3 ? ` · ${t('gas.gauge.bypass')}` : ''}
     </p>
   {/if}
   <figcaption>{caption}</figcaption>

@@ -435,7 +435,9 @@ function decodeBox(text: string | undefined): Partial<EngineConfig> {
 function decodeCar(text: string | undefined): Partial<EngineConfig> {
   // Les anciens liens n'ont pas de voiture : on garde celle par défaut.
   if (!text) return {};
-  const [main, placement, insulation, routing, turboSize, superchargerKind, antiLag, turboPipe, camshaft, airFilter] = text.split('_');
+  // « twin_screw » contient le séparateur : on le met à part le temps de couper. Le format du lien ne change pas.
+  const [main, placement, insulation, routing, turboSize, chargerField, antiLag, turboPipe, camshaft, airFilter] = text.replace('_twin_screw', '_twin-screw').split('_');
+  const superchargerKind = chargerField?.replace('-', '_');
   // La pression peut contenir un point : tout ce qui suit la transmission lui appartient.
   const [body, mass, rim, drive, ...pressure] = main.split('.');
   const bar = Number(pressure.join('.'));

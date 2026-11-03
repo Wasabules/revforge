@@ -45,6 +45,10 @@ export interface Telemetry {
   antiLagHeatKw: number;
   antiLagAirFlow: number;
   antiLagLostNm: number;
+  /** Le compresseur mécanique : l'arbre (tr/min), ce qu'il prend au vilebrequin (kW), la part du débit rendue à l'entrée. Les pressions et températures sont les mêmes champs que pour un turbo. */
+  chargerRpm: number;
+  chargerKw: number;
+  chargerSpill: number;
   torque: number;
   power: number;
   clutch: number;
@@ -112,7 +116,7 @@ export interface Telemetry {
 }
 
 export const IDLE_TELEMETRY: Telemetry = {
-  rpm: 0, speed: 0, gear: 0, throttle: 0, load: 0, boost: 0, turbine: 0, turboRelease: 0, turboRpm: 0, turboCharge: 0, turboPlenum: 0, turboOutlet: 0, turboInlet: 0, turboExhaust: 0, turboWastegate: 0, turboBlowoff: 0, turboFlow: 0, turboOutC: 20, turboCoolC: 20, intakeAirC: 20, turboGasC: 20, antiLag: 0, antiLagHeatKw: 0, antiLagAirFlow: 0, antiLagLostNm: 0, torque: 0, power: 0, clutch: 0, clutchInputRpm: 0, clutchSlipKw: 0, clutchTorque: 0, wheelRpm: 0, slip: 0, pops: 0, cut: 0, shifting: 0, cranking: 0, stalled: 0, lugging: 0, legKind: 0, legTarget: 0, gradePct: 0, underpowered: 0, levelDbA: 0, listenerX: 0, listenerY: 0, listenerZ: 0, peak: 0, outputRpm: 0, meshed: 0, shiftStep: 0, grinding: 0, overload: 0, boxWear: 0, boxBroken: 0, boxPending: 0, boxConeSlip: 0, boxRattle: 0, boxLoose0: 0, boxLoose1: 0, boxLoose2: 0, boxLoose3: 0, fuelLph: 0, fuelLper100km: 0, fuelTripL: 0, fuelAvgLper100km: 0, tripKm: 0, co2GPerKm: 0, oilGph: 0, oilTripMl: 0, oilMlPer1000km: 0, energyKwhPer100km: 0, energyAvgKwhPer100km: 0, energyTripKwh: 0,
+  rpm: 0, speed: 0, gear: 0, throttle: 0, load: 0, boost: 0, turbine: 0, turboRelease: 0, turboRpm: 0, turboCharge: 0, turboPlenum: 0, turboOutlet: 0, turboInlet: 0, turboExhaust: 0, turboWastegate: 0, turboBlowoff: 0, turboFlow: 0, turboOutC: 20, turboCoolC: 20, intakeAirC: 20, turboGasC: 20, antiLag: 0, antiLagHeatKw: 0, antiLagAirFlow: 0, antiLagLostNm: 0, chargerRpm: 0, chargerKw: 0, chargerSpill: 0, torque: 0, power: 0, clutch: 0, clutchInputRpm: 0, clutchSlipKw: 0, clutchTorque: 0, wheelRpm: 0, slip: 0, pops: 0, cut: 0, shifting: 0, cranking: 0, stalled: 0, lugging: 0, legKind: 0, legTarget: 0, gradePct: 0, underpowered: 0, levelDbA: 0, listenerX: 0, listenerY: 0, listenerZ: 0, peak: 0, outputRpm: 0, meshed: 0, shiftStep: 0, grinding: 0, overload: 0, boxWear: 0, boxBroken: 0, boxPending: 0, boxConeSlip: 0, boxRattle: 0, boxLoose0: 0, boxLoose1: 0, boxLoose2: 0, boxLoose3: 0, fuelLph: 0, fuelLper100km: 0, fuelTripL: 0, fuelAvgLper100km: 0, tripKm: 0, co2GPerKm: 0, oilGph: 0, oilTripMl: 0, oilMlPer1000km: 0, energyKwhPer100km: 0, energyAvgKwhPer100km: 0, energyTripKwh: 0,
 };
 
 export interface CurvePoint {
@@ -184,6 +188,10 @@ export interface Spec {
   /** À la puissance maximale : la perte du filtre (kPa) et la température de l'air admis (°C). */
   intakeDropKpa: number;
   intakeAirC: number;
+  /** Le compresseur monté : rapport d'entraînement, volume engendré (L par tour), diamètre de la roue (mm). */
+  chargerRatio: number;
+  chargerVolume: number;
+  chargerWheelMm: number;
   zeroTo100: number;
   topSpeed: number;
   starter: { direct: boolean; kw: number; ring: number; pinion: number; helix: number };
@@ -214,7 +222,7 @@ export interface SoundSheet {
   lineLoss: { hz: number; db: number }[];
 }
 
-export const EMPTY_SPEC: Spec = { idle: 0, redline: 7000, peakTorque: 0, peakTorqueRpm: 0, peakHp: 0, peakHpRpm: 0, gears: 0, ratios: [], turboWheelMm: 0, turboInertia: 0, intakeDropKpa: 0, intakeAirC: 20, zeroTo100: 0, topSpeed: 0, starter: { direct: false, kw: 0, ring: 0, pinion: 0, helix: 0 }, curve: [], box: EMPTY_BOX };
+export const EMPTY_SPEC: Spec = { idle: 0, redline: 7000, peakTorque: 0, peakTorqueRpm: 0, peakHp: 0, peakHpRpm: 0, gears: 0, ratios: [], turboWheelMm: 0, turboInertia: 0, intakeDropKpa: 0, intakeAirC: 20, chargerRatio: 0, chargerVolume: 0, chargerWheelMm: 0, zeroTo100: 0, topSpeed: 0, starter: { direct: false, kw: 0, ring: 0, pinion: 0, helix: 0 }, curve: [], box: EMPTY_BOX };
 
 interface RfExports {
   memory: WebAssembly.Memory;
@@ -248,6 +256,9 @@ interface RfExports {
   rf_intake_drop_kpa(rpm: number): number;
   rf_turbo_wheel_mm(): number;
   rf_turbo_inertia(): number;
+  rf_supercharger_ratio(): number;
+  rf_supercharger_volume(): number;
+  rf_supercharger_wheel_mm(): number;
   rf_set_electric(): void;
   rf_set_car(...args: number[]): void;
   rf_set_mode(mode: number): void;
@@ -569,6 +580,9 @@ export class Engine {
       turboInertia: rf.rf_turbo_inertia(),
       intakeDropKpa: rf.rf_intake_drop_kpa(rf.rf_peak_power_rpm()),
       intakeAirC: rf.rf_intake_air_c(rf.rf_peak_power_rpm()),
+      chargerRatio: rf.rf_supercharger_ratio(),
+      chargerVolume: rf.rf_supercharger_volume(),
+      chargerWheelMm: rf.rf_supercharger_wheel_mm(),
       zeroTo100: rf.rf_zero_to_100(),
       topSpeed: rf.rf_top_speed(),
       starter: { direct: rf.rf_starter_direct() === 1, kw: rf.rf_starter_kw(), ring: rf.rf_starter_ring(), pinion: rf.rf_starter_pinion(), helix: rf.rf_starter_helix() },

@@ -124,6 +124,8 @@ void DrivingModel::setPowertrain(const Powertrain& powertrain) {
     antiLag_.kind = antiLagEngine_ ? powertrain.engine.antiLag : AntiLag::Off;
     antiLag_.active = false;
     antiLagLostNm_ = 0.0;
+    superchargerEngine_ = !powertrain.electric && powertrain.engine.aspiration == Aspiration::Supercharger;
+    if (superchargerEngine_) supercharger_.setSpec(superchargerSpecOf(powertrain));
     if (gear_ > gearing_.gears) gear_ = gearing_.gears;
     step_ = ShiftStep::None;
     ignitionCut_ = false;
@@ -145,7 +147,7 @@ void DrivingModel::setPowertrain(const Powertrain& powertrain) {
         meshed_ = false;
     }
     omega_ = std::min(omega_, toOmega(redline_));
-    if (!turboEngine_) boost_ = 0.0;
+    if (!turboEngine_ && !superchargerEngine_) boost_ = 0.0;
 }
 
 double DrivingModel::rpm() const {
@@ -782,6 +784,15 @@ void DrivingModel::updateAntiLag(double throttle, double rpmNow, bool off) {
     antiLag_.active = !off && !cut_ && !catching_ && throttle < kAntiLagLiftedPedal && rpmNow >= threshold;
 }
 
+void DrivingModel::stepSupercharger(double rpmNow) {
+    SuperchargerInput input;
+    input.rpm = rpmNow;
+    input.fill = manifold_;
+    input.breathing = breathingOf(powertrain_, rpmNow);
+    supercharger_.step(kStep, input);
+    boost_ = std::max(supercharger_.boost(), 0.0);
+}
+
 void DrivingModel::updateEngine(double throttle, bool off) {
     const double rpmNow = toRpm(omega_);
     burnt_.burning = false;
@@ -812,6 +823,7 @@ void DrivingModel::updateEngine(double throttle, bool off) {
     if (crankLeft_ > 0.0) {
         // Rien ne brûle encore : l'arbre, s'il tournait, continue sur son élan.
         if (turboEngine_) stepTurbo(rpmNow, false);
+        if (superchargerEngine_) stepSupercharger(rpmNow);
         crankLeft_ -= kStep;
         cut_ = true;
         manifold_ = 0.0;
@@ -854,6 +866,7 @@ void DrivingModel::updateEngine(double throttle, bool off) {
         manifold_ += (0.0 - manifold_) * std::min(1.0, kStep / manifoldTau_);
         // Calé : plus de gaz, mais l'arbre garde son élan.
         if (turboEngine_) stepTurbo(rpmNow, false);
+        if (superchargerEngine_) stepSupercharger(rpmNow);
         torque_ = -kColdFriction * frictionTorqueNm(powertrain_, rpmNow) - bmepPumping(rpmNow);
         return;
     }
@@ -901,7 +914,9 @@ void DrivingModel::updateEngine(double throttle, bool off) {
     manifold_ += (wantedManifold - manifold_) * std::min(1.0, kStep / manifoldTau_);
 
     // Turbine : tout est dans `TurboCharger`. Le moteur lui donne ce qu'il rejette, et reçoit la pression qui en résulte.
+    // Le compresseur, lui, ne demande rien aux gaz : il tourne avec le vilebrequin.
     if (turboEngine_) stepTurbo(rpmNow, !cut_);
+    else if (superchargerEngine_) stepSupercharger(rpmNow);
     else boost_ = 0.0;
 
     double produced = cut_ ? 0.0 : manifold_ * indicated * torqueScale_;
@@ -913,13 +928,16 @@ void DrivingModel::updateEngine(double throttle, bool off) {
     }
     // Rupteur : le papillon reste ouvert, donc peu de pompage. Le moteur ne redescend que sur ses frottements.
     // Sur un turbo, s'y ajoute le gaz à pousser contre la turbine.
-    const double pumping = pumpingTorqueNm(powertrain_, rpmNow, manifold_) + (turboEngine_ ? turbo_.backPressureNm(manifold_) : 0.0);
+    // Sur un compresseur, ce que coûte son entraînement : la combustion le paie, et il s'ajoute au frein moteur.
+    const double charger = superchargerEngine_ ? supercharger_.driveNm(rpmNow) : 0.0;
+    const double pumping = pumpingTorqueNm(powertrain_, rpmNow, manifold_) + (turboEngine_ ? turbo_.backPressureNm(manifold_) : 0.0) + charger;
     torque_ = produced - friction - pumping;
     // Pour la consommation : le couple au frein que demande cette charge d'air. Le calculateur qui retient le moteur
     // pendant un relais retarde l'allumage : il gaspille, il ne dépense pas moins. Le broutement s'annule en moyenne.
     burnt_.burning = !cut_;
     burnt_.brakeNm = manifold_ * indicated - friction - pumping;
-    burnt_.frictionNm = friction;
+    // Les pistons paient aussi le compresseur : c'est de l'essence, pas du couple à la roue.
+    burnt_.frictionNm = friction + charger;
     burnt_.fullGrossNm = indicated;
     burnt_.load = manifold_;
     // Le couple au frein ci-dessus suit l'air, donc le cylindre retardé ou coupé paie déjà son carburant : reste ce qui s'y ajoute.

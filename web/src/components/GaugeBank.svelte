@@ -29,21 +29,24 @@
   const turbo = $derived(config.aspiration === 'turbo' && !config.electric);
   // L'air d'admission n'a d'intérêt que s'il n'est plus celui du dehors : un filtre sous le capot.
   const hotAir = $derived(!config.electric && (config.airFilter === 'cone' || config.airFilter === 'stacks'));
+  const charged = $derived(config.aspiration === 'supercharger' && !config.electric);
+  const boosted = $derived(turbo || charged);
   /** Une échelle qui finit sur une graduation : tout ce que la simulation peut atteindre y tient. */
   const roundedUp = (value: number, step: number) => Math.ceil(value / step - 1e-9) * step;
 
   const speedStep = $derived(niceStep(Math.max(spec.topSpeed, 60), 6));
   const speedMax = $derived(roundedUp(Math.max(spec.topSpeed, 60), speedStep));
-  const manifoldStep = $derived(turbo && config.boostBar >= 2 ? 1 : 0.5);
+  const manifoldStep = $derived(boosted && config.boostBar >= 2 ? 1 : 0.5);
   // De la dépression totale à un peu plus que la pression réglée ; sans turbo, l'atmosphère est presque le bout.
-  const manifoldMax = $derived(turbo ? roundedUp(config.boostBar * 1.1, 0.5) : 0.5);
-  const backMax = $derived(turbo ? roundedUp(Math.max(config.boostBar, 1), 0.5) : 0.6);
+  const manifoldMax = $derived(boosted ? roundedUp(config.boostBar * 1.1, 0.5) : 0.5);
+  // Sans turbine, un compresseur laisse la ligne libre, mais tout l'air qu'il a poussé doit bien sortir.
+  const backMax = $derived(turbo ? roundedUp(Math.max(config.boostBar, 1), 0.5) : charged ? 1 : 0.6);
   const backStep = $derived(turbo ? 0.5 : 0.2);
   const powerStep = $derived(niceStep(Math.max(spec.peakHp, 50), 5));
   const powerMax = $derived(roundedUp(Math.max(spec.peakHp, 50) * 1.05, powerStep));
 
   /** La vitesse de l'arbre si la télémétrie la donne, sinon l'estimation de `Motion`. */
-  const turbineRpm = () => (telemetry() as Telemetry & { turbineRpm?: number }).turbineRpm ?? motion.turbineRpm(config);
+  const turbineRpm = () => (charged ? telemetry().chargerRpm : (telemetry() as Telemetry & { turbineRpm?: number }).turbineRpm ?? motion.turbineRpm(config));
 
   onMount(() => {
     const stop = animate(root, (_seconds, now) => {
@@ -65,7 +68,7 @@
         if (rpm === lastTurbine && lang() === lastLang) return;
         lastTurbine = rpm;
         lastLang = lang();
-        turbineNode.textContent = t('gauge.turbine', { rpm: whole(rpm * 1000) });
+        turbineNode.textContent = t(charged ? 'gauge.charger' : 'gauge.turbine', { rpm: whole(rpm * 1000) });
       }),
       clock.add((text) => {
         if (!text) return;
@@ -102,9 +105,9 @@
       {t('gauge.electric')}
     </Gauge>
   {:else}
-    <Gauge id="manifold" label={t('gauge.manifold')} note={t('gauge.manifold.note')} unit="bar" min={-1} max={manifoldMax} step={manifoldStep} minor={manifoldStep / 5} zero={0} mark={turbo ? config.boostBar : null}
+    <Gauge id="manifold" label={t('gauge.manifold')} note={t('gauge.manifold.note')} unit="bar" min={-1} max={manifoldMax} step={manifoldStep} minor={manifoldStep / 5} zero={0} mark={boosted ? config.boostBar : null}
       digits={2} signed tickDigits={1} {clock} read={() => readings.manifoldBar}>
-      {#if turbo}<span data-testid="gauge-turbine" bind:this={turbineNode}></span>{:else}{t('gauge.manifold.natural')}{/if}
+      {#if boosted}<span data-testid="gauge-turbine" bind:this={turbineNode}></span>{:else}{t('gauge.manifold.natural')}{/if}
       {#if hotAir}<span data-testid="gauge-intake-air" bind:this={intakeNode}></span>{/if}
     </Gauge>
     <Gauge id="collector" label={t('gauge.collector')} note={t('gauge.collector.note')} unit="°C" min={0} max={1000} step={200} minor={100} warm {clock} read={() => readings.collectorC}>

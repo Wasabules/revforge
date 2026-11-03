@@ -106,6 +106,11 @@ export class Motion {
   release = 0;
   /** L'arbre du turbo (tr/min) et les soupapes : ce que le modèle de conduite calcule, lissé comme le reste. */
   turboRpm = 0;
+  /** L'arbre du compresseur mécanique (tr/min), son angle (radians) et ce qu'il prend au vilebrequin (kW) : ce que le modèle calcule, lissé comme le reste. */
+  chargerRpm = 0;
+  chargerAngle = 0;
+  chargerKw = 0;
+  chargerSpill = 0;
   wastegate = 0;
   blowoff = 0;
   compressorRatio = 1;
@@ -211,6 +216,9 @@ export class Motion {
     this.turbine += (t.turbine - this.turbine) * glide;
     this.release += (t.turboRelease - this.release) * glide;
     this.turboRpm += (t.turboRpm - this.turboRpm) * glide;
+    this.chargerRpm += (t.chargerRpm - this.chargerRpm) * glide;
+    this.chargerKw += (t.chargerKw - this.chargerKw) * glide;
+    this.chargerSpill += (t.chargerSpill - this.chargerSpill) * glide;
     this.wastegate += (t.turboWastegate - this.wastegate) * glide;
     this.blowoff += (t.turboBlowoff - this.blowoff) * glide;
     this.compressorRatio += ((1.01325 + t.turboOutlet) / Math.max(1.01325 + t.turboInlet, 0.5) - this.compressorRatio) * glide;
@@ -267,13 +275,16 @@ export class Motion {
     this.heat += (wantedHeat - this.heat) * (1 - Math.exp(-seconds / heatTau));
 
     this.gasSpeed = 0.1 + 1.05 * flow;
-    const pressure = config.aspiration === 'turbo' ? 1 + this.boost * config.boostBar : 1;
+    const pressure = config.aspiration !== 'natural' ? 1 + this.boost * config.boostBar : 1;
     this.airFlow = flow * pressure;
 
     if (!this.reduced) {
       const turbineTurns = this.turboRpm / 60 / this.slow / TURBINE_EXTRA_SLOW;
       this.turbineAngle = (this.turbineAngle + turbineTurns * 2 * Math.PI * seconds) % (Math.PI * 2);
       this.turbineBlur = Math.min(1, Math.max(0, (turbineTurns - 6) / 10));
+      // Le compresseur : à sa vraie vitesse, comme le vilebrequin. Seule la roue d'un centrifuge a besoin du ralenti de la turbine.
+      const chargerTurns = this.chargerRpm / 60 / this.slow / (config.superchargerKind === 'centrifugal' ? TURBINE_EXTRA_SLOW : 1);
+      this.chargerAngle = (this.chargerAngle + chargerTurns * 2 * Math.PI * seconds) % (Math.PI * 2);
       this.rotorAngle = (this.rotorAngle + ((this.rpm / 60 / this.slow) * 2 * Math.PI * seconds)) % (Math.PI * 2);
       this.flywheelAngle = (this.flywheelAngle + ((this.rpm / 60 / this.slow) * 2 * Math.PI * seconds)) % (Math.PI * 2);
       this.discAngle = (this.discAngle + ((this.inputRpm / 60 / this.slow) * 2 * Math.PI * seconds)) % (Math.PI * 2);

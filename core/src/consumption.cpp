@@ -61,11 +61,13 @@ void ConsumptionModel::configure(const Powertrain& p) {
     electric_ = p.electric;
     diesel_ = p.engine.fuel == Fuel::Diesel;
     turbo_ = p.engine.aspiration == Aspiration::Turbo;
+    // Suralimenté, quelle que soit la façon : moins de compression, et plus d'enrichissement à pleine charge. L'huile des paliers, elle, ne concerne que le turbo.
+    const bool boosted = p.engine.aspiration != Aspiration::Natural;
     fuel_ = &fuelSpecOf(p.engine.fuel);
     litres_ = static_cast<double>(p.engine.displacementCc) / 1000.0;
     redline_ = redlineRpmOf(p);
-    baseEfficiency_ = diesel_ ? kEfficiencyDiesel : (turbo_ ? kEfficiencyPetrolTurbo : kEfficiencyPetrol);
-    fullRichness_ = diesel_ ? 1.0 : 1.0 / (turbo_ ? kFullLoadLambdaTurbo : kFullLoadLambda);
+    baseEfficiency_ = diesel_ ? kEfficiencyDiesel : (boosted ? kEfficiencyPetrolTurbo : kEfficiencyPetrol);
+    fullRichness_ = diesel_ ? 1.0 : 1.0 / (boosted ? kFullLoadLambdaTurbo : kFullLoadLambda);
     throttlingNm_ = diesel_ ? 0.0 : kThrottlingBar * kAtmosphere * litres_ * 1e-3 / (4.0 * kPi);
     peakNaturalNm_ = 1.0;
     peakGrossW_ = 1.0;
@@ -230,7 +232,9 @@ double brakeSpecificFuel(const Powertrain& p, double rpm, double brakeNm) {
     const double friction = frictionTorqueNm(p, rpm);
     const double fullGross = fullLoadTorqueNm(p, rpm, steadyBoost(p, rpm)) + friction;
     const double kw = brakeNm * rpm * 2.0 * kPi / 60.0 / 1000.0;
-    return model.fuelGps(rpm, brakeNm, friction, fullGross) * 3600.0 / kw;
+    // Le compresseur prend sa part aux pistons avant le frein : à cette charge, soupape ouverte ou non.
+    const double charger = p.engine.aspiration == Aspiration::Supercharger ? superchargerDriveNm(p, rpm, (brakeNm + friction + superchargerDriveNm(p, rpm, 1.0)) / fullGross) : 0.0;
+    return model.fuelGps(rpm, brakeNm, friction + charger, fullGross) * 3600.0 / kw;
 }
 
 FuelMapSummary fuelMapSummary(const Powertrain& p) {
@@ -246,8 +250,10 @@ FuelMapSummary fuelMapSummary(const Powertrain& p) {
         const double full = fullLoadTorqueNm(p, rpm, steadyBoost(p, rpm));
         const double kw = rpm * 2.0 * kPi / 60.0 / 1000.0;
         for (double share = 0.05; share <= 1.0001; share += 0.05) {
-            const double brake = share * full;
-            const double gPerKwh = model.fuelGps(rpm, brake, friction, full + friction) * 3600.0 / (brake * kw);
+            const double charger = p.engine.aspiration == Aspiration::Supercharger ? superchargerDriveNm(p, rpm, share) : 0.0;
+            const double brake = share * full - charger;
+            if (brake <= 0.0) continue;
+            const double gPerKwh = model.fuelGps(rpm, brake, friction + charger, full + friction) * 3600.0 / (brake * kw);
             if (out.bestGPerKwh == 0.0 || gPerKwh < out.bestGPerKwh) {
                 out.bestGPerKwh = gPerKwh;
                 out.bestRpm = rpm;

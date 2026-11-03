@@ -182,6 +182,17 @@ const AIR_FILTER_GAS: Record<NonNullable<EngineConfig['airFilter']>, { drop: num
 };
 /** L'échauffement du compartiment au point nominal (K) : recopie `kBayRiseFrontK` et ses voisines. */
 const BAY_RISE_K: Record<'front' | 'mid' | 'rear', number> = { front: 12, mid: 20, rear: 16 };
+/**
+ * Le chemin de l'air d'un compresseur mécanique : mêmes pièces, en plus court, le compresseur étant posé sur le collecteur. Même volume
+ * que `chargeVolumeM3` en C++ (2,6 L sur 2 L), et une perte de l'échangeur de l'ordre de `kRatedCoolerBar` (0,05 bar).
+ */
+const CHARGER_INTAKE: typeof TURBO_INTAKE = [
+  { kind: 'filter', length: 0.24, area: 8, drag: 1100, wall: 0.1 },
+  { kind: 'inlet', length: 0.25, area: 1, drag: 0, wall: 0.1 },
+  { kind: 'hot', length: 0.2, area: 1, drag: 0, wall: 0.1 },
+  { kind: 'cooler', length: 0.2, area: 4, drag: 1400, wall: 3 },
+  { kind: 'cold', length: 0.2, area: 1, drag: 0, wall: 0.1 },
+];
 
 /** Longueur de chaque collecteur (m) : mêmes ordres de grandeur que `EngineConfig::toProfile`. */
 function headerLength(layout: Layout, cylinder: number): number {
@@ -357,11 +368,18 @@ export class GasNetwork {
   private exhaustValve = 0;
   private intakeValve = 0;
   private diesel = false;
+  /** Pas de turbine sur la ligne : un compresseur prend sa puissance au vilebrequin. */
+  get hasTurbine(): boolean {
+    return this.turbo;
+  }
   /** Le carburant de ce moteur : un diesel en charge rejette des suies. */
   get isDiesel(): boolean {
     return this.diesel;
   }
   private turbo = false;
+  /** Un compresseur mécanique : le chemin de l'air d'un turbo, sans turbine ni décharge. */
+  private charger = false;
+  private airChain: typeof TURBO_INTAKE | null = null;
   private flutter = false;
   private antiLagEvent = 0;
   private boostBar = 0;
@@ -459,6 +477,8 @@ export class GasNetwork {
     const CELL_M = count >= 8 ? CELL_LARGE : CELL_SMALL;
     this.cell = CELL_M;
     this.turbo = config.aspiration === 'turbo';
+    this.charger = config.aspiration === 'supercharger';
+    this.airChain = this.turbo ? TURBO_INTAKE : this.charger ? CHARGER_INTAKE : null;
     this.diesel = config.fuel === 'diesel';
     this.flutter = config.turboRelease === 'flutter';
     this.boostBar = config.boostBar;
@@ -475,7 +495,7 @@ export class GasNetwork {
     const stroke = cylinderVolume / this.boreArea;
     this.crank = stroke / 2;
     this.rod = stroke * 1.6;
-    const ratio = this.diesel ? 18 : this.turbo ? 9.5 : 10.5;
+    const ratio = this.diesel ? 18 : this.airChain ? 9.5 : 10.5;
     this.clearance = cylinderVolume / (ratio - 1);
     this.exhaustValve = 0.19 * this.boreArea;
     this.intakeValve = 0.24 * this.boreArea;
@@ -529,9 +549,9 @@ export class GasNetwork {
     const intakeFirst = cells;
     const intakeArea = base * 1.2;
     const parts: IntakePart[] = [];
-    if (this.turbo) {
+    if (this.airChain) {
       let cell = intakeFirst;
-      for (const part of TURBO_INTAKE) {
+      for (const part of this.airChain) {
         // Déporté, c'est le tube chaud qui rejoint l'échangeur de plus loin : même volume en plus qu'en C++ (`chargeVolumeM3`).
         const length = part.kind === 'hot' && pipeExtra > 0 ? part.length + pipeExtra : part.length;
         const count = Math.max(3, Math.round(length / CELL_M));
@@ -620,7 +640,7 @@ export class GasNetwork {
     parts.forEach((part, p) => {
       const areaHere = intakeArea * part.area;
       const nextArea = p + 1 < parts.length ? intakeArea * parts[p + 1].area : 0;
-      const spec = TURBO_INTAKE.find((item) => item.kind === part.kind);
+      const spec = this.airChain?.find((item) => item.kind === part.kind);
       for (let k = 0; k < part.count; k++) {
         const cell = part.first + k;
         this.area[cell] = areaHere;
@@ -652,7 +672,7 @@ export class GasNetwork {
     }
     // Sur la chaîne d'un turbo, le tube chaud garde sa chaleur et seul l'échangeur en prend.
     for (const part of parts) {
-      const spec = TURBO_INTAKE.find((item) => item.kind === part.kind);
+      const spec = this.airChain?.find((item) => item.kind === part.kind);
       if (!spec) continue;
       for (let k = 0; k < part.count; k++) this.wallRate[part.first + k] = spec.wall;
     }
@@ -747,7 +767,7 @@ export class GasNetwork {
     // Le papillon : voir `stepOrgans`.
     right[intakeFirst + this.intakeCount - 1] = this.area[intakeFirst + this.intakeCount - 1];
     // Le compresseur est une face ouverte des deux côtés.
-    if (this.turbo) {
+    if (this.airChain) {
       right[this.compressorCell - 1] = intakeArea;
       left[this.compressorCell] = intakeArea;
     }
@@ -1146,9 +1166,10 @@ export class GasNetwork {
     const plenum = this.zonePlenum;
     const firstIntake = this.intakeFirst;
     const lastIntake = firstIntake + this.intakeCount - 1;
-    const boostFactor = this.turbo ? 1 + inputs.boost * this.boostBar : 1;
-    // Le turbo calculé par `TurboCharger` : c'est lui que sent la voiture. Sans lui, le rapport se déduit de la pression.
-    const compressorRatio = this.turbo ? (inputs.compressorRatio ?? boostFactor) : 1;
+    const chained = this.airChain !== null;
+    const boostFactor = chained ? 1 + inputs.boost * this.boostBar : 1;
+    // Le turbo calculé par `TurboCharger` ou le compresseur par `Supercharger` : c'est lui que sent la voiture. Sans lui, le rapport se déduit de la pression.
+    const compressorRatio = chained ? (inputs.compressorRatio ?? boostFactor) : 1;
 
     // Papillon : il s'ouvre juste assez pour tenir la pression que demande le remplissage réel.
     const wanted = this.diesel ? P_ATM * boostFactor : P_ATM * (0.18 + 0.82 * Math.min(inputs.load, 1)) * boostFactor;
@@ -1162,7 +1183,7 @@ export class GasNetwork {
     const unit = flux[0];
     let opening = this.throttleMax;
     // Grand ouvert sous pression : il laisse aussi revenir l'air que les soupapes refoulent, et le plénum reste au niveau du tube.
-    if (!this.diesel && !(this.turbo && inputs.load > 0.9)) {
+    if (!this.diesel && !(chained && inputs.load > 0.9)) {
       if (unit > 1) {
         const want = this.demand + ((wanted - pZone) * this.zV[plenum]) / (R * tZone * 0.006);
         opening = Math.min(Math.max(want / unit, 0), this.throttleMax);
@@ -1187,13 +1208,15 @@ export class GasNetwork {
     this.zY[plenum] += moved * share;
     this.throttleFlow = throttleFlow;
     // Le plénum tiédit au contact du moteur. Sur un turbo, c'est l'air de l'échangeur qui compte : il ne fait que tiédir.
-    this.zE[plenum] += (dt / (this.turbo ? 0.6 : 0.05)) * (T_AMB + 30 * inputs.heat - tZone) * this.zM[plenum] * CV;
+    this.zE[plenum] += (dt / (chained ? 0.6 : 0.05)) * (T_AMB + 30 * inputs.heat - tZone) * this.zM[plenum] * CV;
 
-    if (!this.turbo) return;
+    if (!chained) return;
 
     this.boostNow = compressorRatio;
     this.outKNow = inputs.compressorOutK ?? 0;
     this.compressorFace();
+    // Un compresseur n'a ni décharge ni turbine : l'échappement ne le voit pas.
+    if (!this.turbo) return;
 
     // Décharge : une soupape qui ouvre le conduit sur l'air libre, sauf en flutter où tout reflue par le compresseur.
     let releaseFlow = 0;

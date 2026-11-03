@@ -296,5 +296,26 @@
     "drive": "rear",
     "placement": "front",
     "insulation": "light"
+  },
+  {
+    "id": "v8_supercharged",
+    "name": "Supercharged V8",
+    "description": "6.2 L V8 with a Roots blower: torque right away, and its whine.",
+    "cylinders": 8,
+    "layout": "cross_plane",
+    "displacementCc": 6200,
+    "boreMm": 103,
+    "redlineRpm": 6400,
+    "exhaust": "sport",
+    "aspiration": "supercharger",
+    "superchargerKind": "roots",
+    "boostBar": 0.7,
+    "routing": "dual",
+    "body": "coupe",
+    "massKg": 1850,
+    "rimInch": 20,
+    "drive": "rear",
+    "placement": "front",
+    "insulation": "standard"
   }
 ]

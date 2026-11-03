@@ -83,6 +83,11 @@
         { label: t('gauge.antiLagLost'), value: () => `${whole(telemetry().antiLagLostNm)} Nm`, source: sim },
       ] : []),
     ] : []),
+    ...(config.aspiration === 'supercharger' && !config.electric ? [
+      { label: t('live.charger'), value: () => `${fixed(telemetry().boost * config.boostBar, 2)} bar`, source: sim },
+      { label: t('gauge.chargerName'), value: () => `${whole(telemetry().chargerRpm)} ${t('unit.rpm')}`, source: sim },
+      { label: t('gauge.chargerKw'), value: () => `${fixed(telemetry().chargerKw, 1)} kW`, source: sim },
+    ] : []),
     { label: t('meter.accel'), value: () => `${fixed(readings.accelG, 2)} g`, source: calculated },
     { label: t('meter.slip'), value: () => `${fixed(telemetry().slip, 1)} m/s`, source: sim },
     { label: t('meter.clutchKw'), value: () => `${fixed(telemetry().clutchSlipKw, 1)} kW`, source: sim },

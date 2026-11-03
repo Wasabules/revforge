@@ -147,6 +147,7 @@ void play(EngineSound& sound, DrivingModel& model, Output& out, int rate, Drive 
         sound.setTargetRpm(static_cast<float>(model.rpm()));
         sound.setDrive(static_cast<float>(model.load()), static_cast<float>(model.boost()), model.cut(), model.cranking(), static_cast<float>(model.throttle()));
         sound.setTurbo(model.turboDrive());
+        sound.setSupercharger(model.superchargerDrive());
         sound.setStarter(model.starterPowered(), model.starterMeshed(), static_cast<float>(model.starterLoad()));
         sound.setRoad(static_cast<float>(model.speedKmh() / 3.6), static_cast<float>(model.wheelSlip()));
         sound.setGearbox(model.box(), model.gearboxDrive());

@@ -720,6 +720,13 @@
           : [toCar(shape.length * 0.96, 0.42), toCar(left + blockWidth, engineY + blockHeight * 0.8)];
         tube(ctx, airPath, Math.max(2.5, 0.04 * scale) + 1, theme.line);
         drawAirGas(ctx, theme, airPath, Math.max(2.5, 0.04 * scale));
+        // Le compresseur mécanique : sur le chemin de l'air, entraîné par le vilebrequin. Ni turbine ni tube chaud.
+        if (config.aspiration === 'supercharger') {
+          const at = airPath[airPath.length - 1];
+          const radius = Math.max(4, 0.09 * scale);
+          turboWheel(ctx, theme, at[0], at[1] - radius, radius, motion.painter.airStyle(theme, motion.compressorOutK, 1 + motion.boost * config.boostBar), config.superchargerKind === 'centrifugal' ? 9 : 3, motion.chargerAngle);
+          labels.push({ x: engineX + blockWidth * 0.4, text: t('live.charger') });
+        }
       }
       labels.push({ x: engineX, text: t('car.engineLabel', { cylinders: config.cylinders, litres: fixed(litres, 1) }) });
 

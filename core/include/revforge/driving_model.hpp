@@ -124,6 +124,10 @@ public:
     bool antiLagActive() const { return antiLag_.active; }
     /** Le couple que le retard et les cylindres coupés retirent à ce que donnerait cette charge d'air (Nm). */
     double antiLagLostNm() const { return antiLagLostNm_; }
+    /** Le compresseur mécanique : mêmes pressions, en unités physiques. Rien de neuf sur un moteur sans compresseur. */
+    bool supercharged() const { return superchargerEngine_; }
+    const Supercharger& supercharger() const { return supercharger_; }
+    SuperchargerDrive superchargerDrive() const { return supercharger_.drive(); }
     /** Couple au vilebrequin, négatif en frein moteur (Nm). */
     double torqueNm() const { return torque_; }
     double powerKw() const;
@@ -196,6 +200,7 @@ private:
     double compressionLoadNm() const;
     void stepTurbo(double rpmNow, bool burning);
     void updateAntiLag(double throttle, double rpmNow, bool off);
+    void stepSupercharger(double rpmNow);
     double bmepPumping(double rpm) const;
     double wheelSpeedMs() const { return wheelOmega_ * radius_; }
     void meterConsumption();
@@ -245,6 +250,8 @@ private:
     bool antiLagEngine_ = false;
     AntiLagCommand antiLag_;
     double antiLagLostNm_ = 0.0;
+    Supercharger supercharger_;
+    bool superchargerEngine_ = false;
     double torque_ = 0.0;
     bool cut_ = false;
     bool limiterCut_ = false;

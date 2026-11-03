@@ -7,6 +7,7 @@
 
 #include "revforge/engine_config.hpp"
 #include "revforge/gearbox.hpp"
+#include "revforge/supercharger.hpp"
 #include "revforge/turbo.hpp"
 
 namespace revforge {
@@ -58,6 +59,8 @@ public:
      * Sans cet appel, le son déduit tout cela de la pression de `setDrive`.
      */
     void setTurbo(const TurboDrive& drive);
+    /** Le vrai compresseur, quand il y en a un : sa vitesse et l'écart de pression font son sifflement. */
+    void setSupercharger(const SuperchargerDrive& drive);
     /** Le démarreur : alimenté ; pignon engagé dans la couronne. Le contact des dents fait le son. */
     void setStarter(bool powered, bool meshed, float load = 0.5f);
     /** Vitesse de la voiture et glissement des pneus : vent, roulement, crissement. */

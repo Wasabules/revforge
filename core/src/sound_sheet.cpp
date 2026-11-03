@@ -18,7 +18,7 @@ float heldLevel(EngineSound& sound, const EngineProfile& profile, float rpm, flo
     sound.setProfile(profile);
     sound.setVolume(0.7f);
     sound.setTargetRpm(rpm);
-    sound.setDrive(load, load > 0.9f && profile.turbo ? 1.0f : 0.0f, false, false);
+    sound.setDrive(load, load > 0.9f && (profile.turbo || profile.supercharged) ? 1.0f : 0.0f, false, false);
     constexpr int kBlock = 512;
     std::vector<float> buffer(kBlock);
     double energy = 0.0;
