@@ -38,7 +38,8 @@ test.describe('la géométrie, sans navigateur', () => {
     expect(EXHAUST_WIDTH).toBe(constant(source, 'kExhaustWidth'));
     expect(TRANSFER_WIDTH).toBe(constant(source, 'kTransferWidth'));
     expect(INLET_WIDTH).toBe(constant(source, 'kInletWidth'));
-    expect(GEOMETRIC_COMPRESSION).toBe(constant(source, 'kGeometricCompression'));
+    // Intégration : le taux géométrique d'origine est dans l'en-tête, que lit aussi la combustion (`stockCompressionRatio`).
+    expect(GEOMETRIC_COMPRESSION).toBe(constant(readFileSync('../core/include/revforge/two_stroke.hpp', 'utf8'), 'kTwoStrokeGeometricCompression'));
     expect(CRANKCASE_COMPRESSION).toBe(constant(source, 'kCrankcaseCompression'));
     const line = cpp('exhaust_line.cpp');
     expect(CHAMBER_SILENCER_M).toBe(constant(line, 'kChamberSilencerM'));

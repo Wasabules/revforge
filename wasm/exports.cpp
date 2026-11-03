@@ -606,7 +606,13 @@ int rf_ecu_flat() { return g_model->flatShifting() ? 1 : 0; }
 /** Part du couple que retire l'antipatinage, de 0 à 1. */
 float rf_ecu_traction() { return static_cast<float>(g_model->ecuAction().traction); }
 /** La fiche : le couple de pleine charge face à la carte d'origine, l'avance demandée, le gaz à la sortie des cylindres (°C). */
-float rf_ecu_full_share() { return g_powertrain.electric ? 1.0f : static_cast<float>(ecuFullLoadShare(g_powertrain.engine)); }
+float rf_ecu_full_share() {
+    if (g_powertrain.electric) return 1.0f;
+    const double share = ecuFullLoadShare(g_powertrain.engine);
+    // Intégration : sur un quatre-temps à étincelle, la part de l'avance vient de la carte du cliquetis, au régime de la fiche.
+    const KnockMap* map = ecuAdvanceInKnockMap(g_powertrain.engine) ? knockMapOf(g_powertrain) : nullptr;
+    return static_cast<float>(map != nullptr ? share * map->steadyTorqueShare(powerSummary(g_powertrain).peakPowerRpm) : share);
+}
 /**
  * L'avance demandée pour la fiche : la carte d'origine de ce moteur, celle que la combustion calcule (meilleur couple, ou sa limite de
  * cliquetis moins sa marge), plus le décalage du calculateur. Un diesel et un deux-temps gardent celle du calculateur.

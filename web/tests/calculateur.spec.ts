@@ -79,7 +79,7 @@ test.describe('le calculateur', () => {
     expect(errors).toEqual([]);
   });
 
-  test('sa carte se lit dans le volet, calculée : 6° de retard retirent 0,8 % de couple et chauffent le gaz', async ({ page }) => {
+  test('sa carte se lit dans le volet, calculée : 6° de retard retirent 3,4 % de couple et chauffent le gaz', async ({ page }) => {
     const figures = async (hash: string) => {
       await open(page, hash);
       await ouvrir(page, 'engine');
@@ -88,8 +88,10 @@ test.describe('le calculateur', () => {
     const stock = await figures(BASE);
     expect(stock).toContain('×1,000');
     const late = await figures(`${BASE}~~adv=-6`);
-    // 1 − (6/68)² = 0,992 : la parabole de `sparkTorqueShare`, lue du C++.
-    expect(late).toContain('×0,992');
+    // Intégration : le décalage passe par la carte du cliquetis (combustion), lue du C++ au régime de la fiche. Son cycle rend
+    // son meilleur travail environ 9° plus tôt que son critère de meilleur couple : 6° de retard y coûtent 3,4 %, là où la
+    // parabole de `sparkTorqueShare` en comptait 0,8 (1 − (6/68)²). Voir « Quand les réglages se rencontrent (2) ».
+    expect(late).toContain('×0,966');
     const gas = (text: string) => text.match(/gaz d'échappement (\d[\d\s ]*) °C \((\d[\d\s ]*) °C/)!.slice(1).map((value) => Number(value.replace(/\D/g, '')));
     const [tuned, origin] = gas(late);
     expect(tuned).toBeGreaterThan(origin);
