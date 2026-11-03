@@ -128,7 +128,7 @@ void TurboCharger::antiLagExhaust(const AntiLagExhaust& in, double& gas, double&
     const double burntFuel = m * in.fuelPerAir;
     const double intake = s.coolerOutK;
     const double share = (hotTarget - intake) / in.heatRiseK;
-    const double ignition = antiLagIgnition(s.turbineInK);
+    const double ignition = antiLagIgnition(collectorK());
     // Un carburateur ne dose pas sur commande : le seul surplus est celui du mélange qu'il débite déjà. -1 : un calculateur qui dose.
     const double carbSurplus = in.carbRichness > 0.0 ? burntFuel * (in.carbRichness > 1.0 ? in.carbRichness - 1.0 : 0.0) : -1.0;
 

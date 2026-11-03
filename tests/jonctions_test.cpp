@@ -262,7 +262,7 @@ TEST_CASE("jonction carburateur et anti-lag : le surplus de carburant n'est pay�
     CHECK(liftOf(antiLagged(AntiLag::CylinderCut, FuelSystem::Carburetor)).surplusGps == 0.0);
 }
 
-TEST_CASE("jonction carburateur et anti-lag : le mélange qui brûle encore ne réécrit pas la pression d'ouverture") {
+TEST_CASE("jonction carburateur et anti-lag : pied levé, le son reste celui de l'anti-lag") {
     const auto liftedSound = [](const Powertrain& p) {
         DrivingModel model(p);
         pullInFourth(model);
@@ -280,11 +280,51 @@ TEST_CASE("jonction carburateur et anti-lag : le mélange qui brûle encore ne r
         }
         return bandDb(test::slice(out, out.size() / 2, out.size()), 80.0, 800.0);
     };
-    // Les deux gardent la chaleur du retard : même pression à l'ouverture, à ce qu'apporte le souffle près.
+    // Le circuit de ralenti ne prend pas la place de l'anti-lag : ce n'est pas un moteur qui retient.
     const double carb = liftedSound(antiLagged(AntiLag::Retard, FuelSystem::Carburetor));
     const double injected = liftedSound(antiLagged(AntiLag::Retard));
     const double off = liftedSound(antiLagged(AntiLag::Off, FuelSystem::Carburetor));
     MESSAGE("médiums pied levé : retard sur carburateur " << carb << " dB, retard en injection " << injected << " dB, carburateur sans anti-lag " << off << " dB");
     CHECK(carb == doctest::Approx(injected).epsilon(0.05));
     CHECK(carb > off + 3.0);
+}
+
+TEST_CASE("jonction anti-lag et tube : la chaleur traverse la paroi, et l'anti-lag reste utile, moins sur un tube long") {
+    const Lifted offShort = liftOf(antiLagged(AntiLag::Off, FuelSystem::Injection, 400));
+    const Lifted offLong = liftOf(antiLagged(AntiLag::Off, FuelSystem::Injection, 3000));
+    for (const AntiLag kind : kAntiLags) {
+        const Lifted reference = liftOf(antiLagged(kind, FuelSystem::Injection, 400));
+        const Lifted remote = liftOf(antiLagged(kind, FuelSystem::Injection, 3000));
+        MESSAGE(static_cast<int>(kind) << " : arbre à 3 s " << reference.shaftAt3s << " puis " << remote.shaftAt3s << " tr/min (sans : " << offShort.shaftAt3s << ", " << offLong.shaftAt3s << ") ; reprise "
+                                       << reference.reprise << " puis " << remote.reprise << " s (sans : " << offShort.reprise << ", " << offLong.reprise << ") ; T3 " << reference.hottest - 273.15 << " puis " << remote.hottest - 273.15 << " °C");
+        // La paroi prend la chaleur de l'anti-lag comme une autre.
+        CHECK(remote.hottest < reference.hottest - 200.0);
+        // Moins efficace sur un tube long, mais toujours efficace.
+        CHECK(remote.shaftAt3s < 0.85 * reference.shaftAt3s);
+        CHECK(remote.shaftAt3s > 2.0 * offLong.shaftAt3s);
+        CHECK(remote.reprise > reference.reprise);
+        CHECK(remote.reprise < 0.8 * offLong.reprise);
+    }
+}
+
+TEST_CASE("jonction anti-lag et tube : ce qui arrive imbrûlé s'enflamme au collecteur, pas à la turbine") {
+    DrivingModel model(antiLagged(AntiLag::CylinderCut, FuelSystem::Injection, 3000));
+    pullInFourth(model);
+    for (int i = 0; i < 300; ++i) model.stepPedal(0.01, 0.0, 0.0);
+    REQUIRE(model.antiLagActive());
+    // Le gaz arrive froid à la turbine, mais le collecteur, lui, est encore chaud.
+    CHECK(model.turbo().state().turbineInK < 800.0);
+    CHECK(model.turbo().collectorK() > 800.0);
+    CHECK(model.turbo().antiLag().collectorHeatW > 1000.0);
+}
+
+TEST_CASE("le tube court ne fait pas fondre le gaz d'un moteur entraîné") {
+    DrivingModel model(antiLagged(AntiLag::Off, FuelSystem::Injection, 150));
+    pullInFourth(model);
+    double hottest = 0.0;
+    for (int i = 0; i < 300; ++i) {
+        model.stepPedal(0.01, 0.0, 0.0);
+        hottest = std::max(hottest, model.turbo().state().turbineInK);
+    }
+    CHECK(hottest < 1200.0);
 }

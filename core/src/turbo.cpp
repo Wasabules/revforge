@@ -459,7 +459,7 @@ TurboDrive TurboCharger::drive() const {
         d.antiLag.evoRatio = static_cast<float>(antiLag_.evoRatio);
         d.antiLag.heatShare = static_cast<float>(antiLag_.collectorHeatW / (rated * kPetrolFuelPerAir * kPetrolHeatValue));
         d.antiLag.heatW = static_cast<float>(antiLag_.collectorHeatW);
-        d.antiLag.ignition = static_cast<float>(antiLagIgnition(state_.turbineInK));
+        d.antiLag.ignition = static_cast<float>(antiLagIgnition(collectorK()));
         d.antiLag.exhaustM3s = static_cast<float>(lastGas_ * kAirR * state_.turbineInK / kAtmosphere);
     }
     return d;

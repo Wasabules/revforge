@@ -119,6 +119,9 @@ public:
     /** Ce que fait l'anti-lag à ce pas. Tout à zéro sans lui. */
     const AntiLagState& antiLag() const { return antiLag_; }
 
+    /** Le gaz à la sortie des cylindres : celui de la turbine, sauf si un tube ajouté les sépare. C'est là que s'enflamme ce qui arrive imbrûlé. */
+    double collectorK() const { return spec_.pipe.active && spec_.pipe.extraM > 0.0 ? pipe_.portK : state_.turbineInK; }
+
 private:
     struct AntiLagExhaust {
         AntiLagCommand command;

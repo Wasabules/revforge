@@ -94,7 +94,14 @@ TurboPipeSpec turboPipeSpecFor(int pipeMm, double displacementM3, int cylinders)
 }
 
 double turboPipeSteadyK(const TurboPipeSpec& pipe, double gas, double inletK) {
-    const double flow = gas > kMinFlow ? gas : kMinFlow;
+    double flow = gas > kMinFlow ? gas : kMinFlow;
+    // Plus court, on rend au gaz ce que le tube retiré lui aurait pris. Moteur entraîné, presque sans débit, cette inversion n'a plus de sens :
+    // le tube aurait tout pris, et le gaz atteindrait 2000 °C. On s'arrête au débit d'un ralenti soutenu : 20 g/s sur 2 L.
+    if (pipe.extraM <= 0.0) {
+        const double scale = pipe.diameterM / kPipeDiameterAt2L;
+        const double floor = 0.02 * scale * scale;
+        if (flow < floor) flow = floor;
+    }
     const double exchanged = exchangedShare(pipe, flow);
     const double wall = steadyWallShare(pipe, flow, exchanged);
     // Sortie du tube : une paroi à `wall`, et ce que le gaz garde de l'écart avec elle.

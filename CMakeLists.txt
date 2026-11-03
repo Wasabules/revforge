@@ -110,7 +110,7 @@ else()
   # La carrosserie des années 80, sur un moteur aux réglages neutres : sa ligne, son plan et sa caisse.
   golden(lap_retro fe72a187 --cylinders 6 --cc 2500 --bore 84 --redline 6400 --exhaust stock --body retro --mass 1150 --rim 14 --drive rear --insulation light --scenario lap)
   golden(turbo_pipe_long a0889b48 --preset hot_hatch_turbo --scenario turbo --turbo-pipe 2500)
-  golden(turbo_pipe_short 7cab0ac1 --preset hot_hatch_turbo --scenario turbo --turbo-pipe 150)
+  golden(turbo_pipe_short 3898802e --preset hot_hatch_turbo --scenario turbo --turbo-pipe 150)
   golden(carb_multi 463a064f --preset carb_twin_cam --scenario blips)
   golden(carb_single 4d1f365e --preset hot_hatch_na --carb single --scenario launch --seconds 10)
 endif()
