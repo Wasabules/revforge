@@ -110,32 +110,36 @@ test.describe('le tube du turbo, sans navigateur', () => {
   });
 
   test('trois mètres de tube n\'allouent rien, et tiennent dans une image', () => {
-    const gas = new GasFlow();
-    gas.configure({ ...BASE, turboPipeMm: 3000 }, ORDER4);
-    let cycle = 0;
-    const step = () => {
-      const turns = (WIDE_OPEN.rpm / 120) * FRAME;
-      gas.wantChambers = true;
-      gas.advance(FRAME, cycle, turns, WIDE_OPEN);
-      cycle = (cycle + turns) % 1;
-    };
-    for (let f = 0; f < 600; f++) step();
-    // La médiane de lots, comme `filtre.spec.ts` : une allocation par pas se retrouve dans chaque lot, alors que le compilateur
-    // et le ramasse-miettes ne font que des pics isolés. La somme des hausses, elle, dépendait des tests passés avant :
-    // 4,6 ko par image dans la suite complète, 2,6 ko seule, à code égal.
-    const lots: number[] = [];
-    // Le meilleur relevé : d'autres calculs sur la machine ne ralentissent qu'une partie des images.
+    // Le tas d'une image dépend de ce que les tests précédents ont fait compiler : sur `main` comme ici, le même réseau passe
+    // de 2,2 ko par image à froid à 4,5 ko après des réglages variés, tube ou pas. Le seuil absolu reste celui
+    // d'`interface.spec.ts`, qui passe tôt ; ici, on compare le tube à son absence, dans le même état, lot après lot.
+    const flows = [400, 3000].map((turboPipeMm) => {
+      const gas = new GasFlow();
+      gas.configure({ ...BASE, turboPipeMm }, ORDER4);
+      return { gas, cycle: 0, lots: [] as number[] };
+    });
+    // Le meilleur relevé, sur le tube : d'autres calculs sur la machine ne ralentissent qu'une partie des images.
     let cost = Infinity;
-    for (let lot = 0; lot < 30; lot++) {
-      const before = process.memoryUsage().heapUsed;
-      for (let f = 0; f < 100; f++) {
-        step();
-        cost = Math.min(cost, gas.costMs);
+    const run = (flow: (typeof flows)[number], frames: number) => {
+      for (let f = 0; f < frames; f++) {
+        const turns = (WIDE_OPEN.rpm / 120) * FRAME;
+        flow.gas.wantChambers = true;
+        flow.gas.advance(FRAME, flow.cycle, turns, WIDE_OPEN);
+        flow.cycle = (flow.cycle + turns) % 1;
+        if (flow === flows[1]) cost = Math.min(cost, flow.gas.costMs);
       }
-      lots.push((process.memoryUsage().heapUsed - before) / 100);
+    };
+    for (const flow of flows) run(flow, 600);
+    // La médiane, comme `filtre.spec.ts` : une allocation par pas se retrouve dans chaque lot, le ramasse-miettes ne fait que des creux isolés.
+    for (let lot = 0; lot < 30; lot++) {
+      for (const flow of flows) {
+        const before = process.memoryUsage().heapUsed;
+        run(flow, 100);
+        flow.lots.push((process.memoryUsage().heapUsed - before) / 100);
+      }
     }
-    lots.sort((a, b) => a - b);
-    expect(lots[15]).toBeLessThan(4000);
+    const [near, far] = flows.map((flow) => flow.lots.sort((a, b) => a - b)[15]);
+    expect(far - near).toBeLessThan(500);
     // Largement au-dessus de ce qu'on vise (4 ms) : la machine des tests peut être chargée.
     expect(cost).toBeLessThan(12);
   });
