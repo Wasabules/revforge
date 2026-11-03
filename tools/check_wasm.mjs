@@ -114,7 +114,7 @@ function check(label, wasm, expected) {
 {
   const rf = load();
   rf.rf_set_car(BODY.coupe, 1300, 18, DRIVE.rear, PLACEMENT.front, INSULATION.standard);
-  rf.rf_set_config(2, LAYOUT.rotary, 1308, 84, 9000, EXHAUST.sport, 0, 0, 0, 1, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+  rf.rf_set_config(2, LAYOUT.rotary, 1308, 84, 9000, EXHAUST.stock, 0, 0, 0, 1, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
   rf.rf_set_mode(3);
   check('tour complet, birotor', render(rf, 60, 128), native('--preset', 'twin_rotor_13', '--scenario', 'lap'));
 }

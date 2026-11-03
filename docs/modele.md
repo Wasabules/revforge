@@ -630,27 +630,27 @@ La boîte automatique du modèle joue peu : un conducteur qui suit des rapports 
 - Aucun bruit de distribution : aucune soupape ne retombe. Bloc à −5 dB (40 bar de pression maximale au lieu de 70, **ordre de grandeur non recoupé**), plancher au ralenti à −3 dB, moins d'à-coups (supposés).
 - **Une mémoire par chambre, et non par explosion.** Les gaz résiduels passent d'un cycle au suivant dans la même chambre, donc tous les trois tours, là où un cylindre les retrouve tous les deux tours. C'est de là que viennent les tiers d'ordre, et que disparaissent les demi-ordres, sans gain ajouté pour les obtenir. Un écart fixe entre les trois faces d'un rotor a été essayé, puis retiré : il ne changeait rien de mesurable, et le chiffre aurait été inventé.
 
-Rangs mesurés à 4000 tr/min, ligne sport, régime tenu (`tools/analyze_orders.py`, en dB sous le rang le plus fort) : les deux moteurs ont le même rang 2, celui de la cadence, mais pas les mêmes sous-rangs.
+Rangs mesurés à 4000 tr/min, ligne d'origine, régime tenu (`tools/analyze_orders.py`, en dB sous le rang le plus fort) : les deux moteurs ont les mêmes rangs 2 et 4, ceux de la cadence, mais pas les mêmes sous-rangs.
 
 | Rang | 1 | 5/3 | 2 | 5/2 | 3 | 4 | 6 | moyenne demis | moyenne tiers |
 |---|---|---|---|---|---|---|---|---|---|
-| Birotor 1,3 L | −31,3 | −24,7 | 0 | −40,8 | −28,2 | −11,6 | −16,3 | −46,7 | −40,8 |
-| 4 cylindres 2,15 L | −24,2 | −31,6 | 0 | −27,9 | −24,9 | −8,6 | −13,7 | −35,7 | −44,2 |
+| Birotor 1,3 L | −25,7 | −29,8 | 0 | −38,5 | −30,1 | −1,3 | −24,9 | −44,0 | −39,4 |
+| 4 cylindres 2,15 L | −21,2 | −38,7 | −2,9 | −25,7 | −28,2 | 0 | −22,5 | −34,8 | −41,2 |
 
 Un bicylindre à 360°, mesuré de même, a son plus fort rang à 1. `tests/rotary_test.cpp` protège les tiers et les demis.
 
-**Face à un 4 cylindres de même puissance** (même coupé de 1300 kg, 9000 tr/min, ligne sport) :
+**Face à un 4 cylindres de même puissance** (même coupé de 1300 kg, 9000 tr/min, ligne d'origine) :
 
 | | Birotor 1,3 L | 4 cylindres 2,15 L |
 |---|---|---|
-| Couple | 242 Nm à 5600 tr/min | 241 Nm à 5600 tr/min |
-| Puissance | 181 kW à 8300 tr/min | 180 kW à 8200 tr/min |
-| 0-100 km/h | 6,9 s | 7,0 s |
-| WLTC | 13,4 L/100 km | 10,9 L/100 km |
-| Meilleur point de la carte | 285 g/kWh | 239 g/kWh |
-| Huile, WLTC | 704 mL/1000 km | 103 mL/1000 km |
+| Couple | 227 Nm à 5400 tr/min | 225 Nm à 5400 tr/min |
+| Puissance | 167 kW à 8250 tr/min | 166 kW à 8150 tr/min |
+| 0-100 km/h | 7,1 s | 7,2 s |
+| WLTC | 13,35 L/100 km | 10,94 L/100 km |
+| Meilleur point de la carte | 287 g/kWh | 241 g/kWh |
+| Huile, WLTC | 707 mL/1000 km | 103 mL/1000 km |
 
-L'égalité de couple et de puissance vient du choix de la cylindrée du 4 cylindres, pour la comparaison. Le birotor lui-même n'a pas été réglé : ses 181 kW et 242 Nm dépassent de 7 à 15 % ce qui est publié pour un 13B-MSP de même cylindrée, écart laissé tel quel.
+L'égalité de couple et de puissance vient du choix de la cylindrée du 4 cylindres, pour la comparaison. Le birotor lui-même n'a pas été réglé : ses 167 kW et 227 Nm sont à −2 % et +8 % des 170 kW et 211 Nm du 13B-MSP de même cylindrée (chiffres de mémoire), écart laissé tel quel. Sur une ligne sport, il passe à 181 kW et 242 Nm. La ligne d'origine du préréglage est aussi celle qui tient le contrôle de « grain » de `engine_sound_test.cpp` : sur la ligne sport, très forte dans les graves, ce rapport tombe à −41 dB, sous le seuil de −40, dans la plage de −47 à −3 dB des voitures mesurées.
 
 **Ce qui reste simplifié.** Pas d'usure, pas de segments, pas de « ring-a-ding » au ralenti, pas de lumières variables : une admission à un seul calage. La température d'échappement du turbo suit la même loi qu'un moteur à pistons, alors qu'un rotatif rejette plus chaud. Dans `EngineView`, un rotatif turbo montre son moteur sans la chaîne du turbo, visible sur la vue du gaz et sur la voiture. Le gaz à l'écran (`GasNetwork`) calcule vraiment trois chambres par rotor, sur 1080°, avec un tube par rotor : leur volume s'y écrit comme un piston à bielle infinie, en degrés de cycle.
 

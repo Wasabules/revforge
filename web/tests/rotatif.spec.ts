@@ -47,6 +47,9 @@ test.describe('la géométrie, sans navigateur', () => {
         }
         return hit;
       };
+      // Un `expect` par point dure des minutes : on compte, et on vérifie à la fin.
+      let offTrack = 0;
+      let crossing = 0;
       for (let shaft = 0; shaft < 1080; shaft += 7) {
         pose.solve(shaft);
         const beta = (pose.rotorDeg[0] * Math.PI) / 180;
@@ -58,15 +61,17 @@ test.describe('la géométrie, sans navigateur', () => {
           housingPoint(p, r, e, u);
           const ax = pose.rotorX[0] + r * Math.sin(u);
           const ay = pose.rotorY[0] + r * Math.cos(u);
-          expect(Math.hypot(ax - p[0], ay - p[1])).toBeLessThan(1e-6);
+          if (Math.hypot(ax - p[0], ay - p[1]) >= 1e-6) offTrack++;
         }
         // 3 flancs, 40 points chacun : on saute le sommet, qui touche par construction.
         for (let j = 0; j < layout.rotor.length; j++) {
           if (j % 40 < 2) continue;
           const q = layout.rotor[j];
-          expect(inside(pose.rotorX[0] + q[0] * cos + q[1] * sin, pose.rotorY[0] - q[0] * sin + q[1] * cos)).toBe(true);
+          if (!inside(pose.rotorX[0] + q[0] * cos + q[1] * sin, pose.rotorY[0] - q[0] * sin + q[1] * cos)) crossing++;
         }
       }
+      expect(offTrack).toBe(0);
+      expect(crossing).toBe(0);
     }
   });
 

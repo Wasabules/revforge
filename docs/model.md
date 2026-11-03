@@ -612,27 +612,27 @@ The model's automatic gearbox matters little: a driver following longer gears, a
 - No valvetrain noise: no valve lands. Block at −5 dB (40 bar peak pressure rather than 70, **order of magnitude, not cross-checked**), idle floor at −3 dB, less shaft ripple (assumed).
 - **One memory per chamber, not per firing.** Residual gas passes from one cycle to the next in the same chamber, so every three turns, where a cylinder meets it again every two. This is where the third orders come from, and why the half orders fade, with no gain added to get them. A fixed difference between a rotor's three faces was tried, then removed: it changed nothing measurable, and the figure would have been invented.
 
-Orders measured at 4000 rpm, sport line, held speed (`tools/analyze_orders.py`, in dB below the strongest order): both engines share order 2, the firing rate, but not the sub-orders.
+Orders measured at 4000 rpm, stock line, held speed (`tools/analyze_orders.py`, in dB below the strongest order): both engines share orders 2 and 4, those of the firing rate, but not the sub-orders.
 
 | Order | 1 | 5/3 | 2 | 5/2 | 3 | 4 | 6 | mean halves | mean thirds |
 |---|---|---|---|---|---|---|---|---|---|
-| Twin-rotor 1.3 L | −31.3 | −24.7 | 0 | −40.8 | −28.2 | −11.6 | −16.3 | −46.7 | −40.8 |
-| 4-cylinder 2.15 L | −24.2 | −31.6 | 0 | −27.9 | −24.9 | −8.6 | −13.7 | −35.7 | −44.2 |
+| Twin-rotor 1.3 L | −25.7 | −29.8 | 0 | −38.5 | −30.1 | −1.3 | −24.9 | −44.0 | −39.4 |
+| 4-cylinder 2.15 L | −21.2 | −38.7 | −2.9 | −25.7 | −28.2 | 0 | −22.5 | −34.8 | −41.2 |
 
 A 360° twin, measured the same way, has its strongest order at 1. `tests/rotary_test.cpp` protects thirds and halves.
 
-**Against a 4-cylinder of the same power** (same 1300 kg coupé, 9000 rpm, sport line):
+**Against a 4-cylinder of the same power** (same 1300 kg coupé, 9000 rpm, stock line):
 
 | | Twin-rotor 1.3 L | 4-cylinder 2.15 L |
 |---|---|---|
-| Torque | 242 Nm at 5600 rpm | 241 Nm at 5600 rpm |
-| Power | 181 kW at 8300 rpm | 180 kW at 8200 rpm |
-| 0-100 km/h | 6.9 s | 7.0 s |
-| WLTC | 13.4 L/100 km | 10.9 L/100 km |
-| Best point of the map | 285 g/kWh | 239 g/kWh |
-| Oil, WLTC | 704 mL/1000 km | 103 mL/1000 km |
+| Torque | 227 Nm at 5400 rpm | 225 Nm at 5400 rpm |
+| Power | 167 kW at 8250 rpm | 166 kW at 8150 rpm |
+| 0-100 km/h | 7.1 s | 7.2 s |
+| WLTC | 13.35 L/100 km | 10.94 L/100 km |
+| Best point of the map | 287 g/kWh | 241 g/kWh |
+| Oil, WLTC | 707 mL/1000 km | 103 mL/1000 km |
 
-The match in torque and power is a choice of the 4-cylinder's displacement, for the comparison. The twin-rotor itself was not tuned: its 181 kW and 242 Nm exceed what is published for a 13B-MSP of the same displacement by 7 to 15%, a gap left as it is.
+The match in torque and power is a choice of the 4-cylinder's displacement, for the comparison. The twin-rotor itself was not tuned: its 167 kW and 227 Nm are at −2% and +8% of the 170 kW and 211 Nm of the 13B-MSP of the same displacement (figures from memory), a gap left as it is. On a sport line it reaches 181 kW and 242 Nm. The preset's stock line is also the one that holds the "grain" check of `engine_sound_test.cpp`: on the sport line, very strong in the bass, that ratio falls to −41 dB, under the −40 threshold, within the −47 to −3 dB range of measured cars.
 
 **What stays simplified.** No wear, no seals, no low-speed "ring-a-ding", no variable ports: an intake with a single timing. The turbo's exhaust temperature follows the piston law, although a rotary runs hotter. In `EngineView`, a turbocharged rotary shows its engine without the turbo chain, which remains visible on the gas view and on the car. The gas on screen (`GasNetwork`) truly computes three chambers per rotor, over 1080°, with one runner per rotor: their volume is written like a piston with an infinite rod, in cycle degrees.
 
