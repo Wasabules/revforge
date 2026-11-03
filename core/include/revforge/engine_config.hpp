@@ -28,7 +28,7 @@ enum class SuperchargerKind { Roots, TwinScrew, Centrifugal };
 enum class AntiLag { Off, Retard, AirInjection, CylinderCut };
 /**
  * L'arbre à cames : deux en tête, quatre soupapes par cylindre ; un seul en tête, deux soupapes ; un seul dans le bloc,
- * avec poussoirs, tiges et culbuteurs (`Ohv`), deux soupapes. Socle : `Ohv` se comporte comme `Sohc` (voir `valvetrain()`).
+ * avec poussoirs hydrauliques, tiges et culbuteurs (`Ohv`), deux soupapes en ligne. Voir « Les culbuteurs et l'affolement ».
  */
 enum class Camshaft { Dohc, Sohc, Ohv };
 /** Le filtre à air : papier d'origine dans sa boîte, panneau sport dans la boîte, cône à l'air libre, cornets sans boîte. */
@@ -159,6 +159,35 @@ struct CarAcoustics {
     bool operator==(const CarAcoustics&) const = default;
 };
 
+/**
+ * Ce que le son tire de la distribution en plus de l'arbre à cames : l'affolement des soupapes, et le choc des poussoirs
+ * d'une distribution à culbuteurs. Rempli par `valvetrainProfileOf` (core/src/valve_float.cpp), lu par `floatOverload`…
+ * Voir « Les culbuteurs et l'affolement » dans docs/modele.md.
+ */
+struct ValvetrainProfile {
+    /** Régime d'affolement (tr/min) ; 0 sans soupapes (rotatif, deux-temps, électrique). */
+    double floatRpm = 0.0;
+    /** Ce que la souplesse de la chaîne ajoute à la décélération à ce régime : (f_d / f_n)². */
+    double stiffening = 0.0;
+    /** Durée de la décélération au nez (degrés de vilebrequin) : le retard de fermeture par unité de surcharge. */
+    double decelSpanDeg = 0.0;
+    /** Le flanc de fermeture (degrés de vilebrequin) : au-delà, la soupape retombe sur son siège sans la came. */
+    double maxLateDeg = 0.0;
+    /** Vitesse de la soupape au flanc par tr/min (m/s), et celle de la rampe de fermeture : la force du choc au siège. */
+    double flankMsPerRpm = 0.0;
+    double rampMsPerRpm = 0.0;
+    /** Entre deux rebonds sur le siège, par m/s de vitesse d'arrivée (s) : 2·e·m / F₀. */
+    double bounceSPerMs = 0.0;
+    /** Taux de compression, et fermeture de l'admission après le point mort bas (°) : ce que garde un cylindre qui ferme tard. */
+    double compression = 10.5;
+    double ivcAfterBdcDeg = 50.0;
+    /** Culbuteurs : l'impulsion du choc au poussoir, rapportée à celle du culbuteur d'un simple arbre, et le mode de la tige (Hz). */
+    double pushrodTick = 0.0;
+    double pushrodHz = 0.0;
+
+    bool operator==(const ValvetrainProfile&) const = default;
+};
+
 /** Le moteur vu par EngineSound : sa géométrie, d'où découle le son. */
 struct EngineProfile {
     int cylinders = 0;
@@ -232,6 +261,8 @@ struct EngineProfile {
     int rotors = 0;
     /** Durée de la bouffée, pleine charge : le volume de la chambre à l'ouverture, face à la section de la lumière (s). */
     float blowdownS = 0.0f;
+    /** L'affolement des soupapes et les poussoirs : voir `ValvetrainProfile`. */
+    ValvetrainProfile valves;
 
     /**
      * Régime simulé pour un régime réel de la voiture. Au ralenti, les deux ralentis
@@ -331,9 +362,9 @@ struct EngineConfig {
     double sweptCcPerTwoTurns() const { return (layout == Layout::Rotary ? 2.0 : 1.0) * static_cast<double>(displacementCc); }
     /**
      * La distribution réelle : un rotatif n'a ni soupapes ni arbre à cames, quoi que dise `camshaft`. Le double arbre est le
-     * modèle d'origine. Socle : les culbuteurs (`Ohv`, deux soupapes) se comportent comme le simple arbre.
+     * modèle d'origine ; le simple arbre et les culbuteurs ont deux soupapes (`twoValves`, valve_float.hpp).
      */
-    Camshaft valvetrain() const { return layout == Layout::Rotary ? Camshaft::Dohc : (camshaft == Camshaft::Ohv ? Camshaft::Sohc : camshaft); }
+    Camshaft valvetrain() const { return layout == Layout::Rotary ? Camshaft::Dohc : camshaft; }
     /** Le diamètre d'un cylindre : `boreMm`, sauf sur un rotatif, qui n'a pas d'alésage et prend le cylindre carré de sa chambre (voir `applyRotary`). */
     double effectiveBoreMm() const;
     /** Un rotatif ne brûle que de l'essence : un réglage diesel y reste sans effet. */

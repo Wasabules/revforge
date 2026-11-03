@@ -6,6 +6,7 @@
 #include "revforge/air_filter.hpp"
 #include "revforge/supercharger.hpp"
 #include "revforge/carburetor.hpp"
+#include "revforge/valve_float.hpp"
 #include "portable_math.hpp"
 
 namespace revforge {
@@ -299,6 +300,8 @@ EngineProfile EngineConfig::toProfile() const {
         p.stackRadiusM = static_cast<float>(revforge::stackRadiusM(*this));
     }
     p.camshaft = valvetrain();
+    // L'affolement des soupapes et les poussoirs : rien sans soupapes (rotatif, deux-temps).
+    p.valves = valvetrainProfileOf(*this);
 
     // Le démarreur dépend de ce qu'il doit lancer : la puissance suit la cylindrée et la compression.
     // Un rotatif se lance comme le quatre temps de deux fois sa cylindrée : il comprime autant à chaque tour.

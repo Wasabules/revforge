@@ -12,9 +12,11 @@
 #include "intake_path.hpp"
 #include "kotlin_math.hpp"
 #include "revforge/air_filter.hpp"
+#include "revforge/valve_float.hpp"
 #include "revforge/valvetrain.hpp"
 #include "starter_sound.hpp"
 #include "supercharger_sound.hpp"
+#include "valvetrain_sound.hpp"
 
 namespace revforge {
 
@@ -444,6 +446,15 @@ struct EngineSound::State {
     float rockerLevel = 0.0f;
     std::uint32_t rockerRng = 0x51ED270Bu;
     Svf rockerBand;
+    // Les culbuteurs et l'affolement (voir `ValvetrainSound`) : leurs générateurs à eux, et rien ne tourne sans leur cause.
+    ValvetrainSound valvetrainSound;
+    bool pushrods = false;
+    float pushrodTick = 0.0f;
+    // Au-delà de l'affolement : la charge perdue en moyenne, la vitesse d'arrivée au siège sur celle de la rampe, le premier rebond.
+    float floatLost = 0.0f;
+    float floatLanding = 0.0f;
+    float floatBounceS = 0.0f;
+    int clatterLeft = 0;
     Svf knockBand;
     float knockEnv = 0.0f;
     float knockDecay;
@@ -501,7 +512,8 @@ struct EngineSound::State {
           gearbox(static_cast<float>(sampleRate)),
           controlDt(static_cast<float>(kControlSamples) / static_cast<float>(sampleRate)),
           line(static_cast<float>(sampleRate)),
-          intakePath(static_cast<float>(sampleRate)) {
+          intakePath(static_cast<float>(sampleRate)),
+          valvetrainSound(static_cast<float>(sampleRate)) {
         intakeResponse.init(kIntakePartition, IntakePath::kLength / kIntakePartition);
         valveDecay = km::exp(-1.0f / (0.0009f * sr));
         blockDecay = km::exp(-1.0f / (0.005f * sr));
@@ -610,10 +622,13 @@ struct EngineSound::State {
      * Le double arbre est le modèle d'origine : il ne passe par rien de ce qui suit, sauf les réglages d'origine des filtres.
      */
     void applyValves(const EngineProfile& p) {
-        sohc = p.camshaft == Camshaft::Sohc && !p.electric;
+        // `sohc` : deux soupapes, sous un simple arbre ou des culbuteurs. Les culbuteurs ont en plus leurs poussoirs.
+        sohc = twoValves(p.camshaft) && !p.electric;
+        pushrods = p.camshaft == Camshaft::Ohv && !p.electric;
         if (!sohc) {
             valveBand.set(3600.0f, 1.1f, sr);
             valveBandHigh.set(7400.0f, 1.4f, sr);
+            valvetrainSound.setup(p.valves, 3600.0f, 7400.0f);
             return;
         }
         const double boreMm = static_cast<double>(p.boreM) * 1000.0;
@@ -630,6 +645,8 @@ struct EngineSound::State {
         seatLevel = km::sqrt(static_cast<float>(massTwo / massFour));
         rockerBand.set(kRockerHz, kRockerQ, sr);
         rockerDecay = km::exp(-1.0f / (kRockerDecayS * sr));
+        valvetrainSound.setup(p.valves, 3600.0f * deeper, 7400.0f * deeper);
+        pushrodTick = pushrods ? static_cast<float>(p.valves.pushrodTick) : 0.0f;
     }
 
     /** Ce qui découle des dimensions du moteur, recalculé sans toucher aux ondes en cours. */
@@ -948,6 +965,20 @@ struct EngineSound::State {
         }
         // Ce qui n'est pas entré par une section trop petite ne ressort pas : la bouffée s'affaiblit vers le rupteur.
         if (sohc) openPressure *= static_cast<float>(sohcFillingRatio(static_cast<double>(a.boreM) * 1000.0, static_cast<double>(a.strokeM) * 1000.0, static_cast<double>(km::max(rpm, 0.0f))));
+        // Au-delà de l'affolement, la soupape a quitté la came : l'admission ferme tard, et elle retombe sans sa rampe.
+        floatLost = 0.0f;
+        floatLanding = 0.0f;
+        if (a.valves.floatRpm > 0.0 && static_cast<double>(rpm) > a.valves.floatRpm) {
+            const double rpmNow = static_cast<double>(rpm);
+            const float kept = static_cast<float>(floatTrappedShare(a.valves, rpmNow));
+            floatLost = 1.0f - kept;
+            openPressure *= kept;
+            // Le choc suit la vitesse d'arrivée (impulsion m·v). Le tic d'origine du siège est calé au ralenti, où la soupape se
+            // pose à la vitesse de la rampe à ce régime : c'est à lui qu'on rapporte celle-ci.
+            const double landing = floatLandingMs(a.valves, rpmNow);
+            floatLanding = static_cast<float>(landing / (a.valves.rampMsPerRpm * static_cast<double>(a.idleRpm)));
+            floatBounceS = static_cast<float>(a.valves.bounceSPerMs * landing);
+        }
         // Le piston continue de pomper de l'air, combustion ou non.
         pumpLevel += (km::max(openPressure, 0.25f) - pumpLevel) * smoothing(0.004f);
         // Rupteur : la combustion s'arrête net, explosion par explosion. Le papillon, lui, reste ouvert,
@@ -1345,6 +1376,8 @@ struct EngineSound::State {
                     // À bas régime, le mélange brûle mal : les combustions varient bien plus, jusqu'au raté partiel.
                     const float spread = km::max(1.0f + kCombustionSpread * memory * (1.0f + idleSpread * idleShake), 0.25f);
                     pressure[c] = km::max(openPressure * p.firingGain[c] * spread, 0.02f);
+                    // Une soupape affolée rebondit au hasard : chaque cycle garde plus ou moins de sa charge.
+                    if (floatLost > 0.0f) pressure[c] = km::max(pressure[c] * valvetrainSound.cycleShare(floatLost), 0.02f);
                     // Chaque bouffée a sa force de souffle : rafales, pas un bruit égal.
                     const float gustDraw = random();
                     gust = 0.75f + 0.5f * gustDraw * gustDraw;
@@ -1471,6 +1504,14 @@ struct EngineSound::State {
         const float seatTick = (valveBand.bp + 0.35f * valveBandHigh.bp) * kValveLevel * (0.5f + 0.5f * rpmFrac) * metal;
         mechanical += sohc ? seatTick * seatLevel : seatTick;
         valveEnv *= valveDecay;
+        // Au-delà de l'affolement, le siège claque plus fort que la rampe ne le pose, puis rebondit : à son propre générateur.
+        // Il finit ses rebonds quand le régime retombe.
+        float clatter = 0.0f;
+        if (floatLanding > 0.0f) clatterLeft = static_cast<int>(0.05f * sr);
+        if (clatterLeft > 0) {
+            --clatterLeft;
+            clatter = valvetrainSound.seatSample(valve, floatLanding, floatBounceS) * kValveLevel * 0.5f * metal * (sohc ? seatLevel : 1.0f);
+        }
 
         if (p.diesel) {
             const float knockNoise = random();
@@ -1535,10 +1576,13 @@ struct EngineSound::State {
         }
         float engineNoise = (mechanical * (0.4f + 0.6f * cutGate) * kMechanicalPa + block) * blockLevel * gain;
         if (sohc) {
-            // Le couvre-culasse rayonne ce choc comme le bloc : peu au-dessus de 4 à 5 kHz.
-            rockerTop += (rockerSample(rockerHit) - rockerTop) * blockTopCoef;
+            // Le couvre-culasse rayonne ce choc comme le bloc : peu au-dessus de 4 à 5 kHz. Sous des culbuteurs, c'est le poussoir
+            // qui frappe, à son propre générateur, à l'échelle de son impulsion face au culbuteur d'un simple arbre.
+            const float tick = pushrods ? valvetrainSound.pushrodSample(rockerHit) * pushrodTick : rockerSample(rockerHit);
+            rockerTop += (tick - rockerTop) * blockTopCoef;
             engineNoise += rockerTop * rockerLevel * crankHush * gain;
         }
+        if (clatter != 0.0f) engineNoise += clatter * kMechanicalPa * blockLevel * gain;
         stem(Source::Bay) += engineNoise;
         // Le moteur fait vibrer toute la caisse : elle en rayonne une part, de partout, mais pas les aigus.
         bodyDamp += (engineNoise - bodyDamp) * bodyDampCoef;
