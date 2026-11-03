@@ -452,23 +452,42 @@ TEST_CASE("la course se traduit en une cylindrée entière, et revient d'où ell
     }
 }
 
-TEST_CASE("à cylindrée constante, alésage et course se partagent le son, sans changer le débit") {
-    const auto render = [](int bore) {
-        EngineConfig c;
-        c.cylinders = 4;
-        c.displacementCc = 2000;
-        c.boreMm = bore;
-        EngineSound sound(kRate);
-        sound.setProfile(c.toProfile());
-        sound.setVolume(0.7f);
-        sound.setTargetRpm(4000.0f);
-        std::vector<float> out(static_cast<std::size_t>(kRate));
-        sound.render(out.data(), kRate);
-        double energy = 0.0;
-        for (std::size_t i = out.size() / 2; i < out.size(); ++i) energy += static_cast<double>(out[i]) * out[i];
-        return energy;
-    };
-    // La bouffée dure √course : plus courte, elle rend le même volume plus vite, donc plus fort.
-    CHECK(render(96) > render(86) * 1.02);
-    CHECK(render(86) > render(76) * 1.02);
+namespace {
+
+/** Le vrai niveau estimé, plein gaz à régime tenu, 2 L sur 4 cylindres : seul l'alésage, donc la course, change. */
+double levelAtFullLoad(int bore, Listener listener) {
+    // Une vraie voiture : sans elle, les sources ne sont nulle part et le niveau ne dit rien.
+    Powertrain p = referencePowertrain();
+    p.engine.cylinders = 4;
+    p.engine.displacementCc = 2000;
+    p.engine.boreMm = bore;
+    p.engine.exhaust = Exhaust::Sport;
+    EngineSound sound(kRate);
+    sound.setProfile(p.profile());
+    sound.setVolume(0.7f);
+    sound.setListener(listener);
+    sound.setTargetRpm(4000.0f);
+    sound.setDrive(1.0f, 0.0f, false, false, 1.0f);
+    Samples x(128);
+    double energy = 0.0;
+    int reads = 0;
+    for (int block = 0; block < 3 * kRate / 128; ++block) {
+        sound.render(x.data(), 128);
+        if (block * 128 < kRate) continue;
+        energy += std::pow(10.0, static_cast<double>(sound.levelDbA()) / 10.0);
+        ++reads;
+    }
+    return 10.0 * std::log10(energy / reads);
+}
+
+}  // namespace
+
+TEST_CASE("à cylindrée constante, la course décide de la force de la bouffée") {
+    // Le même volume rejeté en moins de temps : une pression plus forte, à l'échappement.
+    CHECK(levelAtFullLoad(96, Listener::Outside) > levelAtFullLoad(76, Listener::Outside) + 1.0);
+}
+
+TEST_CASE("à cylindrée constante, l'alésage décide du bruit du bloc") {
+    // La loi d'Anderton suit l'alésage, pas la cylindrée : c'est ce qu'on entend dans le compartiment.
+    CHECK(levelAtFullLoad(96, Listener::EngineBay) > levelAtFullLoad(76, Listener::EngineBay) + 3.0);
 }

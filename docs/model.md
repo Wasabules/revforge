@@ -344,7 +344,7 @@ The stroke is not a stored setting: `V = π/4 × bore² × stroke × cylinders` 
 **What the stroke really changes.**
 
 - *Torque*, only through mean piston speed: above 24 m/s, `breathing` loses `0.012 × excess²`, without going below 0.55. It is a good indicator: flow through the valves, whose area follows the bore, reads on piston speed (Taylor's Mach index). A 39.8 mm Formula 1 V8 at 18,000 rpm does 23.9 m/s. Below this limit, at equal displacement, the curve does not move.
-- *The sound*: the exhaust pulse lasts `√stroke` and expels the same volume, so the shorter the stroke, the briefer and louder it is (`blowdownBase`, `linePressure`). The mean flow and the line follow the displacement.
+- *The sound*, by two paths that move together at constant displacement, separated by removing each in turn. The stroke sets the length of the pulse (`blowdownBase`, `√stroke`, for the same expelled volume): behind the car, at full throttle, the level loses 1.9 dB from 69 to 110 mm, and with this path removed it no longer moves (89.8 to 89.9 dB(A)); at the end of the pipe, the 8-16 kHz band gains 1.9 dB. The bore sets the block noise (Anderton's law, `60 log10 bore`): in the engine bay, 108.0 dB(A) at 96 mm bore, 102.2 at 76, and 105.2 throughout if it is removed. The mean flow and the line follow the displacement. More treble from a longer pulse is not the expected direction: it follows from the model and has not been checked against real engines.
 - *The drawing and the gas*: the crank, the rod (1.6 strokes), the block height, the volume of each cylinder and the piston area.
 - *The displacement*, if the bore stays: everything that follows from it.
 
@@ -359,6 +359,7 @@ The stroke is not a stored setting: `V = π/4 × bore² × stroke × cylinders` 
 | 90 km/h | 6.70 L/100 km | same | same |
 | LAeq, full throttle | 90.9 dB(A) | 90.0 dB(A) | 89.0 dB(A) |
 | 8-16 kHz band, full throttle | 17.1 dB | 17.9 dB | 19.0 dB |
+| LAeq, engine bay | 108.0 dB(A) | 105.2 dB(A) | 102.2 dB(A) |
 
 At 8500 rpm, the long stroke reaches 31.2 m/s: 182 hp at 6750 rpm instead of 191 hp at 7800.
 

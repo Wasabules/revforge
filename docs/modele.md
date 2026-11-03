@@ -338,7 +338,7 @@ La course n'est pas un réglage stocké : `V = π/4 × alésage² × course × c
 **Ce que la course change vraiment.**
 
 - *Le couple*, seulement par la vitesse moyenne du piston : au-delà de 24 m/s, `breathing` perd `0,012 × excès²`, sans descendre sous 0,55. C'est un bon indicateur : le débit par les soupapes, dont la section suit l'alésage, se lit sur la vitesse du piston (indice de Mach de Taylor). Un V8 de Formule 1 de 39,8 mm à 18 000 tr/min fait 23,9 m/s. Sous cette limite, à cylindrée égale, la courbe ne bouge pas.
-- *Le son* : la bouffée d'échappement dure `√course` et rejette le même volume, donc plus la course est courte, plus elle est brève et forte (`blowdownBase`, `linePressure`). Le débit moyen et la ligne, eux, suivent la cylindrée.
+- *Le son*, par deux chemins qui bougent ensemble à cylindrée constante, séparés en retirant chacun à son tour. La course règle la durée de la bouffée (`blowdownBase`, `√course`, à volume rejeté égal) : derrière la voiture, plein gaz, le niveau perd 1,9 dB de 69 à 110 mm, et ce chemin retiré il ne bouge plus (89,8 à 89,9 dB(A)) ; au bout du tube, la bande 8-16 kHz gagne 1,9 dB. L'alésage règle le bruit du bloc (loi d'Anderton, `60 log10 alésage`) : dans le compartiment, 108,0 dB(A) à 96 mm d'alésage, 102,2 à 76, et 105,2 partout s'il est retiré. Le débit moyen et la ligne, eux, suivent la cylindrée. Plus d'aigus pour une bouffée plus longue n'est pas le sens attendu : il découle du modèle, sans avoir été confronté à de vrais moteurs.
 - *Le dessin et le gaz* : la manivelle, la bielle (1,6 course), la hauteur du bloc, le volume de chaque cylindre et la section du piston.
 - *La cylindrée*, si l'alésage reste : tout ce qui en découle.
 
@@ -353,6 +353,7 @@ La course n'est pas un réglage stocké : `V = π/4 × alésage² × course × c
 | 90 km/h | 6,70 L/100 km | identique | identique |
 | LAeq, plein gaz | 90,9 dB(A) | 90,0 dB(A) | 89,0 dB(A) |
 | Bande 8-16 kHz, plein gaz | 17,1 dB | 17,9 dB | 19,0 dB |
+| LAeq, compartiment moteur | 108,0 dB(A) | 105,2 dB(A) | 102,2 dB(A) |
 
 À 8500 tr/min, la longue course atteint 31,2 m/s : 182 ch à 6750 tr/min au lieu de 191 ch à 7800.
 
