@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "revforge/carburetor.hpp"
+#include "revforge/combustion.hpp"
 #include "revforge/consumption.hpp"
 #include "revforge/driver_scenarios.hpp"
 #include "revforge/powertrain.hpp"
@@ -164,6 +165,17 @@ public:
     const ConsumptionMeter& consumption() const { return consumption_; }
     void resetTrip() { consumption_.resetTrip(); }
 
+    /**
+     * Le cliquetis, quand la combustion n'est plus celle d'origine : l'avance que le capteur retire (degrés), la part des cycles qui
+     * cliquettent, et ce que le son en reçoit. Tout à zéro sur un moteur d'origine, un diesel ou un électrique.
+     */
+    double knockRetardDeg() const { return knockRetard_; }
+    double knockShare() const { return knockDrive_.share; }
+    /** L'avance appliquée, et la limite de cliquetis à cet instant (degrés avant le point mort haut). 0 sans modèle de cliquetis. */
+    double sparkAdvanceDeg() const { return knockAdvance_; }
+    double knockLimitDeg() const { return knockLimit_; }
+    KnockDrive knockDrive() const { return knockDrive_; }
+
 private:
     enum class Driver { Pilot, Pedal, Neutral, Off };
     enum class ShiftStep { None, Declutch, PullOut, Flight, Sync, Engage, Reclutch, Handover };
@@ -211,6 +223,8 @@ private:
     double bmepPumping(double rpm) const;
     double wheelSpeedMs() const { return wheelOmega_ * radius_; }
     void meterConsumption();
+    /** Le capteur de cliquetis à ce pas : renvoie la part du couple indiqué que laisse l'avance appliquée. */
+    double stepKnock(double rpmNow);
 
     Powertrain powertrain_;
     Gearing gearing_;
@@ -315,6 +329,15 @@ private:
     // Consommation : ce que la combustion a demandé à ce pas, et le compteur qui l'intègre.
     ConsumptionMeter consumption_;
     ConsumptionInput burnt_;
+
+    // Le cliquetis : la carte de ce moteur, gardée tant qu'il ne change pas, et ce que le capteur a retiré.
+    KnockMap knockMap_;
+    bool knockEngine_ = false;
+    double knockRetard_ = 0.0;
+    double knockAdvance_ = 0.0;
+    double knockLimit_ = 0.0;
+    double knockPerCylinder_ = 1.0;
+    KnockDrive knockDrive_;
 
     // Voiture
     double speedMs_ = 0.0;

@@ -6,6 +6,7 @@
 #include "revforge/air_filter.hpp"
 #include "revforge/supercharger.hpp"
 #include "revforge/carburetor.hpp"
+#include "revforge/combustion.hpp"
 #include "portable_math.hpp"
 
 namespace revforge {
@@ -80,7 +81,8 @@ void applyRotary(const EngineConfig& e, EngineProfile& p) {
     const int rotors = e.rotors();
     const int firings = 2 * rotors;
     const double chamberCc = static_cast<double>(e.displacementCc) / rotors;
-    const double compression = compressionOf(e.aspiration, kRotaryCompressionNatural, kRotaryCompressionBoosted);
+    // Un autre rotor, plus ou moins creusé : la lumière s'ouvre sur un gaz plus ou moins détendu, et le démarreur le sent.
+    const double compression = e.compressionRatio > 0.0f ? static_cast<double>(compressionRatioOf(e)) : compressionOf(e.aspiration, kRotaryCompressionNatural, kRotaryCompressionBoosted);
     const double pistonCompression = compressionOf(e.aspiration, kPistonCompressionNatural, kPistonCompressionBoosted);
     p.rotary = true;
     p.rotors = rotors;
@@ -153,6 +155,10 @@ double rotaryEfficiencyShare(Aspiration aspiration) {
     const double pistonCompression = compressionOf(aspiration, kPistonCompressionNatural, kPistonCompressionBoosted);
     const double wall = rotaryWallRatio(static_cast<float>(compression));
     return ottoEfficiency(compression) / ottoEfficiency(pistonCompression) * (1.0 - kWallLossPerRatio * (wall - 1.0)) * (1.0 - kApexLeakLoss);
+}
+
+double rotaryCycleEfficiency(double compressionRatio) {
+    return ottoEfficiency(compressionRatio) * (1.0 - kWallLossPerRatio * (rotaryWallRatio(static_cast<float>(compressionRatio)) - 1.0));
 }
 
 const ExhaustSpec& exhaustSpec(Exhaust exhaust) {
@@ -307,6 +313,14 @@ EngineProfile EngineConfig::toProfile() const {
     s.kind = (cylinders >= 8 || litres > 4.5f) ? StarterKind::Direct : StarterKind::Reduction;
     // Un moteur suralimenté comprime moins pour ne pas détoner, quelle que soit la façon dont il l'est.
     s.compressionRatio = isDiesel ? 18.0f : (aspiration != Aspiration::Natural ? 9.5f : 10.5f);
+    if (compressionRatio > 0.0f) {
+        // Un autre taux : le démarreur comprime autre chose, et la soupape d'échappement s'ouvre sur un gaz plus ou moins détendu.
+        const float stock = s.compressionRatio;
+        s.compressionRatio = compressionRatioOf(*this);
+        const float release = static_cast<float>(releasePressureShare(static_cast<double>(s.compressionRatio), static_cast<double>(stock)));
+        for (int i = 0; i < cylinders; ++i) p.firingGain[i] *= release;
+        p.dieselKnockScale = revforge::dieselKnockScale(*this);
+    }
     s.powerKw = (0.75f + 0.38f * litres) * (isDiesel ? 1.15f : 1.0f);
     s.ringTeeth = static_cast<int>(km::coerceIn(105.0f + 9.0f * litres, 110.0f, 170.0f));
     if (s.kind == StarterKind::Direct) {

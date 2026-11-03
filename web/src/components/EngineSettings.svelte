@@ -35,7 +35,7 @@
   </p>
   <!-- Une section par sujet, chacune dans son fichier : architecture et cycle, combustion, distribution, alimentation, suralimentation, calculateur. -->
   <SettingsBlock {config} {shown} {onapply} {onlive} />
-  <SettingsCombustion {config} {shown} {onapply} {onlive} />
+  <SettingsCombustion {config} {shown} {spec} {onapply} {onlive} />
   <SettingsValvetrain {config} {shown} {onapply} {onlive} />
   <SettingsFueling {config} {spec} {onapply} />
   <SettingsCharging {config} {shown} {onapply} {onlive} />

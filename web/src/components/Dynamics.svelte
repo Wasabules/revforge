@@ -30,6 +30,8 @@
   let peakNode: HTMLElement;
 
   const percent = (value: number) => t('unit.percent', { value: whole(value) });
+  /** Le cliquetis n'est calculé qu'une fois la combustion changée, sur un moteur à étincelle : avant, la carte d'origine reste sous sa limite. */
+  const knocks = $derived(!config.electric && (config.fuel === 'petrol' || config.layout === 'rotary') && (config.compressionRatio !== 0 || config.fuelGrade !== 'ron95'));
   const on = (value: () => number) => () => (running() ? value() : 0);
 
   onMount(() => {
@@ -97,6 +99,12 @@
     { label: t('stat.wheels'), value: () => `${whole(telemetry().wheelRpm)} ${t('unit.rpm')}`, source: sim },
     { label: t('meter.wear'), value: () => percent(telemetry().boxWear * 100), source: sim },
     { label: t('level.title'), value: () => `${whole(telemetry().levelDbA)} dB(A)`, source: sim },
+    ...(knocks ? [
+      { label: t('table.sparkAdvance'), value: () => `${fixed(telemetry().sparkAdvance, 1)}°`, source: sim },
+      { label: t('table.knockLimit'), value: () => `${fixed(telemetry().knockLimit, 1)}°`, source: sim },
+      { label: t('meter.knock'), value: () => `${fixed(telemetry().knockRetard, 1)}°`, source: sim },
+      { label: t('table.knockShare'), value: () => percent(telemetry().knockShare * 100), source: sim },
+    ] : []),
     ...(extra('fuelLph') !== null ? [{ label: t('table.fuel'), value: () => `${fixed(extra('fuelLph') ?? 0, 1)} L/h`, source: () => t('source.estimate') }] : []),
     ...(extra('oilGph') !== null ? [{ label: t('table.oil'), value: () => `${fixed(extra('oilGph') ?? 0, 1)} g/h`, source: () => t('source.estimate') }] : []),
     { label: t('stat.peak'), value: () => (readings.peakDb <= -60 ? '—' : `${whole(readings.peakDb)} dBFS`), source: sim },
@@ -130,6 +138,9 @@
     {#if !config.electric}
       <Meter id="clutch-kw" label={t('meter.clutchKw')} note={t('meter.clutchKw.note')} unit="kW" min={0} max={30} digits={1} {clock} read={on(() => telemetry().clutchSlipKw)} format={(value) => fixed(value, 1)} />
       <Meter id="clutch-c" label={t('meter.clutchC')} note={t('meter.clutchC.note')} unit="°C" min={0} max={400} warnAt={CLUTCH_SMOKE_C} {clock} read={() => motion.clutchSurface} format={(value) => whole(value)} />
+      {#if knocks}
+        <Meter id="knock" label={t('meter.knock')} note={t('meter.knock.note')} unit="°" min={0} max={20} digits={1} {clock} read={on(() => telemetry().knockRetard)} format={(value) => fixed(value, 1)} />
+      {/if}
       <Meter id="wear" label={t('meter.wear')} note={t('meter.wear.note')} unit="%" min={0} max={100} dangerAt={100} {clock} read={() => telemetry().boxWear * 100} format={(value) => whole(value)} />
     {/if}
   </div>

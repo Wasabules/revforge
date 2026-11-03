@@ -10,6 +10,7 @@
 #include "exhaust_line.hpp"
 #include "gearbox_sound.hpp"
 #include "intake_path.hpp"
+#include "knock_sound.hpp"
 #include "kotlin_math.hpp"
 #include "revforge/air_filter.hpp"
 #include "revforge/valvetrain.hpp"
@@ -491,6 +492,11 @@ struct EngineSound::State {
     float antiLagFlame = 0.0f;
     Svf antiLagFlameBand;
 
+    // ── Le cliquetis : rien de tout cela ne tourne tant que le modèle ne le dit pas possible, et son tirage est à part ──
+    KnockSound knock;
+    bool knockOn = false;
+    KnockDrive knockIn;
+
     State(int sampleRate, std::int32_t seed)
         : sr(static_cast<float>(sampleRate)),
           rng(seed == 0 ? 1u : static_cast<std::uint32_t>(seed)),
@@ -501,7 +507,8 @@ struct EngineSound::State {
           gearbox(static_cast<float>(sampleRate)),
           controlDt(static_cast<float>(kControlSamples) / static_cast<float>(sampleRate)),
           line(static_cast<float>(sampleRate)),
-          intakePath(static_cast<float>(sampleRate)) {
+          intakePath(static_cast<float>(sampleRate)),
+          knock(static_cast<float>(sampleRate)) {
         intakeResponse.init(kIntakePartition, IntakePath::kLength / kIntakePartition);
         valveDecay = km::exp(-1.0f / (0.0009f * sr));
         blockDecay = km::exp(-1.0f / (0.005f * sr));
@@ -670,6 +677,7 @@ struct EngineSound::State {
             inletTone.set(220.0f, 1.3f, sr);
             carbTuned = false;
         }
+        knock.setup(p);
     }
 
     /**
@@ -986,6 +994,8 @@ struct EngineSound::State {
         if (a.electric) tone.set(km::min(a.lowpassIdleHz + (a.lowpassRedlineHz - a.lowpassIdleHz) * rpmFrac, sr * 0.3f), 0.707f, sr);
         if (a.turbo) updateTurbo(wantedLoad);
         if (a.supercharged) updateSupercharger();
+        knockOn = driven && knockIn.active && !a.electric && !a.diesel;
+        if (knockOn) knock.control(knockIn, rpm);
         // Pendant le lancement, l'air pompé par l'échappement est un souffle à peine audible.
         const float gainTarget = (!engineOn || switching) ? 0.0f : 1.0f - 0.97f * starterLevel;
         const float smoothed = gain + (gainTarget - gain) * smoothing(kGainTauS);
@@ -1399,6 +1409,8 @@ struct EngineSound::State {
                 timing[c] = nextTiming[c];
             }
 
+            if (knockOn) knock.watch(c, theta);
+
             auto& line = header[c];
             const int delay = headerDelay[c];
             const int slot = headerSlot[c];
@@ -1476,7 +1488,7 @@ struct EngineSound::State {
             const float knockNoise = random();
             knockBand.process(knockNoise);
             // Sans combustion, plus de claquement.
-            mechanical += knockBand.bp * knockEnv * kDieselKnock * (1.0f - 0.5f * load) * (1.0f - overrun);
+            mechanical += knockBand.bp * knockEnv * kDieselKnock * (1.0f - 0.5f * load) * (1.0f - overrun) * p.dieselKnockScale;
             knockEnv *= knockDecay;
         }
         if (p.turbo) turboSample();
@@ -1540,6 +1552,8 @@ struct EngineSound::State {
             engineNoise += rockerTop * rockerLevel * crankHush * gain;
         }
         stem(Source::Bay) += engineNoise;
+        // Le cliquetis : la chambre résonne, et le bloc la rayonne. Pas par la caisse, qui ne rayonne pas ces aigus.
+        if (knockOn || knock.ringing()) stem(Source::Bay) += knock.sample() * gain;
         // Le moteur fait vibrer toute la caisse : elle en rayonne une part, de partout, mais pas les aigus.
         bodyDamp += (engineNoise - bodyDamp) * bodyDampCoef;
         stem(Source::Underfloor) += bodyDamp * bodyShare;
@@ -1767,6 +1781,10 @@ void EngineSound::setSupercharger(const SuperchargerDrive& drive) {
     s_->superchargerDriven = true;
     s_->superchargerIn = drive;
 }
+
+void EngineSound::setKnock(const KnockDrive& drive) { s_->knockIn = drive; }
+
+std::uint32_t EngineSound::knocks() const { return s_->knock.knocks(); }
 
 void EngineSound::setStarter(bool powered, bool meshed, float load) {
     s_->starter.setState(powered, meshed, load);

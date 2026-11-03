@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "revforge/combustion.hpp"
 #include "revforge/powertrain.hpp"
 
 namespace revforge {
@@ -60,19 +61,38 @@ double clamp(double v, double low, double high) { return v < low ? low : (v > hi
 
 const FuelSpec& fuelSpecOf(Fuel fuel) { return fuel == Fuel::Diesel ? kDiesel : kPetrol; }
 
+const FuelSpec& fuelSpecOf(const EngineConfig& engine) {
+    if (engine.burnsDiesel()) return kDiesel;
+    // Le Super 98 et l'essence de course ont les chiffres du 95 : seul leur octane change. L'E85 et le méthanol, ceux de combustion.cpp.
+    const auto from = [](FuelGrade grade) {
+        const FuelProperties& f = fuelProperties(grade);
+        return FuelSpec{f.densityKgPerL, f.lowerHeatingJPerG, f.co2GPerG, f.stoichiometricAfr};
+    };
+    static const FuelSpec ethanol = from(FuelGrade::E85);
+    static const FuelSpec methanol = from(FuelGrade::Methanol);
+    switch (engine.fuelGrade) {
+        case FuelGrade::E85: return ethanol;
+        case FuelGrade::Methanol: return methanol;
+        default: break;
+    }
+    return kPetrol;
+}
+
 void ConsumptionModel::configure(const Powertrain& p) {
     electric_ = p.electric;
     diesel_ = p.engine.burnsDiesel();
     turbo_ = p.engine.aspiration == Aspiration::Turbo;
     // Suralimenté, quelle que soit la façon : moins de compression, et plus d'enrichissement à pleine charge. L'huile des paliers, elle, ne concerne que le turbo.
     const bool boosted = p.engine.aspiration != Aspiration::Natural;
-    fuel_ = &fuelSpecOf(diesel_ ? Fuel::Diesel : Fuel::Petrol);
+    fuel_ = &fuelSpecOf(p.engine);
     // Le volume avalé en deux tours d'arbre : c'est lui qui remplit, et que le papillon étrangle.
     litres_ = p.engine.sweptCcPerTwoTurns() / 1000.0;
     oilPerKrpm_ = isRotary(p.engine) ? kOilMeteredGPerHPerLitreKrpm * static_cast<double>(p.engine.displacementCc) / 1000.0 : kOilGPerHPerLitreKrpm * litres_;
     redline_ = redlineRpmOf(p);
     baseEfficiency_ = diesel_ ? kEfficiencyDiesel : (boosted ? kEfficiencyPetrolTurbo : kEfficiencyPetrol);
     if (isRotary(p.engine)) baseEfficiency_ *= rotaryEfficiencyShare(p.engine.aspiration);
+    // Un autre taux de compression : le rendement que le couple a déjà reçu, pour que le carburant par kilogramme d'air ne change pas.
+    if (!electric_ && p.engine.compressionRatio > 0.0f) baseEfficiency_ *= compressionEfficiencyShare(p.engine);
     fullRichness_ = diesel_ ? 1.0 : 1.0 / (boosted ? kFullLoadLambdaTurbo : kFullLoadLambda);
     throttlingNm_ = diesel_ ? 0.0 : kThrottlingBar * kAtmosphere * litres_ * 1e-3 / (4.0 * kPi);
     peakNaturalNm_ = 1.0;

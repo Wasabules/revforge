@@ -248,6 +248,7 @@ static void advance(int frames) {
         g_sound->setStarter(g_model->starterPowered(), g_model->starterMeshed(), static_cast<float>(g_model->starterLoad()));
         g_sound->setRoad(static_cast<float>(g_model->speedKmh() / 3.6), static_cast<float>(g_model->wheelSlip()));
         g_sound->setGearbox(g_model->box(), g_model->gearboxDrive());
+        g_sound->setKnock(g_model->knockDrive());
         if (g_mode == kOff && g_powertrain.electric) target = 0.0f;
     }
     // Régime imposé de l'extérieur : plus de voiture, donc plus de boîte qui tourne.
@@ -406,6 +407,39 @@ float rf_carb_drop_kpa() {
     const double rpm = powerSummary(g_powertrain).peakPowerRpm;
     return static_cast<float>(carburetorDropPa(carb, g_powertrain.engine.sweptCcPerTwoTurns() * 1e-6, rpm, 0.9 * breathingOf(injected, rpm)) / 1000.0);
 }
+// ── La combustion, pour la fiche : le taux réel, ce qu'il rend, et la marge au cliquetis à pleine charge ──
+float rf_compression_ratio() { return g_powertrain.electric ? 0.0f : compressionRatioOf(g_powertrain.engine); }
+float rf_compression_efficiency() { return g_powertrain.electric ? 1.0f : static_cast<float>(compressionEfficiencyShare(g_powertrain.engine)); }
+int rf_knock_sensor() {
+    KnockMap map;
+    map.build(g_powertrain);
+    return map.valid() && map.sensor() ? 1 : 0;
+}
+/** La plus petite marge de la carte d'origine sous la limite de cliquetis, à pleine charge (degrés, négative s'il cliquette), et son régime. */
+static float knockMargin(bool wantRpm) {
+    if (g_powertrain.electric || g_powertrain.engine.burnsDiesel()) return 0.0f;
+    KnockMap map;
+    map.build(g_powertrain);
+    const double idle = idleRpmOf(g_powertrain);
+    const double redline = redlineRpmOf(g_powertrain);
+    double worst = 1e9, at = idle;
+    for (double rpm = idle; rpm <= redline; rpm += 100.0) {
+        const KnockPoint point = map.at(rpm, 1.0);
+        const double margin = point.limitDeg - (point.stockDeg + map.advanceOffsetDeg());
+        if (margin < worst) {
+            worst = margin;
+            at = rpm;
+        }
+    }
+    return static_cast<float>(wantRpm ? at : worst);
+}
+float rf_knock_margin_deg() { return knockMargin(false); }
+float rf_knock_margin_rpm() { return knockMargin(true); }
+// ── Le cliquetis, en roulant : l'avance appliquée, la limite, ce que le capteur retire, la part des cycles qui cliquettent ──
+float rf_spark_advance() { return static_cast<float>(g_model->sparkAdvanceDeg()); }
+float rf_knock_limit() { return static_cast<float>(g_model->knockLimitDeg()); }
+float rf_knock_retard() { return static_cast<float>(g_model->knockRetardDeg()); }
+float rf_knock_share() { return static_cast<float>(g_model->knockShare()); }
 int rf_gears() { return g_model->gearing().gears; }
 float rf_overall_ratio(int gear) {
     const Gearing& g = g_model->gearing();

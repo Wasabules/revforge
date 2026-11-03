@@ -65,7 +65,7 @@ void usage() {
         "          --stereo 1: two ears (otherwise one microphone at the centre of the head)\n"
         "          --db 1: also print the estimated A-weighted level\n"
         "          --fuel 1: also print the estimated fuel, oil or energy used, and the best of the engine's fuel map\n"
-        "          --trace FILE: write the turbo, its anti-lag and the fuel as CSV, one line per slice\n"
+        "          --trace FILE: write the turbo, its anti-lag, the fuel and the knock as CSV, one line per slice\n"
         "          --walk 1: the head walks through the car at 1.2 m/s (with lap)");
 }
 
@@ -138,15 +138,16 @@ struct Output {
 std::FILE* g_trace = nullptr;
 
 void traceHeader() {
-    std::fputs("t,rpm,throttle,gear,boost,shaft_rpm,t3_c,turbine_kw,compressor_kw,air_g_s,heat_kw,fuel_g_s,torque_nm,lost_nm,antilag,kmh,flow_kg_s,blowoff,wastegate,charge_bar,exhaust_bar,trip_l,pops\n", g_trace);
+    std::fputs("t,rpm,throttle,gear,boost,shaft_rpm,t3_c,turbine_kw,compressor_kw,air_g_s,heat_kw,fuel_g_s,torque_nm,lost_nm,antilag,kmh,flow_kg_s,blowoff,wastegate,charge_bar,exhaust_bar,trip_l,pops,advance_deg,knock_limit_deg,knock_retard_deg,knock_share,knocks\n", g_trace);
 }
 
 void traceLine(const DrivingModel& model, const EngineSound& sound, double t) {
     const TurboState& s = model.turbo().state();
     const AntiLagState& a = model.turbo().antiLag();
-    std::fprintf(g_trace, "%.4f,%.1f,%.3f,%d,%.4f,%.0f,%.1f,%.3f,%.3f,%.3f,%.3f,%.4f,%.2f,%.2f,%d,%.2f,%.4f,%.3f,%.3f,%.4f,%.4f,%.6f,%u\n", t, model.rpm(), model.throttle(), model.gear(), model.boost(),
+    std::fprintf(g_trace, "%.4f,%.1f,%.3f,%d,%.4f,%.0f,%.1f,%.3f,%.3f,%.3f,%.3f,%.4f,%.2f,%.2f,%d,%.2f,%.4f,%.3f,%.3f,%.4f,%.4f,%.6f,%u,%.2f,%.2f,%.2f,%.4f,%u\n", t, model.rpm(), model.throttle(), model.gear(), model.boost(),
                  s.shaftOmega * 60.0 / (2.0 * 3.141592653589793), s.turbineInK - 273.15, s.turbinePowerW / 1000.0, s.compressorPowerW / 1000.0, a.airFlow * 1000.0, a.collectorHeatW / 1000.0,
-                 model.consumption().fuelGps(), model.torqueNm(), model.antiLagLostNm(), model.antiLagActive() ? 1 : 0, model.speedKmh(), s.compressorFlow, s.blowOff, s.wastegate, s.chargePa / 1e5 - 1.01325, s.turbineInPa / 1e5 - 1.01325, model.consumption().fuelTripL(), static_cast<unsigned>(sound.pops()));
+                 model.consumption().fuelGps(), model.torqueNm(), model.antiLagLostNm(), model.antiLagActive() ? 1 : 0, model.speedKmh(), s.compressorFlow, s.blowOff, s.wastegate, s.chargePa / 1e5 - 1.01325, s.turbineInPa / 1e5 - 1.01325, model.consumption().fuelTripL(), static_cast<unsigned>(sound.pops()),
+                 model.sparkAdvanceDeg(), model.knockLimitDeg(), model.knockRetardDeg(), model.knockShare(), static_cast<unsigned>(sound.knocks()));
 }
 
 /** Le modèle de conduite pilote le son : chaque tranche est une pédale, ou le pilote automatique. */
@@ -166,6 +167,7 @@ void play(EngineSound& sound, DrivingModel& model, Output& out, int rate, Drive 
         sound.setStarter(model.starterPowered(), model.starterMeshed(), static_cast<float>(model.starterLoad()));
         sound.setRoad(static_cast<float>(model.speedKmh() / 3.6), static_cast<float>(model.wheelSlip()));
         sound.setGearbox(model.box(), model.gearboxDrive());
+        sound.setKnock(model.knockDrive());
         const int n = static_cast<int>(std::min<std::size_t>(tick, out.frames() - done));
         out.render(sound, done, n);
         done += static_cast<std::size_t>(n);
@@ -475,6 +477,42 @@ void printFuel(const DrivingModel& model, const Powertrain& powertrain, double s
 }
 
 /**
+ * `--knock 1` : la carte d'avance à pleine charge stabilisée, et la limite de cliquetis de ce moteur, régime par régime. Calculée même sur
+ * un moteur d'origine, où le modèle de conduite ne la lit pas : c'est ainsi qu'on vérifie qu'aucun préréglage ne cliquette.
+ */
+void printKnock(const Powertrain& powertrain, const EngineSound& sound) {
+    std::printf("Knocking combustions heard: %u\n", static_cast<unsigned>(sound.knocks()));
+    if (powertrain.electric || powertrain.engine.burnsDiesel()) {
+        const float ratio = compressionRatioOf(powertrain.engine);
+        std::printf("Knock: none (no spark). Compression %.1f:1 (stock %.1f:1), efficiency x%.4f\n", ratio, stockCompressionRatio(powertrain.engine), powertrain.electric ? 1.0 : compressionEfficiencyShare(powertrain.engine));
+        return;
+    }
+    KnockMap map;
+    map.build(powertrain);
+    const FuelProperties& fuel = fuelPropertiesOf(powertrain.engine);
+    std::printf("Knock: compression %.1f:1 (stock %.1f:1), RON %.0f, efficiency x%.4f, fuel x%.4f, %s\n", compressionRatioOf(powertrain.engine), stockCompressionRatio(powertrain.engine), fuel.ron,
+                compressionEfficiencyShare(powertrain.engine), combustionTorqueShare(powertrain.engine) / compressionEfficiencyShare(powertrain.engine), map.sensor() ? "knock sensor" : "no knock sensor");
+    std::puts("  rpm   MBT  stock  limit  margin  applied  torque  gas_K  draper_Hz");
+    double worst = 1e9, worstRpm = 0.0;
+    const double idle = idleRpmOf(powertrain);
+    const double redline = redlineRpmOf(powertrain);
+    for (double rpm = std::ceil(idle / 250.0) * 250.0; rpm <= redline; rpm += 250.0) {
+        const KnockPoint point = map.at(rpm, 1.0);
+        const double margin = point.limitDeg - point.stockDeg;
+        if (margin < worst) {
+            worst = margin;
+            worstRpm = rpm;
+        }
+        // Un rotatif : le premier mode en longueur de sa chambre en lame, c/(2L), L la corde entre deux sommets.
+        const EngineConfig& e = powertrain.engine;
+        const double hz = isRotary(e) ? burnedSoundMs(point.gasK) / (2.0 * 1.7320508 * rotaryGeometry(static_cast<double>(e.displacementCc) / e.rotors()).radiusMm / 1000.0)
+                                       : draperHz(e.boreMm / 1000.0, point.gasK);
+        std::printf("%5.0f %5.1f %6.1f %6.1f %7.1f %8.1f %7.4f %6.0f %9.0f\n", rpm, point.mbtDeg, point.stockDeg, point.limitDeg, margin, map.steadyAdvanceDeg(rpm), map.steadyTorqueShare(rpm), point.gasK, hz);
+    }
+    std::printf("Knock margin at full load: %.1f deg at %.0f rpm\n", worst, worstRpm);
+}
+
+/**
  * Un passage en bord de route, comme ISO 362 : 7,5 m de l'axe, micro à 1,2 m. La voiture accélère jusqu'à la
  * vitesse voulue puis garde le pied à mi-course ; dans son repère, c'est l'auditeur qui défile, d'où le Doppler.
  */
@@ -495,7 +533,7 @@ void passby(EngineSound& sound, DrivingModel& model, Output& out, int rate, floa
 
 int main(int argc, char** argv) {
     std::string out, scenario = "lap", presetId, at;
-    bool stereo = false, showDb = false, walk = false, showFuel = false;
+    bool stereo = false, showDb = false, walk = false, showFuel = false, showKnock = false;
     ShiftMode shiftMode = ShiftMode::Normal;
     DriveScenario driveScenario = DriveScenario::City;
     double kmh = 90.0;
@@ -568,6 +606,7 @@ int main(int argc, char** argv) {
         else if (arg == "--stereo") stereo = value != "0";
         else if (arg == "--db") showDb = value != "0";
         else if (arg == "--fuel") showFuel = value != "0";
+        else if (arg == "--knock") showKnock = value != "0";
         else if (arg == "--trace") {
             g_trace = std::fopen(value.c_str(), "w");
             if (g_trace == nullptr) {
@@ -787,6 +826,7 @@ int main(int argc, char** argv) {
     const double measured = static_cast<double>(seconds) - (scenario == "cruise" ? kCruiseSettleS : (scenario == "idle" ? 5.0 : 0.0));
     if (silent) {
         if (showFuel) printFuel(model, powertrain, measured, driver.restarts);
+        if (showKnock) printKnock(powertrain, sound);
         return 0;
     }
     if (out == "-") {
@@ -798,10 +838,12 @@ int main(int argc, char** argv) {
         }
         std::printf("%08x\n", hash);
         if (showFuel) printFuel(model, powertrain, measured, driver.restarts);
+        if (showKnock) printKnock(powertrain, sound);
         return 0;
     }
     writeWav(out, pcm, rate, channels);
     if (showFuel) printFuel(model, powertrain, measured, driver.restarts);
+    if (showKnock) printKnock(powertrain, sound);
     if (showDb) std::printf("LAeq %.1f dB(A), LAFmax %.1f dB(A)\n", 10.0 * std::log10(output.energy / static_cast<double>(std::max(output.reads, 1L))), output.loudest);
     return 0;
 }

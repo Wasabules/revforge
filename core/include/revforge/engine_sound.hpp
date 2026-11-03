@@ -5,6 +5,7 @@
 #include <memory>
 #include <vector>
 
+#include "revforge/combustion.hpp"
 #include "revforge/engine_config.hpp"
 #include "revforge/gearbox.hpp"
 #include "revforge/supercharger.hpp"
@@ -70,6 +71,13 @@ public:
     /** Le claquement, pour l'affichage : position d'une roue folle dans son jeu (-1 à 1), force du dernier choc. Ne change rien au son. */
     float gearboxLoose(int index) const;
     float gearboxStrike() const;
+    /**
+     * Le cliquetis, quand le modèle de conduite dit que le moteur peut cliqueter : la chambre résonne, et le bloc la rayonne. Sans cet
+     * appel, ou tant que `drive.active` est faux, rien ne tourne et rien ne s'entend.
+     */
+    void setKnock(const KnockDrive& drive);
+    /** Les combustions qui ont cliqueté depuis le début. */
+    std::uint32_t knocks() const;
     /** Une position toute prête, à la mesure de cette voiture. */
     void setListener(Listener listener);
     /**

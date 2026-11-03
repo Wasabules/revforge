@@ -90,6 +90,7 @@ struct TurboSteady {
     double shaftRpm = 0.0;
     double wastegate = 0.0;
     double flow = 0.0;
+    double coolerOutK = 293.0;  // la charge après l'échangeur : ce que lit le cliquetis
 };
 
 /**
