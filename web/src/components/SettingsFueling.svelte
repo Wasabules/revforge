@@ -28,17 +28,28 @@
       {#if (config.fuelSystem === 'single' || config.fuelSystem === 'multi') && config.aspiration !== 'natural'}
         <p class="help" data-testid="carb-blown">{t('builder.carb.blown')}</p>
       {/if}
+      {#if config.fuelSystem === 'direct' && spec.injection.coolingK > 0}
+        <p class="help" data-testid="direct-figures">{t('builder.direct.figures', { k: fixed(spec.injection.coolingK, 0), gain: fixed(spec.injection.fillGain * 100, 1), bar: Math.round(spec.injection.railBar) })}</p>
+      {/if}
     </div>
   {:else}
     <div data-testid="diesel-injection">
       <Choices label={t('builder.dieselInjection')} options={DIESEL_INJECTIONS} value={config.dieselInjection} onchange={(dieselInjection) => onapply({ dieselInjection })} />
       <p class="help">{DIESEL_INJECTIONS.find((item) => item.value === config.dieselInjection)?.help}</p>
+      {#if spec.injection.railBar > 0}
+        <p class="help" data-testid="diesel-injection-figures">{config.dieselInjection === 'common_rail'
+          ? t('builder.dieselInjection.rail', { bar: Math.round(spec.injection.railBar), torque: Math.round(spec.injection.lowEnd * 100), db: fixed(-spec.injection.knockDb, 1) })
+          : t('builder.dieselInjection.pump', { bar: Math.round(spec.injection.railBar) })}</p>
+      {/if}
     </div>
   {/if}
   {#if !rotary}
     <div data-testid="egr">
       <Choices label={t('builder.egr')} options={ON_OFF} value={config.egr ? 'on' : 'off'} onchange={(value) => onapply({ egr: value === 'on' })} />
       <p class="help">{t('builder.egr.help')}</p>
+      {#if config.egr && spec.injection.egr > 0}
+        <p class="help" data-testid="egr-figures">{t('builder.egr.figures', { share: Math.round(spec.injection.egr * 100) })}</p>
+      {/if}
     </div>
   {/if}
   <!-- Un filtre à particules suit un diesel, ou une injection directe d'essence : les seuls à faire de la suie. -->
@@ -46,6 +57,9 @@
     <div data-testid="dpf">
       <Choices label={t('builder.dpf')} options={ON_OFF} value={config.particulateFilter ? 'on' : 'off'} onchange={(value) => onapply({ particulateFilter: value === 'on' })} />
       <p class="help">{t('builder.dpf.help')}</p>
+      {#if config.particulateFilter && spec.injection.dpfFullKpa > 0}
+        <p class="help" data-testid="dpf-figures">{t('builder.dpf.figures', { clean: fixed(spec.injection.dpfCleanKpa, 1), full: fixed(spec.injection.dpfFullKpa, 1) })}</p>
+      {/if}
     </div>
   {/if}
   <div>

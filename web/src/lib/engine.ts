@@ -113,10 +113,17 @@ export interface Telemetry {
   energyKwhPer100km: number;
   energyAvgKwhPer100km: number;
   energyTripKwh: number;
+  /** Le filtre à particules : remplissage (0 après une régénération, 1 à la suivante), contre-pression (kPa), régénération (0 ou 1), température (°C). */
+  dpfLoad: number;
+  dpfKpa: number;
+  dpfRegen: number;
+  dpfC: number;
+  /** Part de gaz d'échappement recirculés dans la charge, en ce moment. */
+  egrShare: number;
 }
 
 export const IDLE_TELEMETRY: Telemetry = {
-  rpm: 0, speed: 0, gear: 0, throttle: 0, load: 0, boost: 0, turbine: 0, turboRelease: 0, turboRpm: 0, turboCharge: 0, turboPlenum: 0, turboOutlet: 0, turboInlet: 0, turboExhaust: 0, turboWastegate: 0, turboBlowoff: 0, turboFlow: 0, turboOutC: 20, turboCoolC: 20, intakeAirC: 20, turboGasC: 20, antiLag: 0, antiLagHeatKw: 0, antiLagAirFlow: 0, antiLagLostNm: 0, chargerRpm: 0, chargerKw: 0, chargerSpill: 0, torque: 0, power: 0, clutch: 0, clutchInputRpm: 0, clutchSlipKw: 0, clutchTorque: 0, wheelRpm: 0, slip: 0, pops: 0, cut: 0, shifting: 0, cranking: 0, stalled: 0, lugging: 0, legKind: 0, legTarget: 0, gradePct: 0, underpowered: 0, levelDbA: 0, listenerX: 0, listenerY: 0, listenerZ: 0, peak: 0, outputRpm: 0, meshed: 0, shiftStep: 0, grinding: 0, overload: 0, boxWear: 0, boxBroken: 0, boxPending: 0, boxConeSlip: 0, boxRattle: 0, boxLoose0: 0, boxLoose1: 0, boxLoose2: 0, boxLoose3: 0, fuelLph: 0, fuelLper100km: 0, fuelTripL: 0, fuelAvgLper100km: 0, tripKm: 0, co2GPerKm: 0, oilGph: 0, oilTripMl: 0, oilMlPer1000km: 0, energyKwhPer100km: 0, energyAvgKwhPer100km: 0, energyTripKwh: 0,
+  rpm: 0, speed: 0, gear: 0, throttle: 0, load: 0, boost: 0, turbine: 0, turboRelease: 0, turboRpm: 0, turboCharge: 0, turboPlenum: 0, turboOutlet: 0, turboInlet: 0, turboExhaust: 0, turboWastegate: 0, turboBlowoff: 0, turboFlow: 0, turboOutC: 20, turboCoolC: 20, intakeAirC: 20, turboGasC: 20, antiLag: 0, antiLagHeatKw: 0, antiLagAirFlow: 0, antiLagLostNm: 0, chargerRpm: 0, chargerKw: 0, chargerSpill: 0, torque: 0, power: 0, clutch: 0, clutchInputRpm: 0, clutchSlipKw: 0, clutchTorque: 0, wheelRpm: 0, slip: 0, pops: 0, cut: 0, shifting: 0, cranking: 0, stalled: 0, lugging: 0, legKind: 0, legTarget: 0, gradePct: 0, underpowered: 0, levelDbA: 0, listenerX: 0, listenerY: 0, listenerZ: 0, peak: 0, outputRpm: 0, meshed: 0, shiftStep: 0, grinding: 0, overload: 0, boxWear: 0, boxBroken: 0, boxPending: 0, boxConeSlip: 0, boxRattle: 0, boxLoose0: 0, boxLoose1: 0, boxLoose2: 0, boxLoose3: 0, fuelLph: 0, fuelLper100km: 0, fuelTripL: 0, fuelAvgLper100km: 0, tripKm: 0, co2GPerKm: 0, oilGph: 0, oilTripMl: 0, oilMlPer1000km: 0, energyKwhPer100km: 0, energyAvgKwhPer100km: 0, energyTripKwh: 0, dpfLoad: 0, dpfKpa: 0, dpfRegen: 0, dpfC: 0, egrShare: 0,
 };
 
 export interface CurvePoint {
@@ -199,6 +206,12 @@ export interface Spec {
   carb: { throats: number; throatMm: number; dropKpa: number };
   curve: CurvePoint[];
   box: BoxSpec;
+  /**
+   * L'injection, calculée (0 là où elle n'a pas de sens) : refroidissement de la charge d'une injection directe (K) et remplissage
+   * gagné (part), pression d'injection à pleine charge (bar), couple gagné à 1500 tr/min par la rampe commune (part), claquement
+   * au ralenti face à la pompe mécanique (dB), recirculation la plus forte (part), contre-pression du filtre propre et plein (kPa).
+   */
+  injection: { coolingK: number; fillGain: number; railBar: number; lowEnd: number; knockDb: number; egr: number; dpfCleanKpa: number; dpfFullKpa: number };
 }
 
 /** La voiture vue de dessus, en mètres (voir `Telemetry.listenerX`), pour la placer sur le plan. */
@@ -224,7 +237,7 @@ export interface SoundSheet {
   lineLoss: { hz: number; db: number }[];
 }
 
-export const EMPTY_SPEC: Spec = { idle: 0, redline: 7000, peakTorque: 0, peakTorqueRpm: 0, peakHp: 0, peakHpRpm: 0, gears: 0, ratios: [], turboWheelMm: 0, turboInertia: 0, intakeDropKpa: 0, intakeAirC: 20, chargerRatio: 0, chargerVolume: 0, chargerWheelMm: 0, zeroTo100: 0, topSpeed: 0, starter: { direct: false, kw: 0, ring: 0, pinion: 0, helix: 0 }, carb: { throats: 0, throatMm: 0, dropKpa: 0 }, curve: [], box: EMPTY_BOX };
+export const EMPTY_SPEC: Spec = { idle: 0, redline: 7000, peakTorque: 0, peakTorqueRpm: 0, peakHp: 0, peakHpRpm: 0, gears: 0, ratios: [], turboWheelMm: 0, turboInertia: 0, intakeDropKpa: 0, intakeAirC: 20, chargerRatio: 0, chargerVolume: 0, chargerWheelMm: 0, zeroTo100: 0, topSpeed: 0, starter: { direct: false, kw: 0, ring: 0, pinion: 0, helix: 0 }, carb: { throats: 0, throatMm: 0, dropKpa: 0 }, curve: [], box: EMPTY_BOX, injection: { coolingK: 0, fillGain: 0, railBar: 0, lowEnd: 0, knockDb: 0, egr: 0, dpfCleanKpa: 0, dpfFullKpa: 0 } };
 
 interface RfExports {
   memory: WebAssembly.Memory;
@@ -289,6 +302,13 @@ interface RfExports {
   rf_carb_throats(): number;
   rf_carb_throat_mm(): number;
   rf_carb_drop_kpa(): number;
+  rf_injection_figure(item: number): number;
+  rf_dpf_kpa_at(full: number): number;
+  rf_dpf_load(): number;
+  rf_dpf_kpa(): number;
+  rf_dpf_regen(): number;
+  rf_dpf_c(): number;
+  rf_egr_share(): number;
   rf_starter_ring(): number;
   rf_starter_pinion(): number;
   rf_starter_helix(): number;
@@ -598,6 +618,16 @@ export class Engine {
       carb: { throats: rf.rf_carb_throats(), throatMm: rf.rf_carb_throat_mm(), dropKpa: rf.rf_carb_drop_kpa() },
       curve,
       box: this.boxSpec(rf, gears, redline),
+      injection: {
+        coolingK: rf.rf_injection_figure(0),
+        fillGain: rf.rf_injection_figure(1),
+        railBar: rf.rf_injection_figure(2),
+        lowEnd: rf.rf_injection_figure(3),
+        knockDb: rf.rf_injection_figure(4),
+        egr: rf.rf_injection_figure(5),
+        dpfCleanKpa: rf.rf_dpf_kpa_at(0),
+        dpfFullKpa: rf.rf_dpf_kpa_at(1),
+      },
     };
   }
 

@@ -247,6 +247,8 @@ InjectionSummary injectionSummary(const EngineConfig& engine);
 inline bool directInjected(const EngineConfig& e) { return e.fuelSystem == FuelSystem::Direct && !e.burnsDiesel(); }
 /** Une rampe commune sur un diesel. */
 inline bool commonRailed(const EngineConfig& e) { return e.burnsDiesel() && e.dieselInjection == DieselInjection::CommonRail; }
+/** Un filtre à particules : sur un diesel, ou une injection directe d'essence, les seuls à faire de la suie. */
+inline bool particulateFiltered(const EngineConfig& e) { return e.particulateFilter && (e.burnsDiesel() || directInjected(e)); }
 /** La recirculation : un rotatif n'en a pas (il garde ses gaz brûlés d'une chambre à l'autre). */
 inline bool recirculated(const EngineConfig& e) { return e.egr && !isRotary(e); }
 

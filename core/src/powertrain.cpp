@@ -418,7 +418,7 @@ double baseFullLoadTorqueNm(const Powertrain& p, double rpm, double boost) {
 }
 
 /** La pompe haute pression et le filtre à particules : ils ne changent rien sans injection directe ni filtre. */
-bool injectionChanges(const Powertrain& p) { return !p.electric && (directInjected(p.engine) || p.engine.particulateFilter); }
+bool injectionChanges(const Powertrain& p) { return !p.electric && (directInjected(p.engine) || particulateFiltered(p.engine)); }
 
 /** Ce que coûtent à pleine charge la pompe haute pression et le filtre, à sa suie moyenne (Nm). */
 double injectionLossNm(const Powertrain& p, double rpm, double boost) {
@@ -498,7 +498,7 @@ double directPumpTorqueNm(const Powertrain& p, double rpm, double fill, double b
 }
 
 double filterPumpingTorqueNm(const Powertrain& p, double rpm, double fill, double boost, double sootG) {
-    if (p.electric || !p.engine.particulateFilter) return 0.0;
+    if (p.electric || !particulateFiltered(p.engine)) return 0.0;
     const ParticulateFilterSpec spec = particulateFilterSpecOf(p.engine);
     const ExhaustState gas = exhaustStateOf(p, rpm, fill, boost);
     return filterPumpingNm(spec, filterBackPressurePa(spec, sootG, gas.kgS, gas.kelvin));

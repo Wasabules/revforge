@@ -50,7 +50,7 @@ void applyCarburetor(const EngineConfig& engine, EngineProfile& p) {
  */
 void applyInjection(const EngineConfig& e, EngineProfile& p) {
     p.directInjection = directInjected(e);
-    if (e.particulateFilter) {
+    if (particulateFiltered(e)) {
         const ParticulateFilterSpec spec = particulateFilterSpecOf(e);
         ParticulateFilter mean;
         mean.configure(spec);
@@ -347,7 +347,7 @@ EngineProfile EngineConfig::toProfile() const {
     if (layout == Layout::Rotary) applyRotary(*this, p);
     // Après le rotatif : les explosions inégales d'une pipe commune se posent sur les siennes.
     if (hasCarburetor(*this)) applyCarburetor(*this, p);
-    if (directInjected(*this) || particulateFilter || commonRailed(*this) || recirculated(*this)) applyInjection(*this, p);
+    if (directInjected(*this) || particulateFiltered(*this) || commonRailed(*this) || recirculated(*this)) applyInjection(*this, p);
     return p;
 }
 

@@ -290,7 +290,7 @@ double brakeSpecificFuel(const Powertrain& p, double rpm, double brakeNm) {
     // Le compresseur prend sa part aux pistons avant le frein : à cette charge, soupape ouverte ou non.
     double charger = p.engine.aspiration == Aspiration::Supercharger ? superchargerDriveNm(p, rpm, (brakeNm + friction + superchargerDriveNm(p, rpm, 1.0)) / fullGross) : 0.0;
     // La pompe haute pression et le filtre à particules, à sa suie moyenne : la combustion les paie aussi.
-    if (directInjected(p.engine) || p.engine.particulateFilter) {
+    if (directInjected(p.engine) || particulateFiltered(p.engine)) {
         const double share = std::min((brakeNm + friction) / fullGross, 1.0);
         const double boost = steadyBoost(p, rpm);
         charger += directPumpTorqueNm(p, rpm, share, boost) + filterPumpingTorqueNm(p, rpm, share, boost, meanSootG(p));

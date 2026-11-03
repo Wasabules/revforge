@@ -90,25 +90,33 @@ double bandRise(const Samples& before, const Samples& after, double fromHz, doub
     return dB(bandEnergy(after, fromHz, toHz) / bandEnergy(before, fromHz, toHz)) - dB(bandEnergy(after, 63.0, 400.0) / bandEnergy(before, 63.0, 400.0));
 }
 
-/** Tenu en troisième à 2000 tr/min, pied léger, puis au plancher : le couple moyen de la première demi-seconde. */
-double tipInNm(DrivingModel& m) {
-    constexpr double kStep = 0.002;
+/** Tenu en troisième à 1500 tr/min, pied léger, puis au plancher : le couple moyen de la première demi-seconde (comme carburetor_test). */
+double tipInNm(DrivingModel& m, double* leanest = nullptr) {
+    constexpr double kDt = 128.0 / 44100.0;
+    constexpr double kFrom = 1500.0;
     m.setManual(true);
-    for (int i = 0; i < 3; ++i) m.requestShift(1);
-    double held = 0.15;
-    for (int i = 0; i < static_cast<int>(20.0 / kStep); ++i) {
-        const double error = (2000.0 - m.rpm()) / 1000.0;
-        held = std::clamp(held + 0.3 * error * kStep, 0.05, 0.6);
-        m.stepPedal(kStep, std::clamp(held + error, 0.05, 0.8), 0.0);
-        if (m.gear() < 3 && !m.shifting() && m.rpm() > 2500.0) m.requestShift(1);
+    m.requestShift(1);
+    double held = 0.1;
+    for (int i = 0; i < static_cast<int>(12.0 / kDt); ++i) {
+        const int now = m.gear();
+        if (now >= 1 && now < 3 && !m.shifting()) {
+            const double next = m.rpm() * m.gearing().overall[static_cast<std::size_t>(now)] / m.gearing().overall[static_cast<std::size_t>(now - 1)];
+            if (next > std::max(kFrom, m.idleRpm() * 1.4) || m.rpm() > m.redlineRpm() * 0.85) m.requestShift(1);
+        }
+        const double error = (kFrom - m.rpm()) / 1000.0;
+        held = std::clamp(held + 0.5 * error * kDt, 0.02, 1.0);
+        m.stepPedal(kDt, now < 3 ? 0.5 : std::clamp(held + error, 0.02, 1.0), now == 3 && error < -0.1 ? std::min(-error, 0.5) : 0.0);
     }
     double sum = 0.0;
     int count = 0;
-    for (int i = 0; i < static_cast<int>(0.5 / kStep); ++i) {
-        m.stepPedal(kStep, 1.0, 0.0);
+    double lean = 1.0;
+    for (int i = 0; i < static_cast<int>(0.5 / kDt); ++i) {
+        m.stepPedal(kDt, 1.0, 0.0);
         sum += m.torqueNm();
+        lean = std::min(lean, m.portFilm().richnessShare());
         ++count;
     }
+    if (leanest) *leanest = lean;
     return sum / count;
 }
 
@@ -337,12 +345,16 @@ TEST_CASE("film d'une injection indirecte : à 90 °C le modèle de conduite ne 
     cold.setCoolantC(20.0);
     const double plainNm = tipInNm(plain);
     const double warmNm = tipInNm(warm);
-    const double coldNm = tipInNm(cold);
+    double leanest = 1.0;
+    const double coldNm = tipInNm(cold, &leanest);
     CHECK(warmNm == plainNm);
     CHECK(plain.rpm() == warm.rpm());
+    CHECK(plain.gear() == 3);
+    CHECK(warmNm > 50.0);
     CHECK_FALSE(warm.portFilmActive());
     CHECK(cold.portFilmActive());
     // Contre-épreuve : le froid change le mélange, et le couple de la reprise le suit.
+    CHECK(leanest < 0.9);
     CHECK(coldNm < 0.97 * warmNm);
     // L'injection directe n'a pas de film : le froid ne lui fait rien ici.
     DrivingModel direct(petrol2(FuelSystem::Direct));
@@ -487,6 +499,12 @@ TEST_CASE("filtre à particules : la contre-pression croît avec la suie, de l'o
     CHECK(loss > 0.5);
     CHECK(loss < 0.05 * torqueCurveNm(dieselVan(), 3960.0));
     CHECK(filterPumpingTorqueNm(dieselVan(), 3960.0, 1.0, 1.0, 10.0) == 0.0);
+    // Une injection indirecte d'essence ne fait pas assez de suie : le réglage y reste sans effet.
+    Powertrain port = petrol2();
+    port.engine.particulateFilter = true;
+    CHECK_FALSE(particulateFiltered(port.engine));
+    CHECK(port.profile() == petrol2().profile());
+    CHECK_FALSE(DrivingModel(port).filtered());
 }
 
 TEST_CASE("filtre à particules : la régénération se déclenche au plein, brûle la suie, et se paie en carburant") {

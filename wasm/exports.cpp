@@ -4,6 +4,8 @@
 #include "revforge/carburetor.hpp"
 #include "revforge/driving_model.hpp"
 #include "revforge/engine_sound.hpp"
+#include "revforge/injection.hpp"
+#include "revforge/particulate_filter.hpp"
 #include "revforge/powertrain.hpp"
 #include "revforge/sound_sheet.hpp"
 #include "../core/src/exhaust_line.hpp"
@@ -476,5 +478,36 @@ int rf_placement() { return static_cast<int>(placementOf(g_powertrain.car)); }
 
 float rf_sheet_level(int item) { return soundSheet(g_powertrain).level(item); }
 float rf_sheet_line_loss(float fromHz, float toHz) { return lineLossDb(g_powertrain, fromHz, toHz); }
+
+// ── L'injection, pour la fiche : 0 là où elle n'a pas de sens (voir `injectionSummary`) ──
+
+/**
+ * 0 : refroidissement de la charge d'une injection directe (K) ; 1 : remplissage gagné (part) ; 2 : pression d'injection à
+ * pleine charge (bar) ; 3 : couple gagné à 1500 tr/min par la rampe commune (part) ; 4 : claquement au ralenti face à la pompe
+ * mécanique (dB) ; 5 : part de gaz recirculés la plus forte.
+ */
+float rf_injection_figure(int item) {
+    if (g_powertrain.electric) return 0.0f;
+    const InjectionSummary s = injectionSummary(g_powertrain.engine);
+    const double figures[6] = {s.coolingK, s.fillGainShare, s.railBar, s.lowEndTorqueShare, s.knockDb, s.egrShare};
+    return item >= 0 && item < 6 ? static_cast<float>(figures[item]) : 0.0f;
+}
+/** Contre-pression du filtre à particules à la puissance maximale (kPa) : `full` 0 propre, 1 plein. 0 sans filtre. */
+float rf_dpf_kpa_at(int full) {
+    if (g_powertrain.electric || !particulateFiltered(g_powertrain.engine)) return 0.0f;
+    const ParticulateFilterSpec spec = particulateFilterSpecOf(g_powertrain.engine);
+    const double rpm = powerSummary(g_powertrain).peakPowerRpm;
+    const ExhaustState gas = exhaustStateOf(g_powertrain, rpm, 1.0, steadyBoost(g_powertrain, rpm));
+    return static_cast<float>(filterBackPressurePa(spec, full != 0 ? spec.startGPerL * spec.volumeL : 0.0, gas.kgS, gas.kelvin) / 1000.0);
+}
+
+// ── Le filtre à particules et la recirculation, en marche ──
+
+/** Le remplissage du filtre, de la fin de la dernière régénération (0) à la demande de la suivante (1). 0 sans filtre. */
+float rf_dpf_load() { return g_model->filtered() ? static_cast<float>(g_model->particulateFilter().loadShare()) : 0.0f; }
+float rf_dpf_kpa() { return g_model->filtered() ? static_cast<float>(g_model->particulateFilter().backPressurePa() / 1000.0) : 0.0f; }
+int rf_dpf_regen() { return g_model->filtered() && g_model->particulateFilter().regenerating() ? 1 : 0; }
+float rf_dpf_c() { return g_model->filtered() ? static_cast<float>(g_model->particulateFilter().temperatureK() - 273.15) : 0.0f; }
+float rf_egr_share() { return static_cast<float>(g_model->egrShare()); }
 
 }  // extern "C"

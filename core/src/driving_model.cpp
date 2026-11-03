@@ -139,7 +139,7 @@ void DrivingModel::setPowertrain(const Powertrain& powertrain) {
     egrShare_ = 0.0;
     const bool filterBefore = dpfEngine_;
     const ParticulateFilterSpec filterSpec = particulateFilterSpecOf(powertrain.engine);
-    dpfEngine_ = !powertrain.electric && powertrain.engine.particulateFilter;
+    dpfEngine_ = !powertrain.electric && particulateFiltered(powertrain.engine);
     if (dpfEngine_ && (!filterBefore || dpf_.spec().volumeL != filterSpec.volumeL || dpf_.spec().diesel != filterSpec.diesel)) dpf_.configure(filterSpec);
     if (gear_ > gearing_.gears) gear_ = gearing_.gears;
     step_ = ShiftStep::None;
