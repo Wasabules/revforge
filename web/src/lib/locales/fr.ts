@@ -672,7 +672,6 @@ export const fr: Record<MessageKey, string> = {
   'panel.display': 'Affichage',
   'summary.engine': '{litres} L · {cylinders} cyl · {hp} ch · {bore}×{stroke} mm',
   'summary.turboPipe': ' · tube de {m} m',
-  'summary.engine.charged': '{litres} L · {cylinders} cyl · {hp} ch · {bore}×{stroke} mm · {kind}',
   'summary.rotary': '{litres} L · {cylinders} rotors · {hp} ch',
   'summary.electric': 'Électrique · {hp} ch',
   'summary.exhaust': '{line} · {outlets}',

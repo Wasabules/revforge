@@ -673,7 +673,6 @@ export const en = {
   'panel.display': 'Display',
   'summary.engine': '{litres} L · {cylinders} cyl · {hp} hp · {bore}×{stroke} mm',
   'summary.turboPipe': ' · {m} m pipe',
-  'summary.engine.charged': '{litres} L · {cylinders} cyl · {hp} hp · {bore}×{stroke} mm · {kind}',
   'summary.rotary': '{litres} L · {cylinders} rotors · {hp} hp',
   'summary.electric': 'Electric · {hp} hp',
   'summary.exhaust': '{line} · {outlets}',
