@@ -245,6 +245,13 @@ struct InjectionSummary {
 InjectionSummary injectionSummary(const EngineConfig& engine);
 
 /** Une injection directe d'essence : sur un moteur à essence, rotatif compris. */
+/**
+ * La part de la chaleur de vaporisation prise à l'air dans le collecteur, selon l'alimentation : 20 % en injection indirecte (et
+ * pour comparer une injection directe à sa référence), 50 % sous un carburateur. La combustion la lit pour comparer deux carburants.
+ */
+double mixtureAirShare(const EngineConfig& e);
+/** Le carburant de ce moteur, tel que l'injection le lit : celui de la combustion (`fuelPropertiesOf`). */
+InjectedFuel injectedFuelOf(const EngineConfig& e);
 inline bool directInjected(const EngineConfig& e) { return e.fuelSystem == FuelSystem::Direct && !e.burnsDiesel(); }
 /** Une rampe commune sur un diesel. */
 inline bool commonRailed(const EngineConfig& e) { return e.burnsDiesel() && e.dieselInjection == DieselInjection::CommonRail; }

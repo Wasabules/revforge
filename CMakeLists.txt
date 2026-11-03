@@ -147,24 +147,32 @@ else()
   golden(altitude_carb d84f8e06 --preset carb_twin_cam --scenario blips --altitude 2500)
   golden(ambient_electric d0299648 --preset electric --scenario lap --seconds 20 --ambient 45 --altitude 1500)
   # Départ à froid : ralenti accéléré, frottements de l'huile froide ; et le starter d'un carburateur par -10 °C.
-  golden(start_cold_city b3a7b95a --preset city_14 --start cold --scenario start --seconds 8)
+  # Intégration : b3a7b95a -> 25dc320d. Après un départ à froid, le film de l'injection indirecte lit l'eau du réseau thermique, et la paroi froide réchauffe moins l'air piégé.
+  golden(start_cold_city 25dc320d --preset city_14 --start cold --scenario start --seconds 8)
   # Intégration : par -10 °C, l'air est aussi plus dense (atmosphère) ; avec l'air de référence, l'empreinte redevient d3a95f44.
-  golden(blips_cold_carb fdd3932c --preset carb_twin_cam --start cold --ambient -10 --scenario blips --seconds 8)
+  # Intégration : fdd3932c -> 558e94b7. Après un départ à froid, la paroi froide réchauffe moins l'air piégé (thermique et atmosphère),
+  # et le ralenti accéléré garde l'autorité du démarrage (0,8 du remplissage), et non 0,45 comme moteur chaud.
+  golden(blips_cold_carb 558e94b7 --preset carb_twin_cam --start cold --ambient -10 --scenario blips --seconds 8)
   # La combustion : des carburateurs à 12:1 qui cliquettent sans capteur, l'E85 sur un turbo, un diesel moins comprimé au démarrage, un rotor plus creusé.
-  golden(knock_carb cd653d6e --preset carb_twin_cam --compression 12 --scenario turbo --seconds 16)
-  golden(compression_e85_turbo 8c6eee0c --preset hot_hatch_turbo --compression 10.5 --grade e85 --scenario launch --seconds 6)
+  # Intégration : cd653d6e -> 854924ae. La vaporisation prend à l'air la part d'un carburateur (0,5, injection), non plus 0,15 pour toute alimentation.
+  golden(knock_carb 854924ae --preset carb_twin_cam --compression 12 --scenario turbo --seconds 16)
+  # Intégration : 8c6eee0c -> 98ff3f12. La vaporisation prend à l'air la part d'une injection indirecte (0,2, injection), non plus 0,15.
+  golden(compression_e85_turbo 98ff3f12 --preset hot_hatch_turbo --compression 10.5 --grade e85 --scenario launch --seconds 6)
   golden(compression_diesel_start a48c481b --preset diesel_four --compression 15 --scenario start)
   golden(compression_rotary f21ca74c --preset twin_rotor_13 --compression 11 --scenario lap --seconds 10)
   # Le calculateur, actif : la coupure d'allumage et ses détonations, le rupteur progressif avec une carte réglée, le
   # launch control au frein (le 0-100 s'écrit avant l'empreinte), le passage à fond, l'antipatinage.
   golden(ecu_ignition_cut 2af90e2c --cylinders 4 --cc 2000 --bore 86 --redline 7200 --pops strong --exhaust sport --limiter ignition_cut --scenario blips)
-  golden(ecu_soft_map 99069727 --cylinders 4 --cc 2000 --bore 86 --redline 7200 --exhaust sport --limiter soft --advance 6 --lambda 0.95 --scenario blips)
+  # Intégration : 99069727 -> 6b783b4b. La part de couple de l'avance passe par la carte du cliquetis, qui part de la carte d'origine réelle ; le calculateur garde carburant et chaleur.
+  golden(ecu_soft_map 6b783b4b --cylinders 4 --cc 2000 --bore 86 --redline 7200 --exhaust sport --limiter soft --advance 6 --lambda 0.95 --scenario blips)
   golden(ecu_launch_control 7fd42b07 --preset hot_hatch_turbo --launch 4500 --scenario launch_control)
   golden(ecu_flat_shift 7d3dc773 --preset hot_hatch_turbo --flat-shift 1 --scenario launch --seconds 12)
   golden(ecu_traction 0bc683ee --cylinders 8 --layout cross_plane --cc 7000 --bore 99 --redline 6000 --exhaust sport --body coupe --mass 1700 --rim 19 --drive rear --traction sport --scenario launch --seconds 10)
   # L'injection : le tic d'une injection directe (sous le capot, au ralenti), la rampe commune, la recirculation et le filtre.
-  golden(injection_direct_blips 19ac1ec5 --preset hot_hatch_na --fuel-system direct --scenario blips)
-  golden(injection_direct_bay 29fbf825 --preset hot_hatch_na --fuel-system direct --scenario idle --seconds 4 --listener bay)
+  # Intégration : 19ac1ec5 -> 038cacdf. La chaleur latente vient du carburant (350 kJ/kg, combustion), et la carte du cliquetis lit le refroidissement de l'injection directe.
+  golden(injection_direct_blips 038cacdf --preset hot_hatch_na --fuel-system direct --scenario blips)
+  # Intégration : 29fbf825 -> be119bb8. La chaleur latente vient du carburant (350 kJ/kg, combustion), et la carte du cliquetis lit le refroidissement de l'injection directe.
+  golden(injection_direct_bay be119bb8 --preset hot_hatch_na --fuel-system direct --scenario idle --seconds 4 --listener bay)
   golden(injection_common_rail 4781fcd4 --preset diesel_four --diesel-injection common_rail --scenario lap --seconds 20)
   golden(injection_diesel_egr_dpf 089dcc16 --preset diesel_four --egr 1 --dpf 1 --scenario lap --seconds 20)
   golden(injection_petrol_egr db5318c3 --preset city_14 --egr 1 --scenario lap --seconds 20)
@@ -186,7 +194,8 @@ else()
   golden(twincharger 48a5fa18 --preset hot_hatch_turbo --turbo-layout twincharger --scenario launch --seconds 10)
   golden(vgt_diesel c1df8a8e --preset diesel_four --vgt 1 --scenario turbo --seconds 12)
   # L'air de charge : sans échangeur, air-eau, injection d'eau, protoxyde.
-  golden(charge_none_turbo 07dfbb8d --preset hot_hatch_turbo --intercooler none --scenario turbo)
+  # Intégration : 07dfbb8d -> 34de3f5e. La carte du cliquetis lit la charge sans échangeur (air de charge), plus chaude.
+  golden(charge_none_turbo 34de3f5e --preset hot_hatch_turbo --intercooler none --scenario turbo)
   golden(charge_water_cooler efc2c12e --preset v8_supercharged --intercooler water --scenario launch --seconds 10)
   golden(charge_water_injection 59ac8a9c --preset hot_hatch_turbo --water 1 --scenario launch --seconds 10)
   golden(charge_nitrous bedbec6d --preset hot_hatch_na --nitrous 75 --scenario launch --seconds 10)

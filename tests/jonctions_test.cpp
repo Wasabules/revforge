@@ -8,13 +8,23 @@
 
 #include "doctest.h"
 #include "revforge/air_filter.hpp"
+#include "revforge/atmosphere.hpp"
+#include "revforge/cam.hpp"
 #include "revforge/carburetor.hpp"
+#include "revforge/charge_air.hpp"
+#include "revforge/combustion.hpp"
 #include "revforge/driving_model.hpp"
+#include "revforge/ecu.hpp"
 #include "revforge/engine_sound.hpp"
+#include "revforge/injection.hpp"
 #include "revforge/powertrain.hpp"
 #include "revforge/presets.hpp"
 #include "revforge/supercharger.hpp"
+#include "revforge/thermal.hpp"
 #include "revforge/turbo.hpp"
+#include "revforge/twin_turbo.hpp"
+#include "revforge/two_stroke.hpp"
+#include "revforge/valve_float.hpp"
 #include "test_support.hpp"
 
 using namespace revforge;
@@ -515,4 +525,178 @@ TEST_CASE("toutes les rencontres tournent, sans NaN ni calage") {
         sound.render(out.data(), static_cast<int>(out.size()));
         CHECK(std::isfinite(test::rms(out)));
     }
+}
+
+// ── Quand les réglages se rencontrent (2) : les sujets du moteur. Voir la section du même nom dans docs/modele.md. ──
+
+namespace {
+
+Powertrain enginePreset(const char* id) { return findPreset(id)->powertrain(); }
+
+/** Le couple à pleine charge stabilisée, frottements compris : le travail des gaz. */
+double grossAt(const Powertrain& p, double rpm) { return torqueCurveNm(p, rpm) + frictionTorqueNm(p, rpm); }
+
+}  // namespace
+
+TEST_CASE("jonction calculateur et cliquetis : l'avance passe par la carte du cliquetis, et une seule fois") {
+    const Powertrain stock = enginePreset("hot_hatch_na");
+    Powertrain advanced = stock;
+    advanced.engine.ignitionOffsetDeg = 6;
+    // La carte se construit pour l'avance seule, et la lit.
+    REQUIRE(knockMapOf(stock) == nullptr);
+    const KnockMap* map = knockMapOf(advanced);
+    REQUIRE(map != nullptr);
+    CHECK(map->advanceOffsetDeg() == 6.0);
+    // La carte du calculateur ne compte plus la part de couple de l'avance : seule la carte du cliquetis la donne.
+    CHECK(ecuFullLoadShare(advanced.engine) == 1.0);
+    // Sous 2250 tr/min, la carte d'origine de ce moteur est à 2° de sa limite à pleine charge : 6° de plus, le capteur en reprend.
+    const double rpm = 1500.0;
+    CHECK(grossAt(advanced, rpm) / grossAt(stock, rpm) == doctest::Approx(map->steadyTorqueShare(rpm)).epsilon(1e-6));
+    CHECK(map->steadyAdvanceDeg(rpm) < map->at(rpm, 1.0).stockDeg + 6.0);
+    // Le calculateur lit ce que retire le capteur : en quatrième vers 1800 tr/min, puis pied au plancher.
+    DrivingModel model(advanced);
+    model.setManual(true);
+    model.requestShift(1);
+    for (int i = 0; i < 12000; ++i) {
+        const int now = model.gear();
+        if (now >= 1 && now < 4 && !model.shifting() && model.rpm() > 2600.0) model.requestShift(1);
+        const double error = (1800.0 - model.rpm()) / 1000.0;
+        model.stepPedal(0.001, now < 4 ? 0.5 : std::clamp(0.2 + error, 0.02, 1.0), now == 4 && error < -0.1 ? 0.3 : 0.0);
+    }
+    REQUIRE(model.gear() == 4);
+    double maxRetard = 0.0;
+    for (int i = 0; i < 3000; ++i) {
+        model.stepPedal(0.001, 1.0, 0.0);
+        maxRetard = std::max(maxRetard, model.knockRetardDeg());
+        REQUIRE(model.ecuAdvanceDeg() == doctest::Approx(6.0 - model.ecuAction().retardDeg - model.knockRetardDeg()));
+    }
+    CHECK(maxRetard > 0.0);
+}
+
+TEST_CASE("jonction atmosphère et cliquetis : un jour chaud rapproche la limite, la carte d'origine reste celle de l'air de référence") {
+    Powertrain hot = enginePreset("hot_hatch_turbo");
+    hot.engine.ambientC = 45.0f;
+    Powertrain cold = hot;
+    cold.engine.ambientC = -20.0f;
+    const KnockMap* hotMap = knockMapOf(hot);
+    REQUIRE(hotMap != nullptr);
+    const KnockPoint hotPoint = hotMap->at(4000.0, 1.0);
+    const double hotLimit = hotPoint.limitDeg;
+    const double hotStock = hotPoint.stockDeg;
+    const KnockMap* coldMap = knockMapOf(cold);
+    REQUIRE(coldMap != nullptr);
+    const KnockPoint coldPoint = coldMap->at(4000.0, 1.0);
+    // L'air chaud cliquette plus tôt ; la carte d'origine, réglée dans l'air de référence, ne bouge pas.
+    CHECK(hotLimit < coldPoint.limitDeg - 1.0);
+    CHECK(hotStock == doctest::Approx(coldPoint.stockDeg));
+}
+
+TEST_CASE("jonction atmosphère et régulation de pression : la cible absolue se compare à l'air du jour") {
+    Powertrain high = enginePreset("hot_hatch_turbo");
+    high.engine.altitudeM = 3000;
+    DrivingModel spring(high);
+    for (int i = 0; i < 500; ++i) spring.stepPedal(0.001, 0.2, 0.0);
+    // Le ressort tient une pression relative : la cible est l'air du jour plus le réglage.
+    CHECK(spring.boostTargetPa() == doctest::Approx(ambientAirOf(high.engine).pressurePa + static_cast<double>(high.engine.boostBar) * 1e5));
+    CHECK(spring.boostTargetPa() < 101325.0 + static_cast<double>(high.engine.boostBar) * 1e5 - 20000.0);
+}
+
+TEST_CASE("jonction biturbo et régulation de pression : le calculateur donne sa cible à deux turbos, sans son PID") {
+    const Powertrain spring = enginePreset("w12_continental");
+    REQUIRE(usesTwinTurbo(spring.engine));
+    Powertrain capped = spring;
+    capped.engine.boostControl = BoostControl::ByGear;
+    DrivingModel free(spring);
+    DrivingModel limited(capped);
+    double deepest = 0.0;
+    double freeBoost = 0.0;
+    double limitedBoost = 0.0;
+    for (int i = 0; i < 3000; ++i) {
+        free.stepPedal(0.001, 1.0, 0.0);
+        limited.stepPedal(0.001, 1.0, 0.0);
+        if (free.gear() != 1 || limited.gear() != 1) continue;
+        deepest = std::max(deepest, free.boostTargetPa() - limited.boostTargetPa());
+        freeBoost = std::max(freeBoost, free.boost());
+        limitedBoost = std::max(limitedBoost, limited.boost());
+    }
+    // En première, les pneus ne passeraient pas les 778 Nm : le calculateur baisse la cible, et les deux arbres la suivent.
+    CHECK(deepest > 20000.0);
+    CHECK(limitedBoost < freeBoost - 0.1);
+}
+
+TEST_CASE("jonction carburant, injection et air de charge : le refroidissement par vaporisation n'est compté qu'une fois") {
+    // La chaleur latente vient du carburant (combustion), la part prise à l'air de l'alimentation (injection).
+    Powertrain port = enginePreset("hot_hatch_na");
+    port.engine.fuelGrade = FuelGrade::E85;
+    Powertrain carb = port;
+    carb.engine.fuelSystem = FuelSystem::Carburetor;
+    CHECK(mixtureAirShare(port.engine) < mixtureAirShare(carb.engine));
+    CHECK(fuelTorqueShare(carb.engine, 0.88, 320.0) > fuelTorqueShare(port.engine, 0.88, 320.0));
+    const InjectedFuel e85 = injectedFuelOf(port.engine);
+    CHECK(e85.vaporizationJPerKg == doctest::Approx(fuelPropertiesOf(port.engine).vaporizationJPerG * 1000.0));
+    Powertrain direct = port;
+    direct.engine.fuelSystem = FuelSystem::Direct;
+    Powertrain ron95 = direct;
+    ron95.engine.fuelGrade = FuelGrade::Ron95;
+    // L'E85 se vaporise avec trois fois plus de chaleur : l'injection directe en gagne davantage.
+    CHECK(directFillGain(5000.0, 6800.0, 300.0, injectedFuelOf(direct.engine)) > directFillGain(5000.0, 6800.0, 300.0, injectedFuelOf(ron95.engine)));
+    // Le carburant de l'air de charge est le même.
+    Powertrain water = direct;
+    water.engine.waterInjection = true;
+    CHECK(chargeAirSetupOf(water).fuel.latentJPerKg == doctest::Approx(fuelPropertiesOf(water.engine).vaporizationJPerG * 1000.0));
+}
+
+TEST_CASE("jonction thermique, injection et calculateur : un départ à froid réveille le film et la richesse, pas un départ à chaud") {
+    Powertrain cold = enginePreset("city_14");
+    cold.engine.startTemp = StartTemp::Cold;
+    cold.engine.ambientC = -5.0f;
+    Powertrain warm = cold;
+    warm.engine.startTemp = StartTemp::Warm;
+    DrivingModel coldModel(cold);
+    DrivingModel warmModel(warm);
+    for (int i = 0; i < 3000; ++i) {
+        coldModel.stepNeutral(0.001, 0.2);
+        warmModel.stepNeutral(0.001, 0.2);
+    }
+    CHECK(coldModel.portFilmActive());
+    CHECK_FALSE(warmModel.portFilmActive());
+    CHECK(coldModel.coolantC() < 20.0);
+    CHECK(warmModel.coolantC() == kWarmCoolantC);
+    // Une seule loi d'enrichissement à froid : celle de la thermique, que le calculateur demande aussi.
+    CHECK(coldModel.ecuLambda() == doctest::Approx(1.0 / (1.0 + coldEnrichment(cold.engine, coldModel.thermal().coolantC()))).epsilon(1e-6));
+    CHECK(warmModel.ecuLambda() == doctest::Approx(1.0));
+}
+
+TEST_CASE("jonction deux-temps et combustion : le taux réglé change les lumières, et la combustion ne le compte pas une seconde fois") {
+    Powertrain stock = enginePreset("two_stroke_triple");
+    Powertrain high = stock;
+    high.engine.compressionRatio = 9.0f;
+    CHECK(twoStrokePortsOf(stock.engine).geometricCompression == doctest::Approx(7.5));
+    CHECK(twoStrokePortsOf(high.engine).geometricCompression == doctest::Approx(9.0));
+    CHECK(twoStrokePortsOf(high.engine).trappedCompression > twoStrokePortsOf(stock.engine).trappedCompression);
+    CHECK(compressionEfficiencyShare(high.engine) == 1.0);
+    // Plus de compression, plus de couple, par son seul cycle.
+    CHECK(grossAt(high, 3500.0) > grossAt(stock, 3500.0) * 1.03);
+    // Le même taux écrit à la main retombe sur le même moteur.
+    Powertrain same = stock;
+    same.engine.compressionRatio = 7.5f;
+    CHECK(fullLoadTorqueNm(same, 3500.0, 0.0) == doctest::Approx(fullLoadTorqueNm(stock, 3500.0, 0.0)).epsilon(1e-12));
+}
+
+TEST_CASE("jonction culbuteurs, came et calculateur : le rupteur garde la zone rouge, la came pointue s'affole avant") {
+    std::size_t count = 0;
+    const Preset* all = presets(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        const Powertrain p = all[i].powertrain();
+        if (p.electric) continue;
+        // Aucun préréglage : sa came d'origine s'affole au moins 9 % au-delà de sa zone rouge, le rupteur ne bouge pas.
+        if (valveFloatRpm(p.engine) > 0.0) CHECK(limiterRpmFor(redlineRpmOf(p), valveFloatRpm(p.engine)) == redlineRpmOf(p));
+    }
+    Powertrain wild = enginePreset("hot_hatch_na");
+    wild.engine.camLiftMm = 12.5f;
+    wild.engine.camDurationDeg = 200;
+    // La levée et la durée que lisent les culbuteurs sont celles de la came.
+    CHECK(camLobeOf(wild.engine).liftMm == doctest::Approx(camProfileOf(wild.engine).liftMm));
+    CHECK(camLobeOf(wild.engine).durationDeg == doctest::Approx(camProfileOf(wild.engine).durationDeg));
+    CHECK(valveFloatRpm(wild.engine) < static_cast<double>(wild.engine.redlineRpm));
 }

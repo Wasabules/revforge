@@ -4,6 +4,7 @@
 
 #include "portable_math.hpp"
 #include "revforge/carburetor.hpp"
+#include "revforge/thermal.hpp"
 #include "revforge/turbo.hpp"
 
 namespace revforge {
@@ -105,7 +106,10 @@ double warmupRichness(double coolantC) {
 
 double demandedLambda(const EngineConfig& e, double load, double coolantC) {
     if (e.burnsDiesel()) return 1.0;
-    const double richness = (1.0 + (1.0 / fullLoadLambdaOf(e) - 1.0) * enrichment(load)) * warmupRichness(coolantC);
+    // Intégration : l'enrichissement à froid est celui de la thermique (`coldEnrichment`, 0 au-delà de 70 °C), le même que paie la
+    // consommation : une seule loi, pas deux. `warmupRichness` reste pour comparer.
+    const double cold = coldEnrichment(e, coolantC);
+    const double richness = (1.0 + (1.0 / fullLoadLambdaOf(e) - 1.0) * enrichment(load)) * (cold > 0.0 ? 1.0 + cold : 1.0);
     return 1.0 / richness;
 }
 
@@ -144,7 +148,11 @@ double lambdaLoadRatio(const EngineConfig& e, double load) {
 
 double ecuFullLoadShare(const EngineConfig& e, double knockRetardDeg) {
     if (!ecuMapTuned(e) && knockRetardDeg == 0.0) return 1.0;
-    return sparkTorqueShare(mapRetardDeg(e, knockRetardDeg)) * lambdaFullLoadRatio(e);
+    // Intégration : sur un quatre-temps à étincelle, le travail que change le décalage d'avance vient de la carte du cliquetis
+    // (combustion), qui part de la carte d'origine réelle, souvent en retard sur le meilleur couple. Le compter ici aussi le
+    // compterait deux fois. La consommation et la chaleur du gaz gardent, elles, le retard du calculateur (`mapRetardDeg`).
+    const double retard = ecuAdvanceInKnockMap(e) ? knockRetardDeg : mapRetardDeg(e, knockRetardDeg);
+    return sparkTorqueShare(retard) * lambdaFullLoadRatio(e);
 }
 
 double ecuActionShare(const EcuAction& action, double mapRetard) {

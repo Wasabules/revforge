@@ -34,7 +34,10 @@ double energyPerAirJPerKg(const FuelProperties& fuel);
  * jusqu'à saturation de sa vapeur à la température atteinte (Clausius-Clapeyron). Le reste la prend aux parois.
  */
 double evaporationCoolingK(const FuelProperties& fuel, double lambda, double evaporatedShare, double airK, double pressurePa);
-/** Part du carburant qui se vaporise aux dépens de l'air avant la fermeture de l'admission, en injection indirecte ou au carburateur (supposé). */
+/**
+ * Part du carburant qui se vaporise aux dépens de l'air avant la fermeture de l'admission (supposé). Intégration : le modèle ne la
+ * lit plus, la part vient de l'alimentation (`mixtureAirShare`, injection.hpp) ; elle ne sert qu'au test de la formule.
+ */
 inline constexpr double kPortEvaporatedShare = 0.15;
 
 // ── Le taux de compression ──
@@ -210,6 +213,10 @@ private:
  * La carte de ce moteur, gardée tant qu'il ne change pas. `nullptr` quand rien de ce sujet n'a changé, ou sur un diesel ou un électrique :
  * la carte d'origine reste alors sous sa limite, et le calcul garde son chemin d'origine.
  */
+/** Vrai quand l'air, la came, l'avance, l'injection et l'air de charge sont ceux d'origine : la carte n'a rien à voir de plus. */
+bool knockConditionsStock(const Powertrain& powertrain);
+/** Ce que lit la carte : l'air du jour, la fermeture de l'admission, la vaporisation d'une injection directe, l'avance. */
+KnockMap::Inputs knockInputsOf(const Powertrain& powertrain);
 const KnockMap* knockMapOf(const Powertrain& powertrain);
 
 }  // namespace revforge

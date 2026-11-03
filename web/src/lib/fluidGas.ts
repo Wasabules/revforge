@@ -734,7 +734,8 @@ export class GasNetwork {
     const stroke = cylinderVolume / this.boreArea;
     this.crank = stroke / 2;
     this.rod = stroke * (twoStroke ? ROD_OVER_STROKE : 1.6);
-    const ratio = twoStroke ? GEOMETRIC_COMPRESSION : compressionRatioOf(config, this.diesel ? 18 : this.airChain ? 9.5 : 10.5, this.diesel ? 14 : 6, 24);
+    // Un deux-temps lit aussi le taux réglé (comme `twoStrokePortsOf` en C++), 7,5 d'origine.
+    const ratio = twoStroke ? compressionRatioOf(config, GEOMETRIC_COMPRESSION, 4, 24) : compressionRatioOf(config, this.diesel ? 18 : this.airChain ? 9.5 : 10.5, this.diesel ? 14 : 4, 24);
     this.clearance = cylinderVolume / (ratio - 1);
     this.exhaustValve = 0.19 * this.boreArea;
     this.intakeValve = 0.24 * this.boreArea;
@@ -763,7 +764,7 @@ export class GasNetwork {
       this.boreArea = chamber / fakeStroke;
       this.crank = fakeStroke / 2;
       this.rod = fakeStroke * 5000;
-      this.clearance = chamber / (compressionRatioOf(config, rotaryCompression(config.aspiration), 6, 11.9) - 1);
+      this.clearance = chamber / (compressionRatioOf(config, rotaryCompression(config.aspiration), 4, 11.9) - 1);
       const across = shape.radius * shape.width * 1e-6;
       this.exhaustValve = EXHAUST_PORT_SHARE * across;
       this.intakeValve = INTAKE_PORT_SHARE * across;

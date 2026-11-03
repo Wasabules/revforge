@@ -1120,13 +1120,13 @@ The presets, against published figures; nothing is tuned to match:
 | | Simulated torque | Published | Simulated power | Published | Simulated 0-100 | Published |
 |---|---|---|---|---|---|---|
 | VR6 2.8 (Golf III) | 233 Nm at 3050 | 235 Nm at 4200 | 110 kW at 5650 | 128 kW at 5800 | 9.1 s | 7.8 s |
-| Twin-turbo W12 (Continental GT 2003) | 778 Nm | 650 Nm from 1600 to 6100 | 406 kW at 5950 | 412 kW at 6100 | 5.5 s | 4.8 s |
-| W16 (Veyron 16.4) | 1306 Nm | 1250 Nm | 671 kW at 5900 | 736 kW at 6000 | 3.8 s | 2.5 s |
-| V16 (Cadillac 452, 1930) | 578 Nm | 367 to 432 Nm | 179 kW at 3700 | 123 to 138 kW | 10.1 s | — |
+| Twin-turbo W12 (Continental GT 2003) | 778 Nm | 650 Nm from 1600 to 6100 | 406 kW at 5950 | 412 kW at 6100 | 5.4 s | 4.8 s |
+| W16 (Veyron 16.4) | 1306 Nm | 1250 Nm | 671 kW at 5850 | 736 kW at 6000 | 3.6 s | 2.5 s |
+| V16 (Cadillac 452, 1930) | 456 Nm at 1950 | 367 to 432 Nm | 138 kW at 3600 | 123 to 138 kW | 12.4 s | — |
 
 - The VR6 breathes less well than the real one, with its two valves per cylinder (`camshaft: sohc`, the 12-valve).
-- The W12 and the W16 have one turbo in the simulator until the twin-turbo work lands: `turboLayout: twin_parallel` is already written, without effect.
-- The Cadillac's compression was 5.35 (Old Cars Weekly), below the range of the engine settings (6 to 24): its torque is that of a modern engine of the same displacement.
+- The W12 and the W16 have two turbos in parallel, one per head (twin turbo); the Veyron has four, two per head, which the model merges into two. Torque and power are equilibria, the same as with one turbo; the 0-100 km/h gains 0.2 s (3.8 s with a single turbo on the W16).
+- The Cadillac's compression was 5.35 (Old Cars Weekly). The ratio range therefore goes down to 4:1 (integration), and the preset takes that ratio: at 10.5, the base's, it made 578 Nm and 179 kW, those of a modern engine of the same displacement. Torque stays 6 % above the top of the published range.
 - Preset sources: auto-motor-und-sport and auto-data for the Golf VR6 (ratios 3.30, 1.94, 1.31, 1.03, 0.84, final 3.68, 1285 kg); supercars.net (ZF 6HP26 from 4.17 to 0.69, final 3.52, 2385 kg) and australiancar.reviews (0.7 bar) for the Continental GT; Bugatti, auto-motor-und-sport (Super Sport ratios) and conceptcarz (about 18 psi) for the Veyron; its published final drive (3.64) would give 306 km/h at the limiter in seventh, far from 407 km/h, so the gearbox computes it; Wikipedia and Old Cars Weekly for the Cadillac (3 × 4 in, final 4.39, 2400 to 3000 kg).
 - The redlines of the VR6 (6500), the W12 (6500), the W16 (6400) and the Cadillac (4000, peak power being at 3400) are assumed. At 3800, the automatic shift modes of `shift_modes_test.cpp` lost their hysteresis on this three-speed box.
 
@@ -1370,7 +1370,8 @@ and `KnockMap`), `DrivingModel::stepKnock` (the sensor) and `core/src/knock_soun
 Today's engine assumes 10.5:1 naturally aspirated, 9.5:1 boosted, 18:1 diesel, 9.4 or 8.5:1 on a rotary (`stockCompressionRatio`, the
 starter's values). The setting is bounded to what exists (`compressionRatioOf`): a diesel goes no lower than 14:1, the lowest
 production diesel (Mazda Skyactiv-D), and a rotary no higher than 11.9:1, the highest production rotary (Mazda 8C, 2023), as the rotor
-runs out of pocket (assumed); petrol goes from 6 to 24.
+runs out of pocket (assumed); petrol goes from 4 to 24, for pre-war engines (Ford Model A, 4.2:1; Cadillac V16, 5.35:1). A two-stroke
+starts from its geometric ratio, 7.5:1.
 
 Indicated efficiency follows the fuel-air cycle, then what the walls take:
 
@@ -2158,3 +2159,66 @@ The model reads 28 % below the Saab in torque and power, and below the same engi
 **On screen.** The gas (`GasNetwork`) computes each cylinder and its crankcase, a zero-dimensional volume that follows the piston, with the three ports it uncovers and the same coefficients as the C++ cycle: you see the crankcase rise above atmospheric with the piston down, the mixture pass through the transfers, and fresh mixture reach the outlet. The expansion chamber there is tuned on the engine (`expansionSections`), its cones in a few steps of at least 3 cells; `EXHAUST_LINES.expansion` is only the preset's, for drawing. The gas view draws its cones as slopes. The blue smoke is the diesel's soot tracer, tinted blue: thicker as the leaving gas is fresher (oil only half burns in the trapped charge, assumed). The car draws the chamber at its real size under the floor.
 
 **What stays simplified.** No reed valve or rotary disc at the inlet, only the piston skirt. No freewheel (Saab two-strokes had one, so that oil arrived with the foot off). Oil lubricates nothing in the calculation: without mixture, nothing seizes. The other cylinders' pulses do not travel in the integrated cycle's line: each only has its share of the common line. The wave is linear: the higher speed of large amplitudes is not there. The minimum purity and its spread are assumed, and listening will tell whether the ring-ding comes out. Sources read: the Saab museum sheet (saabmuseum.com, Saab 96 1960-1966), the Westsächsische Hochschule Zwickau sheet (Trabant P 601: 594 cc, 72 × 73, 26 PS at 4240 rpm, 7 L/100 km, 620 kg), English Wikipedia (Trabant 601: 54 Nm at 3000 rpm, ratio 7.8, 1:50 mixture). From memory or seen quoted: Benson and Brandham (1969), Blair (*Design and Simulation of Two-Stroke Engines*, 1996), Jennings (*Two-Stroke Tuner's Handbook*), Heywood (1988), SAE study 911249.
+
+## When settings meet (2)
+
+The twelve engine topics together: architectures, atmosphere, thermal, combustion, ECU, injection, cam, pushrods, boost control, twin turbo, charge air, two-stroke. Here, only what exists once they meet. At the defaults nothing changes: the 29 original fingerprints and the presets stay bit-exact (except the Cadillac, see below). Eight topic fingerprints change, each explained in `CMakeLists.txt`. The tests are in `tests/jonctions_test.cpp` (eight more cases, each counter-tested by removing what it protects) and `web/tests/jonctions.spec.ts`.
+
+### What is connected
+
+**The day's air.** The radiator is sized in reference air and crossed by the day's (`ThermalSpec::airPressureRatio`). A spring wastegate holds a relative pressure, the ECU an absolute one, capped by the wheels' speed as a pressure ratio (`boostTargetPa`, `BoostControlInput::ambientPa`): at 3000 m, the spring aims at 2.0 bar absolute, electronic control at 2.31 up to 4100 rpm, then 2.03 at 5900, the shaft at its speed limit. The air-to-air intercooler cools towards the day's air (`coolerOutlet`). The knock map reads a naturally aspirated engine's pressure; temperature already reaches it through the intake air. Everything sized once (turbo, supercharger, gearbox, clutch, shift map, boost calibration) is sized in reference air (`withReferenceAir`).
+
+**The knock map** is built as soon as anything it reads changes (`knockConditionsStock`), not only the combustion: the air, the cam (intake closing), direct injection (how much more its vaporisation cools than port injection), the ECU's advance and the charge air (the manifold charge). A 45 °C day brings it closer to its limit; the stock map, set in reference air, does not move.
+
+**The ECU's advance.** On a four-stroke spark engine, the torque the advance offset changes comes from the knock map alone (`ecuAdvanceInKnockMap`): it starts from the real stock map, often retarded from best torque, where the ECU assumed best torque. Fuel and gas heat keep the ECU's retard. What the sensor takes away, `ecuAdvanceDeg` reads. On the naturally aspirated 2.0, +6°: 194.1 → 197.9 Nm, 117.8 → 120.3 kW; below 2250 rpm the stock map is only 2° from its full-load limit, so the margin drops to −4.0° (−2.2° on RON 98), and the sensor takes advance back under load. The spec sheet (`rf_knock_margin_deg`, `--knock`) reads that same map.
+
+**Thermal.** After a cold start, the network's coolant drives the port-injection film and the ECU's enrichment (one law, `coldEnrichment`); the cold wall, at the metal's temperature, warms the trapped air less (`trappedAirK`). Fast idle keeps the starting authority (0.8 of the fill, against 0.45 when warm): capped as when warm, it could not hold the low-compression Cadillac's cold oil. After a warm start, none of this, bit-exact.
+
+**Vaporisation** is counted once: the chosen fuel gives the latent heat (`fuelPropertiesOf`), the fuel system the share taken from the air (`mixtureAirShare`: 0.5 for a carburetor, 0.2 for port injection; direct injection has its droplet calculation). Combustion, direct injection (`injectedFuelOf`), charge air and the knock map read the same figures. Before, combustion took 0.15 for every fuel system, and injection 305 kJ/kg for every petrol, ethanol included.
+
+**Twin turbo.** One turbine per head: a W counts two (`architectureOf`). The shared intercooler cools towards the day's air. Electronic and by-gear boost control only hand their target to the twin's wastegate law. Their PID and anticipation are calibrated on a single-turbo bench: plugged in as they were, on a third-gear tip-in from 2000 rpm (3 L V6, 1 bar), they overshot the target by 0.49 bar on a sequential pair, whose staging oscillated, and by 0.13 bar in parallel, against 0.24 and 0.02 bar for the twin's own law. A calibration on a twin-turbo bench remains to be done. By gear, the W12's target drops by 0.29 bar in first, and its two shafts follow it.
+
+**The two-stroke.** The set ratio is its geometric ratio (7.5 stock): it changes the trapped ratio the exhaust port leaves, and combustion does not count it a second time (`compressionEfficiencyShare` is 1). The knock map compresses from port closing. At 9:1, torque gains more than 3 %. Six cylinders at most, and no VR, W or cross-plane crank: they fall back to a V.
+
+**Cam and pushrods.** Valve float reads the cam profile (lift and duration, those of the high profile on a two-step). The limiter stays set on the stock cam's float: a wild cam floats before it. No preset is affected: their stock cam floats at least 9 % above their redline. A two-step cam's switch reads valve float.
+
+**Charge air** reads the chosen fuel and the ECU's mixture.
+
+### Double counts
+
+- **Vaporisation**: one function, above. Water injection adds on its own: it is water.
+- **Particulate filter**: `kDieselFilter`, in the exhaust line, was a diesel's turbine and the mass of its line, not a filter: it stays. The computed filter (`ParticulateFilter`) adds its resistance (`filterResistance`): 61.2 → 61.0 dB(A) on the diesel at 2500 rpm.
+- **Trapped air**: the wall (atmosphere) warms the air leaving the intercooler (charge air), once: `trappedAirK` reads the manifold charge, already cooled.
+- **Efficiency**: compression ratio (combustion), advance and mixture (ECU), direct injection's filling gain and the cam multiply, each a distinct effect. The advance no longer goes through the ECU (above); on a two-stroke, the ratio is only counted by its cycle. Pumping is counted once, in friction (`pumpingTorqueNm`), plus the filter's back-pressure; the cam compares indicated mean pressures in the same air, and EGR only acts at part load.
+
+### What is not connected, and why
+
+- The cam cycle's air stays at 20 °C and 101,325 Pa: it gives a ratio between two cycles in the same air, a second-order effect.
+- The knock map and the under-bonnet heat read by the charge air stay those of a warm engine: they are built once per setting, and a cold engine knocks less.
+- The twin turbo's shafts work in reference air (`turbo_laws::constants().atmosphere`): only the intercooler and the target see the day's air. The twin-turbo PID: above.
+- The spec sheet of electronic boost control at altitude stays an equilibrium at relative pressure: 301 Nm at 3000 m, as with the spring; only driving sees the absolute target (0-100 km/h in 8.56 s against 8.65).
+- Consumption does not see the advance's torque as read by the knock map; gas heat keeps the ECU's parabola.
+- The fuel's volatility in the port-injection film stays that of petrol.
+
+### Where they meet, in figures
+
+| Meeting | Measurement |
+|---|---|
+| E85 and direct injection, turbo 2.0 at 11:1 | RON 95: 349 Nm, 192 kW, margin −6.4°; E85: 396 Nm, +2.9°; RON 95 direct: 382 Nm, −4.0°; E85 direct: 455 Nm, 252 kW, +12.7°. Direct injection gains 2.4° on RON 95 and 9.8° on E85: three times the latent heat, one and a half times the fuel. |
+| Cold start at altitude (city car, WLTC) | At sea level, 6.76 → 6.90 L/100 (+2.1 %); at 2500 m and −10 °C, 6.16 → 6.54 (+6.2 %), with one restart after a stall. |
+| Wild cam and stock springs (2.0, redline 7300) | Float at 8140 rpm stock; 12.5 mm over 200°: 6490 (−11 %), below the limiter; stiff springs: 7394 (+1.3 %); two-step: 8752. |
+| Sequential twin and electronic control (3 L V6, 1 bar, tip-in from 2000) | 90 % of boost in 1.76 s on one turbo, 0.62 s sequential, 0.43 s twincharger, 1.41 s parallel; the sequential pair overshoots by 0.24 bar at staging. |
+| W16 with parallel twins | Same equilibrium (1306 Nm); 0-100 km/h in 3.61 s against 3.82 on one turbo; 90 % of boost in 1.13 s against 1.38 from 2500 rpm. |
+| Two-stroke at altitude | 56.5 Nm and 20.2 kW at sea level; at 2000 m, 43.1 Nm (−24 %, while the air loses only 22 %) and 15.3 kW: 100 km/h is no longer reached; 7.73 → 7.16 L/100 at 90 km/h. |
+| Nitrous and a race cam (2.0, 75 kW) | 194 → 417 Nm, 118 → 192 kW; 280° cam alone: 174 Nm, 121 kW, margin 29.7° (late closing); both: 379 Nm, 194 kW. |
+| Launch control and twincharger (turbo 2.0) | 0-100 km/h: 6.86 s; launch at 4500: 6.13; twincharger: 6.35; both: 6.15. The supercharger already fills at the start: launch control only brings it 0.2 s. |
+| Altitude and boost control (turbo 2.0, 3000 m) | 357 → 301 Nm; 0-100 km/h in 8.65 s with the spring, 8.56 with electronic control, which overshoots its target by 0.18 bar on a tip-in. |
+
+### The rest
+
+- **Cadillac**: its published ratio (5.35) was outside the range; the range now goes down to 4:1, and the preset takes it. 456 Nm and 138 kW, against 367 to 432 Nm and 123 to 138 kW published (578 Nm and 179 kW at 10.5). After a cold start it holds its idle at 5 °C, not at 0 °C.
+- **`decideShift`**, changed by the two-stroke: the fingerprints of the journeys, launch control, flat shift and `by_gear` stay bit-exact.
+- **Twin turbo and anti-lag**: the C++ ignores anti-lag and the remote pipe on twin turbos, a twincharger or vanes; `coherentConfig` brings them back to their defaults, and the panel says so, along with boost control's target-only role.
+- **On screen**, the knock row (`Dynamics`) shows as soon as the map is built, with the same conditions as `knockConditionsStock`.
+
+Listening remains to be done: the knock of +6° of advance (`--preset hot_hatch_na --advance 6 --scenario turbo`), E85 with direct injection (`--preset hot_hatch_turbo --compression 11 --grade e85 --fuel-system direct --scenario turbo`), the Cadillac at its ratio (`--preset v16_cadillac --scenario lap`) and the cold start at altitude (`--preset city_14 --start cold --altitude 2500 --ambient -10 --scenario start`).

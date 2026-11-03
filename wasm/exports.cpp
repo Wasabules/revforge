@@ -471,7 +471,8 @@ static const KnockMap& specKnock() {
     static Powertrain built;
     static bool ready = false;
     if (!ready || !(built.engine == g_powertrain.engine) || built.electric != g_powertrain.electric || placementOf(built.car) != placementOf(g_powertrain.car)) {
-        map.build(g_powertrain);
+        // La carte que lit le modèle : l'air du jour, la came, l'injection directe et l'avance du calculateur (combustion.cpp).
+        map.build(g_powertrain, knockInputsOf(g_powertrain));
         built = g_powertrain;
         ready = true;
     }
@@ -606,7 +607,20 @@ int rf_ecu_flat() { return g_model->flatShifting() ? 1 : 0; }
 float rf_ecu_traction() { return static_cast<float>(g_model->ecuAction().traction); }
 /** La fiche : le couple de pleine charge face à la carte d'origine, l'avance demandée, le gaz à la sortie des cylindres (°C). */
 float rf_ecu_full_share() { return g_powertrain.electric ? 1.0f : static_cast<float>(ecuFullLoadShare(g_powertrain.engine)); }
-float rf_ecu_spark_deg(float rpm, float load) { return g_powertrain.electric ? 0.0f : static_cast<float>(demandedAdvanceDeg(g_powertrain.engine, rpm, load)); }
+/**
+ * L'avance demandée pour la fiche : la carte d'origine de ce moteur, celle que la combustion calcule (meilleur couple, ou sa limite de
+ * cliquetis moins sa marge), plus le décalage du calculateur. Un diesel et un deux-temps gardent celle du calculateur.
+ */
+float rf_ecu_spark_deg(float rpm, float load) {
+    const EngineConfig& e = g_powertrain.engine;
+    if (g_powertrain.electric) return 0.0f;
+    if (e.burnsDiesel() || e.twoStroke()) return static_cast<float>(demandedAdvanceDeg(e, rpm, load));
+    const KnockMap* cached = knockMapOf(g_powertrain);
+    KnockMap built;
+    if (cached == nullptr) built.build(g_powertrain, knockInputsOf(g_powertrain));
+    const KnockMap& map = cached != nullptr ? *cached : built;
+    return static_cast<float>(map.at(rpm, load).stockDeg + static_cast<double>(e.ignitionOffsetDeg));
+}
 float rf_ecu_exhaust_c(float rpm, int stockMap) {
     return g_powertrain.electric ? 0.0f : static_cast<float>(fullLoadExhaustK(g_powertrain.engine, rpm, stockMap != 0) - 273.15);
 }

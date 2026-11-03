@@ -394,7 +394,7 @@ export const LIMITS = {
   // Les réglages du socle moteur. Ceux qui acceptent 0 (« d'origine » ou « sans ») le disent dans `TUNING_FIELDS`.
   ambientC: { min: -30, max: 50, step: 1 },
   altitudeM: { min: 0, max: 4500, step: 100 },
-  compressionRatio: { min: 6, max: 24, step: 0.1 },
+  compressionRatio: { min: 4, max: 24, step: 0.1 },
   ignitionOffsetDeg: { min: -10, max: 10, step: 1 },
   fullLoadLambda: { min: 0.7, max: 1.1, step: 0.01 },
   launchRpm: { min: 2000, max: 7000, step: 100 },
@@ -513,6 +513,18 @@ const nearest = (list: number[], value: number) => list.reduce((best, item) => (
  */
 export function coherentConfig(c: EngineConfig): EngineConfig {
   if (c.electric) return c;
+  const engine = coherentEngine(c);
+  // Deux turbos, un twincharger ou des aubes : l'anti-lag et le tube déporté ne sont modélisés que sur un turbo simple (C++ : `antiLagEngine_`).
+  if (!usesTwinTurbo(engine) || (engine.antiLag === DEFAULTS.antiLag && engine.turboPipeMm === DEFAULTS.turboPipeMm)) return engine;
+  return { ...engine, antiLag: DEFAULTS.antiLag, turboPipeMm: DEFAULTS.turboPipeMm };
+}
+
+/** Deux turbos, un twincharger ou des aubes : un autre modèle tient les arbres (recopie d'`usesTwinTurbo`, twin_turbo.hpp). */
+export function usesTwinTurbo(c: Pick<EngineConfig, 'aspiration' | 'turboLayout' | 'variableGeometry'>): boolean {
+  return c.aspiration === 'turbo' && (c.turboLayout !== 'single' || c.variableGeometry);
+}
+
+function coherentEngine(c: EngineConfig): EngineConfig {
   if (isTwoStroke(c)) {
     const cylinders = Math.min(c.cylinders, TWO_STROKE_MAX_CYLINDERS);
     const layout = c.layout === 'cross_plane' || c.layout === 'vr' || c.layout === 'w' ? 'v' : c.layout;

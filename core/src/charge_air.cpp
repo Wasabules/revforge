@@ -3,6 +3,8 @@
 #include <cmath>
 
 #include "portable_math.hpp"
+#include "revforge/atmosphere.hpp"
+#include "revforge/combustion.hpp"
 #include "revforge/powertrain.hpp"
 
 namespace revforge {
@@ -533,6 +535,18 @@ ChargeAirSetup chargeAirSetupOf(const Powertrain& p) {
     if (!chargeAirActive(p)) return s;
     const EngineConfig& e = p.engine;
     s.active = true;
+    // L'air du jour (atmosphère) : exactement 293 K et 101 325 Pa à 20 °C et 0 m.
+    if (!referenceAirOf(e)) {
+        const AmbientAir air = ambientAirOf(e);
+        s.conditions.ambientK = air.temperatureK;
+        s.conditions.ambientPa = air.pressurePa;
+    }
+    // Le carburant choisi (combustion) et la richesse du calculateur : exactement les valeurs par défaut en SP95, carte d'origine.
+    const FuelProperties& props = fuelPropertiesOf(e);
+    s.fuel.latentJPerKg = props.vaporizationJPerG * 1000.0;
+    s.fuel.stoichiometricAfr = props.stoichiometricAfr;
+    s.fuel.lowerHeatingJPerKg = props.lowerHeatingJPerG * 1000.0;
+    if (e.fullLoadLambda > 0.0f) s.fuel.fullLoadLambda = static_cast<double>(e.fullLoadLambda);
     s.turbo = e.aspiration == Aspiration::Turbo;
     s.supercharger = e.aspiration == Aspiration::Supercharger;
     if (s.turbo) s.cooler = turboSpecOf(p).cooler;

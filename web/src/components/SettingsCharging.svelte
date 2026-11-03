@@ -2,7 +2,7 @@
   import Choices from './Choices.svelte';
   import SettingsSection from './SettingsSection.svelte';
   import Slider from './Slider.svelte';
-  import { ANTI_LAGS, ASPIRATIONS, BOOST_CONTROLS, INTERCOOLERS, LIMITS, ON_OFF, RELEASES, SUPERCHARGER_KINDS, TURBO_LAYOUTS, TURBO_SIZES, isRotary, type EngineConfig, isTwoStroke } from '../lib/config';
+  import { ANTI_LAGS, ASPIRATIONS, BOOST_CONTROLS, INTERCOOLERS, LIMITS, ON_OFF, RELEASES, SUPERCHARGER_KINDS, TURBO_LAYOUTS, TURBO_SIZES, coherentConfig, isRotary, type EngineConfig, isTwoStroke, usesTwinTurbo } from '../lib/config';
   import type { Spec } from '../lib/engine';
   import { fixed, t, whole } from '../lib/i18n.svelte';
 
@@ -20,8 +20,13 @@
   const rotary = $derived(isRotary(config));
   /** Allumé par une étincelle : l'eau et le protoxyde reculent le cliquetis, qui ne concerne pas un diesel. */
   const spark = $derived(rotary || config.fuel !== 'diesel');
-  /** Deux turbos ou un twincharger : l'anti-lag et le tube déporté ne sont modélisés que sur un turbo simple. */
-  const single = $derived(config.turboLayout === 'single');
+  /** Deux turbos, un twincharger ou des aubes : l'anti-lag et le tube déporté ne sont modélisés que sur un turbo simple. */
+  const single = $derived(!usesTwinTurbo(config));
+  /** Passer à deux turbos ou aux aubes ramène l'anti-lag et le tube à leur défaut (`coherentConfig`), comme le fait le C++. */
+  function chooseTurbo(next: Partial<EngineConfig>) {
+    const coherent = coherentConfig({ ...config, ...next });
+    onapply({ ...next, antiLag: coherent.antiLag, turboPipeMm: coherent.turboPipeMm });
+  }
 </script>
 
 <SettingsSection id="charging" title={t('builder.section.charging')}>
@@ -57,7 +62,7 @@
     {/if}
     <!-- Biturbo et géométrie variable. -->
     <div data-testid="turbo-layout">
-      <Choices label={t('builder.turboLayout')} options={TURBO_LAYOUTS} value={config.turboLayout} onchange={(turboLayout) => onapply({ turboLayout })} />
+      <Choices label={t('builder.turboLayout')} options={TURBO_LAYOUTS} value={config.turboLayout} onchange={(turboLayout) => chooseTurbo({ turboLayout })} />
       <p class="help">{TURBO_LAYOUTS.find((item) => item.value === config.turboLayout)?.help}</p>
       {#if !single}<p class="help" data-testid="twin-only-single">{t('builder.twinOnlySingle')}</p>{/if}
     </div>
@@ -68,7 +73,7 @@
       </div>
     {/if}
     <div data-testid="vgt">
-      <Choices label={t('builder.vgt')} options={ON_OFF} value={config.variableGeometry ? 'on' : 'off'} onchange={(value) => onapply({ variableGeometry: value === 'on' })} />
+      <Choices label={t('builder.vgt')} options={ON_OFF} value={config.variableGeometry ? 'on' : 'off'} onchange={(value) => chooseTurbo({ variableGeometry: value === 'on' })} />
       <p class="help">{t('builder.vgt.help')}</p>
     </div>
     <!-- La régulation de pression. -->

@@ -1144,13 +1144,13 @@ Les préréglages, face aux chiffres publiés ; rien n'y est réglé pour coller
 | | Couple simulé | Publié | Puissance simulée | Publiée | 0-100 simulé | Publié |
 |---|---|---|---|---|---|---|
 | VR6 2.8 (Golf III) | 233 Nm à 3050 | 235 Nm à 4200 | 110 kW à 5650 | 128 kW à 5800 | 9,1 s | 7,8 s |
-| W12 biturbo (Continental GT 2003) | 778 Nm | 650 Nm de 1600 à 6100 | 406 kW à 5950 | 412 kW à 6100 | 5,5 s | 4,8 s |
-| W16 (Veyron 16.4) | 1306 Nm | 1250 Nm | 671 kW à 5900 | 736 kW à 6000 | 3,8 s | 2,5 s |
-| V16 (Cadillac 452, 1930) | 578 Nm | 367 à 432 Nm | 179 kW à 3700 | 123 à 138 kW | 10,1 s | — |
+| W12 biturbo (Continental GT 2003) | 778 Nm | 650 Nm de 1600 à 6100 | 406 kW à 5950 | 412 kW à 6100 | 5,4 s | 4,8 s |
+| W16 (Veyron 16.4) | 1306 Nm | 1250 Nm | 671 kW à 5850 | 736 kW à 6000 | 3,6 s | 2,5 s |
+| V16 (Cadillac 452, 1930) | 456 Nm à 1950 | 367 à 432 Nm | 138 kW à 3600 | 123 à 138 kW | 12,4 s | — |
 
 - Le VR6 respire moins bien que le vrai, avec ses deux soupapes par cylindre (`camshaft: sohc`, le 12 soupapes).
-- Le W12 et le W16 n'ont qu'un turbo dans le simulateur, en attendant le biturbo : `turboLayout: twin_parallel` y est déjà écrit, sans effet.
-- La Cadillac comprimait à 5,35 (Old Cars Weekly), sous la plage du socle (6 à 24) : son couple est celui d'un moteur moderne de même cylindrée.
+- Le W12 et le W16 ont deux turbos en parallèle, un par culasse (biturbo) ; la Veyron en a quatre, deux par culasse, que le modèle réunit en deux. Le couple et la puissance sont des équilibres, les mêmes qu'avec un turbo ; le 0 à 100 km/h, lui, gagne 0,2 s (3,8 s avec un seul turbo sur le W16).
+- La Cadillac comprimait à 5,35 (Old Cars Weekly). La plage du taux descend donc à 4:1 (intégration), et le préréglage prend ce taux : à 10,5, celui du socle, elle faisait 578 Nm et 179 kW, ceux d'un moteur moderne de même cylindrée. Le couple reste 6 % au-dessus du haut de la fourchette publiée.
 - Sources des préréglages : auto-motor-und-sport et auto-data pour la Golf VR6 (rapports 3,30, 1,94, 1,31, 1,03, 0,84, pont 3,68, 1285 kg) ; supercars.net (ZF 6HP26 de 4,17 à 0,69, pont 3,52, 2385 kg) et australiancar.reviews (0,7 bar) pour la Continental GT ; Bugatti, auto-motor-und-sport (rapports de la Super Sport) et conceptcarz (environ 18 psi) pour la Veyron ; son pont publié (3,64) donnerait 306 km/h au rupteur en septième, loin des 407 km/h : il est laissé au calcul de la boîte ; Wikipedia et Old Cars Weekly pour la Cadillac (3 × 4 pouces, pont 4,39, de 2400 à 3000 kg).
 - Les régimes maximaux du VR6 (6500), du W12 (6500), du W16 (6400) et de la Cadillac (4000, la puissance maximale tombant à 3400) sont supposés. À 3800, les modes de passage automatiques de `shift_modes_test.cpp` ne tenaient plus leur hystérésis sur cette boîte à trois rapports.
 
@@ -1399,7 +1399,8 @@ construite, le son ne tire rien de plus, et les 29 empreintes restent au bit pr�
 Le moteur d'aujourd'hui suppose 10,5:1 en atmosphérique, 9,5:1 suralimenté, 18:1 en diesel, 9,4 ou 8,5:1 sur un rotatif
 (`stockCompressionRatio`, les valeurs du démarreur). Le réglage est borné à ce qui existe (`compressionRatioOf`) : un diesel ne descend
 pas sous 14:1, le plus bas d'un diesel de série (Mazda Skyactiv-D), et un rotatif ne dépasse pas 11,9:1, le plus haut d'un rotatif de
-série (Mazda 8C, 2023), faute de creux dans le rotor (supposé) ; l'essence va de 6 à 24.
+série (Mazda 8C, 2023), faute de creux dans le rotor (supposé) ; l'essence va de 4 à 24, pour les moteurs d'avant-guerre (Ford A,
+4,2:1 ; Cadillac V16, 5,35:1). Un deux-temps part de son taux géométrique, 7,5:1.
 
 Le rendement indiqué suit le cycle air-carburant, puis ce que perdent les parois :
 
@@ -2195,3 +2196,66 @@ Le modèle lit 28 % sous la Saab en couple et en puissance, et sous le même mot
 **À l'écran.** Le gaz (`GasNetwork`) calcule chaque cylindre et son carter, un volume à zéro dimension qui suit le piston, avec les trois lumières découvertes par lui et les mêmes coefficients que le cycle C++ : on y voit le carter monter au-dessus de l'atmosphère piston en bas, le mélange passer par les transferts, et du mélange frais filer jusqu'à la sortie. La chambre de détente y est accordée sur le moteur (`expansionSections`), ses cônes en quelques marches de 3 cellules au moins ; `EXHAUST_LINES.expansion` n'est que celle du préréglage, pour le dessin. La vue du gaz trace ses cônes en pente. La fumée bleue est le traceur des suies du diesel, teinté de bleu : d'autant plus épaisse que le gaz qui sort est frais (l'huile ne brûle qu'à moitié dans la charge enfermée, supposé). La voiture dessine la chambre à ses vraies dimensions sous le plancher.
 
 **Ce qui reste simplifié.** Pas de clapets ni de disque rotatif à l'admission, seulement la jupe du piston. Pas de ralenti en roue libre (les Saab deux-temps en avaient une, pour que l'huile arrive pied levé). L'huile ne lubrifie rien dans le calcul : sans mélange, rien ne grippe. Les bouffées des autres cylindres ne passent pas dans la ligne du cycle intégré : chacun n'a que sa part de la ligne commune. L'onde est linéaire : la vitesse des grandes amplitudes n'y est pas. La pureté minimale et sa dispersion sont supposées, et l'écoute dira si le ring-ding en sort. Sources lues : fiche du musée Saab (saabmuseum.com, Saab 96 1960-1966), fiche de la Westsächsische Hochschule Zwickau (Trabant P 601 : 594 cm³, 72 × 73, 26 ch à 4240 tr/min, 7 L/100 km, 620 kg), Wikipédia anglaise (Trabant 601 : 54 Nm à 3000 tr/min, taux de 7,8, mélange 1:50). De mémoire ou vu cité : Benson et Brandham (1969), Blair (*Design and Simulation of Two-Stroke Engines*, 1996), Jennings (*Two-Stroke Tuner's Handbook*), Heywood (1988), l'étude SAE 911249.
+
+## Quand les réglages se rencontrent (2)
+
+Les douze sujets du moteur réunis : architectures, atmosphère, thermique, combustion, calculateur, injection, came, culbuteurs, régulation de pression, biturbo, air de charge, deux-temps. Ici, ce qui n'existe que réuni. Au défaut, rien ne change : les 29 empreintes d'origine et les préréglages restent au bit près (la Cadillac mise à part, voir plus bas). Huit empreintes de sujets changent, chacune expliquée dans `CMakeLists.txt`. Les tests sont dans `tests/jonctions_test.cpp` (huit cas de plus, chacun contre-éprouvé en retirant ce qu'il protège) et `web/tests/jonctions.spec.ts`.
+
+### Ce qui est branché
+
+**L'air du jour.** Le radiateur est dimensionné dans l'air de référence, et traversé par celui du jour (`ThermalSpec::airPressureRatio`). Une wastegate à ressort tient une pression relative, le calculateur une pression absolue, plafonnée par la vitesse des roues en rapport de pression (`boostTargetPa`, `BoostControlInput::ambientPa`) : à 3000 m, le ressort vise 2,0 bar absolus, l'électronique 2,31 jusqu'à 4100 tr/min, puis 2,03 à 5900, l'arbre à sa vitesse limite. L'échangeur air-air refroidit vers l'air du jour (`coolerOutlet`). La carte du cliquetis lit la pression d'un atmosphérique ; la température lui arrive déjà par l'air d'admission. Tout ce qui se dimensionne une fois (turbo, compresseur, boîte, embrayage, carte de passage, étalonnage de la pression) l'est dans l'air de référence (`withReferenceAir`).
+
+**La carte du cliquetis** se construit dès que change ce qu'elle lit (`knockConditionsStock`), plus seulement la combustion : l'air, la came (la fermeture de l'admission), l'injection directe (ce que sa vaporisation refroidit de plus qu'une injection indirecte), l'avance du calculateur et l'air de charge (la charge au collecteur). Un jour à 45 °C la rapproche de sa limite ; la carte d'origine, réglée dans l'air de référence, ne bouge pas.
+
+**L'avance du calculateur.** Sur un quatre-temps à étincelle, la part de couple que change le décalage d'avance vient de la carte du cliquetis seule (`ecuAdvanceInKnockMap`) : elle part de la carte d'origine réelle, souvent en retard sur le meilleur couple, là où le calculateur supposait le meilleur couple. Carburant et chaleur du gaz gardent le retard du calculateur. Ce que le capteur retire, `ecuAdvanceDeg` le lit. Sur le 2.0 atmosphérique, +6° : 194,1 → 197,9 Nm, 117,8 → 120,3 kW ; sous 2250 tr/min la carte d'origine n'est qu'à 2° de sa limite à pleine charge, la marge tombe à −4,0° (−2,2° en SP98), et le capteur reprend de l'avance en reprise. La fiche (`rf_knock_margin_deg`, `--knock`) lit cette même carte.
+
+**La thermique.** Après un départ à froid, l'eau du réseau fait le film de l'injection indirecte et l'enrichissement du calculateur (une seule loi, `coldEnrichment`) ; la paroi froide, à la température du métal, réchauffe moins l'air piégé (`trappedAirK`). Le ralenti accéléré garde l'autorité du démarrage (0,8 du remplissage, contre 0,45 moteur chaud) : limité comme moteur chaud, il ne tenait pas l'huile froide de la Cadillac peu comprimée. Parti chaud, rien de tout cela, au bit près.
+
+**La vaporisation** n'est comptée qu'une fois : le carburant choisi en donne la chaleur latente (`fuelPropertiesOf`), l'alimentation la part prise à l'air (`mixtureAirShare` : 0,5 au carburateur, 0,2 en injection indirecte ; l'injection directe a son calcul de gouttes). La combustion, l'injection directe (`injectedFuelOf`), l'air de charge et la carte du cliquetis lisent les mêmes chiffres. Avant, la combustion prenait 0,15 pour toute alimentation, et l'injection 305 kJ/kg pour toute essence, éthanol compris.
+
+**Le biturbo.** Une turbine par culasse : un W en compte deux (`architectureOf`). L'échangeur commun refroidit vers l'air du jour. La régulation électronique et selon le rapport ne donnent que leur cible à la loi des soupapes du biturbo. Leur PID et leur anticipation sont étalonnés sur le banc d'un turbo seul : branchés tels quels, en reprise en troisième depuis 2000 tr/min (V6 de 3 L, 1 bar), ils dépassaient la cible de 0,49 bar sur un séquentiel, dont l'étagement oscillait, et de 0,13 bar en parallèle, contre 0,24 et 0,02 bar pour la loi du biturbo. Un étalonnage sur le banc de deux turbos reste à faire. Selon le rapport, la cible du W12 baisse en première de 0,29 bar, et ses deux arbres la suivent.
+
+**Le deux-temps.** Le taux réglé est son taux géométrique (7,5 d'origine) : il change le taux réel que laisse la lumière d'échappement, et la combustion ne le compte pas une seconde fois (`compressionEfficiencyShare` vaut 1). La carte du cliquetis comprime depuis la fermeture de la lumière. À 9:1, le couple gagne plus de 3 %. Au plus six cylindres, et ni VR, ni W, ni vilebrequin croisé : ils reviennent au V.
+
+**La came et les culbuteurs.** L'affolement lit le profil de la came (levée et durée, celles de la bascule sur deux profils). Le rupteur reste réglé sur l'affolement de la came d'origine : une came pointue s'affole avant lui. Aucun préréglage n'est touché : leur came d'origine s'affole au moins 9 % au-delà de leur zone rouge. La bascule d'un calage à deux profils lit l'affolement.
+
+**L'air de charge** lit le carburant choisi et la richesse du calculateur.
+
+### Les doubles comptes
+
+- **Vaporisation** : une seule fonction, ci-dessus. L'injection d'eau s'ajoute à part : c'est de l'eau.
+- **Filtre à particules** : `kDieselFilter`, dans la ligne d'échappement, était la turbine d'un diesel et la masse de sa ligne, pas un filtre : il reste. Le filtre calculé (`ParticulateFilter`) ajoute sa résistance (`filterResistance`) : 61,2 → 61,0 dB(A) sur le diesel à 2500 tr/min.
+- **Air piégé** : la paroi (atmosphère) réchauffe l'air qui sort de l'échangeur (air de charge), une fois : `trappedAirK` lit la charge au collecteur, déjà refroidie.
+- **Rendement** : le taux (combustion), l'avance et la richesse (calculateur), le gain de remplissage de l'injection directe et la came se multiplient, chacun d'un effet distinct. L'avance ne passe plus par le calculateur (ci-dessus) ; sur un deux-temps, le taux n'est compté que par son cycle. Le pompage n'est compté qu'une fois, dans les frottements (`pumpingTorqueNm`), plus la contre-pression du filtre ; la came compare des pressions moyennes indiquées dans le même air, et la recirculation n'agit qu'à charge partielle.
+
+### Ce qui n'est pas branché, et pourquoi
+
+- L'air du cycle de la came reste à 20 °C et 101 325 Pa : elle donne un rapport entre deux cycles dans le même air, d'ordre deux.
+- La carte du cliquetis et la chaleur du compartiment que lit l'air de charge restent celles d'un moteur chaud : elles se construisent une fois par réglage, et un moteur froid cliquette moins.
+- Les arbres du biturbo comptent dans l'air de référence (`turbo_laws::constants().atmosphere`) : seuls l'échangeur et la cible le voient. Le PID sur deux turbos : ci-dessus.
+- La fiche d'une régulation électronique en altitude reste un équilibre en pression relative : 301 Nm à 3000 m comme au ressort ; seule la conduite voit la cible absolue (0 à 100 km/h en 8,56 s contre 8,65).
+- La consommation ne voit pas le couple de l'avance lu par la carte du cliquetis ; la chaleur du gaz garde la parabole du calculateur.
+- La volatilité du carburant dans le film d'une injection indirecte reste celle de l'essence.
+
+### Les rencontres, en chiffres
+
+| Rencontre | Mesure |
+|---|---|
+| E85 et injection directe, 2.0 turbo à 11:1 | SP95 : 349 Nm, 192 kW, marge −6,4° ; E85 : 396 Nm, +2,9° ; SP95 directe : 382 Nm, −4,0° ; E85 directe : 455 Nm, 252 kW, +12,7°. La directe gagne 2,4° en SP95 et 9,8° en E85 : trois fois plus de chaleur latente, une fois et demie plus de carburant. |
+| Départ à froid en altitude (citadine, WLTC) | Au niveau de la mer, 6,76 → 6,90 L/100 (+2,1 %) ; à 2500 m et −10 °C, 6,16 → 6,54 (+6,2 %), avec une relance après un calage. |
+| Came pointue et ressorts d'origine (2.0, zone rouge 7300) | Affolement à 8140 tr/min d'origine ; 12,5 mm sur 200° : 6490 (−11 %), sous le rupteur ; ressorts durs : 7394 (+1,3 %) ; deux profils : 8752. |
+| Biturbo séquentiel et électronique (V6 3 L, 1 bar, reprise depuis 2000) | 90 % de la pression en 1,76 s sur un turbo, 0,62 s en séquentiel, 0,43 s en twincharger, 1,41 s en parallèle ; le séquentiel dépasse de 0,24 bar à l'étagement. |
+| W16 en biturbo parallèle | Même équilibre (1306 Nm) ; 0 à 100 km/h en 3,61 s contre 3,82 sur un turbo ; 90 % de la pression en 1,13 s contre 1,38 depuis 2500 tr/min. |
+| Deux-temps en altitude | 56,5 Nm et 20,2 kW au niveau de la mer ; à 2000 m, 43,1 Nm (−24 %, quand l'air ne perd que 22 %) et 15,3 kW : 100 km/h n'est plus atteint ; 7,73 → 7,16 L/100 à 90 km/h. |
+| Protoxyde et came de course (2.0, 75 kW) | 194 → 417 Nm, 118 → 192 kW ; came de 280° seule : 174 Nm, 121 kW, marge 29,7° (fermeture tardive) ; les deux : 379 Nm, 194 kW. |
+| Launch control et twincharger (2.0 turbo) | 0 à 100 km/h : 6,86 s ; launch à 4500 : 6,13 ; twincharger : 6,35 ; les deux : 6,15. Le compresseur remplit déjà au départ : le launch ne lui apporte que 0,2 s. |
+| Altitude et régulation (2.0 turbo, 3000 m) | 357 → 301 Nm ; 0 à 100 km/h en 8,65 s au ressort, 8,56 en électronique, qui dépasse sa cible de 0,18 bar en reprise. |
+
+### Le reste
+
+- **Cadillac** : son taux publié (5,35) sortait de la plage ; elle descend à 4:1, et le préréglage le prend. 456 Nm et 138 kW, contre 367 à 432 Nm et 123 à 138 kW publiés (578 Nm et 179 kW à 10,5). Partie à froid, elle tient son ralenti par 5 °C, pas par 0 °C.
+- **`decideShift`**, changé par le deux-temps : les empreintes des trajets, du launch control, du passage à fond et de `by_gear` restent au bit près.
+- **Biturbo et anti-lag** : le C++ ignore l'anti-lag et le tube sur deux turbos, un twincharger ou des aubes ; `coherentConfig` les ramène au défaut, et le volet le dit, avec la cible seule de la régulation.
+- **À l'écran**, la ligne du cliquetis (`Dynamics`) s'affiche dès que la carte se construit, avec les mêmes conditions que `knockConditionsStock`.
+
+L'écoute reste à faire : le cliquetis d'une avance de +6° (`--preset hot_hatch_na --advance 6 --scenario turbo`), l'E85 en injection directe (`--preset hot_hatch_turbo --compression 11 --grade e85 --fuel-system direct --scenario turbo`), la Cadillac à son taux (`--preset v16_cadillac --scenario lap`) et le départ à froid en altitude (`--preset city_14 --start cold --altitude 2500 --ambient -10 --scenario start`).

@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "portable_math.hpp"
+#include "revforge/cam.hpp"
 #include "revforge/valvetrain.hpp"
 
 namespace revforge {
@@ -136,10 +137,11 @@ bool hasValves(const EngineConfig& e) { return e.layout != Layout::Rotary && e.c
 CamLobe stockCamLobe(double boreMm) { return CamLobe{kStockLiftPerBore * boreMm, kStockDurationDeg}; }
 
 CamLobe camLobeOf(const EngineConfig& e) {
-    CamLobe cam = stockCamLobe(static_cast<double>(e.boreMm));
-    if (e.camLiftMm > 0.0f) cam.liftMm = static_cast<double>(e.camLiftMm);
-    if (e.camDurationDeg > 0) cam.durationDeg = static_cast<double>(e.camDurationDeg);
-    return cam;
+    // Intégration : le profil de la came (cam.hpp), à 1 mm de levée comme la durée d'origine (240°, de `kEvo` à `kEvc`). Sur une came
+    // fixe, c'est exactement la levée et la durée réglées ; sur deux profils, celui de la bascule, plus haut et plus long.
+    if (camIsStock(e)) return stockCamLobe(static_cast<double>(e.boreMm));
+    const CamProfile profile = highCamProfileOf(e);
+    return CamLobe{profile.liftMm, profile.durationDeg};
 }
 
 ValvetrainParts valvetrainParts(Camshaft valvetrain, double boreMm, double strokeMm) {

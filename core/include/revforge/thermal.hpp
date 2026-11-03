@@ -70,6 +70,8 @@ struct ThermalSpec {
     double pumpWKPerRpm = 1.2;
     // Le radiateur : section frontale (m²), conductance au point de dimensionnement (W/K) et débit d'air de ce point (kg/s).
     double coreM2 = 0.2;
+    /** La pression de l'air du jour, sur celle de référence (atmosphère) : 1 à 0 m. */
+    double airPressureRatio = 1.0;
     double uaDesignWK = 600.0;
     double airDesignKgS = 1.0;
     /** Ce que le ventilateur fait passer à travers le faisceau, à l'arrêt (m/s). 0 : il est en panne. */

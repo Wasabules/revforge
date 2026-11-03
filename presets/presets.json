@@ -448,7 +448,8 @@
     "insulation": "light",
     "boxKind": "synchro",
     "boxGears": 3,
-    "boxFinal": 4.39
+    "boxFinal": 4.39,
+    "compressionRatio": 5.35
   },
   {
     "id": "two_stroke_triple",

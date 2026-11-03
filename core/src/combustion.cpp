@@ -3,8 +3,13 @@
 #include <cmath>
 
 #include "portable_math.hpp"
+#include "revforge/atmosphere.hpp"
+#include "revforge/cam.hpp"
 #include "revforge/carburetor.hpp"
+#include "revforge/charge_air.hpp"
+#include "revforge/injection.hpp"
 #include "revforge/powertrain.hpp"
+#include "revforge/two_stroke.hpp"
 
 namespace revforge {
 
@@ -66,7 +71,8 @@ constexpr double kFullLoadLambdaBoosted = 0.82;
 constexpr double kDieselPolytropic = 1.35;
 constexpr double kDieselIdleIntakeK = 330.0;
 constexpr double kDieselRatioMin = 14.0;  // le plus bas d'un diesel de série (Mazda Skyactiv-D) : en dessous, il ne s'allume plus à froid
-constexpr double kRatioMin = 6.0;
+// Intégration : 4:1, pour les moteurs d'avant-guerre (Ford A 4,2, Cadillac V16 5,35, Old Cars Weekly) ; 6 jusque-là.
+constexpr double kRatioMin = 4.0;
 constexpr double kRatioMax = 24.0;
 // Le plus haut d'un rotatif de série : 11,9 (Mazda 8C, 2023). Au-delà, le rotor n'a plus assez de creux pour la chambre (supposé).
 constexpr double kRotaryRatioMax = 11.9;
@@ -117,8 +123,8 @@ double vaporPressurePa(const FuelProperties& fuel, double temperatureK) {
 }
 
 /** La densité de la charge une fois ce carburant vaporisé, rapportée à celle de l'air seul : plus froide, mais un peu d'air en moins. */
-double densityAfterEvaporation(const FuelProperties& fuel, double lambda, double airK) {
-    const double cooling = evaporationCoolingK(fuel, lambda, kPortEvaporatedShare, airK, kAtmosphere);
+double densityAfterEvaporation(const FuelProperties& fuel, double lambda, double airK, double airShare) {
+    const double cooling = evaporationCoolingK(fuel, lambda, airShare, airK, kAtmosphere);
     const double vapourKg = cooling * kAirCp / (fuel.vaporizationJPerG * 1000.0);
     const double vapourMoles = vapourKg / fuel.molarMassGPerMol * kAirMolarMass;
     return airK / (airK - cooling) / (1.0 + vapourMoles);
@@ -178,6 +184,8 @@ double evaporationCoolingK(const FuelProperties& fuel, double lambda, double eva
 
 float stockCompressionRatio(const EngineConfig& e) {
     if (isRotary(e)) return rotaryCompressionRatio(e.aspiration);
+    // Un deux-temps : son taux géométrique (le curseur part de lui) ; son démarreur, lui, comprime le taux réel des lumières.
+    if (e.twoStroke()) return static_cast<float>(kTwoStrokeGeometricCompression);
     // Les mêmes que le démarreur (`EngineConfig::toProfile`) : un moteur suralimenté comprime moins pour ne pas détoner.
     return e.burnsDiesel() ? 18.0f : (e.aspiration != Aspiration::Natural ? 9.5f : 10.5f);
 }
@@ -203,6 +211,9 @@ double indicatedEfficiency(double ratio, double boreOverStroke, bool diesel) {
 }
 
 double compressionEfficiencyShare(const EngineConfig& e) {
+    // Un deux-temps : son cycle intégré compte déjà le taux réglé (`twoStrokePortsOf`, son taux réel) : le compter ici aussi le
+    // compterait deux fois.
+    if (e.twoStroke()) return 1.0;
     const double ratio = static_cast<double>(compressionRatioOf(e));
     const double stock = static_cast<double>(stockCompressionRatio(e));
     if (isRotary(e)) return rotaryCycleEfficiency(ratio) / rotaryCycleEfficiency(stock);
@@ -215,7 +226,9 @@ double fuelTorqueShare(const EngineConfig& e, double lambda, double airK) {
     if (e.burnsDiesel()) return 1.0;
     const FuelProperties& fuel = fuelPropertiesOf(e);
     const double energy = energyPerAirJPerKg(fuel) / energyPerAirJPerKg(kRon95);
-    return energy * densityAfterEvaporation(fuel, lambda, airK) / densityAfterEvaporation(kRon95, lambda, airK);
+    // La part prise à l'air vient de l'alimentation (injection) : la même pour les deux carburants comparés.
+    const double share = mixtureAirShare(e);
+    return energy * densityAfterEvaporation(fuel, lambda, airK, share) / densityAfterEvaporation(kRon95, lambda, airK, share);
 }
 
 double combustionTorqueShare(const EngineConfig& e) { return compressionEfficiencyShare(e) * fuelTorqueShare(e, fullLoadLambda(e), kEvaporationAirK); }
@@ -362,6 +375,8 @@ EndGasSetup setupAt(const Powertrain& p, const KnockMap::Inputs& in, double rpm,
     s.cycleSpeedShare = rotary ? 2.0 / 3.0 : 1.0;
     // Le rotatif ferme sa lumière 40° d'arbre après le point mort bas : 27° de cycle (voir `kPortIvc` dans engine_sound.cpp).
     s.ivcAbdcDeg = rotary ? 40.0 * 2.0 / 3.0 : in.ivcAbdcDeg;
+    // Un deux-temps comprime depuis la fermeture de sa lumière d'échappement : son taux réel (`trappedCompression`) en découle.
+    if (e.twoStroke()) s.ivcAbdcDeg = 180.0 - twoStrokePortsOf(e).exhaustOpenDeg;
     s.coolantK = in.coolantK;
     s.residualShare = in.residualShare;
     s.extraCoolingK = in.extraCoolingK;
@@ -385,9 +400,16 @@ EndGasSetup setupAt(const Powertrain& p, const KnockMap::Inputs& in, double rpm,
         s.manifoldPa = in.ambientPa - intakeDropPa(p, rpm);
         s.manifoldK = intakeAirK(p, rpm) + (in.ambientK - 293.15);
     }
-    s.vaporizationCoolingK = evaporationCoolingK(fuel, s.lambda, kPortEvaporatedShare, s.manifoldK, s.manifoldPa);
+    // L'air de charge, quand il agit : la charge que donnent son échangeur, l'eau et le protoxyde (`steadyManifoldCharge`).
+    if (chargeAirActive(p)) {
+        const ManifoldCharge charge = steadyManifoldCharge(p, rpm);
+        s.manifoldPa = charge.pressurePa;
+        s.manifoldK = charge.temperatureK + (in.ambientK - 293.15);
+    }
+    s.vaporizationCoolingK = evaporationCoolingK(fuel, s.lambda, mixtureAirShare(e), s.manifoldK, s.manifoldPa);
     // Plus froide, la charge est aussi plus dense : autant de masse en plus qu'à pleine charge (voir `fuelTorqueShare`).
-    s.fillShare = kVolumetric * breathing * densityAfterEvaporation(fuel, s.lambda, s.manifoldK) / densityAfterEvaporation(kRon95, s.lambda, s.manifoldK);
+    s.fillShare = kVolumetric * breathing * densityAfterEvaporation(fuel, s.lambda, s.manifoldK, mixtureAirShare(e)) /
+                  densityAfterEvaporation(kRon95, s.lambda, s.manifoldK, mixtureAirShare(e));
     return s;
 }
 
@@ -407,6 +429,17 @@ void KnockMap::build(const Powertrain& p, const Inputs& in) {
     stock.engine.compressionRatio = 0.0f;
     stock.engine.fuelGrade = FuelGrade::Ron95;
     stock.engine.airFilter = AirFilter::Stock;
+    // Intégration : la came, l'injection, l'air de charge et l'avance d'origine, dans l'air de référence. Rien de cela ne change
+    // un moteur qui les avait déjà.
+    stock.engine.ambientC = 20.0f;
+    stock.engine.altitudeM = 0;
+    stock.engine.camDurationDeg = 0;
+    stock.engine.camLiftMm = 0.0f;
+    stock.engine.lobeSeparationDeg = 0;
+    stock.engine.valveTiming = ValveTiming::Fixed;
+    if (stock.engine.fuelSystem == FuelSystem::Direct) stock.engine.fuelSystem = FuelSystem::Injection;
+    stock.engine.ignitionOffsetDeg = 0;
+    if (chargeAirActive(stock)) stock = chargeAirStock(stock);
     const Inputs reference;
     for (int i = 0; i < kRpmPoints; ++i) {
         const double rpm = idleRpm_ + (redlineRpm_ - idleRpm_) * i / (kRpmPoints - 1);
@@ -530,8 +563,40 @@ constinit int g_nextCached = 0;
 
 }  // namespace
 
+bool knockConditionsStock(const Powertrain& p) {
+    const EngineConfig& e = p.engine;
+    // Un deux-temps garde la carte de la combustion seule : ses lumières ne sont pas une came, et son air n'est pas calibré ici.
+    if (e.twoStroke()) return true;
+    return referenceAirOf(e) && camIsStock(e) && e.ignitionOffsetDeg == 0 && !directInjected(e) && !chargeAirActive(p);
+}
+
+KnockMap::Inputs knockInputsOf(const Powertrain& p) {
+    KnockMap::Inputs in;
+    const EngineConfig& e = p.engine;
+    if (e.twoStroke()) return in;
+    // L'air du jour arrive déjà par `turboSpecOf`, `superchargerSpecOf` et `intakeAirK` : seule la pression d'un atmosphérique
+    // se lit ici. `ambientK` reste 293,15 K, sans quoi l'air serait réchauffé deux fois.
+    if (!referenceAirOf(e)) in.ambientPa = ambientAirOf(e).pressurePa;
+    // La came : la fermeture de l'admission place le début de la compression (cam.hpp).
+    if (!camIsStock(e)) in.ivcAbdcDeg = intakeClosingAbdcDeg(camProfileOf(e));
+    // L'injection directe : ce que la vaporisation dans le cylindre prend de plus qu'une injection indirecte, au point nominal.
+    if (directInjected(e)) {
+        const double rated = 0.88 * static_cast<double>(e.redlineRpm);
+        const double ratio = static_cast<double>(compressionRatioOf(e));
+        const InjectedFuel fuel = injectedFuelOf(e);
+        in.extraCoolingK = chargeCooling(FuelSystem::Direct, rated, 1.0, static_cast<double>(e.redlineRpm), 0.88, ratio, fuel).atIvcK -
+                           chargeCooling(FuelSystem::Injection, rated, 1.0, static_cast<double>(e.redlineRpm), 0.88, ratio, fuel).atIvcK;
+    }
+    // L'avance du calculateur, en écart à la carte d'origine.
+    in.advanceOffsetDeg = static_cast<double>(e.ignitionOffsetDeg);
+    return in;
+}
+
 const KnockMap* knockMapOf(const Powertrain& p) {
-    if (p.electric || p.engine.burnsDiesel() || combustionStock(p.engine)) return nullptr;
+    // Intégration : la carte se construit aussi quand l'air, la came, l'avance, l'injection directe ou l'air de charge ne sont plus
+    // ceux d'origine. L'eau du moteur, elle, reste celle d'un moteur chaud : la carte ne se reconstruit pas pendant la mise en
+    // température (un moteur froid cliquette moins).
+    if (p.electric || p.engine.burnsDiesel() || (combustionStock(p.engine) && knockConditionsStock(p))) return nullptr;
     const EnginePlacement placement = placementOf(p.car);
     for (CachedMap& entry : g_cache) {
         if (entry.used && entry.placement == placement && entry.engine == p.engine) return &entry.map;
@@ -541,7 +606,7 @@ const KnockMap* knockMapOf(const Powertrain& p) {
     entry.used = true;
     entry.engine = p.engine;
     entry.placement = placement;
-    entry.map.build(p);
+    entry.map.build(p, knockInputsOf(p));
     return &entry.map;
 }
 

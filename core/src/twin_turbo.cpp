@@ -4,6 +4,7 @@
 
 #include "portable_math.hpp"
 #include "revforge/air_filter.hpp"
+#include "revforge/architecture.hpp"
 #include "revforge/powertrain.hpp"
 #include "supercharger_laws.hpp"
 #include "turbo_laws.hpp"
@@ -226,7 +227,8 @@ TwinTurboSpec twinTurboSpecOf(const Powertrain& p) {
         // Chaque turbine reçoit sa rangée, ou sa moitié de cylindres, dans l'ordre d'allumage.
         const EngineProfile profile = e.toProfile();
         const int firings = profile.firingCount > 0 ? profile.firingCount : e.firingsPerTwoTurns();
-        const bool banks = e.layout != Layout::Inline && e.layout != Layout::Rotary;
+        // Une turbine par culasse (architectures) : deux sur un V, un boxer ou un W ; une seule culasse (en ligne, VR) se coupe en deux.
+        const bool banks = architectureOf(e).heads == 2;
         std::array<double, 2> count{0.0, 0.0};
         std::array<double, 2> length{0.0, 0.0};
         for (int i = 0; i < firings && i < kMaxCylinders; ++i) {

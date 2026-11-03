@@ -675,8 +675,9 @@ void printKnock(const Powertrain& powertrain, const EngineSound& sound) {
         std::printf("Knock: none (no spark). Compression %.1f:1 (stock %.1f:1), efficiency x%.4f\n", ratio, stockCompressionRatio(powertrain.engine), powertrain.electric ? 1.0 : compressionEfficiencyShare(powertrain.engine));
         return;
     }
+    // La carte que lit le modèle : l'air du jour, la came, l'injection directe et l'avance du calculateur (combustion.cpp).
     KnockMap map;
-    map.build(powertrain);
+    map.build(powertrain, knockInputsOf(powertrain));
     const FuelProperties& fuel = fuelPropertiesOf(powertrain.engine);
     std::printf("Knock: compression %.1f:1 (stock %.1f:1), RON %.0f, efficiency x%.4f, fuel x%.4f, %s\n", compressionRatioOf(powertrain.engine), stockCompressionRatio(powertrain.engine), fuel.ron,
                 compressionEfficiencyShare(powertrain.engine), combustionTorqueShare(powertrain.engine) / compressionEfficiencyShare(powertrain.engine), map.sensor() ? "knock sensor" : "no knock sensor");
@@ -686,7 +687,8 @@ void printKnock(const Powertrain& powertrain, const EngineSound& sound) {
     const double redline = redlineRpmOf(powertrain);
     for (double rpm = std::ceil(idle / 250.0) * 250.0; rpm <= redline; rpm += 250.0) {
         const KnockPoint point = map.at(rpm, 1.0);
-        const double margin = point.limitDeg - point.stockDeg;
+        // Face à l'avance demandée : la carte d'origine et l'écart du calculateur, comme `rf_knock_margin_deg`.
+        const double margin = point.limitDeg - (point.stockDeg + map.advanceOffsetDeg());
         if (margin < worst) {
             worst = margin;
             worstRpm = rpm;

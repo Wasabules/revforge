@@ -1039,7 +1039,7 @@ export const fr: Record<MessageKey, string> = {
   'engine.part.vanes': 'Aubes de la turbine',
   'engine.part.clutch': 'Embrayage du compresseur',
   'summary.vgt': 'géométrie variable',
-  'builder.twinOnlySingle': "L'anti-lag et le tube du turbo ne sont modélisés que sur un turbo simple.",
+  'builder.twinOnlySingle': "L'anti-lag et le tube du turbo ne sont modélisés que sur un turbo simple sans aubes. Ici, la régulation de pression ne donne que sa cible, que suivent les soupapes.",
   'gas.twinTurbines': 'Une turbine par rangée',
   'gauge.turbines': 'Turbos {a} / {b} tr/min',
   'live.turbo2': 'Second turbo',

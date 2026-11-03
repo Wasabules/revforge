@@ -147,9 +147,14 @@ TEST_CASE("calculateur : la carte réglée change la courbe de couple, la consom
     const double rpm = 4500.0;
     const double friction = frictionTorqueNm(stock, rpm);
     const double gross = torqueCurveNm(stock, rpm) + friction;
-    // λ 1 au lieu de 0,88 : 6 % de couple indiqué en moins ; 10° de retard : 2 %. Les frottements, eux, restent.
+    // λ 1 au lieu de 0,88 : 6 % de couple indiqué en moins. Les frottements, eux, restent.
     CHECK((torqueCurveNm(lean, rpm) + friction) / gross == doctest::Approx(lambdaTorqueShare(1.0) / lambdaTorqueShare(0.88)).epsilon(1e-6));
-    CHECK((torqueCurveNm(retarded, rpm) + friction) / gross == doctest::Approx(sparkTorqueShare(10.0)).epsilon(1e-6));
+    // Intégration : 10° de retard passent par la carte du cliquetis (combustion), qui part de la carte d'origine réelle, déjà en
+    // retard sur le meilleur couple : ils coûtent plus que les 2 % de la parabole autour du meilleur couple.
+    const KnockMap* knock = knockMapOf(retarded);
+    REQUIRE(knock != nullptr);
+    CHECK((torqueCurveNm(retarded, rpm) + friction) / gross == doctest::Approx(knock->steadyTorqueShare(rpm)).epsilon(1e-6));
+    CHECK((torqueCurveNm(retarded, rpm) + friction) / gross < sparkTorqueShare(10.0));
     // Même air, même carburant : l'étincelle retardée en tire moins, donc chaque kWh coûte plus.
     const double brake = 0.6 * torqueCurveNm(retarded, 3000.0);
     CHECK(brakeSpecificFuel(retarded, 3000.0, brake) > brakeSpecificFuel(stock, 3000.0, brake) * 1.015);

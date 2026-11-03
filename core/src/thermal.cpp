@@ -232,7 +232,8 @@ void ThermalNetwork::step(const ThermalInput& in, double dt) {
     // Le radiateur : ε-NTU, courants croisés, l'air qui traverse le faisceau du côté froid.
     const double ram = kRamShare * speed;
     const double coreMs = std::sqrt(ram * ram + (fan_ ? s.fanMs * s.fanMs : 0.0) + kDraftMs * kDraftMs);
-    const double airKgS = airDensity(ambient) * s.coreM2 * coreMs;
+    const double rho = s.airPressureRatio == 1.0 ? airDensity(ambient) : airDensity(ambient) * s.airPressureRatio;
+    const double airKgS = rho * s.coreM2 * coreMs;
     const double airWK = airKgS * kAirCp;
     double radiator = 0.0;
     if (flowWK > 0.0) {

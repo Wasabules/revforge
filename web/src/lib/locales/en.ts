@@ -1040,7 +1040,7 @@ export const en = {
   'engine.part.vanes': 'Turbine vanes',
   'engine.part.clutch': 'Supercharger clutch',
   'summary.vgt': 'variable geometry',
-  'builder.twinOnlySingle': 'Anti-lag and the turbo pipe are only modelled on a single turbo.',
+  'builder.twinOnlySingle': 'Anti-lag and the turbo pipe are only modelled on a single turbo without vanes. Here, boost control only sets the target, which the wastegates follow.',
   'gas.twinTurbines': 'One turbine per bank',
   'gauge.turbines': 'Turbos {a} / {b} rpm',
   'live.turbo2': 'Second turbo',

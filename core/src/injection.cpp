@@ -5,6 +5,7 @@
 
 #include "portable_math.hpp"
 #include "revforge/carburetor.hpp"
+#include "revforge/combustion.hpp"
 
 namespace revforge {
 
@@ -178,6 +179,20 @@ double evaporatedBeforeIvc(double rpm, double railBar) {
     // Une goutte perd sa masse en d³ : ce qui reste est (1 − t/t_v)^1,5.
     const double left = std::max(1.0 - available / lifetime, 0.0);
     return 1.0 - left * std::sqrt(left);
+}
+
+double mixtureAirShare(const EngineConfig& e) { return hasCarburetor(e) ? kCarbAirShare : kPortAirShare; }
+
+InjectedFuel injectedFuelOf(const EngineConfig& e) {
+    const FuelProperties& props = fuelPropertiesOf(e);
+    InjectedFuel fuel;
+    fuel.vaporizationJPerKg = props.vaporizationJPerG * 1000.0;
+    fuel.stoichiometricAfr = props.stoichiometricAfr;
+    fuel.densityKgM3 = props.densityKgPerL * 1000.0;
+    fuel.lowerHeatingJPerKg = props.lowerHeatingJPerG * 1000.0;
+    // L·M/R : la pente de Clausius-Clapeyron de ce qui reste en film.
+    fuel.volatilityK = props.vaporizationJPerG * props.molarMassGPerMol / 8.314;
+    return fuel;
 }
 
 ChargeCooling chargeCooling(FuelSystem system, double rpm, double load, double redlineRpm, double lambda, double effectiveCompression, const InjectedFuel& fuel) {
@@ -486,8 +501,9 @@ InjectionSummary injectionSummary(const EngineConfig& e) {
     const double redline = static_cast<double>(e.redlineRpm);
     const double peakRpm = 0.6 * redline;
     if (directInjected(e)) {
-        out.coolingK = chargeCooling(FuelSystem::Direct, peakRpm, 1.0, redline, 0.88, 9.0).atIvcK;
-        out.fillGainShare = directFillGain(peakRpm, redline, 293.0);
+        const InjectedFuel fuel = injectedFuelOf(e);
+        out.coolingK = chargeCooling(FuelSystem::Direct, peakRpm, 1.0, redline, 0.88, 9.0, fuel).atIvcK;
+        out.fillGainShare = directFillGain(peakRpm, redline, 293.0, fuel);
         out.railBar = directRailBar(1.0, peakRpm, redline);
     }
     if (e.burnsDiesel()) {

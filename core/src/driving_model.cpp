@@ -2,8 +2,10 @@
 
 #include "revforge/architecture.hpp"
 #include "revforge/two_stroke.hpp"
+#include "revforge/valve_float.hpp"
 
 #include "portable_math.hpp"
+#include "turbo_laws.hpp"
 #include "revforge/atmosphere.hpp"
 
 #include <algorithm>
@@ -161,7 +163,8 @@ void DrivingModel::setPowertrain(const Powertrain& powertrain) {
     // La régulation de pression : rien à calculer sur une wastegate à ressort, qui reste dans `TurboCharger`.
     const bool controlled = turboEngine_ && powertrain.engine.boostControl != BoostControl::Spring;
     if (controlled && (!boostControlled_ || boostSpec_.kind != powertrain.engine.boostControl)) boostController_.reset();
-    boostSpec_ = turboEngine_ ? boostControlSpecFor(powertrain, gearing_, kTyreGrip) : BoostControlSpec{};
+    // Un étalonnage, comme la carte de passage : fait dans l'air de référence. La cible absolue, elle, se compare à l'air du jour.
+    boostSpec_ = turboEngine_ ? boostControlSpecFor(sized, gearing_, kTyreGrip) : BoostControlSpec{};
     boostControlled_ = controlled;
     // Deux turbos, un twincharger ou des aubes : un autre modèle tient les arbres (twin_turbo.cpp).
     twinEngine_ = turboEngine_ && usesTwinTurbo(powertrain.engine);
@@ -211,8 +214,14 @@ void DrivingModel::setPowertrain(const Powertrain& powertrain) {
     // Le calculateur : sa carte, et ce qu'il fait à chaque pas. Au défaut, rien de cela ne s'exécute.
     {
         const EngineConfig& e = powertrain.engine;
-        // Le régime du rupteur : le régime maximal, tant que l'affolement des soupapes (culbuteurs) n'est pas branché ici.
-        limiterRpm_ = limiterRpmFor(redline_, 0.0);
+        // Le régime du rupteur : le régime maximal, sauf si les soupapes s'affolent avant (culbuteurs). Le calculateur d'origine est
+        // étalonné sur la came d'origine de cette distribution et de ces ressorts : il ne connaît pas une came changée.
+        EngineConfig stockCam = e;
+        stockCam.camDurationDeg = 0;
+        stockCam.camLiftMm = 0.0f;
+        stockCam.lobeSeparationDeg = 0;
+        stockCam.valveTiming = ValveTiming::Fixed;
+        limiterRpm_ = limiterRpmFor(redline_, powertrain.electric ? 0.0 : valveFloatRpm(stockCam));
         ecuMap_ = !powertrain.electric && ecuMapTuned(e);
         mapRetard_ = ecuMap_ ? mapRetardDeg(e) : 0.0;
         lambdaRatio_ = ecuMap_ ? lambdaFullLoadRatio(e) : 1.0;
@@ -255,7 +264,8 @@ void DrivingModel::setPowertrain(const Powertrain& powertrain) {
     camTwoStep_ = !powertrain.electric && camTwoStep(powertrain.engine);
     camPhased_ = !powertrain.electric && camPhased(powertrain.engine);
     camVariable_ = camTwoStep_ || camPhased_;
-    camSwitchRpm_ = camTwoStep_ ? revforge::camSwitchRpm(powertrain.engine) : 0.0;
+    // Au-delà de l'affolement des soupapes (culbuteurs), le second profil ne servirait à rien : pas de bascule.
+    camSwitchRpm_ = camTwoStep_ ? revforge::camSwitchRpm(powertrain.engine, valveFloatRpm(powertrain.engine)) : 0.0;
     camDrive_ = CamDrive{};
     if (camPhased_) camDrive_.phaserDeg = static_cast<float>(-kCamPhaserAuthorityDeg);
 }
@@ -459,6 +469,8 @@ void DrivingModel::meterConsumption() {
 
 void DrivingModel::configureThermal(const Powertrain& p, const Powertrain& sized, double peakPowerRpm, double peakPowerKw) {
     thermalEngine_ = !p.electric;
+    // Intégration : l'eau que lit le film venait du réseau ; repassé au départ chaud, le moteur retrouve l'eau de référence.
+    if (coldCoupled_) coolantC_ = kWarmCoolantC;
     coldCoupled_ = false;
     if (!thermalEngine_) {
         thermalReady_ = false;
@@ -470,7 +482,10 @@ void DrivingModel::configureThermal(const Powertrain& p, const Powertrain& sized
     const double friction = frictionTorqueNm(sized, peakPowerRpm);
     const double fullGross = fullLoadTorqueNm(sized, peakPowerRpm, steadyBoost(sized, peakPowerRpm)) + friction;
     const ConsumptionModel& model = consumption_.model();
-    thermal_.configure(thermalSpecOf(sized, model.fuelGps(peakPowerRpm, brake, friction, fullGross) * model.fuel().lowerHeatingJPerG));
+    ThermalSpec spec = thermalSpecOf(sized, model.fuelGps(peakPowerRpm, brake, friction, fullGross) * model.fuel().lowerHeatingJPerG);
+    // Le radiateur est une pièce, dimensionnée dans l'air de référence ; l'air qui le traverse est celui du jour.
+    spec.airPressureRatio = ambientAirOf(p.engine).pressureRatio;
+    thermal_.configure(spec);
     hydroNmPerRpm_ = hydrodynamicNmPerRpm(p.engine);
     // Un autre départ ou un autre air : le moteur repart de là. Sinon, il garde ses températures, même si on change de ligne.
     if (!thermalReady_ || p.engine.startTemp != startTemp_ || p.engine.ambientC != ambientC_) {
@@ -492,6 +507,8 @@ void DrivingModel::configureThermal(const Powertrain& p, const Powertrain& sized
 void DrivingModel::updateColdEffects() {
     if (!coldCoupled_) return;
     viscosityExcess_ = revforge::coldViscosityExcess(thermal_.oilC());
+    // L'eau du réseau, que lit le film de carburant d'une injection indirecte (injection) : seulement après un départ à froid.
+    coolantC_ = thermal_.coolantC();
     coldIdleRise_ = revforge::coldIdleRise(thermal_.coolantC());
     coldEnrichment_ = revforge::coldEnrichment(powertrain_.engine, thermal_.coolantC());
 }
@@ -1028,6 +1045,14 @@ void DrivingModel::stepTwin(double rpmNow, bool burning) {
     input.fill = manifold_;
     input.breathing = breathingOf(powertrain_, rpmNow);
     input.burning = burning;
+    if (boostControlled_) {
+        // Intégration : le calculateur donne la cible (plafonnée par la vitesse des roues, ou selon le rapport), et la loi des
+        // soupapes (ou des aubes) du biturbo la suit. Son PID et son anticipation ne sont identifiés que sur le banc d'un turbo
+        // seul : branchés tels quels, ils dépassaient la cible de 0,49 bar sur un séquentiel, dont l'étagement oscillait
+        // (docs/modele.md, « Quand les réglages se rencontrent (2) »). Les arbres du biturbo comptent dans l'air de référence.
+        const double ambientPa = turbo_laws::constants().atmosphere;
+        input.targetBar = (revforge::boostTargetPa(boostSpec_, rpmNow, gear_, ambientPa) - ambientPa) / 1e5;
+    }
     twin_.step(kStep, input);
     boost_ = std::max(twin_.boost(), 0.0);
 }
@@ -1055,6 +1080,7 @@ void DrivingModel::stepTurbo(double rpmNow, bool burning) {
         control.rpm = rpmNow;
         control.gear = gear_;
         control.chargePa = turbo_.state().chargePa;
+        control.ambientPa = turbo_.spec().ambientPa;
         input.gateDemand = boostController_.step(boostSpec_, kStep, control);
     }
     if (chargeAirEngine_) input.cooledK = chargeAir_.stepCooler(kStep, turbo_.state().compressorOutK, turbo_.state().compressorFlow, speedMs_);
@@ -1063,9 +1089,11 @@ void DrivingModel::stepTurbo(double rpmNow, bool burning) {
 }
 
 double DrivingModel::boostTargetPa() const {
-    constexpr double kAmbientPa = 101325.0;
-    if (!turboEngine_) return kAmbientPa;
-    return boostControlled_ && boostController_.targetPa() > 0.0 ? boostController_.targetPa() : revforge::boostTargetPa(boostSpec_, rpm(), gear_, kAmbientPa);
+    // L'air du jour (atmosphère) : exactement 101 325 Pa à 0 m.
+    if (!turboEngine_) return powertrain_.electric ? 101325.0 : ambientAirOf(powertrain_.engine).pressurePa;
+    // Le biturbo compte ses arbres dans l'air de référence ; son calculateur n'a pas de PID (stepTwin).
+    const double ambientPa = twinEngine_ ? turbo_laws::constants().atmosphere : turbo_.spec().ambientPa;
+    return boostControlled_ && !twinEngine_ && boostController_.targetPa() > 0.0 ? boostController_.targetPa() : revforge::boostTargetPa(boostSpec_, rpm(), gear_, ambientPa);
 }
 
 void DrivingModel::updateAntiLag(double throttle, double rpmNow, bool off) {
@@ -1297,6 +1325,12 @@ void DrivingModel::updateEngine(double throttle, bool off) {
     }
     frictionHeatNm_ = friction;
     double indicated = fullLoadTorqueNm(powertrain_, rpmNow, boost_) + frictionTorqueNm(powertrain_, rpmNow);
+    // Moteur froid : des parois plus froides chauffent moins l'air piégé (`trappedAirK`, atmosphère) ; il en entre d'autant plus.
+    // La paroi est le métal du réseau thermique. Parti chaud, rien de cela : la paroi de référence est celle du moteur chaud.
+    if (coldCoupled_) {
+        const double airK = manifoldCharge().temperatureK;
+        indicated *= trappedAirK(airK) / trappedAirK(airK, thermal_.metalC() + 273.0);
+    }
     // Au démarrage, le calculateur enrichit le mélange : le moteur prend même très bas.
     if (catching_ && rpmNow < idle_) indicated = std::max(indicated, 0.8 * fullLoadTorqueNm(powertrain_, idle_, 0.0));
 
@@ -1313,7 +1347,11 @@ void DrivingModel::updateEngine(double throttle, bool off) {
         fastIdle_ *= 1.0 - kStep / 0.9;
     }
     const double balance = friction / std::max(indicated, 1.0);
-    const double idleOpen = off ? 0.0 : clamp(balance * (1.0 + (idleTarget - rpmNow) / 60.0), 0.0, catching_ ? 0.8 : 0.45);
+    // Intégration : après un départ à froid, le ralenti accéléré (came d'un carburateur, vanne du calculateur) ouvre autant qu'au
+    // démarrage. Limité à 0,45 comme moteur chaud, il ne tenait pas l'huile froide d'un moteur peu comprimé : la Cadillac, à son
+    // taux publié de 5,35, calait par 5 °C. Parti chaud, rien ne change.
+    const double idleAuthority = catching_ || coldCoupled_ ? 0.8 : 0.45;
+    const double idleOpen = off ? 0.0 : clamp(balance * (1.0 + (idleTarget - rpmNow) / 60.0), 0.0, idleAuthority);
 
     // Un petit filet d'accélérateur remplit vite à bas régime, moins à haut régime.
     const double fraction = clamp(rpmNow / redline_, 0.0, 1.0);
@@ -1886,7 +1924,7 @@ void DrivingModel::finishEcu(double rpmNow, double indicated, bool off) {
         const double air = consumption_.model().airGps(rpmNow, manifold_, indicated);
         const double events = std::max(rpmNow / 120.0 * powertrain_.engine.firingsPerTwoTurns(), 1.0);
         const FuelSpec& fuel = consumption_.model().fuel();
-        const double grams = air / events / (fuel.stoichiometricAfr * demandedLambda(powertrain_.engine, manifold_));
+        const double grams = air / events / (fuel.stoichiometricAfr * demandedLambda(powertrain_.engine, manifold_, coldCoupled_ ? thermal_.coolantC() : kWarmCoolantC));
         unburntJoules_ = grams * fuel.lowerHeatingJPerG * kUnburntCollectorShare;
     }
 }
@@ -1910,14 +1948,16 @@ EcuDrive DrivingModel::ecuDrive() const {
 
 double DrivingModel::ecuAdvanceDeg() const {
     if (!sparkEngine_) return 0.0;
-    return static_cast<double>(powertrain_.engine.ignitionOffsetDeg) - ecu_.retardDeg;
+    // Ce que retire le capteur de cliquetis (combustion) s'y ajoute : 0 sans carte.
+    return static_cast<double>(powertrain_.engine.ignitionOffsetDeg) - ecu_.retardDeg - knockRetard_;
 }
 
 double DrivingModel::ecuLambda() const {
     if (!sparkEngine_) return 0.0;
     // Un carburateur dose lui-même : c'est son mélange qu'on lit.
     if (carbEngine_) return carb_.lambda();
-    return demandedLambda(powertrain_.engine, manifold_);
+    // Moteur froid : l'enrichissement de la thermique, la même loi (`coldEnrichment`).
+    return demandedLambda(powertrain_.engine, manifold_, coldCoupled_ ? thermal_.coolantC() : kWarmCoolantC);
 }
 
 }  // namespace revforge

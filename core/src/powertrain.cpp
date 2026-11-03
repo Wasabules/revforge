@@ -590,7 +590,7 @@ double fullLoadTorqueNm(const Powertrain& p, double rpm, double boost) {
     double share = 1.0;
     if (!stockBurn) share *= combustionTorqueShare(e);
     if (!stockMap) share *= ecuFullLoadShare(e);
-    if (direct) share *= 1.0 + directFillGain(rpm, static_cast<double>(e.redlineRpm), intakeAirK(p, rpm));
+    if (direct) share *= 1.0 + directFillGain(rpm, static_cast<double>(e.redlineRpm), intakeAirK(p, rpm), injectedFuelOf(e));
     if (rail) share *= commonRailTorqueShare(dieselPointOf(p, rpm, 1.0, boost));
     return (airTorqueNm(p, rpm, boost) + friction) * share - friction;
 }
@@ -697,7 +697,7 @@ ExhaustState exhaustStateOf(const Powertrain& p, double rpm, double fill, double
 double directPumpTorqueNm(const Powertrain& p, double rpm, double fill, double boost) {
     if (p.electric || !directInjected(p.engine)) return 0.0;
     const ExhaustState gas = exhaustStateOf(p, rpm, fill, boost);
-    return directPumpNm(gas.fuelGps, directRailBar(fill, rpm, static_cast<double>(p.engine.redlineRpm)), rpm);
+    return directPumpNm(gas.fuelGps, directRailBar(fill, rpm, static_cast<double>(p.engine.redlineRpm)), rpm, injectedFuelOf(p.engine));
 }
 
 double filterPumpingTorqueNm(const Powertrain& p, double rpm, double fill, double boost, double sootG) {

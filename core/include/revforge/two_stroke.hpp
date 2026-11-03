@@ -4,6 +4,9 @@
 
 namespace revforge {
 
+/** Le taux géométrique d'origine d'un deux-temps (préréglage, Saab 96) : celui que remplace `compressionRatio`. */
+inline constexpr double kTwoStrokeGeometricCompression = 7.5;
+
 /**
  * Le deux-temps : des lumières dans la chemise au lieu des soupapes, un carter qui aspire puis refoule le mélange frais dans le
  * cylindre, et une seule explosion par tour. Voir « Le deux-temps » dans docs/modele.md.

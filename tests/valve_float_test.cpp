@@ -115,8 +115,9 @@ TEST_CASE("affolement : chaque préréglage, ressorts d'origine, flotte au-dessu
     for (std::size_t n = 0; n < count; ++n) {
         const Powertrain p = all[n].powertrain();
         INFO(std::string(all[n].id));
-        // Un moteur électrique n'a pas de soupapes, un rotatif non plus : ni affolement, ni rien de ce qui suit.
-        if (p.electric || isRotary(p.engine)) {
+        // Un moteur électrique n'a pas de soupapes, un rotatif non plus, un deux-temps non plus (des lumières) : ni affolement,
+        // ni rien de ce qui suit.
+        if (p.electric || isRotary(p.engine) || p.engine.twoStroke()) {
             if (!p.electric) CHECK(valveFloatRpm(p.engine) == 0.0);
             CHECK(p.profile().valves.floatRpm == 0.0);
             continue;
@@ -297,7 +298,7 @@ TEST_CASE("culbuteurs : la chaîne souple prend une part de la marge, plus à ha
     const Preset* all = presets(count);
     for (std::size_t n = 0; n < count; ++n) {
         const Powertrain p = all[n].powertrain();
-        if (p.electric || isRotary(p.engine)) continue;
+        if (p.electric || isRotary(p.engine) || p.engine.twoStroke()) continue;
         INFO(std::string(all[n].id));
         const double twin = valveFloatRpm(withCam(p, Camshaft::Dohc).engine);
         const double pushrods = valveFloatRpm(withCam(p, Camshaft::Ohv).engine);

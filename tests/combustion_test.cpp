@@ -10,6 +10,7 @@
 #include "revforge/consumption.hpp"
 #include "revforge/driving_model.hpp"
 #include "revforge/engine_sound.hpp"
+#include "revforge/two_stroke.hpp"
 #include "revforge/powertrain.hpp"
 #include "revforge/presets.hpp"
 #include "test_support.hpp"
@@ -153,11 +154,18 @@ TEST_CASE("au défaut, la combustion garde son chemin d'origine : aucune carte d
         const Powertrain p = all[i].powertrain();
         const std::string id = all[i].id;
         CAPTURE(id);
+        // Intégration : la Cadillac prend son taux publié (5,35, Old Cars Weekly) ; sa combustion n'est plus au défaut. Elle seule.
+        if (p.engine.compressionRatio != 0.0f) {
+            CHECK(id == "v16_cadillac");
+            continue;
+        }
         CHECK(combustionStock(p.engine));
         CHECK(knockMapOf(p) == nullptr);
         CHECK(p.profile().dieselKnockScale == 1.0f);
         if (p.electric) continue;
-        CHECK(p.profile().starter.compressionRatio == stockCompressionRatio(p.engine));
+        // Un deux-temps comprime au démarreur son taux réel, celui que laisse la lumière d'échappement (deux-temps).
+        if (p.engine.twoStroke()) CHECK(p.profile().starter.compressionRatio == static_cast<float>(twoStrokePortsOf(p.engine).trappedCompression));
+        else CHECK(p.profile().starter.compressionRatio == stockCompressionRatio(p.engine));
         // Le même taux, écrit à la main : le calcul passe par la combustion, et retombe sur le même couple.
         Powertrain same = p;
         same.engine.compressionRatio = stockCompressionRatio(p.engine);

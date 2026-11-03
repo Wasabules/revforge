@@ -1,3 +1,4 @@
+#include "revforge/combustion.hpp"
 #include "revforge/two_stroke.hpp"
 
 #include <algorithm>
@@ -41,7 +42,7 @@ constexpr double kExhaustWidth = 0.62;
 constexpr double kTransferWidth = 0.95;
 constexpr double kInletWidth = 0.6;
 // Taux géométrique d'un deux-temps de tourisme (Saab 96 : 7,3 ; Trabant 601 : 7,8), et du carter (supposé, 1,3 à 1,5 d'ordinaire).
-constexpr double kGeometricCompression = 7.5;
+constexpr double kGeometricCompression = kTwoStrokeGeometricCompression;
 constexpr double kCrankcaseCompression = 1.35;
 
 // ── La chambre de détente : voir docs/modele.md ──
@@ -670,7 +671,8 @@ TwoStrokePorts twoStrokePortsOf(const EngineConfig& e) {
     p.exhaustOpenDeg = crankAngleForTravel(1.0 - p.exhaustHeight, p.rodOverStroke);
     p.transferOpenDeg = crankAngleForTravel(1.0 - p.transferHeight, p.rodOverStroke);
     p.inletOpenBtdcDeg = crankAngleForTravel(p.inletTravel, p.rodOverStroke);
-    p.geometricCompression = kGeometricCompression;
+    // Le taux réglé (combustion), borné comme les autres ; 0 : celui d'origine, 7,5.
+    p.geometricCompression = e.compressionRatio > 0.0f ? static_cast<double>(compressionRatioOf(e)) : kGeometricCompression;
     // Le cylindre ne comprime qu'une fois la lumière d'échappement fermée.
     p.trappedCompression = 1.0 + (1.0 - p.exhaustHeight) * (p.geometricCompression - 1.0);
     p.crankcaseCompression = kCrankcaseCompression;

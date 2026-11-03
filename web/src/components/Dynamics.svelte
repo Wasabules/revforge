@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
   import Meter from './Meter.svelte';
+  import { REFERENCE_C } from '../lib/atmosphere';
+  import { camIsStock } from '../lib/cam';
   import { animate } from '../lib/canvas';
   import { CLUTCH_SMOKE_C } from '../lib/clutchMechanism';
   import type { EngineConfig } from '../lib/config';
@@ -30,8 +32,18 @@
   let peakNode: HTMLElement;
 
   const percent = (value: number) => t('unit.percent', { value: whole(value) });
-  /** Le cliquetis n'est calculé qu'une fois la combustion changée, sur un moteur à étincelle : avant, la carte d'origine reste sous sa limite. */
-  const knocks = $derived(!config.electric && (config.fuel === 'petrol' || config.layout === 'rotary') && (config.compressionRatio !== 0 || config.fuelGrade !== 'ron95'));
+  /**
+   * Le cliquetis n'est calculé qu'une fois changé ce que lit sa carte (`combustionStock` et `knockConditionsStock`, combustion.cpp) :
+   * la combustion, l'air du jour, la came, l'avance du calculateur, l'injection directe ou l'air de charge, sur un moteur à étincelle.
+   * Avant, la carte d'origine reste sous sa limite.
+   */
+  const knocks = $derived.by(() => {
+    if (config.electric || !(config.fuel === 'petrol' || config.layout === 'rotary')) return false;
+    const boosted = config.aspiration !== 'natural';
+    const chargeAir = (boosted && config.intercooler !== 'air_to_air') || config.waterInjection || config.nitrousKw > 0;
+    return config.compressionRatio !== 0 || config.fuelGrade !== 'ron95' || config.ambientC !== REFERENCE_C || config.altitudeM !== 0
+      || !camIsStock(config) || config.ignitionOffsetDeg !== 0 || config.fuelSystem === 'direct' || chargeAir;
+  });
   const on = (value: () => number) => () => (running() ? value() : 0);
 
   onMount(() => {

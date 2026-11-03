@@ -77,6 +77,8 @@ double demandedAdvanceDeg(const EngineConfig& e, double rpm, double load, double
 /** La carte s'écarte-t-elle de l'origine ? Faux : aucun calcul ne change. Sans effet sur un diesel. */
 bool ecuMapTuned(const EngineConfig& e);
 /** L'écart au meilleur couple de la carte réglée (positif : plus tard), cliquetis lu compris. */
+/** Le décalage d'avance est porté par la carte du cliquetis (`knockMapOf`) : tout quatre-temps à étincelle. */
+inline bool ecuAdvanceInKnockMap(const EngineConfig& e) { return !e.burnsDiesel() && !e.twoStroke() && e.ignitionOffsetDeg != 0; }
 double mapRetardDeg(const EngineConfig& e, double knockRetardDeg = 0.0);
 /** Le rapport du couple indiqué de pleine charge à celui de la richesse d'origine. 1 sans réglage. */
 double lambdaFullLoadRatio(const EngineConfig& e);
