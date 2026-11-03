@@ -58,6 +58,8 @@ constexpr double kRatedCoolerBar = 0.12;
 constexpr double kRatedFilterPa = 3000.0;
 constexpr double kDuctLossAtRated = 1e5 * 0.2;
 constexpr double kDuctDampedShare = 0.25;
+// Frottement du retour d'air froid d'un turbo déporté : un tube lisse, ordre de grandeur.
+constexpr double kColdPipeFriction = 0.02;
 
 // ── L'échangeur ──
 constexpr double kCoolerEffectLow = 0.86;
@@ -265,6 +267,14 @@ TurboSpec turboSpecFor(const EngineConfig& e, double breathingAtRated) {
     s.ratedBackPa = inPa > chargePa ? inPa - chargePa : 0.0;
     s.wastegateK = 2.0 * s.turbineK;
     s.tipLimit = 1.1 * tipSpeed > kTipLimit ? 1.1 * tipSpeed : kTipLimit;
+
+    // Le tube jusqu'à la turbine. Déporté plus loin, le compresseur part avec elle : l'air revient d'autant vers le papillon.
+    s.pipe = turboPipeSpecFor(e.turboPipeMm, s.displacementM3, e.cylinders);
+    if (s.pipe.extraM > 0.0) {
+        s.chargeVolumeM3 += area * s.pipe.extraM;
+        s.ductInertance += s.pipe.extraM / area;
+        s.coolerDrop += kColdPipeFriction * s.pipe.extraM / std::sqrt(area / 0.7854) / (2.0 * area * area);
+    }
     return s;
 }
 
@@ -316,13 +326,15 @@ Balance balanceAt(const TurboSpec& spec, double rpm, double breathing, double ch
     }
     const double fuel = fuelPerAir(spec, 1.0, true);
     const double gas = flow * (1.0 + fuel);
-    const double hotK = exhaustTemperature(spec, coolK, rpm, 1.0, fuel);
+    const double burntK = exhaustTemperature(spec, coolK, rpm, 1.0, fuel);
+    const double hotK = spec.pipe.active ? turboPipeSteadyK(spec.pipe, gas, burntK) : burntK;
     const double outPa = kAtmosphere + spec.lineDrop * gas * gas;
     const double passage = spec.turbineK + spec.wastegateK * gate;
     const double inPa = std::sqrt(outPa * outPa + gas * gas * hotK / (passage * passage));
     const double omega = tip / (0.5 * spec.wheelDiameterM);
     const double through = gas * spec.turbineK / passage;
-    const double power = turbinePower(spec, through, hotK, inPa, outPa, omega, kPulsePa * (1.0 - clamp(rpm / spec.redlineRpm, 0.0, 1.0)));
+    const double pulsePa = kPulsePa * (1.0 - clamp(rpm / spec.redlineRpm, 0.0, 1.0));
+    const double power = turbinePower(spec, through, hotK, inPa, outPa, omega, spec.pipe.active ? pulsePa * turboPipePulseShare(spec.pipe, rpm, inPa, outPa, hotK, passage) : pulsePa);
     const double compressor = (head > 0.0 ? flow * head / compressorEta(x) : 0.0) + windagePower(spec, tip);
     b.surplusW = power - compressor - bearingPower(spec, omega);
     // Sous la limite de pompage, le compresseur ne tient pas cette pression, quelle que soit l'énergie disponible.
@@ -390,13 +402,16 @@ double turboBackPressureNm(const TurboSpec& spec, double chargePa, double turbin
     // Les couples de référence viennent de vrais moteurs, bien appariés : ils comptent déjà ce que coûte un turbo de la bonne
     // taille à ce débit. Seul l'écart compte : un petit turbo étouffe, un gros soulage.
     const double share = flow / spec.ratedFlow;
-    const double difference = clamp(turbineInPa - chargePa - spec.ratedBackPa * share * share, -5e4, 4e5);
+    // Le tube, lui, freine en plus avant la turbine : c'est le cylindre qui pousse contre cette perte, pas la roue.
+    const double beforeTurbine = spec.pipe.active ? turbineInPa + spec.pipe.frictionDrop * flow * flow : turbineInPa;
+    const double difference = clamp(beforeTurbine - chargePa - spec.ratedBackPa * share * share, -5e4, 4e5);
     return difference * spec.displacementM3 / (4.0 * kPi) * clamp(fill, 0.0, 1.0);
 }
 
 // ── Le pas de temps ──
 
 void TurboCharger::setSpec(const TurboSpec& spec) {
+    if (spec.pipe.active && !spec_.pipe.active) pipe_.adopt(spec.pipe, state_.engineFlow, state_.turbineInK);
     spec_ = spec;
     state_.shaftShare = state_.shaftOmega / spec_.referenceOmega;
 }
@@ -500,8 +515,12 @@ void TurboCharger::step(double dt, const TurboInput& input) {
     const double fuel = fuelPerAir(spec, fill, input.burning);
     const double gas = engine * (1.0 + fuel);
     const double hotTarget = rpm > 50.0 ? exhaustTemperature(spec, coolK, rpm, fill, fuel) : kAmbientK;
-    const double hotTau = hotTarget > s.turbineInK ? kHeatUpS : kCoolDownS;
-    s.turbineInK += (hotTarget - s.turbineInK) * dt / hotTau;
+    if (spec.pipe.active) {
+        s.turbineInK = pipe_.stepHeat(spec.pipe, dt, gas, hotTarget, s.turbineInPa, kHeatUpS, kCoolDownS);
+    } else {
+        const double hotTau = hotTarget > s.turbineInK ? kHeatUpS : kCoolDownS;
+        s.turbineInK += (hotTarget - s.turbineInK) * dt / hotTau;
+    }
 
     // La soupape de décharge de la turbine : un ressort et une membrane, qui s'ouvrent à la pression demandée.
     // Le calculateur anticipe : la pression qui monte vite ouvre plus tôt. Sans cela, l'arbre et la soupape se renvoient la balle.
@@ -514,12 +533,15 @@ void TurboCharger::step(double dt, const TurboInput& input) {
 
     const double passage = spec.turbineK + spec.wastegateK * s.wastegate;
     const double outPa = kAtmosphere + spec.lineDrop * gas * gas;
-    s.turbineInPa = std::sqrt(outPa * outPa + gas * gas * s.turbineInK / (passage * passage));
-    const double through = gas * spec.turbineK / passage;
+    const double ellipsePa = std::sqrt(outPa * outPa + gas * gas * s.turbineInK / (passage * passage));
+    // Avec un tube de plus, la pression n'y est pas d'un coup : ce qui sort de ce volume par la turbine n'est pas encore ce qui y entre.
+    s.turbineInPa = spec.pipe.active ? pipe_.stepPressure(spec.pipe, dt, s.turbineInPa, ellipsePa, outPa, s.turbineInK, passage) : ellipsePa;
+    const double through = (spec.pipe.active ? turboPipeOutflow(s.turbineInPa, outPa, s.turbineInK, passage) : gas) * spec.turbineK / passage;
 
     // ── L'arbre : tout se joue ici ──
     const double pulse = input.burning ? kPulsePa * (spec.diesel ? 0.5 + 0.5 * fill : fill) * (1.0 - clamp(rpm / spec.redlineRpm, 0.0, 1.0)) : 0.0;
-    const double power = turbinePower(spec, through, s.turbineInK, s.turbineInPa, outPa, s.shaftOmega, pulse);
+    const double pulseHere = spec.pipe.active ? pulse * turboPipePulseShare(spec.pipe, rpm, s.turbineInPa, outPa, s.turbineInK, passage) : pulse;
+    const double power = turbinePower(spec, through, s.turbineInK, s.turbineInPa, outPa, s.shaftOmega, pulseHere);
     const double compressor = (flowNext > 0.0 && headNew > 0.0 ? flowNext * headNew / eta : 0.0) + windagePower(spec, tip);
     s.turbinePowerW = power;
     s.compressorPowerW = compressor;

@@ -53,6 +53,8 @@ export interface Labels2D {
   airbox?: string;
   maf?: string;
   chargeHot?: string;
+  /** Ce que mesure le tube : toujours écrit, car la coupe de côté peut le replier. */
+  turboPipeLength?: string;
   chargeCold?: string;
   blowoff?: string;
   wastegate?: string;
@@ -934,6 +936,12 @@ export class Engine2D {
     ctx.fillRect(ax - bore * 0.14, ay - ahy - bore * 0.3, bore * 0.28, bore * 0.16);
     // Le tube chaud, jusqu'à l'échangeur.
     stroke(unit.hotFrom, unit.hotFrom[0] + unit.side * bore * 0.2, unit.hotTo[1], unit.hotTo, bore * 0.2, hot);
+    // Déporté, le tube d'échappement descend du collecteur à la turbine.
+    if (unit.feedRun.length > 0) {
+      const from = unit.feedRun[0];
+      const to = unit.feedRun[unit.feedRun.length - 1];
+      stroke(from, to[0], (from[1] + to[1]) / 2, to, bore * 0.26, mix(theme.raised, heatColors(550).fill, pose.gasLive ? 0.75 : 0.4));
+    }
     // Le compresseur, derrière la turbine sur le même arbre : on voit sa volute dépasser.
     const blur = pose.turbineBlur;
     ctx.fillStyle = hot;
@@ -978,6 +986,41 @@ export class Engine2D {
     const y = chain.cooler[1];
     const hot = painter.airStyle(theme, pose.compressorOutK, 2);
     const cold = painter.airStyle(theme, pose.coolerOutK, 2);
+    // Déporté, le tube d'échappement part de sous le moteur et arrive sur la volute. Replié, ses deux traits disent qu'il est plus long que dessiné.
+    if (chain.extraMm > 0) {
+      const high = y + unit.turbineHousing + bore * 0.3;
+      const start = this.layout.rearZ + bore * 0.3;
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = theme.lineStrong;
+      ctx.lineWidth = bore * 0.26 + 2 * px;
+      const feed = () => {
+        ctx.beginPath();
+        ctx.moveTo(start, high + bore * 0.45);
+        ctx.lineTo(start, high);
+        ctx.lineTo(unit.sideZ, high);
+        ctx.lineTo(unit.sideZ, y + unit.turbineHousing);
+        ctx.stroke();
+      };
+      feed();
+      ctx.strokeStyle = mix(theme.raised, heatColors(550).fill, pose.gasLive ? 0.75 : 0.4);
+      ctx.lineWidth = bore * 0.26;
+      feed();
+      ctx.lineCap = 'butt';
+      if (chain.sideFolded) {
+        const middle = (start + unit.sideZ) / 2;
+        const half = bore * 0.26;
+        ctx.fillStyle = theme.surface;
+        ctx.fillRect(middle - bore * 0.07, high - half, bore * 0.14, 2 * half);
+        ctx.strokeStyle = theme.text;
+        ctx.lineWidth = 1.2 * px;
+        ctx.beginPath();
+        for (const at of [middle - bore * 0.07, middle + bore * 0.07]) {
+          ctx.moveTo(at - bore * 0.06, high - half);
+          ctx.lineTo(at + bore * 0.06, high + half);
+        }
+        ctx.stroke();
+      }
+    }
     // Le tube chaud longe le moteur jusqu'à l'échangeur, à l'avant.
     const [, coolerY, coolerZ] = chain.cooler;
     const [, coolerHalfY, coolerHalfZ] = chain.coolerSize;
@@ -985,7 +1028,7 @@ export class Engine2D {
     ctx.lineWidth = bore * 0.18;
     ctx.strokeStyle = hot;
     ctx.beginPath();
-    ctx.moveTo(unit.compressorZ + bore * 0.24, y);
+    ctx.moveTo(unit.sideCompressorZ + bore * 0.24, y);
     ctx.lineTo(coolerZ - coolerHalfZ, y);
     ctx.stroke();
     ctx.lineCap = 'butt';
@@ -1005,20 +1048,20 @@ export class Engine2D {
     ctx.fillStyle = theme.metal;
     ctx.strokeStyle = theme.text;
     ctx.lineWidth = px;
-    ctx.fillRect(unit.z, y - bore * 0.04, unit.compressorZ - unit.z, bore * 0.08);
-    ctx.strokeRect(unit.z, y - bore * 0.04, unit.compressorZ - unit.z, bore * 0.08);
+    ctx.fillRect(unit.sideZ, y - bore * 0.04, unit.sideCompressorZ - unit.sideZ, bore * 0.08);
+    ctx.strokeRect(unit.sideZ, y - bore * 0.04, unit.sideCompressorZ - unit.sideZ, bore * 0.08);
     ctx.fillStyle = theme.raised;
-    ctx.fillRect(unit.z + bore * 0.26, y - bore * 0.18, unit.compressorZ - unit.z - bore * 0.52, bore * 0.36);
-    ctx.strokeRect(unit.z + bore * 0.26, y - bore * 0.18, unit.compressorZ - unit.z - bore * 0.52, bore * 0.36);
+    ctx.fillRect(unit.sideZ + bore * 0.26, y - bore * 0.18, unit.sideCompressorZ - unit.sideZ - bore * 0.52, bore * 0.36);
+    ctx.strokeRect(unit.sideZ + bore * 0.26, y - bore * 0.18, unit.sideCompressorZ - unit.sideZ - bore * 0.52, bore * 0.36);
     // Les carters, en coupe : chaud du côté turbine, de la couleur de l'air du côté compresseur.
     ctx.fillStyle = mix(theme.raised, heatColors(550).fill, Math.min(1, pose.gasLive ? 0.75 : 0.4));
     ctx.beginPath();
-    ctx.rect(unit.z - bore * 0.24, y - unit.turbineHousing, bore * 0.48, 2 * unit.turbineHousing);
+    ctx.rect(unit.sideZ - bore * 0.24, y - unit.turbineHousing, bore * 0.48, 2 * unit.turbineHousing);
     ctx.fill();
     ctx.stroke();
     ctx.fillStyle = hot;
     ctx.beginPath();
-    ctx.rect(unit.compressorZ - bore * 0.24, y - unit.compressorHousing, bore * 0.48, 2 * unit.compressorHousing);
+    ctx.rect(unit.sideCompressorZ - bore * 0.24, y - unit.compressorHousing, bore * 0.48, 2 * unit.compressorHousing);
     ctx.fill();
     ctx.stroke();
     // Vue de côté, on voit passer les aubes : leur hauteur apparente suit l'angle réel de l'arbre.
@@ -1030,10 +1073,10 @@ export class Engine2D {
       const a = pose.turbineAngle + (k / 5) * Math.PI;
       const h1 = Math.cos(a) * unit.turbineWheel;
       const h2 = Math.cos(a) * unit.compressorWheel;
-      ctx.moveTo(unit.z - bore * 0.14, y + h1);
-      ctx.lineTo(unit.z + bore * 0.14, y + h1 * 0.5);
-      ctx.moveTo(unit.compressorZ + bore * 0.14, y + h2 * 0.5);
-      ctx.lineTo(unit.compressorZ - bore * 0.14, y + h2);
+      ctx.moveTo(unit.sideZ - bore * 0.14, y + h1);
+      ctx.lineTo(unit.sideZ + bore * 0.14, y + h1 * 0.5);
+      ctx.moveTo(unit.sideCompressorZ + bore * 0.14, y + h2 * 0.5);
+      ctx.lineTo(unit.sideCompressorZ - bore * 0.14, y + h2);
     }
     ctx.stroke();
     ctx.globalAlpha = 1;
@@ -1060,9 +1103,9 @@ export class Engine2D {
     const unit = chain.units[0];
     const y = chain.cooler[1];
     ctx.textAlign = 'center';
-    if (labels.shaft) at(labels.shaft, (unit.z + unit.compressorZ) / 2, y + bore * 0.26);
-    if (labels.compressor) at(labels.compressor, unit.compressorZ + bore * 0.3, y - unit.compressorHousing - bore * 0.22);
-    if (labels.turbine) at(labels.turbine, unit.z, y - unit.turbineHousing - bore * 0.22);
+    if (labels.shaft) at(labels.shaft, (unit.sideZ + unit.sideCompressorZ) / 2, y + bore * 0.26);
+    if (labels.compressor) at(labels.compressor, unit.sideCompressorZ + bore * 0.3, y - unit.compressorHousing - bore * 0.22);
+    if (labels.turbine) at(labels.turbine, unit.sideZ, y - unit.turbineHousing - bore * 0.22);
     ctx.textAlign = 'right';
     if (labels.intercooler) at(labels.intercooler, chain.cooler[2] - chain.coolerSize[2] - bore * 0.08, chain.cooler[1] + chain.coolerSize[1] * 0.6);
     ctx.textAlign = 'center';
@@ -1074,7 +1117,7 @@ export class Engine2D {
     const layout = this.layout;
     const { bore, deck, valve, ring } = layout;
     const flat = layout.flat;
-    const zMin = ring.z - bore * 0.5;
+    const zMin = Math.min(ring.z - bore * 0.5, this.chain ? this.chain.sideZMin : Infinity);
     // L'échangeur est devant la poulie : la coupe s'allonge pour lui.
     const zMax = this.chain ? this.chain.zMax : layout.pulleyZ + bore * 0.2;
     const top = deck + bore * 2.0;
@@ -1272,6 +1315,18 @@ export class Engine2D {
     }
     this.drawTurboSide(ctx, pose, painter, theme, px);
     ctx.restore();
+
+    // La longueur du tube se lit sans demander les noms : c'est elle que le dessin peut replier.
+    if (labels.turboPipeLength && this.chain && this.chain.extraMm > 0) {
+      const unit = this.chain.units[0];
+      ctx.font = '10.5px "Inter Tight", system-ui, sans-serif';
+      ctx.fillStyle = theme.text;
+      ctx.textAlign = 'center';
+      const feedY = this.chain.cooler[1] + unit.turbineHousing + bore * 0.3 + bore * 0.26;
+      ctx.fillText(labels.turboPipeLength, ox + ((layout.rearZ + bore * 0.3 + unit.sideZ) / 2) * scale, oy - feedY * scale);
+      ctx.textAlign = 'left';
+      ctx.font = '11px "Inter Tight", system-ui, sans-serif';
+    }
 
     if (labels.parts) {
       ctx.font = '10.5px "Inter Tight", system-ui, sans-serif';

@@ -93,6 +93,70 @@ The whistle is at shaft speed: its second order dominates, with a little of the 
 
 The dominant order, the flutter level and the split between orders remain choices: no reference recording was compared, and only listening will settle them.
 
+## The turbo's pipe
+
+`turboPipeMm` is the length of pipe between the cylinders and the turbine, from 150 to 3000 mm (`core/src/turbo_pipe.cpp`). 400 mm is the calibration's reference: at that value, nothing below runs, and no hash moves. Only the difference from that reference exists, and no lag constant is written: lag remains what the shaft needs to store its energy, with less energy available.
+
+- **The wall.** The gas passes over the added surface, `π·d·ΔL`, against a wall that has mass. Inside exchange from Dittus-Boelter (`Nu = 0.023·Re^0.8·Pr^0.4`, raised by 1.5 because the flow pulses), depending on flow; outside, 50 W/(m²·K) for convection under the car and radiation; 1.5 mm steel, about 40 s to heat. Cold or at low flow, the gas leaves a lot of heat there, so enthalpy at the turbine. This is the dominant cause.
+- **The volume.** The pipe's section over the added length fills up: pressure before the turbine joins the ellipse's value with `τ = V·(dp/dṁ)/(γ·R·T)`, and what leaves through the turbine isn't yet what enters. A few tens of milliseconds: 37 ms for 63 % of the rise with 3 m.
+- **The travel.** The mass of gas in the pipe, renewed by the flow: 125 ms at 20 g/s, 12 ms at 200 g/s. The pipe is mixed, not a piston: this is its mean time, not a pure delay.
+- **The pulses.** The pipe's volume filters the firing rate to first order, with this same `τ`. The pressure excursion the pulses bring is multiplied by the ratio of this filter to that of a 400 mm pipe: above 1 on a short pipe, far below on a long one. It matters mostly at low revs.
+- **Friction.** `f·(ΔL/d)·½ρv²` adds to what the cylinders push against, not to the turbine's pressure: a few Nm at the top.
+- **The air's return.** Remote, the compressor goes with the turbine: `chargeVolumeM3`, the duct's air column and its loss grow by ΔL at the duct's section. Surge slows from 8.7 to 3.3 Hz at 3 m: that is what flutter follows by ear.
+- **Shorter than 400 mm.** A volume that isn't counted can't be removed: what remains is the heat the removed pipe would have taken (hotter gas, inverting the wall's law), better kept pulses, and less heat to take before the turbine (a 3 kg manifold stays, assumed). The air's return doesn't change: the intercooler stays at the front.
+
+### What it gives
+
+`hot_hatch_turbo`, 2.0 L at 1.3 bar. `--scenario turbo`: time to 50 and 90 % of the requested pressure. "Cold": as the scenario plays it, the pipe has only run for a few seconds. "Warm": after two more minutes at part load.
+
+| Pipe | Scenario, cold | Scenario, warm | Gas at 90 %, cold | 2500 rpm held, 90 % | 3500 rpm, 90 % | Settled gas, 2500 / 5500 rpm | Torque at 2500 / 5000 | Power | 0-100 km/h | WLTC | 90 km/h |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 150 mm | 1.39 / 1.91 s | 1.43 / 1.96 s | 770 °C | 1.06 s | 0.66 s | 794 / 888 °C | 351.1 / 349.0 Nm | 194.6 kW | 6.75 s | 8.89 L/100 | 7.26 L/100 |
+| 400 mm | 1.76 / 2.33 s | 1.70 / 2.28 s | 754 °C | 1.21 s | 0.71 s | 782 / 882 °C | 350.2 / 348.4 Nm | 194.4 kW | 6.86 s | 8.90 L/100 | 7.26 L/100 |
+| 1000 mm | 2.55 / 3.34 s | 2.39 / 3.16 s | 647 °C | 1.57 s | 0.79 s | 756 / 866 °C | 349.5 / 347.7 Nm | 194.0 kW | 7.14 s | 8.92 L/100 | 7.26 L/100 |
+| 2000 mm | 4.19 / 5.31 s | 3.74 / 4.81 s | 519 °C | 2.54 s | 0.99 s | 714 / 841 °C | 348.9 / 346.7 Nm | 193.4 kW | 7.61 s | 8.93 L/100 | 7.20 L/100 |
+| 3000 mm | 6.06 / 7.47 s | 5.32 / 6.66 s | 431 °C | 7.97 s | 1.26 s | 675 / 817 °C | 348.4 / 345.8 Nm | 192.7 kW | 8.06 s | 8.95 L/100 | 7.20 L/100 |
+
+Time in the scenario grows more than lag alone: in fourth gear, until pressure arrives, revs climb slowly, and gas stays scarce. At 2500 rpm, a 3 m pipe nears the energy limit: the 90 % arrives at a crawl, as the wall warms. Consumption hardly moves. At 90 km/h, it falls by 0.8 % in one step between 1 and 2 m: the cause hasn't been isolated, and it isn't a gain to rely on.
+
+What each cause weighs at 3 m, removing it alone (`--no-skip -tc="le tube : poids*"`):
+
+| Removed | 3500 rpm held | Scenario, warm |
+|---|---|---|
+| Nothing | 1.26 s | 6.66 s |
+| Exchange with the wall | 0.87 s | 2.99 s |
+| Wall mass (÷ 100: already hot) | 1.13 s | 4.20 s |
+| Pulse filter | 1.19 s | 5.84 s |
+| Volume | 1.14 s | 6.50 s |
+| Cold air return | 1.14 s | 6.46 s |
+| Travel time | 1.24 s | 6.65 s |
+| Friction | 1.26 s | 6.70 s |
+
+### Against real installations
+
+| | Model | Reference |
+|---|---|---|
+| Full boost on a V8 | 500 rpm later with 2.6 m more (4.8 L, 0.48 bar, large turbo) | About 500 rpm later with 3.66 m more, 4.8 L, twin 61 mm GT35, 0.48 bar, on the dyno: R. Holdener, EngineLabs (article read; a test with no scientific publication or error bar) |
+| Peak power | -0.4 % on this V8; -0.9 % at 3 m on the 2.0 L | 613 → 609 hp: same test |
+| Air return alone | 0.2 s of 6.7 s in the scenario, 0.1 s at 3500 rpm | 2.44 m more on the discharge: almost nothing at 0.48 bar, a visible delay at 0.9 bar: same test |
+| Cooler gas at the turbine | -107 °C settled at 2500 rpm, -65 °C at 5500; -296 °C in the "warm" run, wall still tepid | "260 °C less": Turbodynamics, a workshop's estimate, with no measuring conditions (read) |
+| Volume before the turbine and response | Lag grows, mainly through the pulses | SAE 920361 and 2004-01-0926: dead volume before the turbine degrades the transient (abstracts read, on diesels) |
+| Integrated manifold | -18 % on the time to 90 %, +16 °C | The direction is known; no comparable figure found |
+
+**What is assumed:** the pipe's diameter (50 mm on 2 L, the same as the on-screen gas), the 1.5 mm wall, the outside coefficient, the 1.5 increase in exchange (Caton and Heywood, 1981, *Int. J. Heat Mass Transfer*, measure it much closer to the valves: from memory, not reread), the friction of 0.02, the 3 kg manifold, and the first-order filter for pulses. None was tuned on lag or on the test above: agreement to within 500 rpm comes from a single test, on an approximated engine, and proves nothing else. The bulk of the effect rests on the wall: it is also the least measured part. The turbo isn't resized: a real remote installation would often use a smaller turbine.
+
+**What isn't modelled:** waves in the pipe for the shaft's balance (only their mean energy counts, as on the rest of the turbine), the line that would shorten by as much behind the turbine, oil and its return on a remote turbo, cold air under the car that could replace the intercooler, underbonnet heat around a turbo bolted to the head.
+
+### On screen
+
+In the gas, a remote pipe has its own cells and one more volume before the turbine: pulses and heat are lost there by the same computation as everywhere else, and the `hot` part of `TURBO_INTAKE` grows by the same length as in C++. Shorter, what is missing comes off the junction's volume. The gas remains a display computation, with nothing going back to the sound.
+
+`turboChain.ts` places the turbo at true scale: it moves back along the engine until the air box has passed the flywheel, then drops below the intercooler's level, then all the rest goes rearward; a test checks that parts cross neither the flywheel nor the block's envelope. The 3D view keeps that scale, and its frame follows: at 3 m, the engine is small there, and is looked at by zooming. The side section folds the pipe beyond 2.5 bores, with a break mark and its length written, so the cylinders stay readable. On the car (`CarStage`), the turbo moves rearward by the true length, without leaving the body, and once well remote the filter follows.
+
+### The sound
+
+It changes through what already drove it, without one more line in `EngineSound`: the whistle follows the shaft, its pitch and level rise later; pressure delays `boost`, hence the turbine's muffling; flutter follows surge, slower. Measured on `--scenario turbo`, from 400 to 3000 mm: the 4 and 8 kHz bands lose 2 dB, the rest 1 dB at most (`tools/analyze_sound.py`), and the scenario shifts in time. Nothing was added for the pulsation: the pulse filter holds below a few tens of hertz, where the pipe is shorter than the wave; above that, it is a waveguide that passes almost everything, and its reflections off the turbine would need a model of that reflection and a recording we don't have. The whistle's position doesn't change either: it stays in the intake source, even on a turbo remote at the rear. Listening is still to be done.
+
 ## What is simulated in the sound
 
 A first version, which destroyed every spectral line above 850 Hz to avoid the zipper, had gone too far: measured on

@@ -33,6 +33,7 @@ add_library(revforge_core STATIC
   core/src/driver_scenarios.cpp
   core/src/powertrain.cpp
   core/src/turbo.cpp
+  core/src/turbo_pipe.cpp
   core/src/consumption.cpp
   core/src/presets.cpp
   ${GENERATED_DIR}/presets_data.inc
@@ -60,7 +61,7 @@ else()
   target_link_libraries(revforge-render PRIVATE revforge_core)
 
   enable_testing()
-  add_executable(revforge_tests tests/main.cpp tests/engine_sound_test.cpp tests/engine_config_test.cpp tests/driving_model_test.cpp tests/powertrain_test.cpp tests/gearbox_test.cpp tests/acoustics_test.cpp tests/starter_test.cpp tests/shift_modes_test.cpp tests/turbo_test.cpp tests/consumption_test.cpp)
+  add_executable(revforge_tests tests/main.cpp tests/engine_sound_test.cpp tests/engine_config_test.cpp tests/driving_model_test.cpp tests/powertrain_test.cpp tests/gearbox_test.cpp tests/acoustics_test.cpp tests/starter_test.cpp tests/shift_modes_test.cpp tests/turbo_test.cpp tests/consumption_test.cpp tests/turbo_pipe_test.cpp)
   target_include_directories(revforge_tests PRIVATE tests/vendor core/src)
   target_link_libraries(revforge_tests PRIVATE revforge_core)
   # Avertissement d'un en-tête de la bibliothèque standard inclus par doctest.
@@ -90,4 +91,6 @@ else()
   golden(drive_track_track 35997d21 --preset inline_six --scenario lap --seconds 40 --drive-scenario track --shift-mode track)
   golden(drive_hill_start_eco 67cec9e3 --preset inline_six --scenario lap --seconds 40 --drive-scenario hill_start --shift-mode eco)
   golden(drive_towing_normal f7acef8f --preset inline_six --scenario lap --seconds 40 --drive-scenario towing --shift-mode normal)
+  golden(turbo_pipe_long a0889b48 --preset hot_hatch_turbo --scenario turbo --turbo-pipe 2500)
+  golden(turbo_pipe_short 7cab0ac1 --preset hot_hatch_turbo --scenario turbo --turbo-pipe 150)
 endif()

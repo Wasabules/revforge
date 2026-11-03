@@ -892,7 +892,9 @@ export class EngineScene {
         this.labelSpots.maf ??= at;
 
         // Le tube chaud : de la volute à l'échangeur, teinté par l'air qui y passe.
-        hotPipes.transform(null).tube(bendPath(unit.hotFrom, [unit.side * 0.2, -1, 0], unit.hotTo, [-unit.side, 0, 0], 14), bore * 0.13, 10);
+        hotPipes.transform(null).tube(unit.hotRun.length > 0 ? unit.hotRun : bendPath(unit.hotFrom, [unit.side * 0.2, -1, 0], unit.hotTo, [-unit.side, 0, 0], 14), bore * 0.13, 10);
+        // Déporté, le tube d'échappement jusqu'à la volute : il rougit avec le reste du collecteur.
+        if (unit.feedRun.length > 0) headers.transform(null).tube(unit.feedRun, bore * 0.17, 10);
 
         // La wastegate : l'actionneur en dehors du carter, sa tige qui pousse un levier selon l'ouverture réelle.
         const [wx, wy, wz] = unit.actuator;
@@ -1148,7 +1150,8 @@ export class EngineScene {
       labelAt('engine.part.shaft', [unit.x, unit.y, (unit.z + unit.compressorZ) / 2]);
       labelAt('engine.part.airbox', [unit.airbox[0], unit.airbox[1] + unit.airboxSize[1], unit.airbox[2]]);
       if (this.labelSpots.maf) labelAt('engine.part.maf', this.labelSpots.maf);
-      labelAt('engine.part.chargeHot', [(unit.hotFrom[0] + unit.hotTo[0]) / 2, (unit.hotFrom[1] + unit.hotTo[1]) / 2, (unit.hotFrom[2] + unit.hotTo[2]) / 2]);
+      labelAt('engine.part.chargeHot', unit.hotRun.length > 0 ? unit.hotRun[Math.floor(unit.hotRun.length / 2)] : [(unit.hotFrom[0] + unit.hotTo[0]) / 2, (unit.hotFrom[1] + unit.hotTo[1]) / 2, (unit.hotFrom[2] + unit.hotTo[2]) / 2]);
+      if (unit.feedRun.length > 0) labelAt('engine.part.turboPipe', unit.feedRun[Math.floor(unit.feedRun.length / 2)]);
       labelAt('engine.part.intercooler', [airChain.cooler[0], airChain.cooler[1], airChain.cooler[2] + airChain.coolerSize[2]]);
       if (this.labelSpots.coldPipe) labelAt('engine.part.chargeCold', this.labelSpots.coldPipe);
       if (layout.releaseValve && this.labelSpots.blowoff) labelAt('engine.part.blowoff', this.labelSpots.blowoff);

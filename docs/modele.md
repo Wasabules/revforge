@@ -94,6 +94,70 @@ Le sifflement est à la vitesse de l'arbre : son ordre 2 domine, avec un peu d'o
 
 L'ordre dominant, le niveau du flutter et le partage entre ordres restent des choix : aucun enregistrement de référence n'a été comparé, et seule l'écoute tranchera.
 
+## Le tube du turbo
+
+`turboPipeMm` est la longueur du tube entre les cylindres et la turbine, de 150 à 3000 mm (`core/src/turbo_pipe.cpp`). 400 mm est la référence de la calibration : à cette valeur, rien de ce qui suit ne s'exécute, et aucune empreinte ne bouge. Seul l'écart à cette référence existe, et aucune constante de retard n'y est écrite : le retard reste ce qu'il faut à l'arbre pour accumuler son énergie, avec moins d'énergie.
+
+- **La paroi.** Le gaz passe sur la surface ajoutée, `π·d·ΔL`, à une paroi qui a sa masse. Échange intérieur de Dittus-Boelter (`Nu = 0,023·Re^0,8·Pr^0,4`, majoré de 1,5 parce que le flux pulse), selon le débit ; dehors, 50 W/(m²·K) pour la convection sous la voiture et le rayonnement ; acier de 1,5 mm, soit environ 40 s pour chauffer. À froid ou à faible débit, le gaz y laisse beaucoup de chaleur, donc d'enthalpie à la turbine. C'est la cause dominante.
+- **Le volume.** La section du tube sur la longueur ajoutée se remplit : la pression avant la turbine rejoint celle de l'ellipse avec `τ = V·(dp/dṁ)/(γ·R·T)`, et ce qui sort par la turbine n'est pas encore ce qui entre. Quelques dizaines de millisecondes : 37 ms pour 63 % de la montée avec 3 m.
+- **Le parcours.** La masse de gaz du tube, renouvelée par le débit : 125 ms à 20 g/s, 12 ms à 200 g/s. Le tube est mélangé, pas un piston : c'est son temps moyen, pas un retard pur.
+- **Les bouffées.** Le volume du tube filtre au premier ordre la cadence d'allumage, avec ce même `τ`. L'écart de pression qu'apportent les bouffées est multiplié par le rapport de ce filtre à celui d'un tube de 400 mm : au-dessus de 1 sur un tube court, très en dessous sur un long. Cela compte surtout à bas régime.
+- **Le frottement.** `f·(ΔL/d)·½ρv²` s'ajoute à ce contre quoi les cylindres poussent, pas à la pression de la turbine : quelques Nm en haut.
+- **Le retour d'air.** Déporté, le compresseur part avec la turbine : `chargeVolumeM3`, la colonne d'air du conduit et sa perte s'allongent de ΔL à la section du conduit. Le pompage ralentit de 8,7 à 3,3 Hz à 3 m : c'est lui que suit le flutter à l'oreille.
+- **Plus court que 400 mm.** On ne peut pas retirer un volume qui n'est pas compté : seules restent la chaleur que le tube retiré aurait prise (le gaz est plus chaud, en inversant la loi de la paroi), les bouffées mieux gardées, et moins de chaleur à prendre avant la turbine (un collecteur de 3 kg reste, supposé). Le retour d'air ne change pas : l'échangeur reste à l'avant.
+
+### Ce que cela donne
+
+`hot_hatch_turbo`, 2,0 L à 1,3 bar. `--scenario turbo` : temps jusqu'à 50 et 90 % de la pression demandée. « Froid » : tel que le scénario le joue, le tube n'a roulé que quelques secondes. « Chaud » : après deux minutes de plus à mi-charge.
+
+| Tube | Scénario, froid | Scénario, chaud | Gaz à 90 %, froid | 2500 tr/min tenus, 90 % | 3500 tr/min, 90 % | Gaz établi, 2500 / 5500 tr/min | Couple à 2500 / 5000 | Puissance | 0-100 km/h | WLTC | 90 km/h |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 150 mm | 1,39 / 1,91 s | 1,43 / 1,96 s | 770 °C | 1,06 s | 0,66 s | 794 / 888 °C | 351,1 / 349,0 Nm | 194,6 kW | 6,75 s | 8,89 L/100 | 7,26 L/100 |
+| 400 mm | 1,76 / 2,33 s | 1,70 / 2,28 s | 754 °C | 1,21 s | 0,71 s | 782 / 882 °C | 350,2 / 348,4 Nm | 194,4 kW | 6,86 s | 8,90 L/100 | 7,26 L/100 |
+| 1000 mm | 2,55 / 3,34 s | 2,39 / 3,16 s | 647 °C | 1,57 s | 0,79 s | 756 / 866 °C | 349,5 / 347,7 Nm | 194,0 kW | 7,14 s | 8,92 L/100 | 7,26 L/100 |
+| 2000 mm | 4,19 / 5,31 s | 3,74 / 4,81 s | 519 °C | 2,54 s | 0,99 s | 714 / 841 °C | 348,9 / 346,7 Nm | 193,4 kW | 7,61 s | 8,93 L/100 | 7,20 L/100 |
+| 3000 mm | 6,06 / 7,47 s | 5,32 / 6,66 s | 431 °C | 7,97 s | 1,26 s | 675 / 817 °C | 348,4 / 345,8 Nm | 192,7 kW | 8,06 s | 8,95 L/100 | 7,20 L/100 |
+
+Le temps en scénario s'allonge plus que le retard seul : en quatrième, tant que la pression n'arrive pas, le régime monte lentement, et le gaz reste rare. À 2500 tr/min, un tube de 3 m approche la limite d'énergie : les 90 % arrivent en rampant, avec la paroi qui chauffe. La consommation bouge à peine. À 90 km/h, elle baisse de 0,8 % d'un coup entre 1 et 2 m : la cause n'a pas été isolée, ce n'est pas un gain à retenir.
+
+Ce que pèse chaque cause, à 3 m, en la retirant seule (`--no-skip -tc="le tube : poids*"`) :
+
+| Retiré | 3500 tr/min tenus | Scénario, chaud |
+|---|---|---|
+| Rien | 1,26 s | 6,66 s |
+| Échange avec la paroi | 0,87 s | 2,99 s |
+| Masse de la paroi (÷ 100 : déjà chaude) | 1,13 s | 4,20 s |
+| Filtre des bouffées | 1,19 s | 5,84 s |
+| Volume | 1,14 s | 6,50 s |
+| Retour d'air froid | 1,14 s | 6,46 s |
+| Temps de parcours | 1,24 s | 6,65 s |
+| Frottement | 1,26 s | 6,70 s |
+
+### Face aux montages réels
+
+| | Modèle | Référence |
+|---|---|---|
+| Pleine pression sur un V8 | 500 tr/min plus tard avec 2,6 m en plus (4,8 L, 0,48 bar, gros turbo) | Environ 500 tr/min plus tard avec 3,66 m en plus, 4,8 L, deux GT35 de 61 mm, 0,48 bar, au banc : R. Holdener, EngineLabs (article lu, essai sans publication scientifique ni barre d'erreur) |
+| Puissance maximale | -0,4 % sur ce V8 ; -0,9 % à 3 m sur le 2,0 L | 613 → 609 ch : même essai |
+| Retour d'air seul | 0,2 s sur 6,7 s en scénario, 0,1 s à 3500 tr/min | 2,44 m de plus au refoulement : presque rien à 0,48 bar, un retard visible à 0,9 bar : même essai |
+| Gaz moins chaud à la turbine | -107 °C établi à 2500 tr/min, -65 °C à 5500 ; -296 °C dans le trajet « chaud », paroi encore tiède | « 260 °C de moins » : Turbodynamics, estimation d'un atelier, sans condition de mesure (lu) |
+| Volume avant la turbine et réponse | Le retard croît, surtout par les bouffées | SAE 920361 et 2004-01-0926 : un volume mort avant la turbine dégrade le transitoire (résumés lus, sur des diesels) |
+| Collecteur intégré | -18 % sur le temps jusqu'à 90 %, +16 °C | Le sens est connu ; aucun chiffre comparable trouvé |
+
+**Ce qui est supposé :** le diamètre du tube (50 mm sur 2 L, celui du gaz à l'écran), la paroi de 1,5 mm, le coefficient extérieur, la majoration de 1,5 de l'échange (Caton et Heywood, 1981, *Int. J. Heat Mass Transfer*, le mesurent bien plus près des soupapes : de mémoire, non relu), le frottement de 0,02, le collecteur de 3 kg, et le filtre du premier ordre pour les bouffées. Aucun n'a été réglé sur le retard ou sur l'essai ci-dessus : l'accord à 500 tr/min près vient d'un seul essai, sur un moteur approché, et ne prouve pas le reste. Le gros de l'effet repose sur la paroi : c'est aussi la partie la moins mesurée. Le turbo n'est pas redimensionné : un vrai montage déporté prendrait souvent une turbine plus petite.
+
+**Ce qui n'est pas modélisé :** les ondes dans le tube pour le bilan de l'arbre (seule leur énergie moyenne compte, comme sur le reste de la turbine), la turbine et la ligne qui raccourcirait d'autant derrière elle, l'huile et son retour sur un turbo déporté, l'air froid sous la voiture qui dispenserait d'échangeur, la chaleur sous le capot autour d'un turbo collé à la culasse.
+
+### À l'écran
+
+Dans le gaz, un tube déporté a ses propres cellules et un volume de plus avant la turbine : les bouffées et la chaleur s'y perdent par le même calcul que le reste, et la partie `hot` de `TURBO_INTAKE` s'allonge de la même longueur qu'en C++. Plus court, ce qui manque manque au volume de la jonction. Le gaz reste un calcul d'affichage, sans retour vers le son.
+
+`turboChain.ts` place le turbo en vraie grandeur : il recule le long du moteur jusqu'à ce que la boîte à air ait passé le volant, puis descend sous le niveau de l'échangeur, puis tout le reste part vers l'arrière ; un test vérifie que les pièces ne traversent ni le volant ni le gabarit du bloc. La 3D garde cette échelle, et son cadre suit : à 3 m, le moteur y est petit, et se regarde en zoomant. La coupe de côté, elle, replie le tube au-delà de 2,5 alésages, avec un trait de coupure et sa longueur écrite, pour que les cylindres restent lisibles. Sur la voiture (`CarStage`), le turbo part vers l'arrière de la vraie longueur, sans sortir de la caisse, et bien déporté le filtre le suit.
+
+### Le son
+
+Il change par ce qui le pilotait déjà, sans une ligne de plus dans `EngineSound` : le sifflement suit l'arbre, sa hauteur et son niveau montent plus tard ; la pression retarde `boost`, donc l'étouffement de la turbine ; le flutter suit le pompage, plus lent. Mesuré sur `--scenario turbo`, de 400 à 3000 mm : les bandes de 4 et 8 kHz perdent 2 dB, le reste 1 dB au plus (`tools/analyze_sound.py`), et le scénario est décalé dans le temps. Rien n'a été ajouté pour la pulsation : le filtre des bouffées vaut en dessous de quelques dizaines de hertz, où le tube est plus court que l'onde ; au-dessus, c'est un guide d'onde qui transmet presque tout, et ses réflexions contre la turbine demanderaient un modèle de cette réflexion et un enregistrement que nous n'avons pas. La place du sifflement ne change pas non plus : il reste dans la source de l'admission, même turbo déporté à l'arrière. L'écoute reste à faire.
+
 ## Ce qui est simulé dans le son
 
 Une première version, qui détruisait toute raie au-dessus de 850 Hz pour éviter la fermeture éclair, était

@@ -379,4 +379,11 @@ for (const [size, release] of [['small', 0], ['medium', 1], ['large', 0]]) {
   rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6500, EXHAUST.sport, 1, 0, 0, 0, release, 1.3, ROUTING.single, TURBO[size], 0, 0, 400, 0, 0);
   check(`retard du turbo, ${size}`, turboStab(rf, 24), native(...turboArgs, '--turbo', size, '--release', release ? 'flutter' : 'dump_valve'));
 }
+// Le tube avant la turbine, des deux côtés de la référence : `portable::pow` et `exp` doivent donner le même arbre partout.
+for (const mm of [150, 2500]) {
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1400, 18, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6500, EXHAUST.sport, 1, 0, 0, 0, 0, 1.3, ROUTING.single, TURBO.medium, 0, 0, mm, 0, 0);
+  check(`retard du turbo, tube de ${mm} mm`, turboStab(rf, 24), native(...turboArgs, '--turbo', 'medium', '--release', 'dump_valve', '--turbo-pipe', String(mm)));
+}
 process.exit(failed ? 1 : 0);

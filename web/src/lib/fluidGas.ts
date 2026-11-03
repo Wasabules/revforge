@@ -347,6 +347,9 @@ export class GasNetwork {
   /** Tubes qui joignent chaque rangée à la ligne commune : première cellule. */
   bankFirst = new Int32Array(0);
   bankCells = 0;
+  /** Déporté au-delà de 400 mm, le tube jusqu'à la turbine : première cellule, et leur nombre (0 à la référence ou plus court). */
+  pipeFirst = 0;
+  pipeCells = 0;
   /** Conduit d'admission : du filtre au papillon, compresseur compris. */
   intakeFirst = 0;
   intakeCount = 0;
@@ -362,6 +365,8 @@ export class GasNetwork {
   /** Numéros des volumes : jonction (ou unique collecteur), plénum. */
   zoneJoin = 0;
   zonePlenum = 0;
+  /** Le volume juste avant la turbine : la jonction elle-même, sauf si un tube déporté les sépare. */
+  zoneTurbine = 0;
 
   // ── Organes ──
   private turbineArea = 0;
@@ -469,6 +474,9 @@ export class GasNetwork {
     this.lineCount = cells - lineFirst;
     this.lineLength = at;
 
+    // Ce que le tube a en plus de la référence : le gaz le parcourt, et le compresseur part avec la turbine.
+    const pipeExtra = this.turbo ? ((config.turboPipeMm ?? 400) - 400) / 1000 : 0;
+
     // Admission : un simple conduit sans turbo ; avec, la vraie chaîne, coupée par le compresseur.
     const intakeFirst = cells;
     const intakeArea = base * 1.2;
@@ -476,7 +484,9 @@ export class GasNetwork {
     if (this.turbo) {
       let cell = intakeFirst;
       for (const part of TURBO_INTAKE) {
-        const count = Math.max(3, Math.round(part.length / CELL_M));
+        // Déporté, c'est le tube chaud qui rejoint l'échangeur de plus loin : même volume en plus qu'en C++ (`chargeVolumeM3`).
+        const length = part.kind === 'hot' && pipeExtra > 0 ? part.length + pipeExtra : part.length;
+        const count = Math.max(3, Math.round(length / CELL_M));
         parts.push({ kind: part.kind, first: cell, count, area: part.area });
         cell += count;
       }
@@ -494,6 +504,12 @@ export class GasNetwork {
     this.coolerCount = coolerPart ? coolerPart.count : 0;
     this.releaseCell = this.turbo ? lastPart.first + lastPart.count - Math.round(0.25 / CELL_M) : -1;
     cells += this.intakeCount;
+
+    // Après tout le reste : à la référence, aucune cellule ne change de numéro.
+    const pipeCells = pipeExtra > 0 ? Math.max(3, Math.round(pipeExtra / CELL_M)) : 0;
+    this.pipeFirst = cells;
+    this.pipeCells = pipeCells;
+    cells += pipeCells;
 
     const n = cells;
     this.n = n;
@@ -573,6 +589,12 @@ export class GasNetwork {
         else if (nextArea > 0 && parts[p + 1].first !== this.compressorCell) this.faceA[cell] = areaHere;
       }
     });
+    for (let k = 0; k < pipeCells; k++) {
+      const cell = this.pipeFirst + k;
+      this.area[cell] = base;
+      this.wallDecay[cell] = 0.45 * Math.exp(-(k * CELL_M) / 2.6);
+      if (k + 1 < pipeCells) this.faceA[cell] = base;
+    }
     this.dragCells = Int32Array.from(dragList);
     this.stepFaces = Int32Array.from(steps);
     for (let i = 0; i < n; i++) {
@@ -588,7 +610,7 @@ export class GasNetwork {
     }
 
     // Volumes : collecteur par rangée, éventuelle jonction, plénum. Volute du turbo dans le dernier avant la ligne.
-    const zones = this.banks + (this.banks === 2 ? 1 : 0) + 1;
+    const zones = this.banks + (this.banks === 2 ? 1 : 0) + (pipeCells > 0 ? 1 : 0) + 1;
     this.zoneCount = zones;
     this.zM = new Float64Array(zones);
     this.zE = new Float64Array(zones);
@@ -600,6 +622,7 @@ export class GasNetwork {
     for (let b = 0; b < this.banks; b++) zoneBank[b] = b;
     this.zoneJoin = this.banks === 2 ? 2 : 0;
     this.zonePlenum = zones - 1;
+    this.zoneTurbine = pipeCells > 0 ? zones - 2 : this.zoneJoin;
     this.zV[this.zonePlenum] = Math.max(volume * 1.3, 0.8e-3);
 
     // Liens tube-volume.
@@ -633,7 +656,13 @@ export class GasNetwork {
       orifice[2] = upstream * 0.45;
       orificeFlux();
       this.turbineArea = peakFlow / orifice[3];
-      this.zV[this.zoneJoin] += volume * 1.5;
+      // Plus court que la référence, ce qui manque au tube manque à ce volume ; déporté, le tube a ses cellules, et la volute reste contre la turbine.
+      this.zV[this.zoneJoin] += volume * 1.5 + (pipeExtra < 0 ? base * pipeExtra : 0);
+      if (pipeCells > 0) {
+        link(this.pipeFirst, this.zoneJoin, -1, base);
+        link(this.pipeFirst + pipeCells - 1, this.zoneTurbine, 1, base);
+        this.zV[this.zoneTurbine] += volume * 0.5;
+      }
       // Les roues sont d'autant plus petites que le turbo l'est : même loi qu'en C++ (D²).
       // Comme en C++ aussi, sa turbine ne laisse passer qu'une part du gaz au point nominal : la soupape prend le reste.
       // Le coefficient est calé pour retrouver la pression avant la turbine du C++, à 15 % près au point nominal.
@@ -751,7 +780,8 @@ export class GasNetwork {
   prefill(heat: number): void {
     const hot = WALL_RISE_K * heat;
     const last = this.lineFirst + this.lineCount;
-    for (let i = 0; i < last; i++) {
+    for (let i = 0; i < this.n; i++) {
+      if (i >= last && i < this.pipeFirst) continue;
       const t = T_AMB + 120 + hot * this.wallDecay[i];
       const r = P_ATM / (R * t);
       this.rho[i] = r;
@@ -1135,7 +1165,7 @@ export class GasNetwork {
     this.releaseFlow = releaseFlow;
 
     // Turbine : la détente y prend de l'énergie, et la volute lisse les bouffées. La soupape de décharge la contourne.
-    const join = this.zoneJoin;
+    const join = this.zoneTurbine;
     const first = this.lineFirst;
     const pz = this.zP[join];
     const tz = this.zT[join];

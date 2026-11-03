@@ -122,6 +122,8 @@ export interface EngineLayout {
   turbo: boolean;
   /** Diamètre des roues du turbo, rapporté au turbo moyen. */
   turboScale: number;
+  /** Le tube entre les cylindres et la turbine (mm) : 400 est la place où le turbo a toujours été dessiné. */
+  turboPipeMm: number;
   /** Une soupape de décharge : sans elle (flutter), l'air revient par le compresseur. */
   releaseValve: boolean;
   dualMass: boolean;
@@ -229,7 +231,7 @@ export function starterTeeth(cylinders: number, displacementCc: number): { ring:
 /** Ce qui fait changer les pièces du moteur : à clé égale, les mêmes maillages. */
 export function layoutKey(config: EngineConfig): string {
   if (config.electric) return 'electric';
-  return `${config.cylinders}|${config.layout}|${config.displacementCc}|${config.boreMm}|${config.fuel}|${config.aspiration}|${config.turboSize}|${config.turboRelease}|${config.boxFlywheel}`;
+  return `${config.cylinders}|${config.layout}|${config.displacementCc}|${config.boreMm}|${config.fuel}|${config.aspiration}|${config.turboSize}|${config.turboRelease}|${config.boxFlywheel}|${config.turboPipeMm}`;
 }
 
 export function engineLayout(config: EngineConfig): EngineLayout {
@@ -408,6 +410,7 @@ export function engineLayout(config: EngineConfig): EngineLayout {
     fuel: config.fuel,
     turbo: config.aspiration === 'turbo',
     turboScale: TURBO_SCALE[config.turboSize ?? 'medium'],
+    turboPipeMm: config.turboPipeMm ?? 400,
     releaseValve: config.turboRelease !== 'flutter',
     dualMass: config.boxFlywheel === 'dual_mass',
     bore,
