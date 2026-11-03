@@ -702,8 +702,8 @@ fuel power = (brake torque + friction + pumping past the throttle) × ω × enri
   I was looking for; only the diesel row of an Irish EPA table was seen (43.31 GJ/t, 73.3 t CO₂/TJ). Check: Ford states 268 g/km for 11.8 L/100 km, or 2.27 kg/L, against 2.36 kg/L here.
 
 Without any tuning, this produces: zero on the limiter, engine off, stalled, or foot off in gear (torque as negative as a motored engine's), a non-zero idle, a full load dearer than the
-best point, a low load dearer still, a big engine using more at the same speed, a short gear using more, and a slipping clutch or tyres burning for nothing. **A cold engine is not simulated:** nothing in the
-model justifies a temperature.
+best point, a low load dearer still, a big engine using more at the same speed, a short gear using more, and a slipping clutch or tyres burning for nothing. **The cold engine is in "Engine temperatures":** the
+figures below are warm.
 
 ### Why not air flow, and what it confirms
 
@@ -767,7 +767,7 @@ the model gives 5.8 and 8.3 L/100 km on the city car, 7.5 and 9.3 on the GTI, 10
 
 ### What misses
 
-**The model reads high on the road:** about 15 to 25% at steady speed and on WLTC, except the diesel van. The 77 km/h, 98 km/h and custom diesel rows date from before the rolling resistance correction, which lowers them a little; they were not remeasured. Official figures include a cold start (which costs) and often start-stop (which saves), both absent here: they pull in opposite directions, and I assume they weigh little, without having measured it. On the city car's WLTC, the 29% gap splits into:
+**The model reads high on the road:** about 15 to 25% at steady speed and on WLTC, except the diesel van. The 77 km/h, 98 km/h and custom diesel rows date from before the rolling resistance correction, which lowers them a little; they were not remeasured. Official figures include a cold start (which costs) and often start-stop (which saves), both absent here: they pull in opposite directions. The cold start, measured since with `--start cold`, costs 1 to 3% over the cycle here (see "Engine temperatures"); start-stop is not measured. On the city car's WLTC, the 29% gap splits into:
 
 - a little energy to supply, despite rolling resistance now at 0.0095: the preset weighs 1100 kg and loses 7% in the gearbox, plus its drag;
 - about 8% of efficiency: 361 g/kWh over the cycle, against an estimated 335.
@@ -944,7 +944,7 @@ The valvetrain changes voice, and each part is a marked choice. Under a larger h
 
 Expected power gap: the BMW 2002 with one carburetor, two, and injection are rated about 100, 120 and 130 PS, with compression and cams that also differ. Here the gap comes from the fuel system alone, and so stays smaller. Between a carburetor and closed-loop injection, consumption historically differed by 10 to 20% depending on the era and the tune: an order of magnitude, not a target.
 
-**Simplifications and limits.** Everything is hot: no choke and no cold start, since nothing computes temperature. No progressive two-barrel, altitude correction, float level, icing, or cornering effect on the bowl. Air cooling by evaporation and manifold heating are assumed to cancel, without computing them. Passing lean and rich phases change combustion efficiency only through `f`. Air in a per-cylinder body does not pulse in the film: only its vacuum does. The gas on screen has only one duct: several bodies are one throat there, which keeps the ratio of each to its runner. It loses only its section changes, without the C++ loss coefficient: 2.4 kPa in the plenum at 6000 rpm on a 2 L single carburetor, 0.3 kPa with one body per cylinder, against 7 and 3 kPa at peak power in the torque. Sources are quoted from memory: Heywood (*Internal Combustion Engine Fundamentals*, 1988, chapters 5 and 7), Aquino (SAE 810494), Hires and Overington (SAE 810495), Nelson and Morfey (*J. Sound Vib.*, 1981), Nukiyama and Tanasawa (1939), Passini's Weber tuning manual for the 20 √(V N) rule, Holley's data sheets. Check them before quoting them elsewhere. Listening remains to be done.
+**Simplifications and limits.** The choke and the fast-idle cam are in "Engine temperatures"; the film stays that of a warm engine. No progressive two-barrel, altitude correction, float level, icing, or cornering effect on the bowl. Air cooling by evaporation and manifold heating are assumed to cancel, without computing them. Passing lean and rich phases change combustion efficiency only through `f`. Air in a per-cylinder body does not pulse in the film: only its vacuum does. The gas on screen has only one duct: several bodies are one throat there, which keeps the ratio of each to its runner. It loses only its section changes, without the C++ loss coefficient: 2.4 kPa in the plenum at 6000 rpm on a 2 L single carburetor, 0.3 kPa with one body per cylinder, against 7 and 3 kPa at peak power in the torque. Sources are quoted from memory: Heywood (*Internal Combustion Engine Fundamentals*, 1988, chapters 5 and 7), Aquino (SAE 810494), Hires and Overington (SAE 810495), Nelson and Morfey (*J. Sound Vib.*, 1981), Nukiyama and Tanasawa (1939), Passini's Weber tuning manual for the 20 √(V N) rule, Holley's data sheets. Check them before quoting them elsewhere. Listening remains to be done.
 
 **Where it meets other settings.** The air filter (`withAirFilter`) and the venturi are in series: their pressures add to first order, because their factors multiply and stay small. The venturi hiss goes straight to `Source::Intake`: it does not pass through the filter's response, and so does not follow its placement. With a "stacks" filter and one body per cylinder, the box would be removed twice: 6 dB here, and what the filter already removes. A filter that makes no sense on one body per cylinder is not forbidden.
 
@@ -1063,3 +1063,83 @@ such as the Cobra.
 
 The render is bit-identical between native and WebAssembly: calculations in `double` rounded to `float`, frozen order of random draws, no floating-point
 contraction, fixed-step physics. Parity with the original Kotlin version (CANCitroen) was abandoned during this rework. `tools/compare_wav.py` compares two renders.
+
+## Engine temperatures
+
+Engine temperatures come from a network of four heat capacities (`ThermalNetwork`, `core/src/thermal.cpp`), integrated by `DrivingModel` every 10 ms: the metal (head, liners, upper block), the coolant on the engine side, the coolant in the radiator, and the oil with what it wets (crankshaft, rods, sump, lower block).
+
+```
+C_m dT_m/dt = Q_walls + (1 − a)·P_f − G_mc·(T_m − T_c) − G_mo·(T_m − T_o) − G_ma·(T_m − T_air)
+C_c dT_c/dt = G_mc·(T_m − T_c) − ṁc·(T_c − T_r)
+C_r dT_r/dt = ṁc·(T_c − T_r) − Q_radiator
+C_o dT_o/dt = a·P_f + G_mo·(T_m − T_o) − G_oa·(T_o − T_air)
+```
+
+- **Heat to the walls.** Q_walls = s·P_fuel, with s = 0.28·(φ/0.25)^−0.25·(T_g − T_m)/(T_g − 100 °C), where φ is the fuel flow relative to that at peak power. The scaling law is Taylor and Toong's (Nu ∝ Re^0.75, so Q ∝ ṁ^0.75); the level is set on Heywood's energy balance (*Internal Combustion Engine Fundamentals*, 17 to 26% to the coolant at full load on a petrol engine, from memory). s is 0.20 at full load and up to 0.5 at idle; a cold wall takes a little more (mean gas at 1100 °C, assumed). The fuel energy comes from the same pure function as the meter (`ConsumptionModel::fuelGps`), not from the meter; cold enrichment, which does not burn, heats nothing.
+- **Friction.** P_f = friction torque × ω: a = 45% goes to the oil (bearings, valvetrain, pump, roughly the share of those terms in Patton et al.), the rest to the liners.
+- **Wax thermostat.** It starts opening at 87 °C (one of the three usual values: 82, 87, 92 °C) and needs 8 K to open fully, like the Land Rover Freelander 2's (83 to 91 °C, workshop manual, seen quoted). The play in the wax closes it 2 K lower: this is the hysteresis (assumed). Its bleed hole passes 0.5% of the flow (assumed). The pump delivers 0.25 L/s per litre of displacement and per 1000 rpm (assumed: about 2 L/s at 6000 rpm on a 1.4 L).
+- **Radiator.** ε-NTU, cross-flow, both fluids unmixed: ε = 1 − exp(NTU^0.22/C_r·(exp(−C_r·NTU^0.78) − 1)). Air crosses the core at 30% of the car's speed, plus 3 m/s from the fan and 0.3 m/s of natural draft (assumed); UA ∝ ṁ_air^0.6 (louvred fins). It is sized the way an engine designer would for its hardest case, assumed here: 60% of the maximum fuel energy at 50 km/h, 40 °C outside, coolant at 110 °C inlet, ε = 0.6. The fan follows a thermoswitch at the bottom of the radiator: on at 95 °C, off at 84 °C (VW T3, single stage, Mecatechnic catalogue).
+- **Masses.** Assumed, per litre of displacement: 30 kg of metal at 600 J/(kg·K) on the coolant side, 15 kg at 500 J/(kg·K) on the oil side; 1.2 L + 1 L/L of coolant in the engine, 1 L + 0.6 L/L in the radiator (glycol mix, 3.64 kJ/(L·K)); 2.5 L + 0.8 L/L of oil. The coolant stops at 129 °C: it boils under the cap, and the network no longer follows.
+
+### Oil and friction
+
+**Viscosity, Vogel's law.** μ = a·exp(b/(T + c)), a = 3.477·10⁻⁵ Pa·s, b = 1345.6 K, c = 144.9 °C, fitted exactly on three points of the data sheet of a synthetic 5W-30 (Motorcraft, "Product typicals", read): 60 mm²/s at 40 °C, 10.5 mm²/s at 100 °C, 4250 mPa·s at −30 °C (cold cranking viscosity), density 0.853 and expansion of 6.5·10⁻⁴/K. At 20 °C it is 14 times thicker than at 100 °C; an Italian review quoted says "up to 15 times".
+
+**Hydrodynamic friction.** That of the Patton, Nitschke and Heywood model (SAE 890836): bearings 3.03·10⁻⁴·N·D³·L·n_b/(B²·S·n_c) and skirts 294·v̄_p/B, in kPa, mm, rpm and m/s, with bearings of 0.67 × 0.25 bore (mains) and 0.56 × 0.22 bore (rods). These coefficients are those reproduced by the work that builds on it, not re-read in the paper. Check: Petroff (torque = π·μ·ω·D³·L/(4c), radial clearance of 1‰ of the radius, oil at 100 °C) gives 5.7 kPa for the city car's bearings at 2000 rpm, the formula 5.9 kPa. They are proportional to engine speed.
+
+**Scaling.** As in Sandoval and Heywood (SAE 2003-01-0725), the hydrodynamic terms follow the viscosity: here (μ/μ₁₀₀)^0.5. The exponent is quoted from memory; their abstract says cold oil gives "about twice" the friction of a warm engine. Here: 1.57 times at 20 °C and 2000 rpm, 2.15 times at 0 °C (`frictionFactor`). Above 100 °C nothing changes: the original friction model is calibrated warm, and thinner oil slides towards the mixed regime (Stribeck), which would compensate.
+
+### What a cold start changes
+
+After a cold start (`--start cold`, the `startTemp` setting), everything starts at the ambient air temperature, and three deviations from the warm reference act, all zero once warm:
+
+- **Friction.** Cold oil adds its friction to the torque, cranking and stalled included: the starter turns more slowly, the engine stalls more easily. Combustion itself stays that of the warm engine.
+- **Idle target.** The Saab 9-5's ECU (Trionic, online workshop manual, read) targets 1200 rpm at −30 °C coolant and 825 rpm once warm: +45% at −30 °C, in a straight line up to 70 °C (end assumed), so +23% at 20 °C. A carburettor does the same with its fast-idle cam.
+- **Enrichment.** The fuel that stays liquid on cold walls and leaves unburnt. Assumed: λ ≈ 0.87 at 20 °C coolant with an ECU, 0.77 with a choke, which has no sensor, in a straight line up to 70 °C. It is paid for in consumption, with no torque or heat. Nothing on a diesel, which has neither throttle nor choke.
+
+**After a warm start, nothing feeds back.** The network still runs, for the gauges, but neither torque, driving nor sound reads it, whatever temperature it computes: the 29 fingerprints are bit-identical, and a test makes the temperatures diverge (20 °C and −30 °C outside) without anything else moving. The spec sheet (0–100 km/h, top speed) is measured warm, even after a cold start.
+
+**The sound.** Nothing was added to the sound: it follows the real engine speed and load. The idle starts higher and comes down as the coolant warms, in about ten minutes at idle at 20 °C, in four and a half minutes on the WLTC. Listening remains to be done.
+
+**On the electric car, none of this applies**: no network, no gauge, and the functions return the ambient air or zero.
+
+### Against published figures
+
+Measured with `revforge-render --out none --preset X --scenario wltc|idle --start cold|warm --fuel 1` (and `--seconds 589` for the first phase), at 20 °C.
+
+| Preset | Low phase, warm → cold (L/100 km) | Full WLTC, warm → cold | Coolant at 70 °C | Thermostat open | Oil at 80 °C | 15 min idle, warm → cold (L/h) | Coolant at 70 °C at idle |
+|---|---|---|---|---|---|---|---|
+| `city_14` | 8.69 → 9.66 (+11%) | 6.76 → 6.89 (+3 g/km) | 264 s | 373 s | 371 s | 0.56 → 0.67 (+20%) | 632 s |
+| `hot_hatch_turbo` | 12.80 → 14.09 (+10%) | 8.90 → 9.08 (+4 g/km) | 219 s | 293 s | 317 s | 0.84 → 1.00 (+19%) | 582 s |
+| `v8_cross_plane` | 23.98 → 26.83 (+12%) | 13.90 → 14.28 (+9 g/km) | 277 s | 385 s | 401 s | 1.87 → 2.21 (+18%) | 605 s |
+| `diesel_four` | 8.56 → 9.15 (+7%) | 7.58 → 7.66 (+2 g/km) | 289 s | 427 s | 402 s | 0.46 → 0.56 (+20%) | 725 s |
+| `carb_twin_cam` | 13.51 → 15.22 (+13%) | 8.94 → 9.17 (+5 g/km) | 232 s | 337 s | 341 s | 0.85 → 1.05 (+23%) | 573 s |
+
+On `diesel_four`, the driver restarts the engine once during the WLTC, warm and cold alike (see "Consumption"). At −20 °C, the city car idling takes 17 minutes to reach 70 °C coolant, and burns 48% more than warm.
+
+| Measure | Model | Published | Source |
+|---|---|---|---|
+| Idle target, coolant at −30 °C | 1.45 times the warm idle | 1200 rpm for 825 | Saab 9-5, Trionic (read): the model is set on it |
+| Idle at 20 °C, `city_14` | 985 rpm for 815 warm (1.21), 1105 just after starting | 1100 for 950 at 20 °C (1.16) in a tuning example; "1200 to 1800" at start-up | HP Academy, engineerfix.com (seen quoted) |
+| Fast idle duration, in neutral at 20 °C | 9.5 to 12 min, until the coolant reaches 70 °C | "a minute or two" for the peak; catalyst heating for up to 5000 ignitions, about 2 min | engineerfix.com (seen quoted), Saab WIS (read) |
+| Coolant at 70 °C, cold WLTC | 3.7 to 4.8 min | the cold period of real-driving tests (RDE) ends at 70 °C coolant, and lasts 5 min at most | Regulation (EU) 2017/1151 (seen quoted) |
+| Oil behind coolant | about 6 K behind the coolant during the WLTC warm-up, then above | "about 10 °C behind" on a heavy-duty diesel | *Applied Sciences* 2020 (MDPI, seen quoted) |
+| Penalty, first phase | +7% (diesel) to +13% (carburettors) over 589 s | +20% in the cold FTP phase (505 s) against the hot one, at 24 °C; +40 to +80% at −6.7 °C | Taylor and Stewart, SAE 2001-01-0221 (abstract read) |
+| Penalty, full WLTC | +2 to +9 g/km of CO₂ (+1 to +3%) | +6.1 g/km on average over 20 cars | Tsokolis et al., *Applied Energy* 2016, JRC102610 (abstract read) |
+| Cold friction | ×1.57 at 20 °C, ×2.15 at 0 °C, at 2000 rpm | "about twice" | Sandoval and Heywood, SAE 2003-01-0725 (abstract seen quoted) |
+
+"Read": the page or document itself. "Seen quoted": a search excerpt or a reprint. The model's fast idle lasts longer than the peak drivers describe, which is catalyst heating: the model does not simulate it, and keeps the ECU's coolant-based idle, which comes down with it.
+
+### What is missing
+
+- **The cold-start penalty reads about half the published figures.** The model counts only the engine: no gearbox and axle oil, no cold tyres, no catalyst heating (spark retarded to about 10° after top dead centre at Saab, for up to 5000 ignitions), no poorer combustion on cold walls (of the order of 1 to 2%), no cabin heater. Nothing was tuned to close this gap.
+- **Assumed**: the end of fast idle and enrichment at 70 °C, the enrichment itself, the masses, the conductances, the radiator's design case, the air speeds, the share of friction going to the oil, the mean gas temperature.
+- **No oil-to-coolant heat exchanger**: the oil reaches 115–120 °C at the end of the WLTC, and about 140 °C towing a trailer at 45 °C.
+- **Overheating**: with a working fan, idling at 45 °C does not overheat (the coolant holds around 97 °C); neither the air-conditioning condenser nor hot air recirculating under the bonnet is simulated. With a failed fan the coolant exceeds 115 °C (test). Beyond 129 °C the coolant boils: no coolant loss, no ECU protection.
+- **After a warm start, the network only drives the gauges**: a warm engine idling for an hour at −30 °C cools on screen without its friction changing.
+- The rotary has only its bearings in the hydrodynamic friction (no skirts), with the same quarter less as its friction (assumed). The on-screen gas and the page's heat (`Motion.heat`) do not read this network, and the steam of a cold exhaust is not drawn.
+- The radiator air is at 101,325 Pa: altitude is not in it yet.
+
+### What other subjects read and are given
+
+Read: the ambient temperature (`EngineConfig::ambientC`, 20 °C by default). Exposed, as pure functions: `oilViscosityPaS`, `hydrodynamicNmPerRpm`, `coldFrictionNm`, `frictionFactor`, `coldIdleRise`, `coldEnrichment`, `wallHeatShare`; and in `DrivingModel::thermal()`: `coolantC`, `oilC`, `metalC`, with `coldIdleRpm`, `coldEnrichment`, `coldFrictionNm` for what acts. For an engine started warm to stay bit-exact, an effect plugged into these temperatures goes, as here, through a deviation from the warm reference (`kWarmCoolantC`, `kWarmOilC`) that acts only after a cold start (`thermalCoupled()`).

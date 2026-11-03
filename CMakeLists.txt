@@ -117,4 +117,7 @@ else()
   golden(turbo_pipe_short 3898802e --preset hot_hatch_turbo --scenario turbo --turbo-pipe 150)
   golden(carb_multi 463a064f --preset carb_twin_cam --scenario blips)
   golden(carb_single 4d1f365e --preset hot_hatch_na --carb single --scenario launch --seconds 10)
+  # Départ à froid : ralenti accéléré, frottements de l'huile froide ; et le starter d'un carburateur par -10 °C.
+  golden(start_cold_city b3a7b95a --preset city_14 --start cold --scenario start --seconds 8)
+  golden(blips_cold_carb d3a95f44 --preset carb_twin_cam --start cold --ambient -10 --scenario blips --seconds 8)
 endif()
