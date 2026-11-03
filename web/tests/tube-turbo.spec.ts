@@ -120,20 +120,22 @@ test.describe('le tube du turbo, sans navigateur', () => {
       cycle = (cycle + turns) % 1;
     };
     for (let f = 0; f < 600; f++) step();
-    let grown = 0;
-    let previous = process.memoryUsage().heapUsed;
+    // La médiane de lots, comme `filtre.spec.ts` : une allocation par pas se retrouve dans chaque lot, alors que le compilateur
+    // et le ramasse-miettes ne font que des pics isolés. La somme des hausses, elle, dépendait des tests passés avant :
+    // 4,6 ko par image dans la suite complète, 2,6 ko seule, à code égal.
+    const lots: number[] = [];
     // Le meilleur relevé : d'autres calculs sur la machine ne ralentissent qu'une partie des images.
     let cost = Infinity;
-    for (let f = 0; f < 3000; f++) {
-      step();
-      cost = Math.min(cost, gas.costMs);
-      if (f % 50 === 0) {
-        const now = process.memoryUsage().heapUsed;
-        if (now > previous) grown += now - previous;
-        previous = now;
+    for (let lot = 0; lot < 30; lot++) {
+      const before = process.memoryUsage().heapUsed;
+      for (let f = 0; f < 100; f++) {
+        step();
+        cost = Math.min(cost, gas.costMs);
       }
+      lots.push((process.memoryUsage().heapUsed - before) / 100);
     }
-    expect(grown / 3000).toBeLessThan(4000);
+    lots.sort((a, b) => a - b);
+    expect(lots[15]).toBeLessThan(4000);
     // Largement au-dessus de ce qu'on vise (4 ms) : la machine des tests peut être chargée.
     expect(cost).toBeLessThan(12);
   });
