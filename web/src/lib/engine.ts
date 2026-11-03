@@ -10,6 +10,22 @@ export type ListenerValue = (typeof Listener)[keyof typeof Listener];
 
 export const KW_TO_HP = 1.35962;
 
+/**
+ * Le son se calcule à 48 kHz, quelle que soit la carte son : le navigateur rééchantillonne. Le simulateur n'est pas invariant en
+ * fréquence d'échantillonnage (ses bruits filtrés gardent leur variance par échantillon : −6 dB à 192 kHz), et une interface à
+ * 192 kHz lui demanderait quatre fois plus de calcul. Tout le monde entend donc le même moteur, celui de la CLI à `--rate 48000`.
+ */
+export const SIMULATION_RATE = 48000;
+
+function audioContextAt(rate: number): AudioContext {
+  try {
+    return new AudioContext({ latencyHint: 'interactive', sampleRate: rate });
+  } catch {
+    // Un navigateur qui refuse cette fréquence garde la sienne.
+    return new AudioContext({ latencyHint: 'interactive' });
+  }
+}
+
 export interface Telemetry {
   rpm: number;
   speed: number;
@@ -573,7 +589,7 @@ export class Engine {
   async start(config: EngineConfig, mode: ModeValue, volume: number): Promise<void> {
     clearTimeout(this.suspendTimer);
     if (!this.context) {
-      const context = new AudioContext({ latencyHint: 'interactive' });
+      const context = audioContextAt(SIMULATION_RATE);
       await context.audioWorklet.addModule(`${import.meta.env.BASE_URL}worklet.js`);
       const node = new AudioWorkletNode(context, 'revforge', {
         numberOfInputs: 0,

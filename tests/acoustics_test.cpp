@@ -739,6 +739,34 @@ TEST_CASE("un moteur derrière les sièges s'entend bien plus dans l'habitacle")
     CHECK(exhaustScaleOf(car.car) < 0.6f);
 }
 
+TEST_CASE("l'habitacle ne dépend pas de la fréquence d'échantillonnage : sa réponse garde sa durée") {
+    // À 192 kHz, 1024 points ne faisaient que 5 ms : tout ce qui se passe sous 200 Hz se perdait entre deux points du filtre.
+    CHECK(CabinPath::firLengthFor(44100.0f) == CabinPath::kFirLength);
+    CHECK(CabinPath::firLengthFor(48000.0f) == CabinPath::kFirLength);
+    CHECK(CabinPath::firLengthFor(96000.0f) == 2 * CabinPath::kFirLength);
+    CHECK(CabinPath::firLengthFor(192000.0f) == 4 * CabinPath::kFirLength);
+    const CarAcoustics car = findPreset("hot_hatch_na")->powertrain().profile().car;
+    const auto heard = [&car](float rate, double hz) {
+        CabinPath path(rate);
+        path.setCar(car);
+        std::array<float, kSources> in{};
+        double energy = 0.0;
+        const int total = static_cast<int>(rate);
+        for (int n = 0; n < total; ++n) {
+            in[static_cast<std::size_t>(Source::ExhaustA)] = static_cast<float>(std::sin(2.0 * 3.141592653589793 * hz * n / rate));
+            float left = 0.0f, right = 0.0f;
+            path.process(in, 0.0f, left, right, false);
+            if (n > total / 3) energy += static_cast<double>(left) * left;
+        }
+        return 10.0 * std::log10(energy / (total - total / 3));
+    };
+    for (const double hz : {63.0, 100.0, 160.0, 400.0, 1000.0}) {
+        const double gap = heard(192000.0f, hz) - heard(48000.0f, hz);
+        MESSAGE("habitacle, " << hz << " Hz : 192 kHz face à 48 kHz, " << gap << " dB");
+        CHECK(std::fabs(gap) < 1.0);
+    }
+}
+
 TEST_CASE("le bloc est là où on l'a mis, et se fait entendre à travers la cloison la plus proche") {
     Powertrain car = withExhaust("city_14", Exhaust::Quiet);
     car.car.placement = EnginePlacement::Front;

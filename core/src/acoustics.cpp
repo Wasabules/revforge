@@ -758,12 +758,20 @@ void SoundField::process(const std::array<float, kSources>& in, float& left, flo
 
 // ── L'habitacle ──
 
-CabinPath::CabinPath(float rate) : rate_(rate) {
-    fft_.init(kFirLength * 2);
-    re_.assign(kFirLength * 2, 0.0f);
-    im_.assign(kFirLength * 2, 0.0f);
-    fir_.assign(kFirLength, 0.0f);
-    for (dsp::Convolver& filter : filters_) filter.init(128, kFirLength / 128);
+int CabinPath::firLengthFor(float rate) {
+    // La réponse doit garder sa durée, donc sa résolution en fréquence (23 Hz) : à 192 kHz, 1024 points n'en font plus que 5 ms, et
+    // tout ce qui se passe sous 200 Hz (la caisse, le plancher) se perd entre deux points.
+    int length = kFirLength;
+    while (static_cast<double>(length) * 48000.0 < static_cast<double>(kFirLength) * static_cast<double>(rate)) length *= 2;
+    return length;
+}
+
+CabinPath::CabinPath(float rate) : rate_(rate), firLength_(firLengthFor(rate)) {
+    fft_.init(firLength_ * 2);
+    re_.assign(static_cast<std::size_t>(firLength_) * 2, 0.0f);
+    im_.assign(static_cast<std::size_t>(firLength_) * 2, 0.0f);
+    fir_.assign(static_cast<std::size_t>(firLength_), 0.0f);
+    for (dsp::Convolver& filter : filters_) filter.init(128, firLength_ / 128);
     roomLeft_[0].init(rate, 0.0031f, 0.55f);
     roomLeft_[1].init(rate, 0.0073f, 0.5f);
     roomLeft_[2].init(rate, 0.0127f, 0.45f);
@@ -786,8 +794,8 @@ int CabinPath::groupOf(Source source) {
 
 void CabinPath::design(int group, const CarAcoustics& car) {
     const Source source = group == 0 ? Source::ExhaustA : (group == 1 ? Source::Bay : Source::Road);
-    const int size = kFirLength * 2;
-    const int half = kFirLength;
+    const int size = firLength_ * 2;
+    const int half = firLength_;
     // Module voulu, en log : le filtre à phase minimale s'en déduit par le cepstre réel.
     for (int k = 0; k <= half; ++k) {
         const double hz = std::max(static_cast<double>(k) * static_cast<double>(rate_) / size, 15.0);
@@ -814,12 +822,12 @@ void CabinPath::design(int group, const CarAcoustics& car) {
         im_[static_cast<std::size_t>(k)] = static_cast<float>(magnitude * std::sin(angle));
     }
     fft_.transform(re_.data(), im_.data(), true);
-    for (int n = 0; n < kFirLength; ++n) {
-        const float rest = static_cast<float>(kFirLength - n) / (static_cast<float>(kFirLength) * 0.25f);
+    for (int n = 0; n < firLength_; ++n) {
+        const float rest = static_cast<float>(firLength_ - n) / (static_cast<float>(firLength_) * 0.25f);
         const float fade = rest < 1.0f ? rest * rest * (3.0f - 2.0f * rest) : 1.0f;
         fir_[static_cast<std::size_t>(n)] = re_[static_cast<std::size_t>(n)] * scale * fade;
     }
-    filters_[static_cast<std::size_t>(group)].setImpulse(fir_.data(), kFirLength);
+    filters_[static_cast<std::size_t>(group)].setImpulse(fir_.data(), firLength_);
 }
 
 void CabinPath::setCar(const CarAcoustics& car) {
