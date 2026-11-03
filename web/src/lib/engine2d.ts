@@ -237,7 +237,8 @@ export class Engine2D {
       const charger = chargerUnit(layout, layout.charger);
       this.charger = charger;
       xMax = Math.max(xMax, charger.xMax);
-      yMax = Math.max(yMax, charger.yMax);
+      // Un peu de place pour son nom, sous le titre de la vue.
+      yMax = Math.max(yMax, charger.yMax + bore * 0.3);
     }
     this.frontBounds = { xMin: -xMax, xMax, yMin: Math.min(yBottom, -ringR), yMax };
   }
