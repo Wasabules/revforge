@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { TURBO_SCALE, isRotary, type EngineConfig } from '../lib/config';
+  import { architectureOf } from '../lib/architecture';
   import { animate, fit, heatedPart, mix, pipeColor, readTheme, type Theme } from '../lib/canvas';
   import type { Telemetry } from '../lib/engine';
   import { fixed, speedLabel, t, whole } from '../lib/i18n.svelte';
@@ -1101,7 +1102,8 @@
 
   onMount(() => animate(canvas, draw));
 
-  const dual = $derived(config.layout !== 'inline' && !isRotary(config) && config.cylinders >= 4);
+  // Deux collecteurs sur deux culasses : un VR n'en a qu'une (`architecture.ts`).
+  const dual = $derived(!isRotary(config) && architectureOf(config).heads === 2 && config.cylinders >= 4);
   const caption = $derived(
     config.electric ? '' : [t(`gas.line.${config.exhaust}`), ...(dual ? [t('gas.banks')] : []), ...(config.aspiration === 'turbo' ? [t('gas.turboPulses')] : []), ...(config.aspiration === 'supercharger' ? [t('gas.chargerNote')] : []), ...(config.aspiration === 'turbo' && config.fuel === 'petrol' && config.antiLag === 'air' ? [t('gas.antiLagAir')] : []), t('gas.legend', { speed: speedLabel(slow) })].join(' '),
   );
