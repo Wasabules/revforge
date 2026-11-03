@@ -1099,7 +1099,7 @@ After a cold start (`--start cold`, the `startTemp` setting), everything starts 
 
 **After a warm start, nothing feeds back.** The network still runs, for the gauges, but neither torque, driving nor sound reads it, whatever temperature it computes: the 29 fingerprints are bit-identical, and a test makes the temperatures diverge (20 °C and −30 °C outside) without anything else moving. The spec sheet (0–100 km/h, top speed) is measured warm, even after a cold start.
 
-**The sound.** Nothing was added to the sound: it follows the real engine speed and load. The idle starts higher and comes down as the coolant warms, in about ten minutes at idle at 20 °C, in four and a half minutes on the WLTC. Listening remains to be done.
+**The sound.** Nothing was added to the sound: it follows the real engine speed and load. The idle starts higher and comes down as the coolant warms, in about ten minutes at idle at 20 °C, in four and a half minutes on the WLTC. At −10 °C the V8's idle breathes more: its level varies by 2.4 dB (standard deviation, 50 ms windows) against 1.3 dB warm, since the idle control opens further to hold nearly twice the friction. Listening remains to be done.
 
 **On the electric car, none of this applies**: no network, no gauge, and the functions return the ambient air or zero.
 

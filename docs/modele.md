@@ -1123,7 +1123,7 @@ Après un départ à froid (`--start cold`, le réglage `startTemp`), tout part 
 
 **Parti chaud, rien n'en revient.** Le réseau tourne quand même, pour les jauges, mais ni le couple, ni la conduite, ni le son ne le lisent, quelle que soit la température qu'il calcule : les 29 empreintes sont les mêmes au bit près, et un test fait diverger les températures (20 °C et −30 °C dehors) sans que rien d'autre ne bouge. La fiche (0 à 100 km/h, vitesse de pointe) se mesure moteur chaud, même après un départ à froid.
 
-**Le son.** Rien n'a été ajouté au son : il suit le régime et la charge réels. Le ralenti part plus haut et redescend à mesure que l'eau chauffe, en une dizaine de minutes au ralenti par 20 °C, en quatre minutes et demie sur le WLTC. L'écoute reste à faire.
+**Le son.** Rien n'a été ajouté au son : il suit le régime et la charge réels. Le ralenti part plus haut et redescend à mesure que l'eau chauffe, en une dizaine de minutes au ralenti par 20 °C, en quatre minutes et demie sur le WLTC. Par −10 °C, le ralenti du V8 respire davantage : son niveau varie de 2,4 dB (écart type sur 50 ms) contre 1,3 dB à chaud, la régulation ouvrant plus pour tenir des frottements presque doubles. L'écoute reste à faire.
 
 **Sur l'électrique, rien de tout cela** : pas de réseau, pas de jauge, et les fonctions renvoient l'air ambiant ou zéro.
 
