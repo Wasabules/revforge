@@ -244,3 +244,28 @@ TEST_CASE("thermique : la fiche se mesure moteur chaud, et rien de tout cela sur
     CHECK(m.coldFrictionNm() == 0.0);
     CHECK(m.coldIdleRpm() == 0.0);
 }
+
+TEST_CASE("thermique : chaque préréglage part à froid, ralenti plus haut et eau qui monte") {
+    // Rotatif, turbo, compresseur, carburateurs, diesel : partout la même mécanique, et rien sur l'électrique.
+    std::size_t count = 0;
+    const Preset* all = presets(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        CAPTURE(all[i].id);
+        const Powertrain p = all[i].powertrain();
+        DrivingModel warm(started(p, StartTemp::Warm, 5.0f));
+        DrivingModel cold(started(p, StartTemp::Cold, 5.0f));
+        const double warmIdle = idleAfter(warm, 20.0);
+        const double coldIdle = idleAfter(cold, 20.0);
+        if (p.electric) {
+            CHECK_FALSE(cold.thermalCoupled());
+            CHECK(coldIdle == warmIdle);
+            continue;
+        }
+        CHECK(std::isfinite(coldIdle));
+        CHECK(coldIdle > warmIdle * 1.1);
+        CHECK(cold.thermal().coolantC() > 5.5);
+        CHECK(cold.thermal().coolantC() < 40.0);
+        CHECK(cold.consumption().fuelTripL() > warm.consumption().fuelTripL());
+        CHECK_FALSE(cold.stalled());
+    }
+}
