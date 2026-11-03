@@ -230,7 +230,7 @@ export class Engine2D {
     if (layout.carb) {
       // Le carburateur dépasse du plénum : de côté en ligne si chaque cylindre a le sien, debout sinon.
       if (layout.carb.kind === 'multi' && layout.banks === 1) xMax = Math.max(xMax, bore * 2.75);
-      else yMax = Math.max(yMax, plenum.y + bore * 1.5);
+      else yMax = Math.max(yMax, plenum.y + bore * (layout.airFilter === 'cone' && !layout.turbo && !layout.charger ? 2.3 : 1.5));
     } else if (!layout.turbo && !layout.charger) {
       // Le filtre, et ses cornets : ils dépassent du moteur.
       if (layout.airFilter === 'stacks') {
@@ -917,7 +917,11 @@ export class Engine2D {
       ctx.arc(plenum.x, plenum.y, plenum.radius, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
-      if (carb) this.drawVenturi(ctx, plenum.x, plenum.y + plenum.radius * 0.9, 0, 1, pose.throttle, theme, px);
+      if (carb) {
+        this.drawVenturi(ctx, plenum.x, plenum.y + plenum.radius * 0.9, 0, 1, pose.throttle, theme, px);
+        // Un cône se pose sur le venturi. Soufflé, l'air est déjà passé par le filtre du compresseur.
+        if (layout.airFilter === 'cone' && !layout.turbo && !layout.charger) this.drawFilterBody(ctx, plenum.x, plenum.y + plenum.radius * 0.9 + bore * 1.2, bore * 0.55, bore * 0.32, theme, px);
+      }
       }
     }
     // Le conduit d'échappement : il prend la couleur du gaz qui y passe, la pièce chauffe avec la ligne.
@@ -1357,11 +1361,10 @@ export class Engine2D {
     ctx.lineTo(unit.x, eyeY);
     ctx.stroke();
     ctx.lineCap = 'butt';
+    this.drawFilterBody(ctx, ax, ay, ahx, ahy, theme, px);
     ctx.fillStyle = theme.raised;
     ctx.strokeStyle = theme.text;
     ctx.lineWidth = 1.2 * px;
-    ctx.fillRect(ax - ahx, ay - ahy, 2 * ahx, 2 * ahy);
-    ctx.strokeRect(ax - ahx, ay - ahy, 2 * ahx, 2 * ahy);
 
     if (unit.volumetric) {
       ctx.fillStyle = hot;

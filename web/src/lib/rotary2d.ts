@@ -31,6 +31,10 @@ export interface RotaryLabels {
   plug: string;
   flywheel: string;
   ring: string;
+  turbine: string;
+  compressor: string;
+  carburetor: string;
+  airbox: string;
 }
 
 function gearPath(teeth: number, pitch: number, depth: number): Path2D {
@@ -54,6 +58,13 @@ export class Rotary2D {
   private readonly extent: number;
   private readonly portEx: Path2D;
   private readonly portIn: Path2D;
+  /** La bouche de chaque lumière, et la direction où elle s'ouvre : c'est là que se branche ce qui alimente le moteur. */
+  private readonly inletEnd: [number, number];
+  private readonly inletDir: [number, number];
+  private readonly outletEnd: [number, number];
+  private readonly outletDir: [number, number];
+  /** Ce qu'il faut de place en plus, sous le carter, pour le dessiner. */
+  private readonly below: number;
 
   constructor(private readonly layout: RotaryLayout) {
     const margin = layout.radius * 0.24;
@@ -67,7 +78,9 @@ export class Rotary2D {
     const toothDepth = layout.eccentricity * 0.13;
     this.fixedGear = gearPath(layout.fixedTeeth, layout.fixedRadius, toothDepth);
     this.rotorGear = gearPath(layout.rotorTeeth, layout.rotorGearRadius, toothDepth);
-    this.extent = layout.radius + layout.eccentricity + margin + layout.radius * 0.28;
+    const fitted = layout.turbo || layout.charger || layout.carb !== null || layout.airFilter !== 'stock';
+    this.extent = layout.radius + layout.eccentricity + margin + layout.radius * (fitted ? 0.62 : 0.28);
+    this.below = fitted ? layout.radius * 0.5 : 0;
     const { radius: r, eccentricity: e } = layout;
     const port = (u: number, width: number, length: number) => {
       const a = u * DEG;
@@ -80,6 +93,18 @@ export class Rotary2D {
     };
     this.portEx = port(EXHAUST_PORT_U, EXHAUST_PORT_WIDTH_U, 0.46);
     this.portIn = port(INTAKE_PORT_U - 6, 12, 0.46);
+    const mouth = (u: number) => {
+      const a = u * DEG;
+      const p = [r * Math.sin(a) - e * Math.sin(3 * a), r * Math.cos(a) - e * Math.cos(3 * a)];
+      const length = Math.hypot(p[0], p[1]) || 1;
+      return { end: [p[0] * 1.46, p[1] * 1.46] as [number, number], dir: [p[0] / length, p[1] / length] as [number, number] };
+    };
+    const inlet = mouth(INTAKE_PORT_U);
+    const outlet = mouth(EXHAUST_PORT_U + EXHAUST_PORT_WIDTH_U / 2);
+    this.inletEnd = inlet.end;
+    this.inletDir = inlet.dir;
+    this.outletEnd = outlet.end;
+    this.outletDir = outlet.dir;
   }
 
   draw(ctx: CanvasRenderingContext2D, width: number, height: number, pose: RotaryPose, painter: GasPainter, theme: Theme, labels: RotaryLabels): void {
@@ -105,7 +130,7 @@ export class Rotary2D {
   private drawFront(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, pose: RotaryPose, painter: GasPainter, theme: Theme, labels: RotaryLabels): void {
     const layout = this.layout;
     const { radius: r, eccentricity: e } = layout;
-    const scale = Math.min(w / (2 * this.extent), h / (2 * (r - e + r * 0.34 + r * 0.36)));
+    const scale = Math.min(w / (2 * this.extent), h / (2 * (r - e + r * 0.34 + r * 0.36 + this.below)));
     const px = 1 / scale;
     ctx.save();
     ctx.translate(x + w / 2, y + h / 2);
@@ -243,6 +268,7 @@ export class Rotary2D {
     ctx.moveTo(0, 0);
     ctx.lineTo(cx, cy);
     ctx.stroke();
+    this.drawInduction(ctx, r, theme, px);
     ctx.restore();
 
     if (labels.parts) {
@@ -255,7 +281,123 @@ export class Rotary2D {
       ctx.fillText(labels.housing, X(this.extent * 0.72), Y(r * 0.64));
       ctx.fillText(labels.exhaustPort, X(r * 0.72), Y(-r * 1.0));
       ctx.fillText(labels.intakePort, X(-r * 0.72), Y(-r * 1.0));
+      if (layout.turbo) {
+        const at = this.turbineAt(r);
+        ctx.fillText(labels.turbine, X(at[0]), Y(at[1] - r * 0.3));
+      }
+      if (layout.charger) {
+        const at = this.alongInlet(r * 0.24);
+        ctx.fillText(labels.compressor, X(at[0]), Y(at[1] - r * 0.3));
+      } else if (layout.carb) {
+        const at = this.alongInlet(r * 0.22);
+        ctx.fillText(labels.carburetor, X(at[0]), Y(at[1] - r * 0.28));
+      }
       ctx.textAlign = 'left';
+    }
+  }
+
+  private alongInlet(distance: number): [number, number] {
+    return [this.inletEnd[0] + this.inletDir[0] * distance, this.inletEnd[1] + this.inletDir[1] * distance];
+  }
+
+  private turbineAt(r: number): [number, number] {
+    return [this.outletEnd[0] + this.outletDir[0] * r * 0.2, this.outletEnd[1] + this.outletDir[1] * r * 0.2];
+  }
+
+  /** Ce qui se branche sur les lumières : en schéma, car un rotatif n'a pas de chaîne d'admission à dessiner à l'échelle. */
+  private drawInduction(ctx: CanvasRenderingContext2D, r: number, theme: Theme, px: number): void {
+    const layout = this.layout;
+    const [ix, iy] = this.inletDir;
+    const lean = Math.atan2(-ix, iy);
+    ctx.lineWidth = 1.2 * px;
+    if (layout.turbo) {
+      // Turbine et compresseur sur le même arbre : la volute chaude, et l'air qui repart vers la lumière d'admission par le bas.
+      const [tx, ty] = this.turbineAt(r);
+      const [mx, my] = this.inletEnd;
+      ctx.strokeStyle = theme.cool;
+      ctx.lineWidth = r * 0.07;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(tx, ty);
+      ctx.quadraticCurveTo(0, Math.min(ty, my) - r * 0.32, mx, my);
+      ctx.stroke();
+      ctx.lineCap = 'butt';
+      ctx.lineWidth = 1.2 * px;
+      ctx.fillStyle = theme.danger;
+      ctx.strokeStyle = theme.text;
+      ctx.beginPath();
+      ctx.arc(tx, ty, r * 0.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = theme.cool;
+      ctx.beginPath();
+      ctx.arc(tx, ty, r * 0.11, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+    if (layout.charger) {
+      // Le compresseur sur l'admission, et son filtre au bout.
+      const [cx, cy] = this.alongInlet(r * 0.24);
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(lean);
+      ctx.fillStyle = theme.cool;
+      ctx.strokeStyle = theme.text;
+      ctx.beginPath();
+      ctx.rect(-r * 0.2, -r * 0.14, r * 0.4, r * 0.28);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+    if (layout.carb) {
+      // Le venturi au bout de la lumière ; soufflé, il reste là, dans sa boîte.
+      const [cx, cy] = layout.charger ? this.alongInlet(-r * 0.02) : this.alongInlet(r * 0.02);
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(lean);
+      ctx.fillStyle = theme.raised;
+      ctx.strokeStyle = theme.text;
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.09, 0);
+      ctx.lineTo(-r * 0.05, r * 0.14);
+      ctx.lineTo(-r * 0.12, r * 0.3);
+      ctx.lineTo(r * 0.12, r * 0.3);
+      ctx.lineTo(r * 0.05, r * 0.14);
+      ctx.lineTo(r * 0.09, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+    // Le filtre : au bout du venturi ou du compresseur, ou sur la lumière nue. Le papier d'origine reste dans sa boîte, hors du dessin.
+    const onTurbo = layout.turbo;
+    if (layout.airFilter !== 'stock' && !onTurbo) {
+      const [fx, fy] = this.alongInlet(layout.charger ? r * 0.52 : layout.carb ? r * 0.42 : r * 0.12);
+      ctx.save();
+      ctx.translate(fx, fy);
+      ctx.rotate(lean);
+      ctx.fillStyle = layout.airFilter === 'stacks' ? theme.raised : theme.danger;
+      ctx.strokeStyle = theme.text;
+      ctx.beginPath();
+      if (layout.airFilter === 'stacks') {
+        ctx.moveTo(-r * 0.08, 0);
+        ctx.lineTo(-r * 0.2, r * 0.12);
+        ctx.lineTo(r * 0.2, r * 0.12);
+        ctx.lineTo(r * 0.08, 0);
+      } else if (layout.airFilter === 'cone') {
+        ctx.moveTo(-r * 0.1, 0);
+        ctx.lineTo(-r * 0.17, r * 0.14);
+        ctx.lineTo(-r * 0.1, r * 0.3);
+        ctx.lineTo(r * 0.1, r * 0.3);
+        ctx.lineTo(r * 0.17, r * 0.14);
+        ctx.lineTo(r * 0.1, 0);
+      } else {
+        ctx.rect(-r * 0.2, 0, r * 0.4, r * 0.16);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
     }
   }
 

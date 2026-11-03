@@ -246,6 +246,10 @@
       plug: t('engine.part.plug'),
       flywheel: t('engine.part.flywheel'),
       ring: t('engine.part.ring'),
+      turbine: t('engine.part.turbine'),
+      compressor: t('engine.part.compressor'),
+      carburetor: t('engine.part.carburetor'),
+      airbox: t('engine.part.airbox'),
     };
     return rotaryLabels;
   }

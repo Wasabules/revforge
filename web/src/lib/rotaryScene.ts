@@ -180,6 +180,74 @@ export class RotaryScene {
       this.sparks.push(spark);
       this.root.add(spark);
     }
+    // Ce qui se branche sur les lumières, en schéma : volute et compresseur, carburateurs, filtre.
+    const across2 = (u: number) => {
+      const p = across(u);
+      const length = Math.hypot(p[0], p[1]) || 1;
+      return { p, out: [p[0] / length, p[1] / length] };
+    };
+    const inlet = across2(INTAKE_PORT_U);
+    const outlet = across2(EXHAUST_PORT_U + EXHAUST_PORT_WIDTH_U / 2);
+    const inletAt = (d: number, z: number): P3 => [inlet.p[0] + inlet.out[0] * d, inlet.p[1] + inlet.out[1] * d, z];
+    const outletAt = (d: number, z: number): P3 => [outlet.p[0] + outlet.out[0] * d, outlet.p[1] + outlet.out[1] * d, z];
+    const midZ = (layout.slots[0].z + layout.slots[layout.slots.length - 1].z) / 2;
+    const lean = m34.rotationZ(m34.create(), Math.atan2(inlet.out[0], inlet.out[1]));
+    /** Une pièce tournée autour de la direction de la lumière d'admission, à cette distance. */
+    const onInlet = (d: number, z: number): Mat34 => {
+      const at = inletAt(d, z);
+      return m34.multiply(m34.create(), tr(at[0], at[1], at[2]), lean);
+    };
+    const ends = new MeshBuilder();
+    const mouthD = margin * 3.4;
+    const venturi: P2[] = [[r * 0.11, 0], [r * 0.08, r * 0.14], [r * 0.14, r * 0.3], [r * 0.12, r * 0.3], [r * 0.05, r * 0.14], [r * 0.09, 0]];
+    let fitting = mouthD;
+    if (layout.carb === 'multi') {
+      for (const slot of layout.slots) ends.transform(onInlet(mouthD, slot.z)).lathe(venturi, 22, 50);
+      fitting = mouthD + r * 0.3;
+    } else if (layout.carb === 'single' || layout.charger) {
+      // Les conduits se rejoignent sur une pipe, et le carburateur ou le compresseur se pose dessus.
+      const zs = layout.slots.map((slot) => slot.z);
+      if (zs.length > 1) ends.transform(null).tube([inletAt(mouthD, zs[0]), inletAt(mouthD, zs[zs.length - 1])], b * 0.22, 12);
+      if (layout.carb === 'single') ends.transform(onInlet(mouthD, midZ)).lathe(venturi, 22, 50);
+      fitting = mouthD + r * 0.3;
+      if (layout.charger) {
+        ends.transform(onInlet(mouthD + r * 0.42, midZ)).box(r * 0.46, r * 0.34, Math.max(b * 1.1, r * 0.5));
+        fitting = mouthD + r * 0.6;
+      }
+    }
+    const carbShape = new THREE.Mesh(geo(ends), materials.alloy);
+    this.root.add(carbShape);
+    const filters = new MeshBuilder();
+    if (!layout.turbo && layout.airFilter !== 'stock') {
+      const place = onInlet(fitting, midZ);
+      if (layout.airFilter === 'cone') filters.transform(place).lathe([[r * 0.11, 0], [r * 0.2, r * 0.05], [r * 0.14, r * 0.34], [0, r * 0.36]], 22, 50);
+      else if (layout.airFilter === 'stacks') filters.transform(place).lathe([[r * 0.08, 0], [r * 0.1, r * 0.08], [r * 0.18, r * 0.14], [r * 0.2, r * 0.14]], 22, 60);
+      else filters.transform(place).lathe([[0, 0], [r * 0.2, 0], [r * 0.2, r * 0.1], [0, r * 0.1]], 22, 40);
+      const filterMesh = new THREE.Mesh(geo(filters), layout.airFilter === 'stacks' ? materials.alloy : stage.surface({ color: 0xb5382a, metalness: 0, roughness: 0.85 }));
+      this.root.add(filterMesh);
+    }
+    const turboParts = new MeshBuilder();
+    if (layout.turbo) {
+      // Une volute par rotor n'aurait pas de sens : les tubes se rejoignent, et un seul turbo les reçoit.
+      const ventD = margin * 3.8;
+      const zs = layout.slots.map((slot) => slot.z);
+      if (zs.length > 1) exhaustPipes.transform(null).tube([outletAt(ventD, zs[0]), outletAt(ventD, zs[zs.length - 1])], b * 0.2, 12);
+      const volute = outletAt(ventD + r * 0.28, midZ);
+      exhaustPipes.transform(onZ(volute[0], volute[1], volute[2])).lathe([[r * 0.06, -r * 0.1], [r * 0.24, -r * 0.09], [r * 0.28, -r * 0.01], [r * 0.25, r * 0.08], [r * 0.08, r * 0.1]], 22, 60);
+      turboParts.transform(onZ(volute[0], volute[1], volute[2] + r * 0.28)).lathe([[r * 0.06, -r * 0.08], [r * 0.24, -r * 0.05], [r * 0.26, r * 0.02], [r * 0.18, r * 0.08], [r * 0.07, r * 0.09]], 22, 60);
+      turboParts.transform(null).tube([[volute[0], volute[1] - r * 0.1, volute[2] + r * 0.3], [volute[0] * 0.3, volute[1] - r * 0.5, volute[2] + r * 0.3], inletAt(mouthD, midZ)], r * 0.06, 10);
+      this.labels.push({ key: 'engine.part.turbine', x: volute[0], y: volute[1], z: volute[2] }, { key: 'engine.part.compressor', x: volute[0], y: volute[1], z: volute[2] + r * 0.3 });
+    }
+    if (layout.charger) {
+      const at = inletAt(mouthD + r * 0.42, midZ);
+      this.labels.push({ key: 'engine.part.compressor', x: at[0], y: at[1], z: at[2] });
+    }
+    if (layout.carb) {
+      const at = inletAt(mouthD + r * 0.2, layout.carb === 'multi' ? layout.slots[0].z : midZ);
+      this.labels.push({ key: 'engine.part.carburetor', x: at[0], y: at[1], z: at[2] });
+    }
+    if (turboParts.vertexCount > 0) this.root.add(new THREE.Mesh(geo(turboParts), materials.alloy));
+
     const shell = new THREE.Mesh(geo(housing), materials.ghost);
     shell.renderOrder = 2;
     this.root.add(shell);
@@ -218,7 +286,8 @@ export class RotaryScene {
 
     const span = layout.frontZ + b * 0.4 - (ring.z - ring.width);
     this.center = [0, -r * 0.05, (layout.frontZ + b * 0.4 + ring.z - ring.width) / 2];
-    this.radius = Math.max(r + e + margin * 3, span / 2 + r * 0.45, ring.radius * 1.1) * 1.08;
+    const fitted = layout.turbo || layout.charger || layout.carb !== null || layout.airFilter !== 'stock';
+    this.radius = Math.max(r + e + margin * (fitted ? 5 : 3), span / 2 + r * 0.45, ring.radius * 1.1) * 1.08;
     const firstZ = layout.slots[0].z;
     this.labels.push(
       { key: 'engine.part.rotor', x: r * 0.55, y: 0, z: firstZ },

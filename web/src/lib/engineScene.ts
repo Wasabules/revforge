@@ -958,6 +958,12 @@ export class EngineScene {
         alloys.transform(null).tube(bendPath(from, dir, base, axis), Math.min(runnerR, throat * 1.2), 9);
         const matrix = sideways ? chainM(tr(base[0], base[1], base[2]), rz(Math.PI / 2)) : tr(base[0], base[1], base[2]);
         carbBody(matrix, throat, height);
+        // Des cônes individuels, un par corps. Soufflé, l'air est déjà passé par le filtre du compresseur.
+        if (layout.airFilter === 'cone' && !layout.turbo && !layout.charger) {
+          const mouth = sideways ? chainM(tr(base[0] - height, base[1], base[2]), rz(Math.PI / 2)) : tr(base[0], base[1] + height, base[2]);
+          elements.transform(mouth).lathe(coneProfile(bore * 0.08, throat * 2.1, bore * 0.6, throat * 1.3), 22, 50);
+          extent([base[0] + axis[0] * (height + bore * 0.7), base[1] + axis[1] * (height + bore * 0.7), base[2]]);
+        }
         carbFlap(base[0] + axis[0] * height * 0.16, base[1] + axis[1] * height * 0.16, base[2], throat * 1.08, sideways);
         extent([base[0] + axis[0] * height, base[1] + axis[1] * height, base[2]]);
         extent([base[0] - throat * 1.9, base[1], base[2]]);
@@ -985,10 +991,18 @@ export class EngineScene {
         carbFlap(plenumX, baseY + height * 0.16, midZ, throat * 1.08, false);
         // La cuve de niveau constant, sur le côté.
         brasses.transform(tr(plenumX, baseY + height * 0.3, midZ + throat * 2.1)).lathe([[0, -height * 0.26], [throat * 0.72, -height * 0.26], [throat * 0.8, -height * 0.18], [throat * 0.8, height * 0.2], [0, height * 0.26]], 16, 50);
-        // Le filtre, un anneau : il laisse voir le venturi.
+        // Le filtre, un anneau : il laisse voir le venturi. Un cône le remplace, des cornets laissent la bouche nue.
+        // Soufflé, le carburateur n'en a pas : c'est le compresseur qui a le sien.
         const filterR = Math.max(throat * 3, bore * 0.9);
         const filterY = baseY + height * 1.02;
-        blacks.transform(tr(plenumX, filterY, midZ)).lathe([[throat * 1.7, 0], [filterR, 0], [filterR, bore * 0.26], [throat * 1.7, bore * 0.26]], 28, 40);
+        if (!layout.turbo && !layout.charger) {
+          if (layout.airFilter === 'cone') {
+            elements.transform(tr(plenumX, filterY, midZ)).lathe(coneProfile(bore * 0.2, bore * 0.56, bore * 1.5, throat * 1.3), 28, 50);
+            extent([plenumX, filterY + bore * 1.8, midZ]);
+          } else if (layout.airFilter !== 'stacks') {
+            (layout.airFilter === 'panel' ? elements : blacks).transform(tr(plenumX, filterY, midZ)).lathe([[throat * 1.7, 0], [filterR, 0], [filterR, bore * 0.26], [throat * 1.7, bore * 0.26]], 28, 40);
+          }
+        }
         extent([plenumX + filterR, filterY + bore * 0.26, midZ]);
         extent([plenumX - filterR, filterY, midZ]);
         this.labelSpots.carb = [plenumX, filterY + bore * 0.4, midZ];
@@ -1271,7 +1285,15 @@ export class EngineScene {
       // La boîte à air, et son conduit jusqu'à l'œil du compresseur.
       const [ax, ay, az] = charger.airbox;
       const [ahx, ahy, ahz] = charger.airboxSize;
-      blacks.transform(tr(ax, ay, az)).box(2 * ahx, 2 * ahy, 2 * ahz);
+      // Selon le filtre, comme sur un turbo : la boîte, le cône à l'air libre, ou une bouche arrondie.
+      if (layout.airFilter === 'cone') {
+        elements.transform(tr(ax, ay - ahy, az)).lathe(coneProfile(bore * 0.1, bore * 0.46, 2 * ahy + bore * 0.7, bore * 0.13), 26, 50);
+      } else if (layout.airFilter === 'stacks') {
+        alloys.transform(tr(ax, ay - ahy, az)).lathe([[bore * 0.13, -bore * 0.05], [bore * 0.15, bore * 0.2], [bore * 0.22, bore * 0.34], [bore * 0.36, bore * 0.42]], 22, 60);
+      } else {
+        blacks.transform(tr(ax, ay, az)).box(2 * ahx, 2 * ahy, 2 * ahz);
+        (layout.airFilter === 'panel' ? elements : blacks).transform(tr(ax, ay + ahy + bore * 0.03, az)).box(2 * ahx * 1.05, bore * 0.05, 2 * ahz * 1.05);
+      }
       const eye: P3 = charger.volumetric ? [charger.x, charger.y + charger.halfY, az] : [charger.x, charger.y + bore * 0.2, charger.z + bore * 0.1];
       blacks.transform(null).tube(bendPath([ax, ay - ahy, az], [0, -1, 0], eye, charger.volumetric ? [0, -1, 0] : [0, -1, 0], 10), bore * 0.13, 10);
       // Sa poulie et sa courroie, devant celle des accessoires, sur la poulie du vilebrequin.

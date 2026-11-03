@@ -135,6 +135,10 @@ export interface RotaryLayout {
   ring: { z: number; width: number; teeth: number; radius: number };
   pinion: { teeth: number; radius: number; angle: number; x: number; y: number };
   turbo: boolean;
+  charger: boolean;
+  /** Le carburateur, s'il y en a un : un col commun, ou un par rotor. */
+  carb: 'single' | 'multi' | null;
+  airFilter: NonNullable<EngineConfig['airFilter']>;
   dualMass: boolean;
 }
 
@@ -210,6 +214,9 @@ export function rotaryLayout(config: EngineConfig): RotaryLayout {
     ring: { z: rearZ - width * 0.32, width: width * 0.16, teeth: teeth.ring, radius: ringRadius },
     pinion: { teeth: teeth.pinion, radius: pinionRadius, angle: pinionAngle, x: Math.cos(pinionAngle) * (ringRadius + pinionRadius), y: Math.sin(pinionAngle) * (ringRadius + pinionRadius) },
     turbo: config.aspiration === 'turbo',
+    charger: config.aspiration === 'supercharger',
+    carb: config.fuelSystem === 'single' || config.fuelSystem === 'multi' ? config.fuelSystem : null,
+    airFilter: config.airFilter ?? 'stock',
     dualMass: config.boxFlywheel === 'dual_mass',
   };
 }
