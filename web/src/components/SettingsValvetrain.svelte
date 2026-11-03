@@ -1,0 +1,49 @@
+<script lang="ts">
+  import Choices from './Choices.svelte';
+  import SettingsSection from './SettingsSection.svelte';
+  import TunedSlider from './TunedSlider.svelte';
+  import { CAMSHAFTS, LIMITS, VALVE_SPRINGS, VALVE_TIMINGS, isRotary, type EngineConfig } from '../lib/config';
+  import { fixed, t } from '../lib/i18n.svelte';
+
+  /** Distribution : l'arbre à cames et ses soupapes. Un rotatif et un deux-temps n'en ont pas : la section ne s'affiche pas. */
+  interface Props {
+    config: EngineConfig;
+    shown: EngineConfig;
+    onapply: (next: Partial<EngineConfig>) => void;
+    onlive: (next: Partial<EngineConfig>) => void;
+  }
+  let { config, shown, onapply, onlive }: Props = $props();
+
+  const valves = $derived(!isRotary(config) && config.cycle !== 'two_stroke');
+</script>
+
+{#if valves}
+  <SettingsSection id="valvetrain" title={t('builder.section.valvetrain')}>
+    <div>
+      <Choices label={t('builder.camshaft')} options={CAMSHAFTS} value={config.camshaft} onchange={(camshaft) => onapply({ camshaft })} />
+      <p class="help" data-testid="camshaft-help">{CAMSHAFTS.find((item) => item.value === config.camshaft)?.help}</p>
+    </div>
+    <!-- Le profil de came : 0, d'origine. Le curseur part d'une came de route. -->
+    <TunedSlider label={t('builder.camDuration')} value={shown.camDurationDeg} {...LIMITS.camDurationDeg} start={250} testid="cam-duration"
+      format={(value) => t('builder.camDuration.value', { deg: value })} help={t('builder.camDuration.help')}
+      onlive={(camDurationDeg) => onlive({ camDurationDeg })} onapply={(camDurationDeg) => onapply({ camDurationDeg })} />
+    <TunedSlider label={t('builder.camLift')} value={shown.camLiftMm} {...LIMITS.camLiftMm} start={10} testid="cam-lift"
+      format={(value) => t('builder.camLift.value', { mm: fixed(value, 1) })} help={t('builder.camLift.help')}
+      onlive={(camLiftMm) => onlive({ camLiftMm })} onapply={(camLiftMm) => onapply({ camLiftMm })} />
+    <TunedSlider label={t('builder.lsa')} value={shown.lobeSeparationDeg} {...LIMITS.lobeSeparationDeg} start={112} testid="lsa"
+      format={(value) => t('builder.lsa.value', { deg: value })} help={t('builder.lsa.help')}
+      onlive={(lobeSeparationDeg) => onlive({ lobeSeparationDeg })} onapply={(lobeSeparationDeg) => onapply({ lobeSeparationDeg })} />
+    <div data-testid="valve-timing">
+      <Choices label={t('builder.valveTiming')} options={VALVE_TIMINGS} value={config.valveTiming} onchange={(valveTiming) => onapply({ valveTiming })} />
+      <p class="help">{VALVE_TIMINGS.find((item) => item.value === config.valveTiming)?.help}</p>
+    </div>
+    <div data-testid="valve-springs">
+      <Choices label={t('builder.valveSprings')} options={VALVE_SPRINGS} value={config.valveSprings} onchange={(valveSprings) => onapply({ valveSprings })} />
+      <p class="help">{VALVE_SPRINGS.find((item) => item.value === config.valveSprings)?.help}</p>
+    </div>
+  </SettingsSection>
+{/if}
+
+<style>
+  .help { margin: 0; color: var(--text-dim); font-size: var(--type-small); }
+</style>

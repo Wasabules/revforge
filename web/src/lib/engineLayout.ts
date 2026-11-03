@@ -566,7 +566,8 @@ export function engineLayout(config: EngineConfig): EngineLayout {
   const pinionDistance = ringRadius + pinionRadius;
 
   // ── Distribution : deux arbres à cames en tête, quatre soupapes par cylindre ; ou un seul, deux soupapes et des culbuteurs ──
-  const valve = config.camshaft === 'sohc' ? singleCamValves(bore, deck) : twinCamValves(bore, deck);
+  // Socle : les culbuteurs (`ohv`) se dessinent comme le simple arbre.
+  const valve = config.camshaft === 'sohc' || config.camshaft === 'ohv' ? singleCamValves(bore, deck) : twinCamValves(bore, deck);
 
   const crankTeeth = 19;
   const camTeeth = 38;

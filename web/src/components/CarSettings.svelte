@@ -1,5 +1,6 @@
 <script lang="ts">
   import Choices from './Choices.svelte';
+  import SettingsConditions from './SettingsConditions.svelte';
   import Slider from './Slider.svelte';
   import { BODIES, DRIVES, INSULATIONS, LIMITS, PLACEMENTS, type Body, type EngineConfig } from '../lib/config';
   import type { Spec } from '../lib/engine';
@@ -7,11 +8,13 @@
 
   interface Props {
     config: EngineConfig;
+    /** Pendant le glissé d'un curseur : ce que montrent les conditions. */
+    shown: EngineConfig;
     spec: Spec;
     onapply: (next: Partial<EngineConfig>) => void;
     onlive: (next: Partial<EngineConfig>) => void;
   }
-  let { config, spec, onapply, onlive }: Props = $props();
+  let { config, shown, spec, onapply, onlive }: Props = $props();
 
   function chooseBody(value: Body) {
     const chosen = BODIES.find((item) => item.value === value);
@@ -40,6 +43,8 @@
 {#if spec.ratios.length}
   <p class="help" data-testid="gearing">{t('builder.gearing', { ratios: spec.ratios.map((ratio) => fixed(ratio, 2)).join(' · ') })}{config.boxFinal > 0 ? '' : ` ${t('builder.gearing.auto')}`}</p>
 {/if}
+<!-- Les conditions du trajet : l'air, l'altitude, le moteur au démarrage. Dans son fichier, pour les sujets qui s'en servent. -->
+<SettingsConditions {config} {shown} {onapply} {onlive} />
 
 <style>
   .help { margin: 6px 0 0; color: var(--text-dim); font-size: var(--type-small); }

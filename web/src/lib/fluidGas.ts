@@ -242,7 +242,10 @@ function headerLength(layout: Layout, cylinder: number): number {
     // Une lumière par rotor, tout de suite un court tube : `headerM` de `applyRotary`.
     case 'rotary': return 0.42;
     case 'inline': return 0.62;
-    case 'v': return cylinder % 2 === 0 ? 0.55 : 0.72;
+    // Socle : un VR et un W comme un V.
+    case 'v':
+    case 'vr':
+    case 'w': return cylinder % 2 === 0 ? 0.55 : 0.72;
     case 'cross_plane': return cylinder % 2 === 0 ? 0.5 : 0.86;
     case 'boxer': return cylinder % 2 === 0 ? 0.48 : 1.05;
   }
@@ -571,7 +574,8 @@ export class GasNetwork {
     this.clearance = cylinderVolume / (ratio - 1);
     this.exhaustValve = 0.19 * this.boreArea;
     this.intakeValve = 0.24 * this.boreArea;
-    if (config.camshaft === 'sohc' && !rotary) {
+    // Socle : les culbuteurs (`ohv`, deux soupapes) comme le simple arbre.
+    if ((config.camshaft === 'sohc' || config.camshaft === 'ohv') && !rotary) {
       // Deux soupapes au lieu de quatre : le même calcul de section que le C++ (`valves.ts`).
       const share = sohcSectionShare(config.boreMm);
       this.exhaustValve *= share.exhaust;

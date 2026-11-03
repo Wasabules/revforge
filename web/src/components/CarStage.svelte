@@ -737,7 +737,8 @@
       const line: [number, number][] = behind
         ? [toCar(Math.max(left, tail + 0.1), engineY + 0.1), toCar(Math.max(left - 0.12, tail + 0.05), floor), toCar(tail, floor + 0.02)]
         : [toCar(left, engineY + 0.1), toCar(left - 0.1, floor), toCar(rearX + 0.1, floor), toCar(rearX, floor + 0.14), toCar(tail + 0.2, floor + 0.12), toCar(tail, floor + 0.04)];
-      const pipeWidth = Math.max(3, (config.exhaust === 'straight' ? 0.075 : 0.06) * scale);
+      // Socle : la chambre de détente se dessine comme la ligne directe.
+      const pipeWidth = Math.max(3, (config.exhaust === 'straight' || config.exhaust === 'expansion' ? 0.075 : 0.06) * scale);
       tube(ctx, line, pipeWidth, pipeColor(theme, motion.heat));
 
       // Le panache d'abord, derrière la ligne : il sort de la grille de calcul, à l'échelle de la voiture.

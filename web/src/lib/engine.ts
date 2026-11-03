@@ -1,4 +1,4 @@
-import { carArgs, configArgs, gearboxArgs, gearRatios, type EngineConfig } from './config';
+import { carArgs, configArgs, gearboxArgs, gearRatios, tuningArgs, type EngineConfig } from './config';
 import { t } from './i18n.svelte';
 
 export const Mode = { Off: 0, Neutral: 1, Drive: 2, Lap: 3, Manual: 4 } as const;
@@ -254,6 +254,8 @@ interface RfExports {
   rf_sheet_level(item: number): number;
   rf_sheet_line_loss(fromHz: number, toHz: number): number;
   rf_set_config(...args: number[]): void;
+  /** Les réglages du socle moteur : posés, pas appliqués. Juste avant rf_set_config ou rf_set_electric. */
+  rf_set_tuning(...args: number[]): void;
   rf_intake_air_c(rpm: number): number;
   rf_intake_drop_kpa(rpm: number): number;
   rf_turbo_wheel_mm(): number;
@@ -429,8 +431,9 @@ export class Engine {
   setConfig(config: EngineConfig): void {
     this.send({ type: 'car', args: carArgs(config) });
     this.send({ type: 'gearbox', args: gearboxArgs(config), ratios: gearRatios(config) });
-    if (config.electric) this.send({ type: 'electric' });
-    else this.send({ type: 'config', args: configArgs(config) });
+    // Les réglages du socle voyagent avec le moteur : un seul changement, jamais un moteur à moitié réglé.
+    if (config.electric) this.send({ type: 'electric', tuning: tuningArgs(config) });
+    else this.send({ type: 'config', args: configArgs(config), tuning: tuningArgs(config) });
   }
 
   setMode(mode: ModeValue): void {
@@ -514,6 +517,7 @@ export class Engine {
     rf.rf_set_car(...carArgs(config));
     gearRatios(config).forEach((ratio, i) => rf.rf_set_gear_ratio(i + 1, ratio));
     rf.rf_set_gearbox(...gearboxArgs(config));
+    rf.rf_set_tuning(...tuningArgs(config));
     if (config.electric) rf.rf_set_electric();
     else rf.rf_set_config(...configArgs(config));
     return rf;

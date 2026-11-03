@@ -24,8 +24,9 @@ class RevforgeProcessor extends AudioWorkletProcessor {
   onCommand(command) {
     const { rf } = this;
     switch (command.type) {
-      case 'config': rf.rf_set_config(...command.args); break;
-      case 'electric': rf.rf_set_electric(); break;
+      // Les réglages du socle d'abord : rf_set_tuning les pose, rf_set_config ou rf_set_electric les applique.
+      case 'config': rf.rf_set_tuning(...command.tuning); rf.rf_set_config(...command.args); break;
+      case 'electric': rf.rf_set_tuning(...command.tuning); rf.rf_set_electric(); break;
       case 'mode': rf.rf_set_mode(command.mode); break;
       case 'car': rf.rf_set_car(...command.args); break;
       case 'gearbox':

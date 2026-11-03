@@ -25,12 +25,13 @@
   import Tachometer from './components/Tachometer.svelte';
   import Trends from './components/Trends.svelte';
   import { AIR_FILTERS, BODIES, BOX_KINDS, CUSTOM_ID, DRIVES, EXHAUSTS, PRESETS, ROUTINGS, decodeConfig, encodeConfig, findPreset, strokeMm, type EngineConfig, type ShiftModeId, ANTI_LAGS, CAMSHAFTS, SUPERCHARGER_KINDS, FUEL_SYSTEMS, isRotary } from './lib/config';
+  import { BOOST_CONTROLS, DIESEL_INJECTIONS, FUEL_GRADES, INTERCOOLERS, REV_LIMITERS, TRACTION_CONTROLS, TUNING_FIELDS, TURBO_LAYOUTS, VALVE_TIMINGS, tuningArgs } from './lib/config';
   import { heated, updateHeat, wallCelsius } from './lib/heat';
   import { TelemetryHistory } from './lib/history';
   import { Readings } from './lib/instruments';
   import { Motion, rememberAnimations, rememberSpeed, SPEEDS, systemReducesMotion } from './lib/motion';
   import { EMPTY_SPEC, Engine, IDLE_TELEMETRY, KW_TO_HP, Listener, Mode, type ModeValue, type Telemetry } from './lib/engine';
-  import { fixed, lang, setLang, t, type MessageKey } from './lib/i18n.svelte';
+  import { fixed, lang, setLang, t, whole, type MessageKey } from './lib/i18n.svelte';
 
   type DriveMode = 'neutral' | 'drive' | 'lap';
   const DRIVE_MODES: { value: DriveMode; label: string; help: string; mode: ModeValue }[] = [
@@ -131,7 +132,7 @@
   onMount(() => {
     engine.load().then(() => (loaded = true)).catch((error) => (failure = () => t('error.load', { error })));
     if (import.meta.env.DEV || location.search.includes('test')) {
-      (window as unknown as Record<string, unknown>).__revforge = { engine, telemetry: () => telemetry, spec: () => spec, motion, telemetryLog, readings, encodeConfig, decodeConfig, config: () => config };
+      (window as unknown as Record<string, unknown>).__revforge = { engine, telemetry: () => telemetry, spec: () => spec, motion, telemetryLog, readings, encodeConfig, decodeConfig, config: () => config, tuningFields: TUNING_FIELDS, tuningArgs };
     }
     const stopGamepad = pollGamepad();
     const stopHeat = followHeat();
@@ -394,11 +395,56 @@
     const c = shown;
     const hp = Math.round(spec.peakHp);
     const label = <T extends string>(list: { value: T; label: string }[], value: T) => list.find((item) => item.value === value)?.label ?? '';
+    /** Un morceau du résumé, précédé de son séparateur ; rien quand le réglage est au défaut ou n'a pas de sens ici. */
+    const part = (text: string | false) => (text ? ` · ${text}` : '');
+    const rotary = isRotary(c);
+    const diesel = c.fuel === 'diesel' && !rotary;
+    const valves = !rotary && c.cycle !== 'two_stroke';
+    const turbo = c.aspiration === 'turbo';
     return {
-      engine: c.electric ? t('summary.electric', { hp }) : (isRotary(c) ? t('summary.rotary', { litres: decimal(c.displacementCc / 1000), cylinders: c.cylinders, hp }) : t('summary.engine', { litres: decimal(c.displacementCc / 1000), cylinders: c.cylinders, hp, bore: c.boreMm, stroke: Math.round(strokeMm(c)) })) + (c.aspiration === 'supercharger' ? ` · ${label(SUPERCHARGER_KINDS, c.superchargerKind)}` : '') + (c.airFilter === 'stock' ? '' : ` · ${label(AIR_FILTERS, c.airFilter)}`) + (c.aspiration === 'turbo' && c.turboPipeMm !== 400 ? t('summary.turboPipe', { m: decimal(c.turboPipeMm / 1000) }) : '') + (c.camshaft === 'sohc' && !isRotary(c) ? ` · ${label(CAMSHAFTS, c.camshaft)}` : '') + (c.fuel !== 'diesel' && c.fuelSystem !== 'injection' ? ` · ${c.fuelSystem === 'multi' && isRotary(c) ? t('fuelSystem.multi.rotary') : label(FUEL_SYSTEMS, c.fuelSystem)}` : '') + (antiLagFitted ? ` · ${label(ANTI_LAGS, c.antiLag)}` : ''),
+      // Une ligne par réglage, comme les sections du volet : chaque sujet ajoute la sienne sans toucher aux autres.
+      engine: c.electric ? t('summary.electric', { hp }) : [
+        rotary ? t('summary.rotary', { litres: decimal(c.displacementCc / 1000), cylinders: c.cylinders, hp }) : t('summary.engine', { litres: decimal(c.displacementCc / 1000), cylinders: c.cylinders, hp, bore: c.boreMm, stroke: Math.round(strokeMm(c)) }),
+        part(c.aspiration === 'supercharger' && label(SUPERCHARGER_KINDS, c.superchargerKind)),
+        part(c.airFilter !== 'stock' && label(AIR_FILTERS, c.airFilter)),
+        turbo && c.turboPipeMm !== 400 ? t('summary.turboPipe', { m: decimal(c.turboPipeMm / 1000) }) : '',
+        part(valves && c.camshaft !== 'dohc' && label(CAMSHAFTS, c.camshaft)),
+        part(c.fuel !== 'diesel' && c.fuelSystem !== 'injection' && (c.fuelSystem === 'multi' && rotary ? t('fuelSystem.multi.rotary') : label(FUEL_SYSTEMS, c.fuelSystem))),
+        part(antiLagFitted && label(ANTI_LAGS, c.antiLag)),
+        // Le socle moteur : architecture et cycle, combustion, distribution, alimentation, suralimentation, calculateur.
+        part(!rotary && c.cycle !== 'four_stroke' && t('summary.twoStroke')),
+        part(c.compressionRatio !== 0 && t('summary.compression', { ratio: decimal(c.compressionRatio) })),
+        part(!diesel && c.fuelGrade !== 'ron95' && label(FUEL_GRADES, c.fuelGrade)),
+        part(valves && c.camDurationDeg !== 0 && t('summary.camDuration', { deg: c.camDurationDeg })),
+        part(valves && c.camLiftMm !== 0 && t('summary.camLift', { mm: decimal(c.camLiftMm) })),
+        part(valves && c.lobeSeparationDeg !== 0 && t('summary.lsa', { deg: c.lobeSeparationDeg })),
+        part(valves && c.valveTiming !== 'fixed' && label(VALVE_TIMINGS, c.valveTiming)),
+        part(valves && c.valveSprings !== 'stock' && t('summary.stiffSprings')),
+        part(diesel && c.dieselInjection !== 'mechanical' && label(DIESEL_INJECTIONS, c.dieselInjection)),
+        part(!rotary && c.egr && t('summary.egr')),
+        part((diesel || c.fuelSystem === 'direct') && c.particulateFilter && t('summary.dpf')),
+        part(turbo && c.turboLayout !== 'single' && label(TURBO_LAYOUTS, c.turboLayout)),
+        part(turbo && c.variableGeometry && t('summary.vgt')),
+        part(turbo && c.boostControl !== 'spring' && t('summary.boostControl', { kind: label(BOOST_CONTROLS, c.boostControl) })),
+        part(c.aspiration !== 'natural' && c.intercooler !== 'air_to_air' && t('summary.intercooler', { kind: label(INTERCOOLERS, c.intercooler) })),
+        part(!diesel && c.waterInjection && t('summary.water')),
+        part(!diesel && c.nitrousKw !== 0 && t('summary.nitrous', { kw: c.nitrousKw })),
+        part(!diesel && c.ignitionOffsetDeg !== 0 && t('summary.advance', { deg: c.ignitionOffsetDeg > 0 ? `+${c.ignitionOffsetDeg}` : c.ignitionOffsetDeg })),
+        part(!diesel && c.fullLoadLambda !== 0 && t('summary.lambda', { lambda: fixed(c.fullLoadLambda, 2) })),
+        part(c.revLimiter !== 'stock' && t('summary.limiter', { kind: label(REV_LIMITERS, c.revLimiter) })),
+        part(c.launchRpm !== 0 && t('summary.launch', { rpm: c.launchRpm })),
+        part(c.flatShift && t('summary.flatShift')),
+        part(c.tractionControl !== 'off' && t('summary.traction', { kind: label(TRACTION_CONTROLS, c.tractionControl) })),
+      ].join(''),
       exhaust: c.electric ? t('summary.noExhaust') : t('summary.exhaust', { line: label(EXHAUSTS, c.exhaust), outlets: label(ROUTINGS, c.routing) }),
       gearbox: spec.gears === 1 ? t('spec.gears.one') : t('summary.gearbox', { gears: t('spec.gears.many', { gears: spec.gears }), kind: label(BOX_KINDS, c.boxKind) }),
-      car: t('summary.car', { body: label(BODIES, c.body), mass: c.massKg, drive: label(DRIVES, c.drive) }),
+      // Les conditions, rangées dans le volet de la voiture : l'air, l'altitude, le moteur au démarrage.
+      car: [
+        t('summary.car', { body: label(BODIES, c.body), mass: c.massKg, drive: label(DRIVES, c.drive) }),
+        part(c.ambientC !== 20 && t('summary.ambient', { c: c.ambientC })),
+        part(c.altitudeM !== 0 && t('summary.altitude', { m: whole(c.altitudeM) })),
+        part(!c.electric && c.startTemp !== 'warm' && t('summary.coldStart')),
+      ].join(''),
       listener: typeof listener === 'number' ? t(POSITION_LABEL[listener]) : t('listener.free'),
       share: preset?.name ?? t('builder.custom'),
       display: animated ? t('summary.display', { lang: t('display.languageName'), speed: t(`speed.${speed}` as MessageKey) }) : t('summary.displayOff', { lang: t('display.languageName') }),
@@ -628,7 +674,7 @@
     <GearboxPanel {config} {shown} {spec} rpm={panel === 'gearbox' ? telemetry.rpm : 0} speed={panel === 'gearbox' ? telemetry.speed : 0} gear={panel === 'gearbox' ? telemetry.gear : 0} {running} onapply={apply} onlive={live} />
   </Panel>
   <Panel id="car" title={t('panel.car')} open={panel === 'car'} onclose={closePanel}>
-    <CarSettings {config} {spec} onapply={apply} onlive={live} />
+    <CarSettings {config} {shown} {spec} onapply={apply} onlive={live} />
   </Panel>
   <Panel id="listener" title={t('section.listener')} open={panel === 'listener'} onclose={closePanel}>
     <ListenerPanel config={shown} settled={config} telemetry={panel === 'listener' ? telemetry : IDLE_TELEMETRY} {motion} {engine} {loaded} {running} bind:place={listener} />

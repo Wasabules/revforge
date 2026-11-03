@@ -10,12 +10,14 @@
   let { config, onapply }: Props = $props();
 
   const popCharacter = $derived(EXHAUSTS.find((item) => item.value === config.exhaust)?.pops ?? '');
+  /** La chambre de détente est faite pour un deux-temps : proposée là, ou si un lien l'a déjà choisie. */
+  const lines = $derived(EXHAUSTS.filter((item) => item.value !== 'expansion' || config.cycle === 'two_stroke' || config.exhaust === 'expansion'));
 </script>
 
 {#if config.electric}
   <p class="help">{t('builder.electricHelp')}</p>
 {:else}
-  <Choices label={t('builder.exhaust')} options={EXHAUSTS} value={config.exhaust} onchange={(exhaust) => onapply({ exhaust })} />
+  <Choices label={t('builder.exhaust')} options={lines} value={config.exhaust} onchange={(exhaust) => onapply({ exhaust })} />
   <Choices label={t('builder.routing')} options={ROUTINGS} value={config.routing} onchange={(routing) => onapply({ routing })} />
   {#if config.fuel === 'diesel'}
     <p class="help">{t('builder.dieselNoPops')}</p>

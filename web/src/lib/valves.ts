@@ -35,7 +35,8 @@ const quarterValve = (boreMm: number, reach: number) => (boreMm / 2 - VALVE_EDGE
 
 export function valveSizes(camshaft: Camshaft, boreMm: number): ValveSizes {
   const lift = VALVE_LIFT_PER_BORE * boreMm;
-  if (camshaft === 'sohc') {
+  // Socle : les culbuteurs (`ohv`) ont deux soupapes, comme le simple arbre.
+  if (camshaft === 'sohc' || camshaft === 'ohv') {
     const intakeMm = (boreMm - 2 * VALVE_EDGE_MM - VALVE_BRIDGE_TWO_MM) / (1 + VALVE_EXHAUST_SHARE);
     const exhaustMm = VALVE_EXHAUST_SHARE * intakeMm;
     return { perCylinder: 2, intakeMm, exhaustMm, intakeAreaMm2: valveArea(intakeMm, lift), exhaustAreaMm2: valveArea(exhaustMm, lift) };

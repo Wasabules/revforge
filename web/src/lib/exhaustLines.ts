@@ -51,6 +51,11 @@ export const EXHAUST_LINES: Record<Exhaust, { length: number; area: number; part
     { length: 0.5, area: 13, part: 'muffler' },
     { length: 0.5, area: 1, part: 'pipe' },
   ],
+  // Socle : la chambre de détente d'un deux-temps se dessine et se calcule comme la ligne directe, comme dans le son.
+  expansion: [
+    { length: 0.4, area: 1, part: 'pipe' },
+    { length: 1.6, area: 1.3, part: 'pipe' },
+  ],
 };
 
 /** Le diamètre des roues, rapporté au turbo moyen : recopie de `kSizeSmall` et `kSizeLarge` en C++. Il dimensionne le gaz et les dessins. */

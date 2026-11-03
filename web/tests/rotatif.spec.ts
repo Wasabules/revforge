@@ -276,7 +276,8 @@ test.describe('sur le site', () => {
     await panel.getByRole('button', { name: 'Rotatif' }).click();
     await expect(page.getByTestId('summary')).toContainText('2 rotors');
     await expect(panel.getByText('Alésage (taille')).toHaveCount(0);
-    await expect(panel.getByText('Carburant')).toHaveCount(0);
+    // Le choix essence ou diesel : d'autres textes du volet parlent de carburant, d'où le mot exact.
+    await expect(panel.getByText('Carburant', { exact: true })).toHaveCount(0);
     const rotors = panel.locator('fieldset').filter({ hasText: 'Rotors' }).getByRole('button');
     await expect(rotors).toHaveText(['2', '3', '4']);
     await rotors.nth(1).click();
