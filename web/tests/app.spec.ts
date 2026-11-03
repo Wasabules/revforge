@@ -107,6 +107,8 @@ test('balade : le pilote automatique démarre seul', async ({ page }) => {
 });
 
 test('tous les préréglages jouent, sans erreur ni silence', async ({ page }) => {
+  // Vingt-trois préréglages depuis le VR6, le W12, le W16 et le V16 : quelques secondes chacun au plus.
+  test.setTimeout(120_000);
   const errors = await start(page);
   await ouvrir(page, 'share');
   const select = page.getByTestId('preset');
