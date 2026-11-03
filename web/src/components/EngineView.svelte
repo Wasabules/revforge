@@ -206,6 +206,14 @@
       block: t('engine.part.block'),
       ...(layout?.valve.sohc ? { rocker: t('engine.part.rocker') } : {}),
       ...(layout?.carb ? { carburetor: t('engine.part.carburetor') } : {}),
+      // Un deux-temps : des lumières et un carter fermé, à la place des soupapes et du carter d'huile.
+      ...(layout?.twoStroke ? {
+        exhaustPort: t('engine.part.exhaustPort'),
+        transferPort: t('engine.part.transferPort'),
+        inletPort: t('engine.part.inletPort'),
+        crankcase: t('engine.part.crankcase'),
+        transferDuct: t('engine.part.transferDuct'),
+      } : {}),
       ...(layout?.turbo ? {
         compressor: t('engine.part.compressor'),
         turbine: t('engine.part.turbine'),
@@ -437,6 +445,7 @@
     if (shape.splitDeg > 0) parts.push(t('engine.caption.split', { angle: shape.splitDeg }));
     if (shape.strokeClamped) parts.push(t('engine.caption.clamped'));
     if (shape.valve.sohc) parts.push(t('engine.caption.sohc', { valves: shape.count * shape.valve.perCylinder }));
+    if (shape.twoStroke) parts.push(t('engine.twoStroke.note'));
     return parts.join(' · ');
   });
   const caption = $derived(

@@ -220,6 +220,26 @@ test.describe('sur le site', () => {
     expect(errors).toEqual([]);
   });
 
+  test('la vue du moteur : des lumières, ni soupapes ni cames, sans erreur, en 3D et en 2D', async ({ page }) => {
+    mkdirSync(SONS, { recursive: true });
+    const errors = await open(page);
+    await choosePreset(page);
+    await page.keyboard.press('Escape');
+    await voir(page, 'engine');
+    await page.getByTestId('start').click();
+    await page.waitForFunction(() => (window as any).__revforge?.telemetry().rpm > 500, null, { timeout: 15000 });
+    await page.waitForTimeout(1500);
+    await page.getByTestId('engine-view').screenshot({ path: `${SONS}/vue3d.png` });
+    await page.getByTestId('engine-names').click();
+    await page.waitForTimeout(400);
+    await page.getByTestId('engine-view').screenshot({ path: `${SONS}/vue3d_noms.png` });
+    await page.getByTestId('engine-names').click();
+    await page.getByTestId('engine-mode-2d').click();
+    await page.waitForTimeout(800);
+    await page.getByTestId('engine-view').screenshot({ path: `${SONS}/vue2d.png` });
+    expect(errors).toEqual([]);
+  });
+
   test('en marche : l\'huile part avec l\'essence, et la ligne montre la chambre et sa fumée bleue', async ({ page }) => {
     mkdirSync(SONS, { recursive: true });
     const errors = await open(page);

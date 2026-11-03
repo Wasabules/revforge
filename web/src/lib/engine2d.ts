@@ -5,7 +5,7 @@
  * construction ; dessiner une image n'alloue rien.
  */
 import { mix, type Theme } from './canvas';
-import { collectorPosition, DEG, type Cylinder, type EngineLayout, type EnginePose, lobeNoseDeg, lobeRadius, plenumPosition, stackOf, rockerOutline, hasOpenStacks } from './engineLayout';
+import { bankToFront, collectorPosition, DEG, type Cylinder, type EngineLayout, type EnginePose, lobeNoseDeg, lobeRadius, plenumPosition, stackOf, rockerOutline, hasOpenStacks } from './engineLayout';
 import { chargerUnit, lobedOutline, type ChargerUnit } from './superchargerLayout';
 import { turboChain, type TurboChain, type TurboUnit } from './turboChain';
 import { EVC, EVO, IVC, IVO } from './fluidGas';
@@ -65,6 +65,12 @@ export interface Labels2D {
   wastegate?: string;
   /** La courroie du compresseur mécanique. */
   belt?: string;
+  /** Les pièces d'un deux-temps : absentes sur un quatre-temps. */
+  exhaustPort?: string;
+  transferPort?: string;
+  inletPort?: string;
+  crankcase?: string;
+  transferDuct?: string;
 }
 
 export class Engine2D {
@@ -78,7 +84,12 @@ export class Engine2D {
   private readonly head: Path2D;
   private readonly block: Path2D;
   private readonly pan: Path2D;
-  private readonly oil: Path2D;
+  /** L'huile au fond du carter : un deux-temps n'en a pas, elle est mélangée à l'essence. */
+  private readonly oil: Path2D | null;
+  /** Le carter fermé d'un deux-temps, là où tourne le vilebrequin : il se remplit du mélange qu'il pompe. */
+  private readonly caseCavity: Path2D | null = null;
+  /** De quoi passer d'un repère de rangée à la vue de face sans rien allouer. */
+  private readonly spot = [0, 0];
   /** Les bossages de came : admission et échappement de chaque cylindre. */
   private readonly lobesIn: Path2D[] = [];
   private readonly lobesEx: Path2D[] = [];
@@ -132,14 +143,18 @@ export class Engine2D {
     this.rod = rodPath;
 
     // Ce qui est coupé, hachuré : la culasse, et le bloc avec ses chemises.
+    const ported = layout.twoStroke;
     const W = bore * 1.04;
     const topY = valve.headTop;
-    const headPath: P2[] = [[-W, deck], [W, deck], [W, deck + bore * 0.85], [W * 0.92, topY], [-W * 0.92, topY], [-W, deck + bore * 0.85]];
+    // Un deux-temps n'a qu'une plaque sur son cylindre : ni arbre, ni couvre-culasse.
+    const headPath: P2[] = ported
+      ? [[-valve.coverW, deck], [valve.coverW, deck], [valve.coverW, topY - bore * 0.1], [valve.coverW * 0.9, topY], [-valve.coverW * 0.9, topY], [-valve.coverW, topY - bore * 0.1]]
+      : [[-W, deck], [W, deck], [W, deck + bore * 0.85], [W * 0.92, topY], [-W * 0.92, topY], [-W, deck + bore * 0.85]];
     this.head = polyPath(headPath);
     const coverW = valve.coverW;
     const coverTop = valve.coverTop;
     this.rockerPath = valve.rocker ? polyPath(rockerOutline(valve.rocker, bore)) : null;
-    this.cover = polyPath([[-coverW, topY], [coverW, topY], [coverW, coverTop - bore * 0.14], [coverW - bore * 0.18, coverTop], [-coverW + bore * 0.18, coverTop], [-coverW, coverTop - bore * 0.14]]);
+    this.cover = ported ? new Path2D() : polyPath([[-coverW, topY], [coverW, topY], [coverW, coverTop - bore * 0.14], [coverW - bore * 0.18, coverTop], [-coverW + bore * 0.18, coverTop], [-coverW, coverTop - bore * 0.14]]);
 
     const half = bore * 0.66;
     const swing = Math.max(crank * 1.25 + bore * 0.1, mainRadius * 1.6);
@@ -173,11 +188,27 @@ export class Engine2D {
     }
     blockPath.closePath();
     this.block = blockPath;
-    const panDepth = layout.flat ? bore * 0.55 : Math.max(crank * 1.25 + bore * 0.55, bore * 1.1);
-    yBottom = panTop - panDepth;
-    this.pan = polyPath([[-panWidth, panTop], [-panWidth, panTop - panDepth * 0.2], [-panWidth * 0.86, yBottom], [panWidth * 0.86, yBottom], [panWidth, panTop - panDepth * 0.2], [panWidth, panTop]]);
-    const oilTop = layout.flat ? panTop - bore * 0.3 : panTop - panDepth * 0.62;
-    this.oil = polyPath([[-panWidth * 0.86, yBottom + 0.5], [panWidth * 0.86, yBottom + 0.5], [panWidth * 0.93, oilTop], [-panWidth * 0.93, oilTop]]);
+    if (ported) {
+      // Le carter d'un deux-temps : fermé, étanche, sa paroi au plus près du vilebrequin, sans huile au fond.
+      const depth = layout.flat ? bore * 0.3 : Math.max(ported.caseRadius + panTop, bore * 0.2);
+      yBottom = panTop - depth;
+      const bowl: P2[] = [];
+      for (let k = 0; k <= 16; k++) {
+        const a = (k / 16) * Math.PI;
+        bowl.push([-panWidth * Math.cos(a), panTop - depth * Math.sin(a)]);
+      }
+      this.pan = polyPath(bowl);
+      this.oil = null;
+      const cavity = new Path2D();
+      cavity.arc(0, 0, swing, 0, Math.PI * 2);
+      this.caseCavity = cavity;
+    } else {
+      const panDepth = layout.flat ? bore * 0.55 : Math.max(crank * 1.25 + bore * 0.55, bore * 1.1);
+      yBottom = panTop - panDepth;
+      this.pan = polyPath([[-panWidth, panTop], [-panWidth, panTop - panDepth * 0.2], [-panWidth * 0.86, yBottom], [panWidth * 0.86, yBottom], [panWidth, panTop - panDepth * 0.2], [panWidth, panTop]]);
+      const oilTop = layout.flat ? panTop - bore * 0.3 : panTop - panDepth * 0.62;
+      this.oil = polyPath([[-panWidth * 0.86, yBottom + 0.5], [panWidth * 0.86, yBottom + 0.5], [panWidth * 0.93, oilTop], [-panWidth * 0.93, oilTop]]);
+    }
 
     // Les conduits, dans la culasse.
     const port = (radius: number): Path2D => {
@@ -192,11 +223,12 @@ export class Engine2D {
       path.closePath();
       return path;
     };
-    this.portIn = port(valve.radiusIn * 0.68);
-    this.portEx = port(valve.radiusEx * 0.68);
+    // Un deux-temps n'a ni conduit dans sa culasse, ni came : ses conduits partent des lumières, voir `drawTwoStrokeBank`.
+    this.portIn = ported ? new Path2D() : port(valve.radiusIn * 0.68);
+    this.portEx = ported ? new Path2D() : port(valve.radiusEx * 0.68);
 
     // Les bossages de came, un par cylindre, tout autour de leur arbre.
-    for (const cylinder of layout.cylinders) {
+    for (const cylinder of ported ? [] : layout.cylinders) {
       for (const exhaust of [false, true]) {
         const side = exhaust ? -cylinder.intakeSide : cylinder.intakeSide;
         const open = exhaust ? EVO : IVO;
@@ -217,7 +249,8 @@ export class Engine2D {
     let xMax = ringR;
     let yMax = 0;
     for (const cylinder of layout.cylinders) {
-      const top = deck + bore * 1.95;
+      // La bougie d'un deux-temps et son capuchon dépassent moins qu'un couvre-culasse.
+      const top = deck + bore * (ported ? 1.3 : 1.95);
       const p = toFront(cylinder.betaDeg, 0, top);
       const c = toFront(cylinder.betaDeg, coverW, top);
       const d = toFront(cylinder.betaDeg, -coverW, top);
@@ -412,10 +445,20 @@ export class Engine2D {
     ctx.stroke(this.block);
     ctx.fillStyle = theme.bg;
     ctx.fill(this.pan);
-    ctx.fillStyle = '#8a5a14';
-    ctx.globalAlpha = 0.55;
-    ctx.fill(this.oil);
-    ctx.globalAlpha = 1;
+    if (this.oil) {
+      ctx.fillStyle = '#8a5a14';
+      ctx.globalAlpha = 0.55;
+      ctx.fill(this.oil);
+      ctx.globalAlpha = 1;
+    }
+    if (this.caseCavity) {
+      // Le mélange frais qu'aspire et comprime le carter : la couleur de l'admission.
+      ctx.fillStyle = theme.cool;
+      ctx.globalAlpha = 0.14;
+      ctx.fill(this.pan);
+      ctx.fill(this.caseCavity);
+      ctx.globalAlpha = 1;
+    }
     ctx.stroke(this.pan);
 
     // ── Un rang : la section la plus à l'avant de chaque rangée ──
@@ -492,8 +535,22 @@ export class Engine2D {
         if (labels.airbox) labelAt(labels.airbox, charger.airbox[0], charger.airbox[1] + charger.airboxSize[1] + bore * 0.08);
       }
       labelAt(labels.flywheel, ring.radius * 0.72, -ring.radius * 0.72);
-      labelAt(labels.pan, 0, -ring.radius * 0.88);
-      labelAt(labels.head, 0, layout.deck + bore * 2.08);
+      const ported = layout.twoStroke;
+      labelAt(ported && labels.crankcase ? labels.crankcase : labels.pan, 0, -ring.radius * 0.88);
+      labelAt(labels.head, 0, layout.deck + bore * (ported ? 1.42 : 2.08));
+      if (ported) {
+        // Les lumières de la première rangée : l'échappement au-dessus de son conduit, l'admission sous le sien.
+        const first = layout.byBank[0][0];
+        const at = this.spot;
+        if (labels.exhaustPort) {
+          bankToFront(at, first.betaDeg, -first.intakeSide * (ported.mouthX + bore * 0.2), ported.exhaustTop + bore * 0.14);
+          labelAt(labels.exhaustPort, at[0], at[1]);
+        }
+        if (labels.inletPort) {
+          bankToFront(at, first.betaDeg, first.intakeSide * (ported.mouthX + bore * 0.2), ported.inletFloor - bore * 0.2);
+          labelAt(labels.inletPort, at[0], at[1]);
+        }
+      }
       if (labels.rocker && layout.valve.rocker) {
         // Au-dessus du culbuteur d'admission de la première rangée.
         const first = layout.byBank[0][0];
@@ -550,6 +607,11 @@ export class Engine2D {
   }
 
   private drawBank(ctx: CanvasRenderingContext2D, cylinder: Cylinder, pose: EnginePose, painter: GasPainter, theme: Theme, hatch: CanvasPattern | string, px: number): void {
+    if (this.layout.twoStroke) {
+      this.drawTwoStrokeBank(ctx, cylinder, pose, painter, theme, hatch, px);
+      this.drawManifolds(ctx, cylinder, pose, theme, painter, px);
+      return;
+    }
     const layout = this.layout;
     const { bore, deck, valve } = layout;
     const i = cylinder.index;
@@ -770,6 +832,226 @@ export class Engine2D {
     this.drawManifolds(ctx, cylinder, pose, theme, painter, px);
   }
 
+  /**
+   * Un cylindre de deux-temps, coupé par l'échappement et l'admission : la plaque de culasse et sa bougie, les lumières qui
+   * percent la paroi, le carter sous le piston. Le piston, à longue jupe, découvre et recouvre les lumières en passant devant.
+   */
+  private drawTwoStrokeBank(ctx: CanvasRenderingContext2D, cylinder: Cylinder, pose: EnginePose, painter: GasPainter, theme: Theme, hatch: CanvasPattern | string, px: number): void {
+    const layout = this.layout;
+    const ported = layout.twoStroke!;
+    const { bore, deck, valve } = layout;
+    const i = cylinder.index;
+    const side = cylinder.intakeSide;
+    const out = -side;
+    const s = pose.piston[i];
+    const R = bore / 2;
+    const crown = s + layout.pistonTop;
+    const skirt = s - layout.pistonBottom;
+    const roof = valve.roofRise;
+    const bottom = ported.ductBottom;
+    const edge = ported.mouthX;
+
+    ctx.save();
+    ctx.rotate(-cylinder.betaDeg * DEG);
+
+    // La culasse : une plaque hachurée.
+    ctx.fillStyle = hatch;
+    ctx.fill(this.head);
+    ctx.strokeStyle = theme.lineStrong;
+    ctx.lineWidth = 1.5 * px;
+    ctx.stroke(this.head);
+
+    // Les parois coupées : l'échappement d'un côté, l'admission du carter de l'autre, plus bas. Entre les deux, les conduits.
+    ctx.fillStyle = hatch;
+    this.wallBand(ctx, out, R, edge, bottom, ported.exhaustFloor);
+    this.wallBand(ctx, out, R, edge, ported.exhaustTop, deck);
+    this.wallBand(ctx, side, R, edge, bottom, ported.inletFloor);
+    this.wallBand(ctx, side, R, edge, ported.inletTop, deck);
+    ctx.fillStyle = pose.gasLive ? painter.gasStyle(theme, pose.gasT[i], pose.gasBurnt[i]) : theme.metal;
+    ctx.globalAlpha = 0.8;
+    this.wallBand(ctx, out, R, edge, ported.exhaustFloor, ported.exhaustTop);
+    ctx.fillStyle = theme.cool;
+    ctx.globalAlpha = 0.55;
+    this.wallBand(ctx, side, R, edge, ported.inletFloor, ported.inletTop);
+    ctx.globalAlpha = 1;
+
+    // Sous le piston, le carter et son mélange : il monte jusqu'à la jupe.
+    ctx.fillStyle = theme.bg;
+    ctx.fillRect(-R, bottom, bore, Math.max(crown - bottom, 0));
+    ctx.fillStyle = theme.cool;
+    ctx.globalAlpha = 0.16;
+    ctx.fillRect(-R, bottom, bore, Math.max(skirt - bottom, 0));
+    ctx.globalAlpha = 1;
+
+    // La chambre en dôme : le gaz, la flamme.
+    ctx.beginPath();
+    ctx.moveTo(-R, crown);
+    ctx.lineTo(-R, deck);
+    ctx.quadraticCurveTo(0, deck + 2 * roof, R, deck);
+    ctx.lineTo(R, crown);
+    ctx.closePath();
+    const burning = pose.flame[i] > 0;
+    if (pose.gasLive) {
+      const kelvin = pose.gasT[i];
+      const shown = kelvin < 800 ? kelvin : 800 + (kelvin - 800) * 0.33;
+      ctx.fillStyle = painter.gasStyle(theme, shown, burning ? 0 : pose.gasBurnt[i]);
+    } else {
+      ctx.fillStyle = theme.bg;
+    }
+    ctx.fill();
+    // Un transfert, sur la paroi du fond, tourné vers l'admission : on le voit au-dessus de la tête du piston quand il est découvert.
+    const transferX = side * R * 0.15;
+    const transferHalf = ported.transferWidth * 0.35;
+    ctx.fillStyle = theme.cool;
+    ctx.globalAlpha = 0.45;
+    ctx.fillRect(transferX - transferHalf, ported.transferFloor, 2 * transferHalf, ported.transferTop - ported.transferFloor);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = theme.cool;
+    ctx.lineWidth = px;
+    ctx.setLineDash(DASH);
+    ctx.strokeRect(transferX - transferHalf, ported.transferFloor, 2 * transferHalf, ported.transferTop - ported.transferFloor);
+    ctx.setLineDash(NO_DASH);
+    if (burning) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(-R, crown);
+      ctx.lineTo(-R, deck);
+      ctx.quadraticCurveTo(0, deck + 2 * roof, R, deck);
+      ctx.lineTo(R, crown);
+      ctx.closePath();
+      ctx.clip();
+      // La flamme part de la bougie : la masse brûlée est calculée (Wiebe), la forme du front est une approximation.
+      const radius = bore * 0.08 + bore * 0.72 * Math.sqrt(pose.flame[i]);
+      ctx.beginPath();
+      ctx.arc(0, deck + roof - bore * 0.03, radius, 0, Math.PI * 2);
+      ctx.fillStyle = painter.gasStyle(theme, 1050 + 300 * (1 - pose.flame[i]), 1);
+      ctx.fill();
+      ctx.strokeStyle = '#fff4dc';
+      ctx.lineWidth = px;
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // La chemise : ses bords s'interrompent aux lumières.
+    ctx.strokeStyle = theme.text;
+    ctx.lineWidth = px;
+    ctx.beginPath();
+    this.edgeWithGap(ctx, out * R, bottom, deck, ported.exhaustFloor, ported.exhaustTop);
+    this.edgeWithGap(ctx, side * R, bottom, deck, ported.inletFloor, ported.inletTop);
+    ctx.moveTo(out * R, ported.exhaustFloor);
+    ctx.lineTo(out * edge, ported.exhaustFloor);
+    ctx.moveTo(out * R, ported.exhaustTop);
+    ctx.lineTo(out * edge, ported.exhaustTop);
+    ctx.moveTo(side * R, ported.inletFloor);
+    ctx.lineTo(side * edge, ported.inletFloor);
+    ctx.moveTo(side * R, ported.inletTop);
+    ctx.lineTo(side * edge, ported.inletTop);
+    ctx.stroke();
+
+    // Le piston : une longue jupe pleine, qui ferme les lumières en passant devant ; deux segments, l'axe.
+    ctx.fillStyle = theme.raised;
+    ctx.fillRect(-R + 0.3, skirt, bore - 0.6, crown - skirt);
+    ctx.fillStyle = theme.metal;
+    ctx.fillRect(-R + 0.3, crown - bore * 0.2, bore - 0.6, bore * 0.2);
+    ctx.fillRect(-R + 0.3, skirt, bore * 0.05, crown - skirt);
+    ctx.fillRect(R - 0.3 - bore * 0.05, skirt, bore * 0.05, crown - skirt);
+    ctx.strokeStyle = theme.text;
+    ctx.lineWidth = px;
+    ctx.strokeRect(-R + 0.3, skirt, bore - 0.6, crown - skirt);
+    ctx.fillStyle = theme.bg;
+    for (let k = 0; k < 2; k++) {
+      const gy = crown - bore * (0.06 + 0.06 * k);
+      ctx.fillRect(-R + 0.3, gy, bore * 0.02, bore * 0.018);
+      ctx.fillRect(R - 0.3 - bore * 0.02, gy, bore * 0.02, bore * 0.018);
+    }
+    ctx.fillStyle = theme.text;
+    ctx.beginPath();
+    ctx.arc(0, s, bore * 0.09, 0, Math.PI * 2);
+    ctx.fill();
+
+    // La bougie, au sommet du dôme, et son capuchon.
+    const tip = deck + roof - bore * 0.03;
+    ctx.fillStyle = theme.metal;
+    ctx.fillRect(-bore * 0.05, tip + bore * 0.05, bore * 0.1, bore * 0.32);
+    ctx.fillStyle = '#e9e6dd';
+    ctx.fillRect(-bore * 0.04, tip + bore * 0.36, bore * 0.08, bore * 0.3);
+    ctx.fillStyle = theme.text;
+    ctx.fillRect(-bore * 0.009, tip - bore * 0.03, bore * 0.018, bore * 0.08);
+    ctx.fillStyle = theme.dim;
+    ctx.fillRect(-bore * 0.075, tip + bore * 0.6, bore * 0.15, bore * 0.4);
+    if (pose.spark[i] > 0) {
+      const size = bore * (0.05 + 0.1 * pose.spark[i]);
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = '#a8d8ff';
+      ctx.lineWidth = 1.5 * px;
+      ctx.globalAlpha = 0.4 + 0.6 * pose.spark[i];
+      ctx.beginPath();
+      for (let k = 0; k < 4; k++) {
+        const a = (k / 4) * Math.PI;
+        ctx.moveTo(-Math.cos(a) * size, tip - bore * 0.035 - Math.sin(a) * size);
+        ctx.lineTo(Math.cos(a) * size, tip - bore * 0.035 + Math.sin(a) * size);
+      }
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(0, tip - bore * 0.035, size * 0.34, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    // Ce que calcule le gaz : la bouffée qui sort, le mélange qui monte des transferts, celui qu'aspire le carter.
+    const jetEx = pose.jetEx[i];
+    if (pose.liftEx[i] > 0 && (jetEx > 0.02 || jetEx < -0.02)) {
+      const y = (Math.max(crown, ported.exhaustFloor) + ported.exhaustTop) / 2;
+      this.flowJet(ctx, out * R * 0.7, y, out, 0, Math.min(Math.abs(jetEx) * 1.4, 1) * bore * 0.6, jetEx > 0 ? '#ffeed6' : theme.cool, px);
+    }
+    const jetIn = pose.jetIn[i];
+    if (pose.liftIn[i] > 0 && (jetIn > 0.02 || jetIn < -0.02)) {
+      const length = Math.min(Math.abs(jetIn) * 1.8, 1) * Math.max(deck - crown, bore * 0.2);
+      this.flowJet(ctx, transferX, Math.max(crown, ported.transferFloor), side * 0.35, 1, length, jetIn > 0 ? theme.cool : theme.accent, px);
+    }
+    const jetCase = pose.jetCase[i];
+    if (pose.inlet[i] > 0 && (jetCase > 0.02 || jetCase < -0.02)) {
+      const y = (ported.inletFloor + Math.min(ported.inletTop, skirt)) / 2;
+      this.flowJet(ctx, side * edge, y, -side, -0.25, Math.min(Math.abs(jetCase) * 1.8, 1) * bore * 0.6, jetCase > 0 ? theme.cool : theme.accent, px);
+    }
+
+    ctx.restore();
+  }
+
+  /** Une bande de paroi, du cylindre (`inner`) au bord du bloc (`outer`), du côté `sign`, entre deux hauteurs. */
+  private wallBand(ctx: CanvasRenderingContext2D, sign: number, inner: number, outer: number, from: number, to: number): void {
+    if (to <= from) return;
+    ctx.fillRect(sign > 0 ? inner : -outer, from, outer - inner, to - from);
+  }
+
+  /** Un bord de chemise, de `from` à `to`, interrompu par une lumière. À ajouter au chemin en cours. */
+  private edgeWithGap(ctx: CanvasRenderingContext2D, x: number, from: number, to: number, gapFrom: number, gapTo: number): void {
+    ctx.moveTo(x, from);
+    ctx.lineTo(x, gapFrom);
+    ctx.moveTo(x, gapTo);
+    ctx.lineTo(x, to);
+  }
+
+  /** Un écoulement : trois traits tiretés qui s'ouvrent dans la direction `dx, dy`, longs de `length`. */
+  private flowJet(ctx: CanvasRenderingContext2D, x: number, y: number, dx: number, dy: number, length: number, color: string, px: number): void {
+    const norm = Math.hypot(dx, dy) || 1;
+    const ux = dx / norm;
+    const uy = dy / norm;
+    const spread = this.layout.bore * 0.05;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5 * px;
+    ctx.setLineDash(DASH);
+    ctx.lineDashOffset = x + y;
+    ctx.beginPath();
+    for (let k = -1; k <= 1; k++) {
+      ctx.moveTo(x - uy * k * spread, y + ux * k * spread);
+      ctx.lineTo(x + ux * length - uy * k * spread * 2.2, y + uy * length + ux * k * spread * 2.2);
+    }
+    ctx.stroke();
+    ctx.setLineDash(NO_DASH);
+    ctx.lineDashOffset = 0;
+  }
+
   private jet(ctx: CanvasRenderingContext2D, side: number, from: number, length: number, color: string, px: number): void {
     const { bore, valve } = this.layout;
     const x = side * valve.x;
@@ -880,8 +1162,12 @@ export class Engine2D {
     const b = cylinder.betaDeg * DEG;
     const c = Math.cos(b);
     const s = Math.sin(b);
-    const W = bore * 1.04;
+    // Sur un deux-temps, les conduits partent du cylindre, à la hauteur de leurs lumières : voir `portMouth`.
+    const ported = layout.twoStroke;
+    const W = ported ? ported.mouthX : bore * 1.04;
     const portY = deck + bore * 0.62;
+    const inY = ported ? ported.inletMouthY : portY;
+    const exY = ported ? ported.exhaustMouthY : portY;
     const side = cylinder.intakeSide;
     const plenum = plenumPosition(layout);
     const radius = bore * 0.14;
@@ -892,10 +1178,10 @@ export class Engine2D {
       this.drawStack(ctx, stackOf(layout, cylinder), theme, px);
     } else {
       // Le conduit d'admission, du plénum à la culasse ; sur un corps par cylindre, jusqu'à son carburateur.
-      const ax = side * W * c + portY * s;
-      const ay = -side * W * s + portY * c;
+      const ax = side * W * c + inY * s;
+      const ay = -side * W * s + inY * c;
       const toX = multi ? (layout.banks === 1 ? -bore * 1.7 : ax * (layout.flat ? 1 : 0.72)) : plenum.x;
-      const toY = multi ? (layout.banks === 1 ? portY : plenum.y - bore * 0.3) : plenum.y;
+      const toY = multi ? (layout.banks === 1 ? inY : plenum.y - bore * 0.3) : plenum.y;
       ctx.strokeStyle = theme.cool;
       ctx.globalAlpha = 0.6;
       ctx.lineWidth = radius * 2;
@@ -926,8 +1212,8 @@ export class Engine2D {
     }
     // Le conduit d'échappement : il prend la couleur du gaz qui y passe, la pièce chauffe avec la ligne.
     const collector = collectorPosition(layout, cylinder.bank);
-    const ex = -side * W * c + portY * s;
-    const ey = side * W * s + portY * c;
+    const ex = -side * W * c + exY * s;
+    const ey = side * W * s + exY * c;
     ctx.strokeStyle = pose.gasLive ? painter.gasStyle(theme, pose.gasT[i], pose.gasBurnt[i]) : theme.metal;
     ctx.lineWidth = bore * 0.26;
     ctx.lineCap = 'round';
@@ -1525,7 +1811,9 @@ export class Engine2D {
     const zMin = Math.min(ring.z - bore * 0.5, this.chain ? this.chain.sideZMin : Infinity);
     // L'échangeur est devant la poulie : la coupe s'allonge pour lui.
     const zMax = this.chain ? this.chain.zMax : this.charger ? this.charger.zMax : layout.pulleyZ + bore * 0.2;
-    const top = this.charger ? this.chargerSideY(this.charger) + this.charger.halfY + bore * 0.3 : deck + bore * 2.0;
+    const ported = layout.twoStroke;
+    // Un deux-temps n'a que sa plaque de culasse et sa bougie au-dessus du cylindre.
+    const top = this.charger ? this.chargerSideY(this.charger) + this.charger.halfY + bore * 0.3 : deck + bore * (ported ? 1.35 : 2.0);
     const bottom = Math.min(flat ? -top : Math.min(-ring.radius, -(layout.crank * 1.25 + bore * 1.0)), this.chain ? this.chain.yMin : 0);
     const scale = Math.min(w / (zMax - zMin), h / (top - bottom));
     // Sur un turbo, la coupe n'est plus symétrique : le zéro se place depuis l'arrière.
@@ -1549,15 +1837,21 @@ export class Engine2D {
       ctx.save();
       ctx.scale(1, sign);
       // Le bloc et la culasse, coupés dans le plan de la rangée.
+      const headHeight = ported ? valve.headTop - deck : bore * 1.0;
       ctx.fillStyle = hatch;
-      ctx.fillRect(uBlockRear, deck, uBlockFront - uBlockRear, bore * 1.0);
+      ctx.fillRect(uBlockRear, deck, uBlockFront - uBlockRear, headHeight);
       ctx.strokeStyle = theme.lineStrong;
       ctx.lineWidth = 1.5 * px;
-      ctx.strokeRect(uBlockRear, deck, uBlockFront - uBlockRear, bore * 1.0);
+      ctx.strokeRect(uBlockRear, deck, uBlockFront - uBlockRear, headHeight);
       const linerBottom = deck - layout.stroke - layout.pistonTop - layout.pistonBottom - bore * 0.02;
       ctx.fillStyle = theme.surface;
       ctx.fillRect(uBlockRear, linerBottom, uBlockFront - uBlockRear, deck - linerBottom);
       ctx.strokeRect(uBlockRear, linerBottom, uBlockFront - uBlockRear, deck - linerBottom);
+      if (ported) {
+        for (const cylinder of cylinders) this.drawSideTwoStroke(ctx, cylinder, pose, painter, theme, hatch, px, linerBottom);
+        ctx.restore();
+        continue;
+      }
       // Le couvre-culasse.
       ctx.fillStyle = theme.surface;
       ctx.globalAlpha = 0.5;
@@ -1620,29 +1914,31 @@ export class Engine2D {
     ctx.fillStyle = theme.raised;
     ctx.fillRect(layout.pulleyZ - bore * 0.13, -bore * 0.72, bore * 0.26, bore * 1.44);
     ctx.strokeRect(layout.pulleyZ - bore * 0.13, -bore * 0.72, bore * 0.26, bore * 1.44);
-    // La chaîne, du pignon de vilebrequin à celui de la came. Ses maillons avancent avec le moteur.
-    const sprocketZ = layout.sprocket.z[0];
-    ctx.strokeStyle = theme.text;
-    ctx.lineWidth = bore * 0.03;
-    ctx.setLineDash(this.chainDash);
-    ctx.lineDashOffset = (pose.chainTurns * Math.PI * 2 * layout.sprocket.crankRadius) % (bore * 0.16);
-    const signs = this.signList;
-    for (const s of signs) {
-      ctx.beginPath();
-      ctx.moveTo(sprocketZ, s * layout.sprocket.crankRadius);
-      ctx.lineTo(sprocketZ, s * (valve.camY + layout.sprocket.camRadius));
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(sprocketZ, s * -layout.sprocket.crankRadius);
-      ctx.lineTo(sprocketZ, s * (valve.camY - layout.sprocket.camRadius));
-      ctx.stroke();
-    }
-    ctx.setLineDash(NO_DASH);
-    ctx.lineDashOffset = 0;
-    ctx.fillStyle = theme.metal;
-    for (const s of signs) {
-      const cy = s * valve.camY;
-      ctx.fillRect(sprocketZ - bore * 0.045, cy - layout.sprocket.camRadius, bore * 0.09, layout.sprocket.camRadius * 2);
+    // La chaîne, du pignon de vilebrequin à celui de la came. Ses maillons avancent avec le moteur. Un deux-temps n'en a pas.
+    if (!ported) {
+      const sprocketZ = layout.sprocket.z[0];
+      ctx.strokeStyle = theme.text;
+      ctx.lineWidth = bore * 0.03;
+      ctx.setLineDash(this.chainDash);
+      ctx.lineDashOffset = (pose.chainTurns * Math.PI * 2 * layout.sprocket.crankRadius) % (bore * 0.16);
+      const signs = this.signList;
+      for (const s of signs) {
+        ctx.beginPath();
+        ctx.moveTo(sprocketZ, s * layout.sprocket.crankRadius);
+        ctx.lineTo(sprocketZ, s * (valve.camY + layout.sprocket.camRadius));
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(sprocketZ, s * -layout.sprocket.crankRadius);
+        ctx.lineTo(sprocketZ, s * (valve.camY - layout.sprocket.camRadius));
+        ctx.stroke();
+      }
+      ctx.setLineDash(NO_DASH);
+      ctx.lineDashOffset = 0;
+      ctx.fillStyle = theme.metal;
+      for (const s of signs) {
+        const cy = s * valve.camY;
+        ctx.fillRect(sprocketZ - bore * 0.045, cy - layout.sprocket.camRadius, bore * 0.09, layout.sprocket.camRadius * 2);
+      }
     }
 
     // ── Le volant et le démarreur ──
@@ -1695,7 +1991,33 @@ export class Engine2D {
     ctx.fillStyle = pose.starter > 0.5 ? theme.accent : theme.metal;
     ctx.fillRect(pinionZ - ring.width * 0.55, starterV - layout.pinion.radius, ring.width * 1.1, layout.pinion.radius * 2);
 
-    if (!flat) {
+    if (ported && !flat) {
+      // Le carter d'un deux-temps : fermé, sans huile, une chambre par cylindre, que séparent les paliers. Il est plein du mélange qu'il pompe.
+      const caseBottom = -ported.caseRadius;
+      const caseTop = ported.ductBottom;
+      ctx.fillStyle = theme.bg;
+      ctx.fillRect(uBlockRear, caseBottom, uBlockFront - uBlockRear, caseTop - caseBottom);
+      ctx.fillStyle = theme.cool;
+      ctx.globalAlpha = 0.14;
+      ctx.fillRect(uBlockRear, caseBottom, uBlockFront - uBlockRear, caseTop - caseBottom);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = hatch;
+      for (let k = 1; k < layout.mains.length - 1; k++) {
+        const main = layout.mains[k];
+        ctx.fillRect(main.z - main.width / 2, caseBottom, main.width, caseTop - caseBottom);
+      }
+      ctx.strokeStyle = theme.lineStrong;
+      ctx.lineWidth = 1.2 * px;
+      ctx.strokeRect(uBlockRear, caseBottom, uBlockFront - uBlockRear, caseTop - caseBottom);
+      ctx.restore();
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x, y, w, h);
+      ctx.clip();
+      ctx.translate(ox, oy);
+      ctx.scale(scale, -scale);
+      this.redrawCrankOverPan(ctx, crankAngle, theme, px);
+    } else if (!flat) {
       // Le carter d'huile, à l'échelle.
       const panTop = -Math.max(layout.crank * 1.25 + bore * 0.1, layout.mainRadius * 1.6) * 0.72;
       const depth = Math.max(layout.crank * 1.25 + bore * 0.55, bore * 1.1);
@@ -1743,8 +2065,17 @@ export class Engine2D {
       const charger = this.charger;
       if (charger && labels.compressor) labelAt(labels.compressor, charger.z, this.chargerSideY(charger) + charger.halfY + bore * 0.08);
       const mid = (layout.frontZ + layout.rearZ) / 2;
-      labelAt(labels.cam, mid, valve.camY + bore * 0.3);
-      labelAt(labels.chain, layout.sprocket.z[0], deck + bore * 2);
+      if (ported) {
+        // Le premier cylindre, côté avant : sa lumière de transfert et son conduit.
+        const first = layout.byBank[0][0];
+        const wallMid = first.z + bore / 2 + ported.ductWall / 2;
+        if (labels.transferPort) labelAt(labels.transferPort, wallMid, ported.transferTop + bore * 0.12);
+        if (labels.transferDuct) labelAt(labels.transferDuct, wallMid, ported.ductBottom - bore * 0.16);
+        if (labels.crankcase && !flat) labelAt(labels.crankcase, mid, -ported.caseRadius - bore * 0.14);
+      } else {
+        labelAt(labels.cam, mid, valve.camY + bore * 0.3);
+        labelAt(labels.chain, layout.sprocket.z[0], deck + bore * 2);
+      }
       labelAt(labels.flywheel, ring.z, ring.radius + bore * 0.1);
       labelAt(labels.block, mid, deck - layout.stroke * 0.4);
       ctx.textAlign = 'left';
@@ -1787,6 +2118,121 @@ export class Engine2D {
         ctx.fillRect(pin.z - pin.width / 2, v - layout.pinRadius, pin.width, layout.pinRadius * 2);
         ctx.strokeRect(pin.z - pin.width / 2, v - layout.pinRadius, pin.width, layout.pinRadius * 2);
       }
+    }
+  }
+
+  /**
+   * Un cylindre de deux-temps, vu le long du vilebrequin : de part et d'autre, la paroi loge un conduit de transfert, qui monte
+   * du carter et s'ouvre dans le cylindre à sa lumière ; au fond, la fenêtre de l'échappement. Le piston passe devant les deux.
+   */
+  private drawSideTwoStroke(ctx: CanvasRenderingContext2D, cylinder: Cylinder, pose: EnginePose, painter: GasPainter, theme: Theme, hatch: CanvasPattern | string, px: number, linerBottom: number): void {
+    const layout = this.layout;
+    const ported = layout.twoStroke!;
+    const { bore, deck, valve } = layout;
+    const i = cylinder.index;
+    const u = cylinder.z;
+    const R = bore / 2;
+    const s = pose.piston[i];
+    const crown = s + layout.pistonTop;
+    const skirt = s - layout.pistonBottom;
+    const wall = ported.ductWall;
+    // La chemise, mince, entre le conduit et le cylindre ; le conduit, au milieu de la paroi.
+    const liner = wall * 0.18;
+    const duct = wall * 0.5;
+    for (let k = 0; k < 2; k++) {
+      const sign = k === 0 ? -1 : 1;
+      const inner = u + sign * R;
+      ctx.fillStyle = hatch;
+      ctx.fillRect(sign < 0 ? inner - wall : inner, linerBottom, wall, deck - linerBottom);
+      ctx.fillStyle = theme.cool;
+      ctx.globalAlpha = 0.5;
+      ctx.fillRect(sign < 0 ? inner - liner - duct : inner + liner, linerBottom, duct, ported.transferTop - linerBottom);
+      // La lumière : la chemise s'interrompt, le conduit débouche dans le cylindre.
+      ctx.fillRect(sign < 0 ? inner - liner : inner, ported.transferFloor, liner, ported.transferTop - ported.transferFloor);
+      ctx.globalAlpha = 1;
+    }
+    ctx.strokeStyle = theme.text;
+    ctx.lineWidth = px;
+    ctx.beginPath();
+    this.edgeWithGap(ctx, u - R, linerBottom, deck, ported.transferFloor, ported.transferTop);
+    this.edgeWithGap(ctx, u + R, linerBottom, deck, ported.transferFloor, ported.transferTop);
+    ctx.stroke();
+
+    // Sous le piston, le mélange du carter ; au-dessus, la chambre.
+    ctx.fillStyle = theme.bg;
+    ctx.fillRect(u - R, linerBottom, bore, Math.max(crown - linerBottom, 0));
+    ctx.fillStyle = theme.cool;
+    ctx.globalAlpha = 0.16;
+    ctx.fillRect(u - R, linerBottom, bore, Math.max(skirt - linerBottom, 0));
+    ctx.globalAlpha = 1;
+    const burning = pose.flame[i] > 0;
+    if (pose.gasLive) {
+      const kelvin = pose.gasT[i];
+      const shown = kelvin < 800 ? kelvin : 800 + (kelvin - 800) * 0.33;
+      ctx.fillStyle = painter.gasStyle(theme, shown, burning ? 0 : pose.gasBurnt[i]);
+    } else {
+      ctx.fillStyle = theme.bg;
+    }
+    const top = deck + valve.roofRise * 0.55;
+    ctx.fillRect(u - R, crown, bore, top - crown);
+    // La lumière d'échappement, sur la paroi du fond : découverte, on la voit au-dessus de la tête du piston.
+    const half = ported.exhaustWidth / 2;
+    ctx.fillStyle = pose.gasLive ? painter.gasStyle(theme, pose.gasT[i], pose.gasBurnt[i]) : theme.metal;
+    ctx.globalAlpha = 0.7;
+    ctx.fillRect(u - half, ported.exhaustFloor, 2 * half, ported.exhaustTop - ported.exhaustFloor);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = theme.lineStrong;
+    ctx.setLineDash(DASH);
+    ctx.strokeRect(u - half, ported.exhaustFloor, 2 * half, ported.exhaustTop - ported.exhaustFloor);
+    ctx.setLineDash(NO_DASH);
+    if (burning) {
+      const radius = Math.min(bore * 0.08 + bore * 0.72 * Math.sqrt(pose.flame[i]), R);
+      ctx.fillStyle = painter.gasStyle(theme, 1050 + 300 * (1 - pose.flame[i]), 1);
+      ctx.beginPath();
+      ctx.ellipse(u, top, radius, Math.min(radius, Math.max(top - crown, 1)), 0, Math.PI, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // La bielle, puis le piston : sa longue jupe ferme les lumières en passant devant.
+    const pinV = layout.crank * Math.cos(pose.alpha[i] * DEG);
+    ctx.fillStyle = theme.metal;
+    ctx.strokeStyle = theme.text;
+    ctx.lineWidth = px;
+    ctx.fillRect(u - layout.rodWidth / 2, pinV, layout.rodWidth, s - pinV);
+    ctx.strokeRect(u - layout.rodWidth / 2, pinV, layout.rodWidth, s - pinV);
+    ctx.fillStyle = theme.raised;
+    ctx.fillRect(u - R + 0.3, skirt, bore - 0.6, crown - skirt);
+    ctx.strokeRect(u - R + 0.3, skirt, bore - 0.6, crown - skirt);
+    ctx.fillStyle = theme.lineStrong;
+    for (let k = 0; k < 2; k++) ctx.fillRect(u - R + 0.3, crown - bore * (0.06 + 0.06 * k), bore - 0.6, bore * 0.018);
+    ctx.fillStyle = theme.text;
+    ctx.beginPath();
+    ctx.arc(u, s, bore * 0.09, 0, Math.PI * 2);
+    ctx.fill();
+
+    // La bougie, au milieu de la plaque.
+    const tip = deck + valve.roofRise - bore * 0.03;
+    ctx.fillStyle = theme.dim;
+    ctx.fillRect(u - bore * 0.075, tip + bore * 0.6, bore * 0.15, bore * 0.4);
+    ctx.fillStyle = '#e9e6dd';
+    ctx.fillRect(u - bore * 0.04, tip + bore * 0.3, bore * 0.08, bore * 0.3);
+    if (pose.spark[i] > 0) {
+      ctx.fillStyle = '#ffffff';
+      ctx.globalAlpha = 0.4 + 0.6 * pose.spark[i];
+      ctx.beginPath();
+      ctx.arc(u, tip - bore * 0.03, bore * (0.04 + 0.06 * pose.spark[i]), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    // Le mélange qui monte des transferts, l'un vers l'autre puis vers le haut : le balayage en boucle.
+    const jetIn = pose.jetIn[i];
+    if (pose.liftIn[i] > 0 && (jetIn > 0.02 || jetIn < -0.02)) {
+      const from = Math.max(crown, ported.transferFloor);
+      const length = Math.min(Math.abs(jetIn) * 1.8, 1) * Math.max(deck - from, bore * 0.2);
+      const color = jetIn > 0 ? theme.cool : theme.accent;
+      this.flowJet(ctx, u - R, from, 0.6, 1, length, color, px);
+      this.flowJet(ctx, u + R, from, -0.6, 1, length, color, px);
     }
   }
 
