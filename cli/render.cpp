@@ -72,6 +72,7 @@ void usage() {
         "          --stereo 1: two ears (otherwise one microphone at the centre of the head)\n"
         "          --db 1: also print the estimated A-weighted level\n"
         "          --fuel 1: also print the estimated fuel, oil or energy used, and the best of the engine's fuel map\n"
+        "                    (--fuel 0|1 is this display; --fuel petrol|diesel chooses the engine's fuel)\n"
         "          --trace FILE: write the turbo, its boost control, its anti-lag, the fuel, the knock, the engine management and the charge air as CSV, one line per slice\n"
         "          --thermal FILE: write the engine temperatures and what a cold engine changes as CSV, one line per 0.1 s\n"
         "          --walk 1: the head walks through the car at 1.2 m/s (with lap)\n"
@@ -796,7 +797,9 @@ int main(int argc, char** argv) {
         else if (arg == "--at") at = value;
         else if (arg == "--stereo") stereo = value != "0";
         else if (arg == "--db") showDb = value != "0";
-        else if (arg == "--fuel") showFuel = value != "0";
+        // `--fuel` dit deux choses, que sa valeur distingue : 0 ou 1, l'affichage de la consommation ; petrol ou diesel, le carburant
+        // (plus bas, avec les réglages du moteur). Avant, l'affichage prenait tout, et `--fuel diesel` ne donnait jamais un diesel.
+        else if (arg == "--fuel" && (value == "0" || value == "1")) showFuel = value != "0";
         else if (arg == "--knock") showKnock = value != "0";
         else if (arg == "--valves") showValves = value != "0";
         else if (arg == "--trace") {

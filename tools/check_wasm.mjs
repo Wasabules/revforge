@@ -922,13 +922,22 @@ for (const [name, code] of [['electronic', BOOST_CONTROL.electronic], ['by_gear'
     '--turbo-layout', 'twin_sequential', '--body', 'coupe', '--mass', '1300', '--rim', '18', '--drive', 'rear', '--insulation', 'standard', '--scenario', 'lap', '--seconds', '20'));
 }
 {
-  // `--fuel` de la CLI est l'affichage de la consommation : le diesel vient du préréglage, comme pour sa consommation plus haut.
+  // Le diesel vient du préréglage, comme pour sa consommation plus haut (`--fuel diesel` donne aussi un diesel : voir plus bas).
   const rf = load();
   rf.rf_set_car(BODY.van, 1950, 16, DRIVE.front, PLACEMENT.front, INSULATION.standard);
   rf.rf_set_gearbox(BOX.synchro, 0, 0, 0, 0, 0, 0, 0, 1);
   tune(rf, { variableGeometry: 1 });
   rf.rf_set_config(4, LAYOUT.inline, 2000, 85, 4500, EXHAUST.stock, 1, 1, 0, 0, 0, 1.8, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
   check('diesel à aubes', turboStab(rf, 24), native('--preset', 'diesel_four', '--vgt', '1', '--scenario', 'turbo', '--seconds', '24'));
+}
+{
+  // `--fuel diesel` : un diesel donné en entier, sans préréglage. La CLI le prenait pour l'affichage de la consommation.
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1400, 16, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  rf.rf_set_config(4, LAYOUT.inline, 1900, 82, 4500, EXHAUST.stock, 1, 1, 0, 0, 0, 1.2, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+  rf.rf_set_mode(3);
+  check('--fuel diesel, sans préréglage', render(rf, 10, 128), native('--cylinders', '4', '--cc', '1900', '--bore', '82', '--redline', '4500', '--aspiration', 'turbo', '--fuel', 'diesel', '--boost', '1.2',
+    '--body', 'compact', '--mass', '1400', '--rim', '16', '--drive', 'front', '--insulation', 'standard', '--scenario', 'lap', '--seconds', '10'));
 }
 // L'air de charge : un turbo sans échangeur, au coup de gaz ; un compresseur à l'air-eau, avec l'eau et le protoxyde, pied au plancher,
 // consommation comprise (le gicleur d'essence du kit se paie à part).

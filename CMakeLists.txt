@@ -205,4 +205,7 @@ else()
   golden(lap_two_stroke_expansion fde00d9e --preset two_stroke_triple --exhaust expansion --scenario lap --seconds 20)
   # Un bicylindre comme la Trabant, sans modèle de conduite : la charge déduite du régime, et ses ratés.
   golden(steady_two_stroke_twin 38e43381 --cylinders 2 --cc 595 --bore 72 --redline 4500 --cycle two_stroke --carb single --scenario steady --rpm 900 --seconds 3)
+  # `--fuel` se lit à sa valeur : petrol ou diesel, le carburant ; 0 ou 1, l'affichage de la consommation. Un diesel n'a pas d'étincelle.
+  add_test(NAME cli_fuel_diesel COMMAND revforge-render --out none --cylinders 4 --cc 1900 --bore 82 --redline 4500 --fuel diesel --scenario steady --seconds 1 --knock 1)
+  set_tests_properties(cli_fuel_diesel PROPERTIES PASS_REGULAR_EXPRESSION "Knock: none \\(no spark\\)")
 endif()
