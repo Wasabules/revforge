@@ -647,7 +647,8 @@ export class GasNetwork {
     this.compressorCell = hotPart ? hotPart.first : -1;
     this.coolerFirst = coolerPart ? coolerPart.first : -1;
     this.coolerCount = coolerPart ? coolerPart.count : 0;
-    this.releaseCell = coldPart ? coldPart.first + coldPart.count - Math.round(0.25 / CELL_M) : -1;
+    // La décharge et la vanne d'air de l'anti-lag : seulement sur un turbo. Un compresseur n'a que sa soupape de dérivation, interne.
+    this.releaseCell = this.turbo && coldPart ? coldPart.first + coldPart.count - Math.round(0.25 / CELL_M) : -1;
     cells += this.intakeCount;
 
     // Après tout le reste : à la référence, aucune cellule ne change de numéro.
