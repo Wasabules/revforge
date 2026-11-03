@@ -1046,12 +1046,22 @@ void DrivingModel::stepTwin(double rpmNow, bool burning) {
     input.breathing = breathingOf(powertrain_, rpmNow);
     input.burning = burning;
     if (boostControlled_) {
-        // Intégration : le calculateur donne la cible (plafonnée par la vitesse des roues, ou selon le rapport), et la loi des
-        // soupapes (ou des aubes) du biturbo la suit. Son PID et son anticipation ne sont identifiés que sur le banc d'un turbo
-        // seul : branchés tels quels, ils dépassaient la cible de 0,49 bar sur un séquentiel, dont l'étagement oscillait
-        // (docs/modele.md, « Quand les réglages se rencontrent (2) »). Les arbres du biturbo comptent dans l'air de référence.
+        // Le calculateur donne la cible (plafonnée par la vitesse des roues, ou selon le rapport). Deux turbos ou des aubes : une
+        // électrovanne pilote les deux soupapes (ou les aubes) par un PID étalonné sur le banc de ce montage (`BoostControlSpec::twin`).
+        // Un twincharger garde la loi de son volet, qui suit la cible. Les arbres du biturbo comptent dans l'air de référence.
         const double ambientPa = turbo_laws::constants().atmosphere;
-        input.targetBar = (revforge::boostTargetPa(boostSpec_, rpmNow, gear_, ambientPa) - ambientPa) / 1e5;
+        if (boostSpec_.twin) {
+            BoostControlInput control;
+            control.rpm = rpmNow;
+            control.gear = gear_;
+            control.chargePa = twin_.state().unit[0].chargePa;
+            control.ambientPa = ambientPa;
+            control.staging = twin_.state().stage == 2 && !twin_.state().secondaryOnline;
+            input.wastegate = boostController_.step(boostSpec_, kStep, control);
+            input.targetBar = (boostController_.targetPa() - ambientPa) / 1e5;
+        } else {
+            input.targetBar = (revforge::boostTargetPa(boostSpec_, rpmNow, gear_, ambientPa) - ambientPa) / 1e5;
+        }
     }
     twin_.step(kStep, input);
     boost_ = std::max(twin_.boost(), 0.0);
@@ -1091,9 +1101,10 @@ void DrivingModel::stepTurbo(double rpmNow, bool burning) {
 double DrivingModel::boostTargetPa() const {
     // L'air du jour (atmosphère) : exactement 101 325 Pa à 0 m.
     if (!turboEngine_) return powertrain_.electric ? 101325.0 : ambientAirOf(powertrain_.engine).pressurePa;
-    // Le biturbo compte ses arbres dans l'air de référence ; son calculateur n'a pas de PID (stepTwin).
+    // Le biturbo compte ses arbres dans l'air de référence ; un twincharger n'a pas de PID (stepTwin).
     const double ambientPa = twinEngine_ ? turbo_laws::constants().atmosphere : turbo_.spec().ambientPa;
-    return boostControlled_ && !twinEngine_ && boostController_.targetPa() > 0.0 ? boostController_.targetPa() : revforge::boostTargetPa(boostSpec_, rpm(), gear_, ambientPa);
+    const bool pid = boostControlled_ && (!twinEngine_ || boostSpec_.twin);
+    return pid && boostController_.targetPa() > 0.0 ? boostController_.targetPa() : revforge::boostTargetPa(boostSpec_, rpm(), gear_, ambientPa);
 }
 
 void DrivingModel::updateAntiLag(double throttle, double rpmNow, bool off) {

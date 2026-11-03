@@ -177,5 +177,11 @@ double twinSteadyBoost(const Powertrain& p, double rpm);
 double twinIntakeDropPa(const Powertrain& p, double rpm);
 /** Le son d'un twincharger : ses poches et son rapport, posés sur le profil comme pour un compresseur seul. */
 void twinchargerProfile(const Powertrain& p, EngineProfile& profile);
+/**
+ * Ce que `TwinTurboInput::wastegate` doit valoir pour tenir `targetBar` à pleine charge stabilisée, à ce régime : l'ouverture
+ * commune des soupapes, ou la course des aubes (0 fermées, 1 grandes ouvertes). La précommande de la régulation électronique,
+ * qui pilote les deux soupapes par une seule électrovanne (boost_control.cpp). 0 si la pression n'est pas atteinte.
+ */
+double twinSteadyGate(const TwinTurboSpec& spec, double rpm, double breathing, double targetBar);
 
 }  // namespace revforge

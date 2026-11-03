@@ -378,3 +378,113 @@ TEST_CASE("la régulation ne dépend pas de la durée demandée, et le compresse
     }
     CHECK(ignored.boostDuty() == -1.0);
 }
+
+// ── Deux turbos : une électrovanne pour les deux soupapes, étalonnée sur leur banc. Voir « La régulation de pression ». ──
+
+namespace {
+
+Powertrain twinV6(TurboLayout layout, BoostControl control) {
+    Powertrain p;
+    p.engine.cylinders = 6;
+    p.engine.layout = Layout::V;
+    p.engine.displacementCc = 3000;
+    p.engine.boreMm = 86;
+    p.engine.redlineRpm = 6800;
+    p.engine.aspiration = Aspiration::Turbo;
+    p.engine.boostBar = 1.0f;
+    p.engine.exhaust = Exhaust::Sport;
+    p.engine.turboLayout = layout;
+    p.engine.boostControl = control;
+    p.car.body = Body::Coupe;
+    p.car.massKg = 1500;
+    p.car.rimInch = 18;
+    p.car.drive = Drive::Rear;
+    return p;
+}
+
+struct TwinPull {
+    double t90 = -1.0;
+    double overBar = 0.0;
+    double finalBar = 0.0;
+    int stagingFalls = 0;  // le séquentiel retombe sur un seul turbo pendant la reprise
+};
+
+/** En troisième vers `fromRpm`, puis six secondes pied au plancher : la pression face à la cible. */
+TwinPull twinPull(const Powertrain& p, double fromRpm) {
+    DrivingModel m(p);
+    m.setManual(true);
+    m.requestShift(1);
+    for (int i = 0; i < 15000; ++i) {
+        const int now = m.gear();
+        if (now >= 1 && now < 3 && !m.shifting() && m.rpm() > 2600.0) m.requestShift(1);
+        const double error = (fromRpm - m.rpm()) / 1000.0;
+        m.stepPedal(kStep, now < 3 ? 0.5 : std::clamp(0.2 + error, 0.02, 1.0), now == 3 && error < -0.1 ? 0.3 : 0.0);
+    }
+    TwinPull out;
+    out.overBar = -1.0;
+    int stage = m.twin().state().stage;
+    for (int i = 0; i < 6000; ++i) {
+        m.stepPedal(kStep, 1.0, 0.0);
+        const double target = m.boostTargetPa();
+        const double pa = m.turboState().chargePa;
+        if (out.t90 < 0.0 && gauge(pa) >= 0.9 * gauge(target)) out.t90 = (i + 1) * kStep;
+        out.overBar = std::max(out.overBar, (pa - target) / 1e5);
+        out.finalBar = (pa - target) / 1e5;
+        const int now = m.twin().state().stage;
+        if (stage == 2 && now == 0) ++out.stagingFalls;
+        stage = now;
+    }
+    return out;
+}
+
+}  // namespace
+
+TEST_CASE("deux turbos : une électrovanne pour les deux soupapes, étalonnée sur leur banc") {
+    // Le banc et les gains de ce montage, avec les mêmes marges qu'un turbo seul.
+    for (const TurboLayout layout : {TurboLayout::TwinParallel, TurboLayout::TwinSequential}) {
+        const BoostControlSpec spec = specOf(twinV6(layout, BoostControl::Electronic));
+        CHECK(spec.twin);
+        REQUIRE(spec.plantCount > 0);
+        for (int k = 0; k < spec.plantCount; ++k) {
+            const BoostPlant& plant = spec.plants[static_cast<std::size_t>(k)];
+            const BoostPid pid = simcPid(plant, spec.actuator);
+            double low = 0.01, high = 1000.0;
+            for (int i = 0; i < 80; ++i) {
+                const double middle = std::sqrt(low * high);
+                (std::abs(openLoop(plant, pid, spec.actuator, middle)) > 1.0 ? low : high) = middle;
+            }
+            const double wc = std::sqrt(low * high);
+            const double phase = std::arg(openLoop(plant, pid, spec.actuator, wc)) * 180.0 / 3.141592653589793;
+            const double margin = 180.0 + (phase > 0.0 ? phase - 360.0 : phase);
+            MESSAGE(std::string(layout == TurboLayout::TwinParallel ? "parallèle" : "séquentiel") << " à " << plant.rpm << " tr/min : K " << plant.gainPa / 1e5 << " bar par ouverture, τ " << plant.tauS
+                                                                                      << " s, θ " << plant.deadS << " s ; marge de phase " << margin << "°");
+            CHECK(margin > 45.0);
+            CHECK(margin < 80.0);
+        }
+    }
+    // Des aubes aussi ; un twincharger garde son volet, et ne lit que la cible.
+    Powertrain vanes = findPreset("diesel_four")->powertrain();
+    vanes.engine.variableGeometry = true;
+    vanes.engine.boostControl = BoostControl::Electronic;
+    CHECK(specOf(vanes).twin);
+    Powertrain twincharger = controlled("hot_hatch_turbo", BoostControl::Electronic);
+    twincharger.engine.turboLayout = TurboLayout::Twincharger;
+    CHECK_FALSE(specOf(twincharger).twin);
+
+    // Reprise en troisième : plus de dérive en haut, un dépassement mesuré, et l'étagement qui ne bat pas.
+    for (const double from : {2000.0, 3000.0}) {
+        const TwinPull parallel = twinPull(twinV6(TurboLayout::TwinParallel, BoostControl::Electronic), from);
+        const TwinPull sequential = twinPull(twinV6(TurboLayout::TwinSequential, BoostControl::Electronic), from);
+        const TwinPull spring = twinPull(twinV6(TurboLayout::TwinSequential, BoostControl::Spring), from);
+        MESSAGE("depuis " << from << " tr/min : parallèle 90 % en " << parallel.t90 << " s, dépassement " << parallel.overBar << " bar ; séquentiel " << sequential.t90 << " s, "
+                          << sequential.overBar << " bar (ressort " << spring.overBar << " bar)");
+        CHECK(parallel.overBar < 0.15);
+        CHECK(std::fabs(parallel.finalBar) < 0.01);
+        CHECK(sequential.overBar < 0.2);
+        CHECK(sequential.overBar < spring.overBar);
+        CHECK(std::fabs(sequential.finalBar) < 0.01);
+        CHECK(sequential.stagingFalls == 0);
+        CHECK(parallel.t90 > 0.0);
+        CHECK(sequential.t90 > 0.0);
+    }
+}

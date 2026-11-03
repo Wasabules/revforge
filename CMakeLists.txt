@@ -199,6 +199,8 @@ else()
   golden(twin_sequential 32336632 --preset hot_hatch_turbo --turbo-layout twin_sequential --scenario turbo --seconds 12)
   golden(twincharger 48a5fa18 --preset hot_hatch_turbo --turbo-layout twincharger --scenario launch --seconds 10)
   golden(vgt_diesel c1df8a8e --preset diesel_four --vgt 1 --scenario turbo --seconds 12)
+  # Finitions (régulation) : l'électrovanne pilote les deux soupapes d'un séquentiel, PID étalonné sur le banc des deux turbos.
+  golden(twin_sequential_electronic c8855f36 --preset hot_hatch_turbo --turbo-layout twin_sequential --boost-control electronic --scenario turbo --seconds 12)
   # L'air de charge : sans échangeur, air-eau, injection d'eau, protoxyde.
   # Intégration : 07dfbb8d -> 34de3f5e. La carte du cliquetis lit la charge sans échangeur (air de charge), plus chaude.
   # Finitions (régulation) : 34de3f5e -> 7f5a5c89. le cycle de la carte du cliquetis perd sa chaleur aux parois pas à pas (Woschni) et libère 0,95 de l'énergie de l'air au lieu de 0,80 net : 94 combustions entendues qui cliquettent au lieu de 89, marge la plus faible −11,9° au lieu de −11,8°.

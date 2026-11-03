@@ -711,6 +711,14 @@ for (const [label, changes, options, pipe] of [
     rf.rf_set_config(6, LAYOUT.v, 3000, 86, 6800, EXHAUST.sport, 1, 0, 0, 0, 0, 1.0, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0, 0);
     check(`biturbo, V6 ${layout}${vanes ? ', aubes' : ''}`, turboStab(rf, 24), native(...v6, '--turbo-layout', layout, '--vgt', String(vanes)));
   }
+  // La régulation électronique sur deux turbos : une électrovanne, un PID étalonné sur leur banc, l'étagement du séquentiel.
+  for (const layout of ['twin_parallel', 'twin_sequential']) {
+    const rf = load();
+    rf.rf_set_car(BODY.coupe, 1500, 18, DRIVE.rear, PLACEMENT.front, INSULATION.standard);
+    tune(rf, { turboLayout: TURBO_LAYOUT[layout], boostControl: BOOST_CONTROL.electronic });
+    rf.rf_set_config(6, LAYOUT.v, 3000, 86, 6800, EXHAUST.sport, 1, 0, 0, 0, 0, 1.0, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0, 0);
+    check(`biturbo électronique, V6 ${layout}`, turboStab(rf, 24), native(...v6, '--turbo-layout', layout, '--boost-control', 'electronic'));
+  }
 }
 {
   const rf = load();

@@ -10,6 +10,7 @@ namespace revforge {
 
 struct Powertrain;
 struct Gearing;
+class TwinTurbo;
 
 /**
  * La régulation de la pression d'un turbo (docs/modele.md, « La régulation de pression »).
@@ -72,6 +73,12 @@ struct BoostControlSpec {
     int plantCount = 0;
     /** Les essais seulement : sans anti-emballement, l'intégrale grossit tant que l'électrovanne est en butée. */
     bool antiWindup = true;
+    /**
+     * Deux turbos en parallèle ou en séquence, ou des aubes : une électrovanne commande les deux soupapes (ou les aubes) à la fois,
+     * et tout ce qui précède a été mesuré sur le banc de ce montage (`TwinTurbo`), pas sur celui d'un turbo seul. Faux sur un
+     * twincharger : son volet et l'embrayage de son compresseur règlent la pression, le calculateur ne donne que la cible.
+     */
+    bool twin = false;
 };
 
 /** Ce que le calculateur sait à ce pas. */
@@ -80,6 +87,12 @@ struct BoostControlInput {
     int gear = 0;                 // le rapport engagé : 0 au point mort, qui prend la cible de la première
     double chargePa = 101325.0;   // la pression de charge mesurée, absolue
     double ambientPa = 101325.0;  // l'air ambiant : à brancher sur l'atmosphère
+    /**
+     * Le calculateur bascule un séquentiel : il a ouvert la vanne d'échappement du second turbo, dont le clapet ne débite pas
+     * encore. Le creux qui suit n'est pas une erreur à corriger : il tient son rapport cyclique, et l'intégrale, jusqu'à ce
+     * que le second débite (gestion des 2JZ-GTE et 959, qui commandent eux-mêmes l'étagement).
+     */
+    bool staging = false;
 };
 
 // ── Les fonctions pures ──
@@ -120,6 +133,8 @@ double boostLoopDelayS(const BoostPlant& plant, const BoostActuatorSpec& actuato
  * les temps de la réponse (méthode des deux points de Smith, à 28 % et 63 %). `turbo` est réutilisé d'un régime à l'autre.
  */
 BoostPlant identifyBoostPlant(TurboCharger& turbo, double rpm, double breathing, double gate, double settleS);
+/** Le même banc, sur deux turbos (ou des aubes) : l'échelon s'applique aux deux soupapes à la fois, comme le fait l'électrovanne. */
+BoostPlant identifyTwinBoostPlant(TwinTurbo& twin, double rpm, double breathing, double gate, double settleS);
 
 /** Le plafond de couple du rapport `gear` (1 = première) au vilebrequin : pneus et boîte (Nm). */
 double gearTorqueCapNm(const Powertrain& p, const Gearing& gearing, int gear, double tyreGrip);

@@ -601,7 +601,7 @@ TEST_CASE("jonction atmosphère et régulation de pression : la cible absolue se
     CHECK(spring.boostTargetPa() < 101325.0 + static_cast<double>(high.engine.boostBar) * 1e5 - 20000.0);
 }
 
-TEST_CASE("jonction biturbo et régulation de pression : le calculateur donne sa cible à deux turbos, sans son PID") {
+TEST_CASE("jonction biturbo et régulation de pression : le calculateur pilote deux turbos, avec un PID étalonné sur leur banc") {
     const Powertrain spring = enginePreset("w12_continental");
     REQUIRE(usesTwinTurbo(spring.engine));
     Powertrain capped = spring;
@@ -622,6 +622,10 @@ TEST_CASE("jonction biturbo et régulation de pression : le calculateur donne sa
     // En première, les pneus ne passeraient pas les 778 Nm : le calculateur baisse la cible, et les deux arbres la suivent.
     CHECK(deepest > 20000.0);
     CHECK(limitedBoost < freeBoost - 0.1);
+    // Selon le rapport, c'est son électrovanne qui tient les deux soupapes : son PID a été étalonné sur le banc des deux turbos.
+    CHECK(limited.boostControl().twin);
+    CHECK(limited.boostDuty() >= 0.0);
+    CHECK(free.boostDuty() == -1.0);
 }
 
 TEST_CASE("jonction carburant, injection et air de charge : le refroidissement par vaporisation n'est compté qu'une fois") {
