@@ -236,6 +236,29 @@ const CHARGER_INTAKE: typeof TURBO_INTAKE = [
   { kind: 'cold', length: 0.2, area: 1, drag: 0, wall: 0.1 },
 ];
 
+/**
+ * Les autres échangeurs : recopie de `ChargePath` (core/src/charge_air.cpp), mêmes longueurs, même volume rapporté à celui de
+ * l'air-air d'origine. Air-eau sur un turbo : une brique près du papillon, la moitié de la perte du faisceau, un tube froid court.
+ * Aucun : un seul tube du compresseur au papillon. Sur un compresseur, l'air-eau garde le chemin d'origine, déjà court.
+ */
+const TURBO_INTAKE_WATER: typeof TURBO_INTAKE = [
+  TURBO_INTAKE[0],
+  TURBO_INTAKE[1],
+  TURBO_INTAKE[2],
+  { kind: 'cooler', length: 0.25, area: 4, drag: 750, wall: 3 },
+  { kind: 'cold', length: 0.2, area: 1, drag: 0, wall: 0.1 },
+];
+const TURBO_INTAKE_NONE: typeof TURBO_INTAKE = [TURBO_INTAKE[0], TURBO_INTAKE[1], TURBO_INTAKE[2], { kind: 'cold', length: 0.35, area: 1, drag: 0, wall: 0.1 }];
+const CHARGER_INTAKE_NONE: typeof TURBO_INTAKE = [CHARGER_INTAKE[0], CHARGER_INTAKE[1], CHARGER_INTAKE[2], CHARGER_INTAKE[4]];
+
+/** Le chemin de l'air entre le filtre et le papillon, selon la machine et l'échangeur. */
+export function intakeChainOf(config: Pick<EngineConfig, 'aspiration' | 'intercooler'>): typeof TURBO_INTAKE | null {
+  const cooler = config.intercooler ?? 'air_to_air';
+  if (config.aspiration === 'turbo') return cooler === 'none' ? TURBO_INTAKE_NONE : cooler === 'air_to_water' ? TURBO_INTAKE_WATER : TURBO_INTAKE;
+  if (config.aspiration === 'supercharger') return cooler === 'none' ? CHARGER_INTAKE_NONE : CHARGER_INTAKE;
+  return null;
+}
+
 /** Longueur de chaque collecteur (m) : mêmes ordres de grandeur que `EngineConfig::toProfile`. */
 function headerLength(layout: Layout, cylinder: number): number {
   switch (layout) {
@@ -552,7 +575,7 @@ export class GasNetwork {
     this.cell = CELL_M;
     this.turbo = config.aspiration === 'turbo';
     this.charger = config.aspiration === 'supercharger';
-    this.airChain = this.turbo ? TURBO_INTAKE : this.charger ? CHARGER_INTAKE : null;
+    this.airChain = this.turbo || this.charger ? intakeChainOf(config) : null;
     this.diesel = config.fuel === 'diesel' && !rotary;
     this.flutter = config.turboRelease === 'flutter';
     this.boostBar = config.boostBar;

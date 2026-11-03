@@ -365,18 +365,24 @@
     const nearTurbo = remote >= 0.5 && !behind;
     const airX = nearTurbo ? turboX + 0.3 : atRear ? 0.14 : behind ? shape.length * 0.44 : Math.min(left + blockWidth + 0.32, shape.length * 0.93);
     const airY = nearTurbo ? compressorY + 0.12 : behind ? shape.height * 0.66 : engineY + blockHeight * 1.05;
-    const coolerRight = behind ? (atRear ? left + blockWidth + 0.5 : left + blockWidth + 0.45) : shape.length * 0.965;
-    const coolerLeft = coolerRight - 0.24;
-    const coolerBottom = behind ? engineY + 0.18 : floor + 0.04;
-    const coolerTop = coolerBottom + 0.26;
     const throttleX = left + blockWidth * 0.86;
     const throttleY = engineY + blockHeight * 0.92;
+    // L'échangeur d'origine, tout à l'avant ; une brique air-eau, juste devant le moteur et sous le papillon ; aucun : le tube chaud
+    // remonte de là droit au papillon (voir `ChargePath`, core/src/charge_air.cpp).
+    const cooling = config.intercooler ?? 'air_to_air';
+    const nearEngine = cooling !== 'air_to_air';
+    const coolerRight = nearEngine ? left + blockWidth + 0.03 + (cooling === 'none' ? 0 : 0.12) : behind ? (atRear ? left + blockWidth + 0.5 : left + blockWidth + 0.45) : shape.length * 0.965;
+    const coolerLeft = nearEngine ? left + blockWidth + 0.03 : coolerRight - 0.24;
+    const coolerBottom = nearEngine ? throttleY - 0.24 : behind ? engineY + 0.18 : floor + 0.04;
+    const coolerTop = coolerBottom + (nearEngine ? 0.14 : 0.26);
     const way: Record<string, [number, number][]> = {
       filter: [toCar(airX + 0.09, airY), toCar(airX, airY)],
       inlet: nearTurbo ? [toCar(airX, airY), toCar(turboX, compressorY + 0.05)] : [toCar(airX, airY), toCar(left + blockWidth * 0.5, engineY + blockHeight + 0.06), toCar(turboX, compressorY + 0.05)],
       hot: [toCar(turboX - 0.02, compressorY - 0.05), toCar(turboX - 0.05, floor + 0.01), toCar(coolerLeft - 0.02, floor + 0.01), toCar(coolerLeft, coolerBottom + 0.08)],
-      cooler: [toCar(coolerLeft, coolerBottom + 0.13), toCar(coolerRight, coolerBottom + 0.13)],
-      cold: [toCar(coolerRight, coolerTop - 0.04), toCar(coolerRight - 0.12, coolerTop + 0.08), toCar(throttleX, throttleY)],
+      cooler: [toCar(coolerLeft, (coolerBottom + coolerTop) / 2), toCar(coolerRight, (coolerBottom + coolerTop) / 2)],
+      cold: cooling === 'none'
+        ? [toCar(coolerLeft, coolerBottom + 0.08), toCar(throttleX, throttleY)]
+        : [toCar(coolerRight, coolerTop - 0.04), toCar(coolerRight - 0.12, coolerTop + 0.08), toCar(throttleX, throttleY)],
     };
     if (behind) way.hot = [toCar(turboX - 0.02, compressorY - 0.05), toCar(turboX, floor + 0.03), toCar(coolerLeft - 0.03, floor + 0.05), toCar(coolerLeft, coolerBottom + 0.08)];
     const partFor = (kind: string) => way[kind];
@@ -419,34 +425,36 @@
     ctx.stroke();
     labels.push({ x: airX + 0.09, text: t('gas.airbox') });
 
-    // L'échangeur : des tranches à la température de l'air, du chaud (côté tube chaud) au froid.
-    const [cx0, cy0] = toCar(coolerLeft, coolerTop);
-    const coolerW = (coolerRight - coolerLeft) * scale;
-    const coolerH = (coolerTop - coolerBottom) * scale;
-    if (ready && !motion.reduced) {
-      const steps = Math.min(8, net.coolerCount);
-      for (let k = 0; k < steps; k++) {
-        const cell = net.coolerFirst + Math.floor((k * net.coolerCount) / steps);
-        ctx.fillStyle = painter.airStyle(theme, net.temp[cell], net.rho[cell]);
-        ctx.fillRect(cx0 + (coolerW * k) / steps, cy0, coolerW / steps + 0.5, coolerH);
+    // L'échangeur : des tranches à la température de l'air, du chaud (côté tube chaud) au froid. Sans échangeur, rien.
+    if (cooling !== 'none') {
+      const [cx0, cy0] = toCar(coolerLeft, coolerTop);
+      const coolerW = (coolerRight - coolerLeft) * scale;
+      const coolerH = (coolerTop - coolerBottom) * scale;
+      if (ready && !motion.reduced && net.coolerCount > 0) {
+        const steps = Math.min(8, net.coolerCount);
+        for (let k = 0; k < steps; k++) {
+          const cell = net.coolerFirst + Math.floor((k * net.coolerCount) / steps);
+          ctx.fillStyle = painter.airStyle(theme, net.temp[cell], net.rho[cell]);
+          ctx.fillRect(cx0 + (coolerW * k) / steps, cy0, coolerW / steps + 0.5, coolerH);
+        }
+      } else {
+        ctx.fillStyle = theme.raised;
+        ctx.fillRect(cx0, cy0, coolerW, coolerH);
       }
-    } else {
-      ctx.fillStyle = theme.raised;
-      ctx.fillRect(cx0, cy0, coolerW, coolerH);
+      ctx.strokeStyle = theme.metal;
+      ctx.lineWidth = 1;
+      ctx.globalAlpha = 0.5;
+      ctx.beginPath();
+      for (let k = 1; k < 7; k++) {
+        ctx.moveTo(cx0 + (coolerW * k) / 7, cy0 + 1);
+        ctx.lineTo(cx0 + (coolerW * k) / 7, cy0 + coolerH - 1);
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(cx0, cy0, coolerW, coolerH);
+      labels.push({ x: nearEngine ? (coolerLeft + coolerRight) / 2 : coolerRight - 0.12, text: t('gas.intercooler') });
     }
-    ctx.strokeStyle = theme.metal;
-    ctx.lineWidth = 1;
-    ctx.globalAlpha = 0.5;
-    ctx.beginPath();
-    for (let k = 1; k < 7; k++) {
-      ctx.moveTo(cx0 + (coolerW * k) / 7, cy0 + 1);
-      ctx.lineTo(cx0 + (coolerW * k) / 7, cy0 + coolerH - 1);
-    }
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(cx0, cy0, coolerW, coolerH);
-    labels.push({ x: coolerRight - 0.12, text: t('gas.intercooler') });
 
     // La soupape de décharge, sur le tube froid, qui souffle quand elle s'ouvre.
     if (config.turboRelease !== 'flutter') {

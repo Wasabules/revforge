@@ -195,6 +195,10 @@ TEST_CASE("air de charge : sans échangeur, moins de volume et de perte, une cha
     CHECK(w.coolerDrop < a.coolerDrop);
     // Le volume se remplit plus vite : moins de retard.
     const double rpm = 3000.0;
+    char line[160];
+    std::snprintf(line, sizeof line, "90 %% de la pression à 3000 tr/min : air-air %.2f s, air-eau %.2f s, aucun %.2f s ; volume %.1f/%.1f/%.1f L", stabSeconds(stock, rpm),
+                  stabSeconds(water, rpm), stabSeconds(none, rpm), a.chargeVolumeM3 * 1000.0, w.chargeVolumeM3 * 1000.0, n.chargeVolumeM3 * 1000.0);
+    MESSAGE(line);
     CHECK(stabSeconds(none, rpm) < stabSeconds(stock, rpm));
     CHECK(stabSeconds(water, rpm) < stabSeconds(stock, rpm));
     // À la puissance maximale : la sortie du compresseur, plus de 100 °C, et la densité qui va avec.

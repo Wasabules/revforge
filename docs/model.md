@@ -1063,3 +1063,84 @@ such as the Cobra.
 
 The render is bit-identical between native and WebAssembly: calculations in `double` rounded to `float`, frozen order of random draws, no floating-point
 contraction, fixed-step physics. Parity with the original Kotlin version (CANCitroen) was abandoned during this rework. `tools/compare_wav.py` compares two renders.
+
+## Charge air
+
+`core/src/charge_air.cpp`: the intercooler (air-to-air, air-to-water, none), water injection and nitrous oxide, as pure functions. What changes while driving (the water loop, the bottle) is the `ChargeAir` state, advanced by `DrivingModel` at each 1 ms step through `revforge::portable`. At the defaults (air-to-air, no water, no nitrous), `chargeAirActive` is false and none of this runs: the presets and the 29 original fingerprints do not move by a bit. On a diesel, water and nitrous have no effect (the setting only appears on a spark-ignition engine); on a naturally aspirated engine, there is no intercooler.
+
+**One principle throughout.** The base torque (`fullLoadTorqueNm`) assumes the original intercooler. Whatever changes the charge changes the mass of air admitted at equal pressure: `C = ((C₀ + f)·T_ref/T·air_share − f)`, where `f` is friction, which does not follow density. On the sheet, `torqueCurveNm` applies it at equilibrium, at 100 km/h; while driving, `DrivingModel` multiplies the indicated torque by the same ratio, read from the current state. The gearbox and clutch remain those of the original engine (`chargeAirStock`), as for the air filter: an intercooler does not redesign a gearbox, and a clutch does not grow stronger for nitrous.
+
+### The intercooler
+
+- **Original air-to-air.** Unchanged: `ε = 0.86 − 0.14·ṁ/ṁ_rated`, a 1.5 s mass, outside air on the other side, whatever the speed.
+- **Air-to-air by ε-NTU, with road air** (`airToAirCoolerFor`, `airToAirOutletK`): ready to plug in, it does not replace the original, because it cannot reproduce it to the bit. `UA = 1/(1/hA_charge + 1/hA_road)`, `hA_charge ∝ ṁ^0.8` (Dittus-Boelter), `hA_road ∝ ṁ_road^0.5` (louvered fins, laminar), `ṁ_road = ρ·A·(0.3·v + 1 m/s)` (a grille lets through only part of the speed; the fan, at a standstill; both assumed). Cross-flow, both fluids unmixed: `ε = 1 − exp[(NTU^0.22/Cr)·(exp(−Cr·NTU^0.78) − 1)]` (Incropera). Face of 0.85 m² per kg/s (600 × 300 mm for a 2 L), both sides of equal conductance, fitted to give the original at the rated point at 100 km/h. What it would change to torque at peak power, at equal pressure:
+
+| Preset | Original | 0 km/h | 50 km/h | 100 km/h | 150 km/h |
+|---|---|---|---|---|---|
+| three_cyl_turbo | 52.4 °C | 92.0 °C, −10.8 % | 60.6 °C, −2.4 % | 52.2 °C, +0.1 % | 48.0 °C, +1.4 % |
+| hot_hatch_turbo | 53.6 °C | 94.5 °C, −11.1 % | 62.0 °C, −2.5 % | 53.4 °C, +0.1 % | 49.0 °C, +1.4 % |
+| five_cyl_turbo | 56.8 °C | 101.7 °C, −12.0 % | 66.1 °C, −2.7 % | 56.6 °C, +0.1 % | 51.8 °C, +1.6 % |
+| boxer_four_turbo | 51.9 °C | 90.7 °C, −10.7 % | 59.9 °C, −2.4 % | 51.7 °C, 0.0 % | 47.5 °C, +1.4 % |
+| diesel_four | 61.3 °C | 111.6 °C, −13.1 % | 71.6 °C, −3.0 % | 61.0 °C, +0.1 % | 55.6 °C, +1.7 % |
+| v8_supercharged | 40.1 °C | 64.8 °C, −7.3 % | 45.3 °C, −1.6 % | 40.1 °C, 0.0 % | 37.4 °C, +0.9 % |
+
+  The gap only really matters at a standstill, flat out: on a dyno without a fan, or pulling away from a light. Plugging it in would change the 0–100 km/h of the turbo presets, hence their fingerprints: that is a separate decision.
+- **Air-to-water.** A brick cooled by a glycol-water loop, its electric pump and its low-temperature radiator at the grille:
+
+  ```
+  C_loop·dT_water/dt = ε_b·ṁ·cp·(T2 − T_water) − K_rad(v)·(T_water − T_air) + G·(T_bay(v) − T_water)
+  T3 = T2 − ε_b·(T2 − T_water)
+  ```
+
+  The brick: ε-NTU, water side four times the air side (assumed), 85 % at the rated point (assumed). The pump: 2 kg of coolant per kg of air at the rated point (24 L/min for a 2 L); at 1 kg/kg, the coolant heated by more than 20 K in the brick, and no radiator of this size could return the original point. The radiator: 0.7 m² per kg/s, ε-NTU against road air, its conductance fitted so that equilibrium at the rated point, at 100 km/h, gives the original air-to-air: the same intercooler, cooled differently. The loop: 3 L of coolant and 3.5 kg of aluminium for 0.21 kg/s, i.e. 68 kJ/K per kg/s. The engine bay: at a standstill, its air is halfway between the outside air and the engine coolant (55 °C on a 20 °C day, warm engine), half that rise at 36 km/h; it gives 70 W/K per kg/s to the loop. All these sizes are assumed, in the range of production systems.
+
+  `--scenario soak` (hot_hatch_turbo, a minute at a standstill, then three 8 s standing starts with 20 s stops between them):
+
+  | | Standstill (60 s) | End of start 1 | 2 | 3 | Water at start 1/2/3 |
+  |---|---|---|---|---|---|
+  | Air-to-air | 19.9 °C | 48.6 °C | 48.6 °C | 48.7 °C | — |
+  | Air-to-water | 21.3 °C | 43.9 °C | 45.6 °C | 46.2 °C | 21.3/24.9/26.2 °C |
+
+  The loop's mass makes the first start cooler than the air-to-air; it then keeps what it took, and the radiator, without speed, only gives it back in about 90 s. At a standstill alone, the loop gains only 1.4 K in a minute (3 K at equilibrium): what a sensor in a hot manifold reads at very low flow comes mostly from the manifold, which is not modelled, for any intercooler. Published order of magnitude: a front-mounted air-to-air cooler holds the charge about 15 K above ambient at full power (Behr, patent US 7,779,791 B2), 20 to 30 K according to other patents from the same maker; here, 28.6 K at the end of a start and 33.6 K at equilibrium at peak power.
+- **None.** The compressor outlet goes straight to the throttle: `T3 = T2`. The air path (`ChargePath`, copied by `fluidGas.ts`): hot pipe 0.45 m, core 0.45 m at four times the section, cold pipe 0.5 m for a turbo's air-to-air; a 0.25 m brick and a 0.2 m cold pipe for air-to-water; a single 0.8 m pipe without intercooler. The volume follows: 6.5, 3.9 and 1.9 L on a 2 L. The loss follows `ρv²`: Darcy (`f = 0.02`) and 0.3 per bend; the core carries about 80 % of the original 0.12 bar, a brick half that (assumed). Lag hardly improves: 90 % of the boost at 3000 rpm in 0.85, 0.80 and 0.76 s, because shaft inertia dominates. The turbo and supercharger stay those of the original intercooler.
+
+| | Peak torque | Power | 0–100 km/h | Charge at peak power |
+|---|---|---|---|---|
+| hot_hatch_turbo, air-to-air | 357 Nm at 2850 | 194.4 kW | 6.86 s | 53.6 °C |
+| air-to-water | 363 Nm at 2850 | 195.0 kW | 6.60 s | 52.6 °C |
+| none | 274 Nm at 4350 | 150.4 kW | 7.79 s | 131.7 °C |
+| water injection | 378 Nm at 2850 | 209.5 kW | 6.59 s | 27.8 °C |
+| nitrous 75 kW | 598 Nm at 3000 | 271.5 kW | 5.57 s | 18.4 °C |
+| v8_supercharged, original | 767 Nm at 3650 | 393.6 kW | 6.99 s | 40.1 °C |
+| air-to-water | 772 Nm at 3550 | 393.7 kW | 6.96 s | 40.1 °C |
+| none | 651 Nm at 3850 | 338.7 kW | 7.16 s | 87.4 °C |
+| hot_hatch_na | 194 Nm at 4500 | 117.8 kW | 8.72 s | 19.9 °C |
+| water injection | 203 Nm at 4550 | 123.7 kW | 8.42 s | 6.4 °C |
+| nitrous 75 kW | 417 Nm at 3000 | 192.3 kW | 7.18 s | −27.5 °C |
+
+Without an intercooler, the engine loses 23 % of its power from density alone: knock, which an ECU would avoid by pulling timing, is not in this calculation (see what knock reads, below).
+
+### Water injection
+
+Water, at 30 % of the fuel mass (assumed; according to the press, BMW's M4 GTS asks for its 5 L of water to be refilled at every fuel stop on track, where injection only works at full load), sprayed into the manifold from 80 % fill, all of it beyond 95 %. It evaporates until the air is saturated, or until the last drop:
+
+```
+cp_air·(T_in − T) = x_water·c_water·(T − T_tank) + x_vap·h_fg(T),   x_vap = min(x_water, 0.622·p_s(T)/(p − p_s(T)))
+ln(p_s/p₀) = (a/R_v)·(1/T₀ − 1/T) − (b/R_v)·ln(T/T₀),   h_fg = a − b·T
+```
+
+Clausius-Clapeyron integrated with a linear latent heat (Kirchhoff): `a = 3.1615 MJ/kg`, `b = 2386 J/(kg·K)`, from boiling at 1 atm; within 1 % of the tables at 20 and 60 °C. The temperature is found by bisection. The air admitted is `(p − p_vap)/p·T_in/T` of the dry air: colder, but the vapour takes its place. Dry air at 20 °C goes down to 6.4 °C, its adiabatic saturation temperature (6 to 7 °C on a psychrometric chart): +4.5 % torque on hot_hatch_na. On a turbo, the warm air from the intercooler carries much more water: 53.6 → 27.8 °C, +7 % air. What stays liquid is exposed (`liquidWaterPerAir`): it will evaporate during compression, which is the knock model's business. Outside air is assumed dry; there is no tank to empty.
+
+### Nitrous oxide
+
+- **Saturated nitrous**: ESDU 91022 correlations (pressure, liquid and vapour densities, enthalpies), from 183 to 309 K. 50.5 bar, 786 and 158 kg/m³, 169 kJ/kg at 20 °C; 31.3 bar at 0 °C (NIST: 3.12 MPa).
+- **Combustion.** `2 N₂O → 2 N₂ + O₂`: 36.4 % oxygen by mass, against 23.1 % in air, and 82.05 kJ/mol released, i.e. 1.86 MJ/kg, in the flame. The oxygen burns `O₂/(14.7·0.2314) = 0.107` kg of petrol per kg of nitrous; `P_ind = η·(m_fuel·LHV + ṁ_N₂O·Δh)`, `η = 0.39` (between the 0.375 and 0.405 of `consumption.cpp`), i.e. 2.52 MJ indicated per kg. A 75 kW kit flows 29.8 g/s, 0.30 kg in 10 s for 100 hp: the tuners' rule says 0.8 lb, 0.36 kg.
+- **The jets.** The fuel jet is at regulated pressure: 1 kg per 6 of nitrous at the design point (a common recommendation, richer than the stoichiometric 9.4), and it does not follow the bottle; the mixture richens as it empties. Its whole flow is paid at the pump, burnt or not. The nitrous jet passes liquid (`ṁ = Cd·A·√(2ρ_l·Δp)`), sized with a full bottle at ambient temperature and the manifold at full load; vapour alone goes through a choked throat (`ṁ = Cd·A·0.667·√(ρp)`, γ = 1.3).
+- **The bottle.** 10 lb (4.536 kg), at the regulatory filling ratio of 0.68 kg per litre (6.67 L), 6.8 kg of aluminium (assumed). Liquid leaving frees a volume that liquid must boil to fill: `ṁ_vap = ṁ·ρ_v/(ρ_l − ρ_v)`, and `C·dT/dt = −ṁ_vap·h_fg + hA·(T_air − T)` (liquid at 2.5 kJ/(kg·K), wall at 2 W/K, assumed). For 75 kW: −0.8 bar in 10 s; no liquid left after 133 s, the bottle at 8.8 °C; 5 s later, vapour alone gives 4.5 g/s, 85 % less. Forums speak of 80 to 120 s at 100 hp for this bottle, Holley of 7 to 10 quarter miles for a 125 hp kit. But the bottle is a single lump at equilibrium here: the clear pressure drop by the third pass that tuners report comes from a stratifying liquid, and is not in it. It refills at every engine change, or with the gauge's button.
+- **Activation.** Wide-open-throttle switch (pedal at 95 %), rpm window from max(3000, 0.4·redline) to 97 % of the redline (makers advise against opening below 3000 rpm), combustion running. A constant flow gives a constant power, hence a torque in `1/ω`: 417 Nm at 3000 rpm on a 2 L that makes 194. The clutch stays the original one, at 1.6 times the original torque: it can slip.
+- **The charge.** The liquid vaporises at the bottle temperature, then the vapour and the fuel take the mixture's: `ṁ_air·cp·(T3 − T) = ṁ_N₂O·[h_fg(T_b) + c_v·(T − T_b)] + ṁ_fuel·[L + c_fuel·(T − T_b)]`, with the fuel's latent heat read as a parameter. At equal pressure, the cylinder is shared between the moles: nitrous and fuel take air's place, and the cold gives some back. On hot_hatch_na at 6750 rpm, −27.5 °C, and the air admitted stays at 100 %: the two effects cancel, and the kit gives its power (+74.5 kW). Tuners claim 60 to 75 °F (33 to 42 K) less at the intake; here 47 K, for a 75 kW kit on a 2 L, large for this engine. The vapour's departure from an ideal gas (around 60 kJ/kg) is ignored: the cooling is rather underestimated.
+- **Sound.** `EngineSound::setCharge` adds to the exhaust opening pressure what the charge adds to torque, at the ratio of `boostFill` (0.4 for 0.9 of torque). On `--scenario launch`, hot_hatch_na: 89.6 → 93.2 dB(A) LAeq, the car also going faster. **No listening has been done.**
+
+### What is read, what is exposed
+
+Read as parameters, at the reference values while the other subjects are not plugged in: `ChargeConditions` (`ambientK`, `ambientPa` from the atmosphere, `engineCoolantK` from the thermal model) and `ChargeFuel` (`latentJPerKg`, `stoichiometricAfr`, `lowerHeatingJPerKg` from combustion, `fullLoadLambda` from the ECU). Exposed for knock: `ManifoldCharge` (pressure and temperature at the manifold, water injected and still liquid, nitrous, oxygen in the oxidiser, air share), through `DrivingModel::manifoldCharge()` while driving and `steadyManifoldCharge(p, rpm)` on the sheet; and the pure functions `mixCharge`, `waterSpray`, `waterSaturationPa`, `nitrousSaturation`, `chargeCoolerSteadyK`. On the site: `rf_charge_c`, `rf_charge_water_c`, `rf_water_gps`, `rf_nitrous_bar`, `rf_nitrous_kg`, `rf_nitrous_flow`, `rf_nitrous_refill`, `rf_nitrous_activation_rpm`; the bottle gauge and the charge under the manifold gauge. Tests: `tests/charge_air_test.cpp`, `web/tests/air-de-charge.spec.ts`; fingerprints `golden_charge_*`.

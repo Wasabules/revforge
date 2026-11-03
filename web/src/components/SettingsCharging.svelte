@@ -3,7 +3,8 @@
   import SettingsSection from './SettingsSection.svelte';
   import Slider from './Slider.svelte';
   import { ANTI_LAGS, ASPIRATIONS, BOOST_CONTROLS, INTERCOOLERS, LIMITS, ON_OFF, RELEASES, SUPERCHARGER_KINDS, TURBO_LAYOUTS, TURBO_SIZES, isRotary, type EngineConfig } from '../lib/config';
-  import { fixed, t } from '../lib/i18n.svelte';
+  import type { Spec } from '../lib/engine';
+  import { fixed, t, whole } from '../lib/i18n.svelte';
 
   /** Suralimentation : turbo ou compresseur, leur régulation, l'air de charge, l'eau et le protoxyde d'azote. */
   interface Props {
@@ -11,8 +12,10 @@
     shown: EngineConfig;
     onapply: (next: Partial<EngineConfig>) => void;
     onlive: (next: Partial<EngineConfig>) => void;
+    /** La fiche : le régime d'activation du protoxyde. */
+    spec?: Spec;
   }
-  let { config, shown, onapply, onlive }: Props = $props();
+  let { config, shown, onapply, onlive, spec }: Props = $props();
 
   const rotary = $derived(isRotary(config));
   /** Allumé par une étincelle : l'eau et le protoxyde reculent le cliquetis, qui ne concerne pas un diesel. */
@@ -85,6 +88,7 @@
       <Slider label={t('builder.nitrous')} value={shown.nitrousKw} {...LIMITS.nitrousKw} format={(value) => (value === 0 ? t('tuned.none') : t('builder.nitrous.value', { kw: value }))}
         oninput={(nitrousKw) => onlive({ nitrousKw })} onchange={(nitrousKw) => onapply({ nitrousKw })} />
       <p class="help">{t('builder.nitrous.help')}</p>
+      {#if config.nitrousKw > 0 && spec && spec.nitrousRpm > 0}<p class="help" data-testid="nitrous-figures">{t('builder.nitrous.figures', { rpm: whole(spec.nitrousRpm) })}</p>{/if}
     </div>
   {/if}
 </SettingsSection>

@@ -630,7 +630,7 @@
 
     <aside class="rail" aria-label={t('section.instruments')}>
       <section class="card">
-        <GaugeBank config={shown} {spec} {motion} {readings} telemetry={() => telemetry} running={() => running} {sample} />
+        <GaugeBank config={shown} {spec} {motion} {readings} telemetry={() => telemetry} running={() => running} {sample} onrefill={() => engine.refillNitrous()} />
       </section>
       <section class="card" aria-label={t('section.curves.aria')}>
         <PowerCurves {spec} rpm={telemetry.rpm} {liveHp} liveTorque={liveTorque} {running} />

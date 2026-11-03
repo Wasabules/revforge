@@ -595,4 +595,24 @@ for (const [name, system] of [['single', 1], ['multi', 2]]) {
   rf.rf_set_mode(3);
   check('socle moteur, électrique', render(rf, 20, 128), native('--preset', 'electric', '--ambient', '40', '--altitude', '1500', '--traction', 'full', '--scenario', 'lap', '--seconds', '20'));
 }
+// L'air de charge : un turbo sans échangeur, au coup de gaz ; un compresseur à l'air-eau, avec l'eau et le protoxyde, pied au plancher,
+// consommation comprise (le gicleur d'essence du kit se paie à part).
+{
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1400, 18, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  tune(rf, { intercooler: INTERCOOLER.none });
+  rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6500, EXHAUST.sport, 1, 0, 0, 0, 0, 1.3, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+  check('air de charge, turbo sans échangeur', turboStab(rf, 24), native(...turboArgs, '--intercooler', 'none'));
+}
+{
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1400, 18, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  tune(rf, { intercooler: INTERCOOLER.water, waterInjection: 1, nitrousKw: 60 });
+  rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6500, EXHAUST.sport, 2, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+  rf.rf_set_mode(FRESH);
+  rf.rf_set_mode(2);
+  const args = [...chargerArgs, '--supercharger', 'roots', '--intercooler', 'water', '--water', '1', '--nitrous', '60', '--scenario', 'launch'];
+  check('air de charge, air-eau, eau, protoxyde', render(rf, 20, 128, (step) => rf.rf_set_controls(step * TICK_S >= 1 ? 1 : 0, 0, 0)), native(...args));
+  checkFigures('air de charge, consommation', rf, nativeFigures(...args));
+}
 process.exit(failed ? 1 : 0);

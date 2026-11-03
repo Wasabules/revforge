@@ -130,6 +130,8 @@ export interface EngineLayout {
   turboScale: number;
   /** Le tube entre les cylindres et la turbine (mm) : 400 est la place où le turbo a toujours été dessiné. */
   turboPipeMm: number;
+  /** L'échangeur d'un turbo : un faisceau à l'avant, une brique refroidie à l'eau, ou rien (voir `turboChain`). */
+  intercooler: NonNullable<EngineConfig['intercooler']>;
   /** Une soupape de décharge : sans elle (flutter), l'air revient par le compresseur. */
   releaseValve: boolean;
   /** Le filtre à air, et la longueur de ses cornets s'il en a, de la soupape à la bouche (mm) : recopie `stackLengthM`. */
@@ -331,7 +333,7 @@ export function layoutKey(config: EngineConfig): string {
   if (config.electric) return 'electric';
   // La longueur des cornets dépend du régime qu'on vise : eux seuls font reconstruire le moteur quand il change.
   const filter = config.airFilter === 'stacks' ? `stacks${config.redlineRpm}` : config.airFilter ?? 'stock';
-  return `${config.cylinders}|${config.layout}|${config.displacementCc}|${config.boreMm}|${config.fuel}|${config.aspiration}|${config.turboSize}|${config.turboRelease}|${config.boxFlywheel}|${filter}|${config.turboPipeMm}|${config.camshaft ?? 'dohc'}|${config.superchargerKind}|${carburetorOf(config)?.kind ?? ''}|${carburetorOf(config) ? config.redlineRpm : ''}`;
+  return `${config.cylinders}|${config.layout}|${config.displacementCc}|${config.boreMm}|${config.fuel}|${config.aspiration}|${config.turboSize}|${config.turboRelease}|${config.boxFlywheel}|${filter}|${config.turboPipeMm}|${config.camshaft ?? 'dohc'}|${config.superchargerKind}|${carburetorOf(config)?.kind ?? ''}|${carburetorOf(config) ? config.redlineRpm : ''}|${config.intercooler ?? 'air_to_air'}`;
 }
 
 /** Deux arbres, chacun au-dessus de ses soupapes, qu'il attaque directement par un poussoir. */
@@ -593,6 +595,7 @@ export function engineLayout(config: EngineConfig): EngineLayout {
     charger: config.aspiration === 'supercharger' ? (config.superchargerKind ?? 'roots') : null,
     turboScale: TURBO_SCALE[config.turboSize ?? 'medium'],
     turboPipeMm: config.turboPipeMm ?? 400,
+    intercooler: config.intercooler ?? 'air_to_air',
     releaseValve: config.turboRelease !== 'flutter',
     airFilter: config.airFilter ?? 'stock',
     stackMm: stackLengthMm(config.boreMm, config.redlineRpm),

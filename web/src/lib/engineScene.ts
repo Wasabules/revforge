@@ -1149,21 +1149,23 @@ export class EngineScene {
         this.turboWheels.push(mesh);
       }
 
-      // L'échangeur : boîtes d'extrémité, faisceau et ailettes, devant le moteur.
+      // L'échangeur : boîtes d'extrémité, faisceau et ailettes, devant le moteur. Sans échangeur, rien : les tubes se rejoignent.
       const [cx, cy, cz] = airChain.cooler;
       const [chx, chy, chz] = airChain.coolerSize;
-      const core = new MeshBuilder();
-      core.transform(tr(cx, cy, cz)).box(2 * chx * 0.86, 2 * chy, 2 * chz * 0.75);
-      const fins = Math.round(16 * s);
-      for (let k = 0; k < fins; k++) {
-        const fx = cx - chx * 0.86 + (2 * chx * 0.86 * (k + 0.5)) / fins;
-        core.transform(tr(fx, cy, cz + chz * 0.78)).box(bore * 0.018, 2 * chy * 0.96, bore * 0.02);
+      if (airChain.hasCooler) {
+        const core = new MeshBuilder();
+        core.transform(tr(cx, cy, cz)).box(2 * chx * 0.86, 2 * chy, 2 * chz * 0.75);
+        const fins = Math.round(16 * s);
+        for (let k = 0; k < fins; k++) {
+          const fx = cx - chx * 0.86 + (2 * chx * 0.86 * (k + 0.5)) / fins;
+          core.transform(tr(fx, cy, cz + chz * 0.78)).box(bore * 0.018, 2 * chy * 0.96, bore * 0.02);
+        }
+        for (const end of [-1, 1]) {
+          alloys.transform(tr(cx + end * chx * 0.93, cy, cz)).box(2 * chx * 0.14, 2 * chy * 1.06, 2 * chz * 1.05);
+        }
+        alloys.transform(null);
+        this.coolerGeometry = geo(core);
       }
-      for (const end of [-1, 1]) {
-        alloys.transform(tr(cx + end * chx * 0.93, cy, cz)).box(2 * chx * 0.14, 2 * chy * 1.06, 2 * chz * 1.05);
-      }
-      alloys.transform(null);
-      this.coolerGeometry = geo(core);
 
       // Le tube froid : de l'échangeur au papillon. La soupape de décharge est à mi-chemin, là où un vrai moteur la monte.
       const coldPath = bendPath(airChain.coldFrom, airChain.coldFromDir, airChain.coldTo, [0, 0, -1], 18);
@@ -1466,7 +1468,7 @@ export class EngineScene {
       if (this.labelSpots.maf) labelAt('engine.part.maf', this.labelSpots.maf);
       labelAt('engine.part.chargeHot', unit.hotRun.length > 0 ? unit.hotRun[Math.floor(unit.hotRun.length / 2)] : [(unit.hotFrom[0] + unit.hotTo[0]) / 2, (unit.hotFrom[1] + unit.hotTo[1]) / 2, (unit.hotFrom[2] + unit.hotTo[2]) / 2]);
       if (unit.feedRun.length > 0) labelAt('engine.part.turboPipe', unit.feedRun[Math.floor(unit.feedRun.length / 2)]);
-      labelAt('engine.part.intercooler', [airChain.cooler[0], airChain.cooler[1], airChain.cooler[2] + airChain.coolerSize[2]]);
+      if (airChain.hasCooler) labelAt('engine.part.intercooler', [airChain.cooler[0], airChain.cooler[1], airChain.cooler[2] + airChain.coolerSize[2]]);
       if (this.labelSpots.coldPipe) labelAt('engine.part.chargeCold', this.labelSpots.coldPipe);
       if (layout.releaseValve && this.labelSpots.blowoff) labelAt('engine.part.blowoff', this.labelSpots.blowoff);
       labelAt('engine.part.wastegate', unit.actuator);

@@ -36,6 +36,7 @@ class RevforgeProcessor extends AudioWorkletProcessor {
       case 'assist': rf.rf_set_clutch_assist(command.assisted ? 1 : 0); break;
       case 'repair': rf.rf_repair_gearbox(); break;
       case 'resetTrip': rf.rf_reset_trip(); break;
+      case 'refillNitrous': rf.rf_nitrous_refill(); break;
       case 'controls': rf.rf_set_controls(command.pedal, command.brake, command.clutch); break;
       case 'transmission': rf.rf_set_transmission(command.manual ? 1 : 0); break;
       case 'shiftMode': rf.rf_set_shift_mode(command.mode); break;
@@ -148,6 +149,12 @@ class RevforgeProcessor extends AudioWorkletProcessor {
         energyKwhPer100km: rf.rf_energy_kwh_per_100km(),
         energyAvgKwhPer100km: rf.rf_energy_avg_kwh_per_100km(),
         energyTripKwh: rf.rf_energy_trip_kwh(),
+        chargeC: rf.rf_charge_c(),
+        chargeWaterC: rf.rf_charge_water_c(),
+        waterGps: rf.rf_water_gps(),
+        nitrousBar: rf.rf_nitrous_bar(),
+        nitrousKg: rf.rf_nitrous_kg(),
+        nitrousFlow: rf.rf_nitrous_flow(),
         peak: this.peak,
       });
       this.peak = 0;

@@ -113,10 +113,18 @@ export interface Telemetry {
   energyKwhPer100km: number;
   energyAvgKwhPer100km: number;
   energyTripKwh: number;
+  /** L'air de charge : au collecteur, après l'échangeur, l'eau et le protoxyde (°C) ; la boucle d'un air-eau (°C) ; l'eau injectée (g/s). */
+  chargeC: number;
+  chargeWaterC: number;
+  waterGps: number;
+  /** La bouteille de protoxyde : pression relative (bar), ce qu'il en reste (kg), ce qui en sort (g/s, 0 fermé). */
+  nitrousBar: number;
+  nitrousKg: number;
+  nitrousFlow: number;
 }
 
 export const IDLE_TELEMETRY: Telemetry = {
-  rpm: 0, speed: 0, gear: 0, throttle: 0, load: 0, boost: 0, turbine: 0, turboRelease: 0, turboRpm: 0, turboCharge: 0, turboPlenum: 0, turboOutlet: 0, turboInlet: 0, turboExhaust: 0, turboWastegate: 0, turboBlowoff: 0, turboFlow: 0, turboOutC: 20, turboCoolC: 20, intakeAirC: 20, turboGasC: 20, antiLag: 0, antiLagHeatKw: 0, antiLagAirFlow: 0, antiLagLostNm: 0, chargerRpm: 0, chargerKw: 0, chargerSpill: 0, torque: 0, power: 0, clutch: 0, clutchInputRpm: 0, clutchSlipKw: 0, clutchTorque: 0, wheelRpm: 0, slip: 0, pops: 0, cut: 0, shifting: 0, cranking: 0, stalled: 0, lugging: 0, legKind: 0, legTarget: 0, gradePct: 0, underpowered: 0, levelDbA: 0, listenerX: 0, listenerY: 0, listenerZ: 0, peak: 0, outputRpm: 0, meshed: 0, shiftStep: 0, grinding: 0, overload: 0, boxWear: 0, boxBroken: 0, boxPending: 0, boxConeSlip: 0, boxRattle: 0, boxLoose0: 0, boxLoose1: 0, boxLoose2: 0, boxLoose3: 0, fuelLph: 0, fuelLper100km: 0, fuelTripL: 0, fuelAvgLper100km: 0, tripKm: 0, co2GPerKm: 0, oilGph: 0, oilTripMl: 0, oilMlPer1000km: 0, energyKwhPer100km: 0, energyAvgKwhPer100km: 0, energyTripKwh: 0,
+  rpm: 0, speed: 0, gear: 0, throttle: 0, load: 0, boost: 0, turbine: 0, turboRelease: 0, turboRpm: 0, turboCharge: 0, turboPlenum: 0, turboOutlet: 0, turboInlet: 0, turboExhaust: 0, turboWastegate: 0, turboBlowoff: 0, turboFlow: 0, turboOutC: 20, turboCoolC: 20, intakeAirC: 20, turboGasC: 20, antiLag: 0, antiLagHeatKw: 0, antiLagAirFlow: 0, antiLagLostNm: 0, chargerRpm: 0, chargerKw: 0, chargerSpill: 0, torque: 0, power: 0, clutch: 0, clutchInputRpm: 0, clutchSlipKw: 0, clutchTorque: 0, wheelRpm: 0, slip: 0, pops: 0, cut: 0, shifting: 0, cranking: 0, stalled: 0, lugging: 0, legKind: 0, legTarget: 0, gradePct: 0, underpowered: 0, levelDbA: 0, listenerX: 0, listenerY: 0, listenerZ: 0, peak: 0, outputRpm: 0, meshed: 0, shiftStep: 0, grinding: 0, overload: 0, boxWear: 0, boxBroken: 0, boxPending: 0, boxConeSlip: 0, boxRattle: 0, boxLoose0: 0, boxLoose1: 0, boxLoose2: 0, boxLoose3: 0, fuelLph: 0, fuelLper100km: 0, fuelTripL: 0, fuelAvgLper100km: 0, tripKm: 0, co2GPerKm: 0, oilGph: 0, oilTripMl: 0, oilMlPer1000km: 0, energyKwhPer100km: 0, energyAvgKwhPer100km: 0, energyTripKwh: 0, chargeC: 20, chargeWaterC: 20, waterGps: 0, nitrousBar: 0, nitrousKg: 0, nitrousFlow: 0,
 };
 
 export interface CurvePoint {
@@ -197,6 +205,8 @@ export interface Spec {
   starter: { direct: boolean; kw: number; ring: number; pinion: number; helix: number };
   /** Le carburateur, s'il y en a un : corps, col du venturi, perte de charge à la puissance maximale. */
   carb: { throats: number; throatMm: number; dropKpa: number };
+  /** Le kit de protoxyde : le régime à partir duquel il s'ouvre, pied au plancher (0 sans kit). */
+  nitrousRpm: number;
   curve: CurvePoint[];
   box: BoxSpec;
 }
@@ -224,7 +234,7 @@ export interface SoundSheet {
   lineLoss: { hz: number; db: number }[];
 }
 
-export const EMPTY_SPEC: Spec = { idle: 0, redline: 7000, peakTorque: 0, peakTorqueRpm: 0, peakHp: 0, peakHpRpm: 0, gears: 0, ratios: [], turboWheelMm: 0, turboInertia: 0, intakeDropKpa: 0, intakeAirC: 20, chargerRatio: 0, chargerVolume: 0, chargerWheelMm: 0, zeroTo100: 0, topSpeed: 0, starter: { direct: false, kw: 0, ring: 0, pinion: 0, helix: 0 }, carb: { throats: 0, throatMm: 0, dropKpa: 0 }, curve: [], box: EMPTY_BOX };
+export const EMPTY_SPEC: Spec = { idle: 0, redline: 7000, peakTorque: 0, peakTorqueRpm: 0, peakHp: 0, peakHpRpm: 0, gears: 0, ratios: [], turboWheelMm: 0, turboInertia: 0, intakeDropKpa: 0, intakeAirC: 20, chargerRatio: 0, chargerVolume: 0, chargerWheelMm: 0, zeroTo100: 0, topSpeed: 0, starter: { direct: false, kw: 0, ring: 0, pinion: 0, helix: 0 }, carb: { throats: 0, throatMm: 0, dropKpa: 0 }, nitrousRpm: 0, curve: [], box: EMPTY_BOX };
 
 interface RfExports {
   memory: WebAssembly.Memory;
@@ -236,6 +246,15 @@ interface RfExports {
   rf_antilag_heat_kw(): number;
   rf_antilag_air_flow(): number;
   rf_antilag_lost_nm(): number;
+  /** L'air de charge (télémétrie : charge_air.cpp) ; le régime d'activation du kit, pour la fiche (0 sans kit). */
+  rf_charge_c(): number;
+  rf_charge_water_c(): number;
+  rf_water_gps(): number;
+  rf_nitrous_bar(): number;
+  rf_nitrous_kg(): number;
+  rf_nitrous_flow(): number;
+  rf_nitrous_refill(): void;
+  rf_nitrous_activation_rpm(): number;
   rf_render(frames: number): void;
   rf_render_stereo(frames: number): void;
   rf_set_listener(listener: number): void;
@@ -477,6 +496,11 @@ export class Engine {
     this.send({ type: 'resetTrip' });
   }
 
+  /** Remplit la bouteille de protoxyde. */
+  refillNitrous(): void {
+    this.send({ type: 'refillNitrous' });
+  }
+
   /** Relance le démarreur, après un calage. */
   crank(): void {
     this.send({ type: 'crank' });
@@ -596,6 +620,7 @@ export class Engine {
       topSpeed: rf.rf_top_speed(),
       starter: { direct: rf.rf_starter_direct() === 1, kw: rf.rf_starter_kw(), ring: rf.rf_starter_ring(), pinion: rf.rf_starter_pinion(), helix: rf.rf_starter_helix() },
       carb: { throats: rf.rf_carb_throats(), throatMm: rf.rf_carb_throat_mm(), dropKpa: rf.rf_carb_drop_kpa() },
+      nitrousRpm: rf.rf_nitrous_activation_rpm(),
       curve,
       box: this.boxSpec(rf, gears, redline),
     };
