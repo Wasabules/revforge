@@ -204,6 +204,34 @@ TEST_CASE("thermique : le moteur froid dépense plus, frottements et enrichissem
     CHECK(cold.coldFrictionNm() > 0.0);
 }
 
+TEST_CASE("thermique : l'huile froide freine le moteur, l'enrichissement se paie sans couple") {
+    // Même pédale au point mort : le moteur froid plafonne plus bas, ses frottements en plus le retiennent.
+    DrivingModel warm(started(city(), StartTemp::Warm));
+    DrivingModel cold(started(city(), StartTemp::Cold));
+    for (int i = 0; i < static_cast<int>(4.0 / kDt); ++i) {
+        warm.stepNeutral(kDt, 0.2);
+        cold.stepNeutral(kDt, 0.2);
+    }
+    CHECK(cold.rpm() < warm.rpm() - 100.0);
+    // Le compteur paie ce que le calculateur ajoute, à couple égal : tout le surplus, rien de plus.
+    ConsumptionMeter plain, enriched;
+    plain.configure(city());
+    enriched.configure(city());
+    ConsumptionInput in;
+    in.rpm = 2000.0;
+    in.omega = 2000.0 * 2.0 * 3.141592653589793 / 60.0;
+    in.brakeNm = 30.0;
+    in.frictionNm = 14.0;
+    in.fullGrossNm = 120.0;
+    in.load = 0.3;
+    in.burning = true;
+    plain.step(in, 0.001);
+    in.enrichment = 0.15;
+    enriched.step(in, 0.001);
+    CHECK(enriched.fuelGps() == doctest::Approx(plain.fuelGps() * 1.15));
+    CHECK(enriched.lambdaNow() < plain.lambdaNow());
+}
+
 TEST_CASE("thermique : la fiche se mesure moteur chaud, et rien de tout cela sur l'électrique") {
     const Performance warm = measurePerformance(started(city(), StartTemp::Warm));
     const Performance cold = measurePerformance(started(city(), StartTemp::Cold));
