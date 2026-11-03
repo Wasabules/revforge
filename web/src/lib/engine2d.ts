@@ -5,7 +5,7 @@
  * construction ; dessiner une image n'alloue rien.
  */
 import { mix, type Theme } from './canvas';
-import { collectorPosition, DEG, type Cylinder, type EngineLayout, type EnginePose, lobeNoseDeg, lobeRadius, plenumPosition, stackOf, rockerOutline } from './engineLayout';
+import { collectorPosition, DEG, type Cylinder, type EngineLayout, type EnginePose, lobeNoseDeg, lobeRadius, plenumPosition, stackOf, rockerOutline, hasOpenStacks } from './engineLayout';
 import { chargerUnit, lobedOutline, type ChargerUnit } from './superchargerLayout';
 import { turboChain, type TurboChain, type TurboUnit } from './turboChain';
 import { EVC, EVO, IVC, IVO } from './fluidGas';
@@ -48,6 +48,8 @@ export interface Labels2D {
   block: string;
   /** Le culbuteur d'un simple arbre. */
   rocker?: string;
+  /** Le carburateur : absent sur une injection. */
+  carburetor?: string;
   /** Les pièces du turbo : absentes sur un moteur qui n'en a pas. */
   compressor?: string;
   turbine?: string;
@@ -225,8 +227,12 @@ export class Engine2D {
     const plenum = plenumPosition(layout);
     xMax = Math.max(xMax, Math.abs(plenum.x) + plenum.radius);
     yMax = Math.max(yMax, plenum.y + plenum.radius);
+    if (layout.carb) {
+      // Le carburateur dépasse du plénum : de côté en ligne si chaque cylindre a le sien, debout sinon.
+      if (layout.carb.kind === 'multi' && layout.banks === 1) xMax = Math.max(xMax, bore * 2.75);
+      else yMax = Math.max(yMax, plenum.y + bore * 1.5);
+    } else if (!layout.turbo && !layout.charger) {
     // Le filtre, et ses cornets : ils dépassent du moteur.
-    if (!layout.turbo) {
       if (layout.airFilter === 'stacks') {
         for (const cylinder of layout.cylinders) {
           const stack = stackOf(layout, cylinder);
@@ -496,10 +502,51 @@ export class Engine2D {
         const y = layout.valve.coverTop + bore * 0.08;
         labelAt(labels.rocker, x * Math.cos(b) + y * Math.sin(b), -x * Math.sin(b) + y * Math.cos(b));
       }
+      if (labels.carburetor) {
+        const plenum = plenumPosition(layout);
+        if (layout.carb?.kind === 'multi' && layout.banks === 1) labelAt(labels.carburetor, -bore * 2.1, plenum.y + bore * 0.95);
+        else labelAt(labels.carburetor, plenum.x, plenum.y + bore * 1.45);
+      }
       labelAt(labels.crank, -layout.crank * 1.8, -layout.crank * 0.1);
     }
     ctx.textAlign = 'left';
     ctx.font = '11px "Inter Tight", system-ui, sans-serif';
+  }
+
+  /** Un corps de carburateur, en coupe : l'étranglement du venturi, et le volet qui tourne dessous. `ux, uy` : vers où il aspire. */
+  private drawVenturi(ctx: CanvasRenderingContext2D, x: number, y: number, ux: number, uy: number, open: number, theme: Theme, px: number): void {
+    const carb = this.layout.carb;
+    if (!carb) return;
+    const { bore } = this.layout;
+    const throat = (carb.throatM * 1000) / 2;
+    const height = bore * 0.95;
+    const outer = throat * 1.5;
+    // (along, across) dans le repère du corps.
+    const put = (along: number, across: number): [number, number] => [x + ux * along - uy * across, y + uy * along + ux * across];
+    ctx.fillStyle = theme.raised;
+    ctx.strokeStyle = theme.lineStrong;
+    ctx.lineWidth = px * 1.2;
+    for (const sign of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(...put(0, sign * outer));
+      ctx.lineTo(...put(height, sign * outer * 1.25));
+      ctx.lineTo(...put(height, sign * throat * 1.3));
+      ctx.lineTo(...put(height * 0.42, sign * throat));
+      ctx.lineTo(...put(0, sign * throat * 1.2));
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+    // Le volet : à plat fermé, dans l'axe grand ouvert.
+    const angle = 0.14 + open * 1.32;
+    const along = Math.sin(angle) * throat * 1.1;
+    const across = Math.cos(angle) * throat * 1.1;
+    ctx.strokeStyle = theme.text;
+    ctx.lineWidth = px * 1.6;
+    ctx.beginPath();
+    ctx.moveTo(...put(height * 0.16 - along, -across));
+    ctx.lineTo(...put(height * 0.16 + along, across));
+    ctx.stroke();
   }
 
   private drawBank(ctx: CanvasRenderingContext2D, cylinder: Cylinder, pose: EnginePose, painter: GasPainter, theme: Theme, hatch: CanvasPattern | string, px: number): void {
@@ -838,30 +885,40 @@ export class Engine2D {
     const side = cylinder.intakeSide;
     const plenum = plenumPosition(layout);
     const radius = bore * 0.14;
-    if (layout.airFilter === 'stacks' && !layout.turbo) {
+    const carb = layout.carb;
+    const multi = carb?.kind === 'multi';
+    if (hasOpenStacks(layout)) {
       // Le cornet : un tube droit, sans plénum, qui s'évase à sa bouche.
       this.drawStack(ctx, stackOf(layout, cylinder), theme, px);
     } else {
-      // Le conduit d'admission, du plénum à la culasse.
+      // Le conduit d'admission, du plénum à la culasse ; sur un corps par cylindre, jusqu'à son carburateur.
+      const ax = side * W * c + portY * s;
+      const ay = -side * W * s + portY * c;
+      const toX = multi ? (layout.banks === 1 ? -bore * 1.7 : ax * (layout.flat ? 1 : 0.72)) : plenum.x;
+      const toY = multi ? (layout.banks === 1 ? portY : plenum.y - bore * 0.3) : plenum.y;
       ctx.strokeStyle = theme.cool;
       ctx.globalAlpha = 0.6;
       ctx.lineWidth = radius * 2;
       ctx.lineCap = 'round';
-      const ax = side * W * c + portY * s;
-      const ay = -side * W * s + portY * c;
       ctx.beginPath();
       ctx.moveTo(ax, ay);
-      ctx.quadraticCurveTo(plenum.x * 0.5 + ax * 0.5, Math.max(ay, plenum.y), plenum.x, plenum.y);
+      ctx.quadraticCurveTo(toX * 0.5 + ax * 0.5, Math.max(ay, toY), toX, toY);
       ctx.stroke();
       ctx.globalAlpha = 1;
       ctx.lineCap = 'butt';
       ctx.fillStyle = theme.raised;
       ctx.strokeStyle = theme.lineStrong;
       ctx.lineWidth = px * 1.2;
+      if (multi) {
+        if (layout.banks === 1) this.drawVenturi(ctx, toX, toY, -1, 0, pose.throttle, theme, px);
+        else this.drawVenturi(ctx, toX, toY, 0, 1, pose.throttle, theme, px);
+      } else {
       ctx.beginPath();
       ctx.arc(plenum.x, plenum.y, plenum.radius, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
+      if (carb) this.drawVenturi(ctx, plenum.x, plenum.y + plenum.radius * 0.9, 0, 1, pose.throttle, theme, px);
+      }
     }
     // Le conduit d'échappement : il prend la couleur du gaz qui y passe, la pièce chauffe avec la ligne.
     const collector = collectorPosition(layout, cylinder.bank);
@@ -926,7 +983,7 @@ export class Engine2D {
 
   private drawNaturalFilter(ctx: CanvasRenderingContext2D, painter: GasPainter, theme: Theme, px: number): void {
     const layout = this.layout;
-    if (layout.turbo || layout.airFilter === 'stacks') return;
+    if (layout.turbo || layout.charger || layout.carb || layout.airFilter === 'stacks') return;
     const { bore } = layout;
     const plenum = plenumPosition(layout);
     const at = this.filterAt();

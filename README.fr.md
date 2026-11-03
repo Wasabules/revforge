@@ -12,7 +12,7 @@ Il n'y a aucun échantillon sonore. Tout ce qu'on entend est calculé, échantil
 
 ## Ce qu'on peut faire
 
-- **Construire le moteur.** Cylindres (de 2 à 12), architecture, cylindrée, alésage et course (le curseur ajuste la cylindrée), régime maximal, essence ou diesel, un turbo avec sa taille et sa pression, et un filtre à air (papier d'origine, panneau sport, cône à l'air libre, cornets). Puissance, couple, 0 à 100 km/h et vitesse de pointe découlent de ces réglages : rien n'est saisi à la main. Le temps de réponse du turbo vient d'un vrai bilan de puissance sur son arbre, et se sent dans la voiture.
+- **Construire le moteur.** Cylindres (de 2 à 12), architecture, cylindrée, alésage et course (le curseur ajuste la cylindrée), régime maximal, essence ou diesel, injection ou carburateurs, un turbo avec sa taille et sa pression, et un filtre à air (papier d'origine, panneau sport, cône à l'air libre, cornets). Puissance, couple, 0 à 100 km/h et vitesse de pointe découlent de ces réglages : rien n'est saisi à la main. Le temps de réponse du turbo vient d'un vrai bilan de puissance sur son arbre, et se sent dans la voiture.
 - **Ou un compresseur.** Roots, à vis ou centrifuge, entraîné par une courroie : de la pression dès le bas ou seulement en haut, pas d'arbre à lancer, sa puissance prise au vilebrequin, et un sifflement qui suit le moteur.
 - **Choisir l'échappement.** Confort, origine, sans résonateur, sport, sans silencieux ou ligne directe, avec une ou deux sorties, et un pont en H ou en X sur un moteur en V. Chaque ligne est calculée depuis sa géométrie.
 - **Choisir la boîte, indépendamment du moteur.** Synchros, crabots, séquentielle, double embrayage ou convertisseur ; nombre de rapports, rapports issus de vrais nombres de dents, couple final, denture hélicoïdale ou droite, volant simple ou bi-masse. Une boîte mal adaptée a de vraies conséquences : on peut caler, manquer de vitesse ou la casser.
@@ -68,7 +68,7 @@ cmake --build build
     --gearbox dog --teeth spur --listener cabin --insulation stripped --scenario launch --out cinq.wav
 ```
 
-Autres options utiles : `--turbo small|medium|large`, `--turbo-pipe MM`, `--filter stock|panel|cone|stacks`, `--shift-mode`, `--drive-scenario`, et `--fuel 1` avec `--out none` pour la consommation. `--help` donne la liste complète.
+Autres options utiles : `--turbo small|medium|large`, `--turbo-pipe MM`, `--filter stock|panel|cone|stacks`, `--carb injection|single|multi`, `--shift-mode`, `--drive-scenario`, et `--fuel 1` avec `--out none` pour la consommation. `--help` donne la liste complète.
 
 ## Comment le son est fabriqué
 
@@ -96,6 +96,7 @@ Limites connues :
 - Le ralenti du 4 cylindres sportif sort de la plage des vrais moteurs au comparateur, et reste trop haché.
 - À plein gaz, le limiteur resserre l'écart entre les lignes : environ 6 dB joués pour environ 22 dB estimés entre l'origine et la ligne directe.
 - Les vues 2D et 3D simplifient une partie de la mécanique (automatique schématique, double embrayage approché, pas de distribution à tiges : double ou simple arbre en tête seulement) et n'ont pas été vérifiées sur beaucoup de cartes graphiques. Sans carte graphique, la 3D passe en rendu plus grossier et tourne lentement ; le bouton 2D reste fluide.
+- Les carburateurs sont toujours chauds : ni starter ni démarrage à froid, puisque rien ne calcule la température. Plusieurs constantes du film et du souffle sont supposées.
 - La consommation estimée lit environ 15 à 25 % au-dessus des chiffres officiels, et l'huile n'est qu'un ordre de grandeur, à un facteur trois près.
 - À cylindrée égale, la course ne change le couple qu'au-delà de 24 m/s de vitesse de piston, et ne change jamais le frottement, l'inertie ni la consommation.
 - La voiture ne recule jamais (démarrage en côte avec maintien supposé), toutes les voitures ont la même adhérence, et les trajets sont réglés en durée, pas en distance.

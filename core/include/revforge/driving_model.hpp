@@ -1,5 +1,8 @@
 #pragma once
 
+#include <algorithm>
+
+#include "revforge/carburetor.hpp"
 #include "revforge/consumption.hpp"
 #include "revforge/driver_scenarios.hpp"
 #include "revforge/powertrain.hpp"
@@ -105,7 +108,10 @@ public:
     double cycleSec() const { return cycleSec_; }
 
     /** Remplissage du moteur : 0 pied levé, 1 plein gaz. C'est lui qui fait le son. */
-    double load() const { return manifold_; }
+    double load() const { return carbEngine_ ? std::min(manifold_ * carb_.torqueShare(), 1.0) : manifold_; }
+    /** Le carburateur, s'il y en a un : film, mélange dans les cylindres. */
+    const Carburetor& carburetor() const { return carb_; }
+    bool carbureted() const { return carbEngine_; }
     /** Calé : plus rien ne brûle, il faut relancer le démarreur. */
     bool stalled() const { return stalled_; }
     /** Trop bas en prise : le moteur broute. */
@@ -252,6 +258,8 @@ private:
     double antiLagLostNm_ = 0.0;
     Supercharger supercharger_;
     bool superchargerEngine_ = false;
+    Carburetor carb_;
+    bool carbEngine_ = false;
     double torque_ = 0.0;
     bool cut_ = false;
     bool limiterCut_ = false;

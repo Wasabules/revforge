@@ -11,6 +11,7 @@
  *
  * Ce calcul donne une vraie manivelle à condition de placer chaque numéro sur la bonne rangée : voir `placementOf`.
  */
+import { carburetorOf, type CarbGeometry } from './carburetor';
 import type { EngineConfig, SuperchargerKind } from './config';
 import { TURBO_SCALE } from './exhaustLines';
 import { EVC, EVO, ignitionAdvance, IVC, IVO } from './fluidGas';
@@ -120,6 +121,8 @@ export interface EngineLayout {
   halfDeg: number;
   flat: boolean;
   fuel: EngineConfig['fuel'];
+  /** Le carburateur, à la place du plénum et de l'injection. `null` sans carburateur. */
+  carb: CarbGeometry | null;
   turbo: boolean;
   /** Le compresseur mécanique, s'il y en a un : `null` sinon. */
   charger: SuperchargerKind | null;
@@ -319,11 +322,16 @@ export function stackLengthMm(boreMm: number, redlineRpm: number): number {
   return Math.min(Math.max(length, 0.12), 0.5) * 1000;
 }
 
+/** Des cornets à l'air libre : plus de plénum, un tube et un papillon par cylindre. Un moteur suralimenté garde son plénum, un carburateur a son propre col et son cornet. */
+export function hasOpenStacks(layout: EngineLayout): boolean {
+  return layout.airFilter === 'stacks' && !layout.turbo && !layout.charger && !layout.carb;
+}
+
 export function layoutKey(config: EngineConfig): string {
   if (config.electric) return 'electric';
   // La longueur des cornets dépend du régime qu'on vise : eux seuls font reconstruire le moteur quand il change.
   const filter = config.airFilter === 'stacks' ? `stacks${config.redlineRpm}` : config.airFilter ?? 'stock';
-  return `${config.cylinders}|${config.layout}|${config.displacementCc}|${config.boreMm}|${config.fuel}|${config.aspiration}|${config.turboSize}|${config.turboRelease}|${config.boxFlywheel}|${filter}|${config.turboPipeMm}|${config.camshaft ?? 'dohc'}|${config.superchargerKind}`;
+  return `${config.cylinders}|${config.layout}|${config.displacementCc}|${config.boreMm}|${config.fuel}|${config.aspiration}|${config.turboSize}|${config.turboRelease}|${config.boxFlywheel}|${filter}|${config.turboPipeMm}|${config.camshaft ?? 'dohc'}|${config.superchargerKind}|${carburetorOf(config)?.kind ?? ''}|${carburetorOf(config) ? config.redlineRpm : ''}`;
 }
 
 /** Deux arbres, chacun au-dessus de ses soupapes, qu'il attaque directement par un poussoir. */
@@ -579,6 +587,7 @@ export function engineLayout(config: EngineConfig): EngineLayout {
     halfDeg,
     flat,
     fuel: config.fuel,
+    carb: carburetorOf(config),
     turbo: config.aspiration === 'turbo',
     charger: config.aspiration === 'supercharger' ? (config.superchargerKind ?? 'roots') : null,
     turboScale: TURBO_SCALE[config.turboSize ?? 'medium'],
@@ -854,6 +863,8 @@ export class EnginePose {
   /** Étincelle et jet de carburant, 1 à leur début puis ils s'éteignent. */
   spark: Float64Array;
   spray: Float64Array;
+  /** Remplissage, 0 à 1 : l'ouverture du volet dessiné en coupe. */
+  throttle = 0;
   /** Le gaz : température (K), part brûlée, flamme (0 à 1 de la masse brûlée, 0 sans combustion), jets aux soupapes (−1 à 1). */
   gasT: Float64Array;
   gasBurnt: Float64Array;
@@ -967,6 +978,7 @@ export class EnginePose {
     this.coolerOutK = clock.coolerOutK ?? 293;
 
     this.state = engineState(telemetry);
+    this.throttle = clock.load;
     const cranking = !!telemetry.cranking;
     const diesel = layout.fuel === 'diesel';
     const firing = firingAllowed(clock, telemetry);
@@ -991,7 +1003,7 @@ export class EnginePose {
           this.lastSparkCylinder = i;
         }
       }
-      if (!diesel) {
+      if (!diesel && !layout.carb) {
         const sprayAt = wrap720(cylinder.firingDeg + PETROL_INJECTION_DEG - fromAngle);
         if (sprayAt < advanced) {
           this.spray[i] = 1;

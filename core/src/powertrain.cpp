@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "revforge/air_filter.hpp"
+#include "revforge/carburetor.hpp"
 #include "revforge/driving_model.hpp"
 #include "revforge/valvetrain.hpp"
 
@@ -30,6 +31,7 @@ constexpr double kInletDensity = 1.2;
 constexpr double kInletK = 293.0;
 constexpr double kVolumetric = 0.92;
 constexpr double kRatedShare = 0.88;
+constexpr double kCarburetorVolumetric = 0.9;  // remplissage au pic de couple : c'est lui qui fixe le débit au col
 
 constexpr double kElectricTorqueNm = 350.0;
 constexpr double kElectricPowerW = 190000.0;
@@ -46,6 +48,21 @@ double bmepToNm(const EngineConfig& e, double bar) { return bar * 1e5 * liters(e
 double naturalBmep(const EngineConfig& e) {
     if (e.fuel == Fuel::Diesel) return kBmepDieselNa;
     return clamp(11.0 + 1.1 * (static_cast<double>(e.redlineRpm) - 6200.0) / 1000.0, 10.5, 14.5);
+}
+
+/**
+ * Le venturi et la pipe prennent de la pression à l'air admis : moins de gaz à brûler, plus de travail de pompage. Les
+ * frottements restent, donc le couple au frein perd plus que la charge. Sur un montage soufflé, le débit volumique et le
+ * rapport des pressions ne changent pas avec la suralimentation : la même part (voir docs/modele.md).
+ */
+double carburetorBrakeShare(const EngineConfig& e, double rpm, double shape) {
+    const CarburetorSpec carb = carburetorSpecOf(e);
+    constexpr double kAtmosphereBar = 1e5;
+    const double drop = carburetorDropPa(carb, liters(e) * 1e-3, rpm, kCarburetorVolumetric * shape) / kAtmosphereBar;
+    const double k = rpm / 1000.0;
+    const double friction = 0.9 + 0.12 * k + 0.03 * k * k;
+    const double brake = naturalBmep(e) * shape;
+    return std::max(((brake + friction) * (1.0 - drop) - friction - drop) / brake, 0.3);
 }
 
 /** La respiration selon le régime : 1 au pic de couple. */
@@ -79,6 +96,7 @@ double breathing(const EngineConfig& e, double rpm) {
         case Exhaust::ResonatorDelete: shape *= 0.97 - 0.03 * fraction; break;
         case Exhaust::Quiet: shape *= 0.95 - 0.05 * fraction; break;
     }
+    if (fuelSystemOf(e) != FuelSystem::Injection) shape *= carburetorBrakeShare(e, rpm, shape);
     return shape;
 }
 

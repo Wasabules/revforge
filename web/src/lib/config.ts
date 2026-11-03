@@ -16,6 +16,7 @@ export type SuperchargerKind = 'roots' | 'twin_screw' | 'centrifugal';
 export type AntiLag = 'off' | 'retard' | 'air' | 'cut';
 export type Camshaft = 'dohc' | 'sohc';
 export type AirFilter = 'stock' | 'panel' | 'cone' | 'stacks';
+export type FuelSystem = 'injection' | 'single' | 'multi';
 export type Body = 'city' | 'compact' | 'coupe' | 'supercar' | 'van' | 'retro';
 export type Drive = 'front' | 'rear' | 'all';
 export type BoxKind = 'synchro' | 'dog' | 'sequential' | 'dual_clutch' | 'converter';
@@ -48,6 +49,8 @@ export interface EngineConfig {
   turboPipeMm: number;
   camshaft: Camshaft;
   airFilter: AirFilter;
+  /** L'alimentation : injection, un carburateur sur une pipe commune, un corps par cylindre. Sans effet sur un diesel. */
+  fuelSystem: FuelSystem;
   electric: boolean;
   body: Body;
   massKg: number;
@@ -165,6 +168,12 @@ export const AIR_FILTERS: { value: AirFilter; label: string; help: string }[] = 
   { value: 'cone', get label() { return t('airFilter.cone'); }, get help() { return t('airFilter.cone.help'); } },
   { value: 'stacks', get label() { return t('airFilter.stacks'); }, get help() { return t('airFilter.stacks.help'); } },
 ];
+/** La position donne la valeur envoyée au C++ : `FuelSystem`. */
+export const FUEL_SYSTEMS: { value: FuelSystem; label: string; help: string }[] = [
+  { value: 'injection', get label() { return t('fuelSystem.injection'); }, get help() { return t('fuelSystem.injection.help'); } },
+  { value: 'single', get label() { return t('fuelSystem.single'); }, get help() { return t('fuelSystem.single.help'); } },
+  { value: 'multi', get label() { return t('fuelSystem.multi'); }, get help() { return t('fuelSystem.multi.help'); } },
+];
 /** Choisir une carrosserie règle aussi une masse, des jantes et une transmission plausibles, et parfois une isolation. */
 export const BODIES: { value: Body; label: string; massKg: number; rimInch: number; drive: Drive; placement: Placement; insulation?: Insulation }[] = [
   { value: 'city', get label() { return t('body.city'); }, massKg: 1100, rimInch: 15, drive: 'front', placement: 'front' },
@@ -279,6 +288,7 @@ const DEFAULTS: EngineConfig = {
   turboPipeMm: 400,
   camshaft: 'dohc',
   airFilter: 'stock',
+  fuelSystem: 'injection',
   electric: false,
   body: 'city',
   massKg: 1100,
@@ -355,6 +365,7 @@ export function configArgs(c: EngineConfig): number[] {
     c.turboPipeMm,
     index(CAMSHAFTS, c.camshaft),
     index(AIR_FILTERS, c.airFilter),
+    index(FUEL_SYSTEMS, c.fuelSystem),
   ];
 }
 
@@ -389,7 +400,7 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 
 // Les champs ajoutés suivent après un « _ » : la pression, avant eux, peut contenir un point. Toujours à la fin, pour que les anciens liens restent valides.
 function encodeCar(c: EngineConfig): string {
-  return `${c.body}.${c.massKg}.${c.rimInch}.${c.drive}.${c.boostBar}_${c.placement}_${c.insulation}_${c.routing}_${c.turboSize}_${c.superchargerKind}_${c.antiLag}_${c.turboPipeMm}_${c.camshaft}_${c.airFilter}`;
+  return `${c.body}.${c.massKg}.${c.rimInch}.${c.drive}.${c.boostBar}_${c.placement}_${c.insulation}_${c.routing}_${c.turboSize}_${c.superchargerKind}_${c.antiLag}_${c.turboPipeMm}_${c.camshaft}_${c.airFilter}_${c.fuelSystem}`;
 }
 
 export function encodeConfig(c: EngineConfig): string {
@@ -436,7 +447,7 @@ function decodeCar(text: string | undefined): Partial<EngineConfig> {
   // Les anciens liens n'ont pas de voiture : on garde celle par défaut.
   if (!text) return {};
   // « twin_screw » contient le séparateur : on le met à part le temps de couper. Le format du lien ne change pas.
-  const [main, placement, insulation, routing, turboSize, chargerField, antiLag, turboPipe, camshaft, airFilter] = text.replace('_twin_screw', '_twin-screw').split('_');
+  const [main, placement, insulation, routing, turboSize, chargerField, antiLag, turboPipe, camshaft, airFilter, fuelSystem] = text.replace('_twin_screw', '_twin-screw').split('_');
   const superchargerKind = chargerField?.replace('-', '_');
   // La pression peut contenir un point : tout ce qui suit la transmission lui appartient.
   const [body, mass, rim, drive, ...pressure] = main.split('.');
@@ -460,6 +471,7 @@ function decodeCar(text: string | undefined): Partial<EngineConfig> {
     ...(turboPipe !== undefined && Number.isFinite(Number(turboPipe)) ? { turboPipeMm: clamp(Number(turboPipe), LIMITS.turboPipeMm.min, LIMITS.turboPipeMm.max) } : {}),
     ...(CAMSHAFTS.some((item) => item.value === camshaft) ? { camshaft: camshaft as Camshaft } : {}),
     ...(AIR_FILTERS.some((item) => item.value === airFilter) ? { airFilter: airFilter as AirFilter } : {}),
+    ...(FUEL_SYSTEMS.some((item) => item.value === fuelSystem) ? { fuelSystem: fuelSystem as FuelSystem } : {}),
   };
 }
 

@@ -195,6 +195,8 @@ export interface Spec {
   zeroTo100: number;
   topSpeed: number;
   starter: { direct: boolean; kw: number; ring: number; pinion: number; helix: number };
+  /** Le carburateur, s'il y en a un : corps, col du venturi, perte de charge à la puissance maximale. */
+  carb: { throats: number; throatMm: number; dropKpa: number };
   curve: CurvePoint[];
   box: BoxSpec;
 }
@@ -222,7 +224,7 @@ export interface SoundSheet {
   lineLoss: { hz: number; db: number }[];
 }
 
-export const EMPTY_SPEC: Spec = { idle: 0, redline: 7000, peakTorque: 0, peakTorqueRpm: 0, peakHp: 0, peakHpRpm: 0, gears: 0, ratios: [], turboWheelMm: 0, turboInertia: 0, intakeDropKpa: 0, intakeAirC: 20, chargerRatio: 0, chargerVolume: 0, chargerWheelMm: 0, zeroTo100: 0, topSpeed: 0, starter: { direct: false, kw: 0, ring: 0, pinion: 0, helix: 0 }, curve: [], box: EMPTY_BOX };
+export const EMPTY_SPEC: Spec = { idle: 0, redline: 7000, peakTorque: 0, peakTorqueRpm: 0, peakHp: 0, peakHpRpm: 0, gears: 0, ratios: [], turboWheelMm: 0, turboInertia: 0, intakeDropKpa: 0, intakeAirC: 20, chargerRatio: 0, chargerVolume: 0, chargerWheelMm: 0, zeroTo100: 0, topSpeed: 0, starter: { direct: false, kw: 0, ring: 0, pinion: 0, helix: 0 }, carb: { throats: 0, throatMm: 0, dropKpa: 0 }, curve: [], box: EMPTY_BOX };
 
 interface RfExports {
   memory: WebAssembly.Memory;
@@ -282,6 +284,9 @@ interface RfExports {
   rf_top_speed(): number;
   rf_starter_direct(): number;
   rf_starter_kw(): number;
+  rf_carb_throats(): number;
+  rf_carb_throat_mm(): number;
+  rf_carb_drop_kpa(): number;
   rf_starter_ring(): number;
   rf_starter_pinion(): number;
   rf_starter_helix(): number;
@@ -586,6 +591,7 @@ export class Engine {
       zeroTo100: rf.rf_zero_to_100(),
       topSpeed: rf.rf_top_speed(),
       starter: { direct: rf.rf_starter_direct() === 1, kw: rf.rf_starter_kw(), ring: rf.rf_starter_ring(), pinion: rf.rf_starter_pinion(), helix: rf.rf_starter_helix() },
+      carb: { throats: rf.rf_carb_throats(), throatMm: rf.rf_carb_throat_mm(), dropKpa: rf.rf_carb_drop_kpa() },
       curve,
       box: this.boxSpec(rf, gears, redline),
     };

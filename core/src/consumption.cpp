@@ -81,6 +81,23 @@ void ConsumptionModel::configure(const Powertrain& p) {
         const double fullGross = fullLoadTorqueNm(p, rpm, steadyBoost(p, rpm)) + frictionTorqueNm(p, rpm);
         peakGrossW_ = std::max(peakGrossW_, fullGross * rpm * 2.0 * kPi / 60.0);
     }
+    carburetor_ = fuelSystemOf(p.engine) != FuelSystem::Injection;
+    if (!carburetor_) return;
+    carbSpec_ = carburetorSpecOf(p.engine);
+    // Le remplissage de 0,9 vaut pour le moteur à injection : le venturi retire ce qu'il retire au couple.
+    Powertrain injected = p;
+    injected.engine.fuelSystem = FuelSystem::Injection;
+    double injectedPeak = 1.0;
+    for (int i = 0; i < kCurvePoints; ++i) {
+        const double rpm = redline_ * i / (kCurvePoints - 1);
+        injectedPeak = std::max(injectedPeak, fullLoadTorqueNm(injected, rpm, 0.0) + frictionTorqueNm(injected, rpm));
+    }
+    carbAirShare_ = peakNaturalNm_ / injectedPeak;
+    // Le circuit de ralenti a un gicleur fixe : ce qu'il donne au ralenti, il le donne aussi pied levé, à tout régime.
+    idleCircuitGps_ = 0.0;
+    idleRpm_ = idleRpmOf(p);
+    const double friction = frictionTorqueNm(p, idleRpm_);
+    idleCircuitGps_ = fuelGps(idleRpm_, 0.0, friction, fullLoadTorqueNm(p, idleRpm_, 0.0) + friction);
 }
 
 double ConsumptionModel::naturalGrossNm(double rpm) const {
@@ -99,8 +116,10 @@ double ConsumptionModel::fuelGps(double rpm, double brakeNm, double frictionNm, 
     // Le pompage dépend de la pression du collecteur, elle-même de ce travail : au-dessus de la pleine charge
     // atmosphérique, plus de papillon ; en dessous, une droite, donc une solution directe.
     double gross = onPistons + throttlingNm_ > natural ? onPistons : (onPistons + throttlingNm_) / (1.0 + throttlingNm_ / natural);
+    // Pas de coupure sur un carburateur : le circuit de ralenti débite tant que le moteur aspire.
+    const double idleCircuit = carburetor_ ? idleCircuitGps_ * std::min(rpm / idleRpm_, 1.0) : 0.0;
     // Le moteur retient autant qu'un moteur entraîné : rien ne brûle.
-    if (gross <= 0.0) return 0.0;
+    if (gross <= 0.0) return idleCircuit;
     const double pressure = std::min(gross / natural, 1.0);
     const double fullGross = std::max(fullGrossNm, 1.0);
     // Un diesel n'a pas de papillon : ce qui compte est la part du carburant maximal, pas la pression.
@@ -112,6 +131,10 @@ double ConsumptionModel::fuelGps(double rpm, double brakeNm, double frictionNm, 
 
     const double omega = rpm * 2.0 * kPi / 60.0;
     double richness = 1.0;
+    if (carburetor_) {
+        const double mixture = carburetorRichness(carbSpec_, gross / fullGross, rpm);
+        return std::max(gross * omega / efficiency * mixture / fuel_->lowerHeatingJPerG, idleCircuit);
+    }
     if (fullRichness_ > 1.0) {
         const double nearFull = clamp((gross / fullGross - kEnrichFromShare) / (1.0 - kEnrichFromShare), 0.0, 1.0);
         const double heat = clamp(gross * omega / peakGrossW_, 0.0, 1.0);
@@ -125,7 +148,8 @@ double ConsumptionModel::airGps(double rpm, double load, double fullGrossNm) con
     // Le couple à pleine charge suit l'air que le moteur avale : sa courbe donne le remplissage, et son rapport à la
     // courbe atmosphérique la pression du turbo. Un diesel n'est pas étranglé : il avale tout, quelle que soit la charge.
     const double admitted = (diesel_ ? 1.0 : clamp(load, 0.0, 1.0)) * std::max(fullGrossNm, 0.0) / peakNaturalNm_;
-    return kAirGPerL * litres_ * rpm / 120.0 * kPeakVolumetric * admitted;
+    const double air = kAirGPerL * litres_ * rpm / 120.0 * kPeakVolumetric * admitted;
+    return carburetor_ ? air * carbAirShare_ : air;
 }
 
 double ConsumptionModel::oilGps(double rpm, double brakeNm) const {
@@ -161,6 +185,7 @@ void ConsumptionMeter::step(const ConsumptionInput& in, double dt) {
     }
     batteryW_ = 0.0;
     fuelGps_ = in.burning ? model_.fuelGps(in.rpm, in.brakeNm, in.frictionNm, in.fullGrossNm) : 0.0;
+    if (in.pumpGps > 0.0 && in.burning) fuelGps_ += in.pumpGps;
     // L'air ne compte que là où quelque chose brûle : c'est ce qu'on compare au carburant.
     airGps_ = fuelGps_ > 0.0 ? model_.airGps(in.rpm, in.load, in.fullGrossNm) : 0.0;
     // Tant que le moteur tourne, l'huile passe, même pied levé : c'est la seule chose qui ne se coupe pas.

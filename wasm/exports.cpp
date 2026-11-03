@@ -1,6 +1,7 @@
 // Interface C du moteur pour WebAssembly : un seul moteur, piloté depuis l'AudioWorklet.
 #include <new>
 
+#include "revforge/carburetor.hpp"
 #include "revforge/driving_model.hpp"
 #include "revforge/engine_sound.hpp"
 #include "revforge/powertrain.hpp"
@@ -62,7 +63,7 @@ float* rf_buffer_right() { return g_bufferRight; }
 
 void rf_set_config(int cylinders, int layout, int displacementCc, int boreMm, int redlineRpm, int exhaust, int aspiration, int fuel,
                    float multiplier, int pops, int release, float boostBar, int routing, int turboSize,
-                   int superchargerKind, int antiLag, int turboPipeMm, int camshaft, int airFilter) {
+                   int superchargerKind, int antiLag, int turboPipeMm, int camshaft, int airFilter, int fuelSystem) {
     EngineConfig c;
     c.cylinders = cylinders;
     c.layout = static_cast<Layout>(layout);
@@ -83,6 +84,7 @@ void rf_set_config(int cylinders, int layout, int displacementCc, int boreMm, in
     c.turboPipeMm = turboPipeMm;
     c.camshaft = static_cast<Camshaft>(camshaft);
     c.airFilter = static_cast<AirFilter>(airFilter);
+    c.fuelSystem = static_cast<FuelSystem>(fuelSystem);
     g_powertrain.engine = c;
     g_powertrain.electric = false;
     applyPowertrain();
@@ -352,6 +354,19 @@ float rf_starter_kw() { return g_powertrain.profile().starter.powerKw; }
 int rf_starter_ring() { return g_powertrain.profile().starter.ringTeeth; }
 int rf_starter_pinion() { return g_powertrain.profile().starter.pinionTeeth; }
 float rf_starter_helix() { return g_powertrain.profile().starter.helixDeg; }
+// Le carburateur, pour la fiche : 0 corps sur une injection, un diesel ou un moteur électrique.
+int rf_carb_throats() { return g_powertrain.electric ? 0 : carburetorSpecOf(g_powertrain.engine).throats; }
+float rf_carb_throat_mm() { return g_powertrain.electric ? 0.0f : static_cast<float>(carburetorSpecOf(g_powertrain.engine).throatM * 1000.0); }
+/** Ce que le venturi et la pipe prennent à la puissance maximale (kPa). */
+float rf_carb_drop_kpa() {
+    if (g_powertrain.electric) return 0.0f;
+    const CarburetorSpec carb = carburetorSpecOf(g_powertrain.engine);
+    if (carb.kind == FuelSystem::Injection) return 0.0f;
+    Powertrain injected = g_powertrain;
+    injected.engine.fuelSystem = FuelSystem::Injection;
+    const double rpm = powerSummary(g_powertrain).peakPowerRpm;
+    return static_cast<float>(carburetorDropPa(carb, static_cast<double>(g_powertrain.engine.displacementCc) * 1e-6, rpm, 0.9 * breathingOf(injected, rpm)) / 1000.0);
+}
 int rf_gears() { return g_model->gearing().gears; }
 float rf_overall_ratio(int gear) {
     const Gearing& g = g_model->gearing();

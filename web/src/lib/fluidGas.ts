@@ -12,6 +12,7 @@
  * (régime, remplissage, coupure, et sur un turbo le rapport de pression, la sortie du compresseur et les soupapes),
  * il ne le remplace pas et n'agit jamais sur le son. Il n'y a qu'un turbo : celui du C++.
  */
+import { carburetorOf } from './carburetor';
 import type { EngineConfig, Exhaust, Layout } from './config';
 import { EXHAUST_LINES, TURBO_SCALE } from './exhaustLines';
 import { WALL_RISE_K } from './heat';
@@ -143,7 +144,7 @@ export function antiLagFires(event: number): boolean {
   return ((event % 5) * 2) % 5 < 2;
 }
 
-export type IntakePartKind = 'duct' | 'filter' | 'inlet' | 'hot' | 'cooler' | 'cold';
+export type IntakePartKind = 'duct' | 'filter' | 'inlet' | 'hot' | 'cooler' | 'cold' | 'venturi';
 
 /** Un tronçon de la chaîne d'admission : du filtre au papillon, dans le sens de l'air. */
 export interface IntakePart {
@@ -487,6 +488,7 @@ export class GasNetwork {
     const engineAt = config.placement ?? (config.body === 'supercar' ? 'mid' : 'front');
     this.inletK = T_AMB + filter.bay * BAY_RISE_K[engineAt];
     this.inletRho = (RHO_ATM * T_AMB) / this.inletK;
+    const carb = carburetorOf(config);
 
     // Géométrie du cylindre.
     const bore = config.boreMm / 1000;
@@ -559,10 +561,23 @@ export class GasNetwork {
         cell += count;
       }
     } else {
-      parts.push({ kind: 'duct', first: intakeFirst, count: Math.round(filter.duct / CELL_M), area: 1 });
+      parts.push({ kind: 'duct', first: intakeFirst, count: Math.round((carb ? 0.25 : filter.duct) / CELL_M), area: 1 });
+    }
+    // Le carburateur : le col du venturi, puis sa pipe. Ce réseau n'a qu'un conduit : plusieurs corps y sont un seul col, qui garde le rapport
+    // de chacun à sa pipe. La pipe reprend la section du conduit, celle que le papillon ouvre sur le plénum.
+    // Monté soufflé sur un turbo : après le tube froid. Le rétrécissement se paie par le calcul des changements de section.
+    if (carb) {
+      const last = parts[parts.length - 1];
+      const after = last.first + last.count;
+      const overPipe = (carb.throatM / carb.pipeM) * (carb.throatM / carb.pipeM);
+      const throatArea = carb.kind === 'single' ? Math.min((Math.PI * carb.throatM * carb.throatM) / 4 / intakeArea, overPipe) : overPipe;
+      const venturiCount = Math.max(3, Math.round(0.06 / CELL_M));
+      parts.push({ kind: 'venturi', first: after, count: venturiCount, area: throatArea });
+      parts.push({ kind: 'duct', first: after + venturiCount, count: Math.max(3, Math.round((carb.kind === 'single' ? 0.39 : 0.15) / CELL_M)), area: 1 });
     }
     this.intakeParts = parts;
     const lastPart = parts[parts.length - 1];
+    const coldPart = parts.find((part) => part.kind === 'cold');
     this.intakeFirst = intakeFirst;
     this.intakeCount = lastPart.first + lastPart.count - intakeFirst;
     const hotPart = parts.find((part) => part.kind === 'hot');
@@ -570,7 +585,7 @@ export class GasNetwork {
     this.compressorCell = hotPart ? hotPart.first : -1;
     this.coolerFirst = coolerPart ? coolerPart.first : -1;
     this.coolerCount = coolerPart ? coolerPart.count : 0;
-    this.releaseCell = this.turbo ? lastPart.first + lastPart.count - Math.round(0.25 / CELL_M) : -1;
+    this.releaseCell = coldPart ? coldPart.first + coldPart.count - Math.round(0.25 / CELL_M) : -1;
     cells += this.intakeCount;
 
     // Après tout le reste : à la référence, aucune cellule ne change de numéro.
@@ -645,7 +660,7 @@ export class GasNetwork {
         const cell = part.first + k;
         this.area[cell] = areaHere;
         // Sans turbo, le filtre à air tient dans les premières cellules.
-        const drag = (spec ? spec.drag : k < 4 ? 700 : 0) * (spec && spec.kind !== 'filter' ? 1 : filter.drop);
+        const drag = (spec ? spec.drag : p === 0 && k < 4 ? 700 : 0) * (spec && spec.kind !== 'filter' ? 1 : filter.drop);
         if (drag > 0) {
           this.dragRate[cell] = drag;
           dragList.push(cell);

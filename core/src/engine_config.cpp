@@ -5,6 +5,7 @@
 #include "kotlin_math.hpp"
 #include "revforge/air_filter.hpp"
 #include "revforge/supercharger.hpp"
+#include "revforge/carburetor.hpp"
 
 namespace revforge {
 
@@ -20,6 +21,24 @@ const std::array<float, 6> kCylinderSpread{1.0f, 0.94f, 1.05f, 0.97f, 1.02f, 0.9
 
 constexpr float kMinCarRpm = 100.0f;
 constexpr float kSoftCeilingFrom = 0.8f;
+// Pied levé, le circuit de ralenti débite encore, mais ce mélange très dilué par les gaz résiduels ne brûle qu'un cycle sur deux environ (supposé).
+constexpr float kOverrunBurn = 0.5f;
+
+/** Ce que le son doit savoir du carburateur. Le partage ne donne pas à chaque cylindre le même mélange : les explosions en diffèrent. */
+void applyCarburetor(const EngineConfig& engine, EngineProfile& p) {
+    const CarburetorSpec carb = carburetorSpecOf(engine);
+    p.fuelSystem = carb.kind;
+    p.carbThroats = carb.throats;
+    p.carbThroatM = static_cast<float>(carb.throatM);
+    p.carbRunnerM = static_cast<float>(carb.pipeLengthM + 0.15);
+    p.overrunFuel = kOverrunBurn;
+    if (carb.sharing < 2) return;
+    // Sur une pipe commune, les cylindres du bout sont plus pauvres que ceux du milieu : un sur deux dans l'ordre d'allumage d'un 4 en ligne.
+    const double settled = 1.0 / carb.partLambda;
+    const double lean = torqueOfRichness(settled * (1.0 - carb.spread)) / torqueOfRichness(settled);
+    const double rich = torqueOfRichness(settled * (1.0 + carb.spread)) / torqueOfRichness(settled);
+    for (int i = 0; i < p.firingCount; ++i) p.firingGain[i] *= static_cast<float>(i % 2 == 0 ? lean : rich);
+}
 
 }  // namespace
 
@@ -176,6 +195,7 @@ EngineProfile EngineConfig::toProfile() const {
         s.motorFreeRpm = 16500.0f;
         s.motorInertia = 0.00008f + 0.00001f * litres;
     }
+    if (fuelSystemOf(*this) != FuelSystem::Injection) applyCarburetor(*this, p);
     return p;
 }
 

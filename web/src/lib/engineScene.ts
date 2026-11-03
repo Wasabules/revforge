@@ -6,7 +6,7 @@
 import type * as T from 'three';
 import type { Theme } from './canvas';
 import { EVC, EVO, IVC, IVO } from './fluidGas';
-import { bankToFront, chainCircles, chainPath, type ChainPath, collectorPosition, DEG, type Cylinder, type EngineLayout, type EnginePose, lobeNoseDeg, lobeRadius, plenumPosition, stackOf, rockerOutline } from './engineLayout';
+import { bankToFront, chainCircles, chainPath, type ChainPath, collectorPosition, DEG, type Cylinder, type EngineLayout, type EnginePose, lobeNoseDeg, lobeRadius, plenumPosition, stackOf, rockerOutline, hasOpenStacks } from './engineLayout';
 import { chargerUnit, lobedOutline } from './superchargerLayout';
 import { turboChain } from './turboChain';
 import type { Motion } from './motion';
@@ -456,9 +456,7 @@ interface Dynamic {
   portsEx: T.InstancedMesh;
   glowTips: T.InstancedMesh | null;
   pinion: T.Mesh;
-  butterfly: T.Group;
-  /** Un papillon par cornet : ce qui remplace le corps de papillon quand il n'y a plus de plénum. */
-  stackFlaps: T.Group[];
+  butterflies: T.Group[];
   accessory: T.InstancedMesh;
 }
 
@@ -485,7 +483,7 @@ export class EngineScene {
   /** Ce qui bouge selon l'état réel des soupapes, à sa position de repos. */
   private readonly wastegateRods: { mesh: T.Object3D; rest: number; travel: number }[] = [];
   private readonly blowoffPistons: { mesh: T.Object3D; rest: number; travel: number }[] = [];
-  private readonly labelSpots: { maf?: P3; blowoff?: P3; coldPipe?: P3 } = {};
+  private readonly labelSpots: { maf?: P3; blowoff?: P3; coldPipe?: P3; carb?: P3 } = {};
   private coolerGeometry: T.BufferGeometry | null = null;
   private hotPipeMaterial: T.MeshStandardMaterial | null = null;
   private coldPipeMaterial: T.MeshStandardMaterial | null = null;
@@ -882,14 +880,41 @@ export class EngineScene {
     const plenumR = plenum.radius;
     const zFrontAll = Math.max(...layout.cylinders.map((c) => c.z)) + bore * 0.5;
     const zRearAll = Math.min(...layout.cylinders.map((c) => c.z)) - bore * 0.5;
-    // Des cornets sur un moteur sans turbo : plus de plénum, un tube et un papillon par cylindre. Le turbo, lui, garde son plénum.
-    const openStacks = layout.airFilter === 'stacks' && !layout.turbo;
+    const butterflies: T.Group[] = [];
+    const carb = layout.carb;
+    // Des cornets sur un moteur sans suralimentation ni carburateur : plus de plénum, un tube et un papillon par cylindre.
+    const openStacks = hasOpenStacks(layout);
     const throttleZ = zFrontAll + bore * 0.5;
     const throttleR = bore * 0.2;
-    const butterfly = new THREE.Group();
-    const stackFlaps: T.Group[] = [];
     // L'élément filtrant, là où il se voit : le coton huilé d'un cône, le cadre d'un panneau.
     const elements = new MeshBuilder();
+    // Le volet d'un corps, au bout de son arbre : `tilted`, son disque regarde l'axe X ; sinon, l'axe Y.
+    const carbFlap = (x: number, y: number, z: number, radius: number, tilted: boolean) => {
+      const pivot = new THREE.Group();
+      pivot.position.set(x, y, z);
+      const disc = new THREE.Mesh(geo(new MeshBuilder().cylinder(radius, bore * 0.012, 18)), materials.steel);
+      if (tilted) disc.rotation.z = Math.PI / 2;
+      disc.updateMatrix();
+      disc.matrixAutoUpdate = false;
+      pivot.add(disc);
+      this.root.add(pivot);
+      butterflies.push(pivot);
+    };
+    // Un corps de carburateur le long de Y : son col, ses parois, et le cornet. Ouvert en haut : le venturi se voit.
+    const carbBody = (matrix: Mat34, throat: number, height: number) => {
+      const outer = throat * 1.45;
+      alloys.transform(matrix).lathe([
+        [outer, 0],
+        [outer, height * 0.62],
+        [outer * 1.02, height * 0.66],
+        [outer * 1.3, height],
+        [outer * 1.18, height],
+        [throat * 1.2, height * 0.68],
+        [throat, height * 0.42],
+        [throat * 1.18, height * 0.1],
+        [throat * 1.18, 0],
+      ], 22, 50);
+    };
     if (openStacks) {
       const flapMesh = geo(new MeshBuilder().cylinder(runnerR * 0.94, bore * 0.012, 14));
       for (const cylinder of layout.cylinders) {
@@ -918,30 +943,72 @@ export class EngineScene {
         lever.add(flat);
         axis.add(lever);
         this.root.add(axis);
-        stackFlaps.push(lever);
+        butterflies.push(lever);
       }
+    } else if (carb?.kind === 'multi') {
+      // Un corps par cylindre : un conduit court et droit, à la place du plénum. De côté en ligne, debout entre les rangées d'un V.
+      const throat = (carb.throatM * 1000) / 2;
+      const height = bore * 1.0;
+      for (const cylinder of layout.cylinders) {
+        const from = bankPoint(cylinder.betaDeg, cylinder.intakeSide * W, portY, cylinder.z);
+        const dir = bankDir(cylinder.betaDeg, cylinder.intakeSide, 0.1);
+        const sideways = layout.banks === 1;
+        const base: P3 = sideways ? [-bore * 1.65, portY, cylinder.z] : [from[0] * (layout.flat ? 1 : 0.72), plenumY - bore * 0.3, cylinder.z];
+        const axis: P3 = sideways ? [-1, 0, 0] : [0, 1, 0];
+        alloys.transform(null).tube(bendPath(from, dir, base, axis), Math.min(runnerR, throat * 1.2), 9);
+        const matrix = sideways ? chainM(tr(base[0], base[1], base[2]), rz(Math.PI / 2)) : tr(base[0], base[1], base[2]);
+        carbBody(matrix, throat, height);
+        carbFlap(base[0] + axis[0] * height * 0.16, base[1] + axis[1] * height * 0.16, base[2], throat * 1.08, sideways);
+        extent([base[0] + axis[0] * height, base[1] + axis[1] * height, base[2]]);
+        extent([base[0] - throat * 1.9, base[1], base[2]]);
+      }
+      const first = layout.cylinders[0];
+      this.labelSpots.carb = layout.banks === 1 ? [-bore * 2.6, portY + bore * 0.5, first.z] : [plenumX, plenumY + bore * 0.9, first.z];
     } else {
-      alloys.transform(onZ(plenumX, plenumY, (zFrontAll + zRearAll) / 2)).lathe([[0, -(zFrontAll - zRearAll) / 2 - plenumR * 0.5], [plenumR, -(zFrontAll - zRearAll) / 2], [plenumR, (zFrontAll - zRearAll) / 2], [0, (zFrontAll - zRearAll) / 2 + plenumR * 0.5]], 18, 60);
+      // Sur une pipe commune, le tube reste, en plus fin : c'est la pipe qui se partage entre les cylindres.
+      const logR = carb ? Math.min(plenumR, ((carb.pipeM * 1000) / 2) * 0.9) : plenumR;
+      alloys.transform(onZ(plenumX, plenumY, (zFrontAll + zRearAll) / 2)).lathe([[0, -(zFrontAll - zRearAll) / 2 - logR * 0.5], [logR, -(zFrontAll - zRearAll) / 2], [logR, (zFrontAll - zRearAll) / 2], [0, (zFrontAll - zRearAll) / 2 + logR * 0.5]], 18, 60);
       extent([plenumX + plenumR, plenumY + plenumR, 0]);
       for (const cylinder of layout.cylinders) {
         const from = bankPoint(cylinder.betaDeg, cylinder.intakeSide * W, portY, cylinder.z);
         const dir = bankDir(cylinder.betaDeg, cylinder.intakeSide, 0.1);
         const target: P3 = [plenumX, plenumY, cylinder.z];
-        alloys.transform(null).tube(bendPath(from, dir, target, layout.banks === 1 ? [-1, 0, 0] : [from[0] > 0 ? -0.2 : 0.2, 1, 0]), runnerR, 9);
+        alloys.transform(null).tube(bendPath(from, dir, target, layout.banks === 1 ? [-1, 0, 0] : [from[0] > 0 ? -0.2 : 0.2, 1, 0]), carb ? Math.min(runnerR, logR * 0.8) : runnerR, 9);
       }
-      // Le corps de papillon : tube court et, dedans, le volet.
-      alloys.transform(onZ(plenumX, plenumY, throttleZ)).lathe([[throttleR, -bore * 0.32], [throttleR * 1.2, -bore * 0.2], [throttleR * 1.2, bore * 0.2], [throttleR, bore * 0.32]], 18);
-      butterfly.position.set(plenumX, plenumY, throttleZ);
-      const flap = new THREE.Mesh(geo(new MeshBuilder().cylinder(throttleR * 0.96, bore * 0.012, 18)), materials.steel);
-      flap.rotation.x = Math.PI / 2;
-      flap.updateMatrix();
-      flap.matrixAutoUpdate = false;
-      butterfly.add(flap);
+      if (carb) {
+        // Le carburateur, debout au milieu de sa pipe : son col, sa cuve, et son filtre plat autour du cornet.
+        const midZ = (zFrontAll + zRearAll) / 2;
+        const throat = (carb.throatM * 1000) / 2;
+        const height = bore * 1.05;
+        const baseY = plenumY + logR * 0.8;
+        carbBody(tr(plenumX, baseY, midZ), throat, height);
+        carbFlap(plenumX, baseY + height * 0.16, midZ, throat * 1.08, false);
+        // La cuve de niveau constant, sur le côté.
+        brasses.transform(tr(plenumX, baseY + height * 0.3, midZ + throat * 2.1)).lathe([[0, -height * 0.26], [throat * 0.72, -height * 0.26], [throat * 0.8, -height * 0.18], [throat * 0.8, height * 0.2], [0, height * 0.26]], 16, 50);
+        // Le filtre, un anneau : il laisse voir le venturi.
+        const filterR = Math.max(throat * 3, bore * 0.9);
+        const filterY = baseY + height * 1.02;
+        blacks.transform(tr(plenumX, filterY, midZ)).lathe([[throat * 1.7, 0], [filterR, 0], [filterR, bore * 0.26], [throat * 1.7, bore * 0.26]], 28, 40);
+        extent([plenumX + filterR, filterY + bore * 0.26, midZ]);
+        extent([plenumX - filterR, filterY, midZ]);
+        this.labelSpots.carb = [plenumX, filterY + bore * 0.4, midZ];
+      } else {
+        // Le corps de papillon : tube court et, dedans, le volet.
+        alloys.transform(onZ(plenumX, plenumY, throttleZ)).lathe([[throttleR, -bore * 0.32], [throttleR * 1.2, -bore * 0.2], [throttleR * 1.2, bore * 0.2], [throttleR, bore * 0.32]], 18);
+        const butterfly = new THREE.Group();
+        butterfly.position.set(plenumX, plenumY, throttleZ);
+        const flap = new THREE.Mesh(geo(new MeshBuilder().cylinder(throttleR * 0.96, bore * 0.012, 18)), materials.steel);
+        flap.rotation.x = Math.PI / 2;
+        flap.updateMatrix();
+        flap.matrixAutoUpdate = false;
+        butterfly.add(flap);
+        this.root.add(butterfly);
+        butterflies.push(butterfly);
+      }
     }
-    this.root.add(butterfly);
 
     // Devant le papillon d'un moteur sans turbo : sa boîte à air, ou son cône à l'air libre.
-    if (!layout.turbo && !openStacks) {
+    if (!layout.turbo && !layout.charger && !carb && !openStacks) {
       const mouthZ = throttleZ + bore * 0.32;
       if (layout.airFilter === 'cone') {
         const radius = bore * 0.56;
@@ -1324,7 +1391,7 @@ export class EngineScene {
       if (stage.software) geometry.dispose();
     }
 
-    this.d = { pistons, rings, pins, rods, valvesIn, valvesEx, springs, retainers, buckets, rockers, chain, gas, flame, spark, spray, jets, portsIn, portsEx, glowTips, pinion: pinionMesh, butterfly, stackFlaps, accessory };
+    this.d = { pistons, rings, pins, rods, valvesIn, valvesEx, springs, retainers, buckets, rockers, chain, gas, flame, spark, spray, jets, portsIn, portsEx, glowTips, pinion: pinionMesh, butterflies, accessory };
 
     // Les ombres, sur un vrai GPU seulement : les pièces s'en reçoivent les unes des autres.
     this.root.traverse((node) => {
@@ -1367,6 +1434,7 @@ export class EngineScene {
     labelAt('engine.part.pan', [panWidth * 0.5, panTop - panDepth * 0.6, blockZ]);
     labelAt('engine.part.starter', [pinion.x, pinion.y, ring.z + bore * 0.9]);
     labelAt('engine.part.exhaust', [xMax * 0.9, deck * 0.6, blockZ]);
+    if (this.labelSpots.carb) labelAt('engine.part.carburetor', this.labelSpots.carb);
     if (airChain) {
       const unit = airChain.units[0];
       labelAt('engine.part.turbine', [unit.x, unit.y + unit.turbineHousing, unit.z]);
@@ -1655,8 +1723,13 @@ export class EngineScene {
 
     // Le papillon : calculé par le gaz quand il tourne.
     const open = viewGas ? net.throttleShare : motion.load;
-    d.butterfly.rotation.x = 0.14 + open * 1.32;
-    for (const flap of d.stackFlaps) flap.rotation.x = d.butterfly.rotation.x;
+    const angle = 0.14 + open * 1.32;
+    // Sur un corps par cylindre, l'arbre du volet est parallèle au vilebrequin.
+    const spindleZ = layout.carb?.kind === 'multi';
+    for (let b = 0; b < d.butterflies.length; b++) {
+      if (spindleZ) d.butterflies[b].rotation.z = angle;
+      else d.butterflies[b].rotation.x = angle;
+    }
 
     for (let a = 0; a < this.accessoryAt.length; a++) {
       const item = this.accessoryAt[a];

@@ -2,6 +2,7 @@
 
 #include <array>
 
+#include "revforge/carburetor.hpp"
 #include "revforge/engine_config.hpp"
 
 namespace revforge {
@@ -60,6 +61,12 @@ private:
     double peakNaturalNm_ = 1.0;
     double peakGrossW_ = 1.0;
     std::array<double, kCurvePoints> naturalCurve_{};
+    // Carburateur : son mélange, ce que le circuit de ralenti débite encore pied levé, et l'air que le venturi retire au remplissage.
+    bool carburetor_ = false;
+    CarburetorSpec carbSpec_;
+    double idleCircuitGps_ = 0.0;
+    double idleRpm_ = 1.0;
+    double carbAirShare_ = 1.0;
 };
 
 /** L'état du moteur à ce pas, tel que `DrivingModel` le donne. */
@@ -72,6 +79,7 @@ struct ConsumptionInput {
     double fullGrossNm = 0.0;  // ce que donnerait la pleine charge à ce régime et à cette pression de turbo
     double load = 0.0;         // remplissage du modèle
     double motorNm = 0.0;      // électrique : couple de la machine, avant ses frottements
+    double pumpGps = 0.0;      // carburateur : ce que donne en plus la pompe de reprise
     bool burning = false;
     double extraFuelGps = 0.0;  // l'anti-lag : carburant au-delà de ce que demande le cylindre
     double extraAirGps = 0.0;   // l'anti-lag : air qui n'est pas passé par les cylindres

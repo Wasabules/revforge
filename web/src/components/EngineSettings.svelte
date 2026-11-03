@@ -1,7 +1,7 @@
 <script lang="ts">
   import Choices from './Choices.svelte';
   import Slider from './Slider.svelte';
-  import { AIR_FILTERS, ASPIRATIONS, CYLINDERS, FUELS, LAYOUTS, LIMITS, RELEASES, TURBO_SIZES, cylinderCc, strokeMm, type EngineConfig, ANTI_LAGS, CAMSHAFTS, SUPERCHARGER_KINDS } from '../lib/config';
+  import { AIR_FILTERS, ASPIRATIONS, CYLINDERS, FUELS, LAYOUTS, LIMITS, RELEASES, TURBO_SIZES, cylinderCc, strokeMm, type EngineConfig, ANTI_LAGS, CAMSHAFTS, SUPERCHARGER_KINDS, FUEL_SYSTEMS } from '../lib/config';
   import type { Spec } from '../lib/engine';
   import { fixed, t } from '../lib/i18n.svelte';
   import { PISTON_SPEED_LIMIT, moveStroke, pistonSpeed, strokeOutside, strokeRange, strokeShape, strokeThumb, type StrokeAnchor } from '../lib/stroke';
@@ -12,6 +12,7 @@
     spec: Spec;
     onapply: (next: Partial<EngineConfig>) => void;
     onlive: (next: Partial<EngineConfig>) => void;
+    spec?: Spec;
   }
   let { config, shown, spec, onapply, onlive }: Props = $props();
 
@@ -54,6 +55,18 @@
   <Slider label={t('builder.redline')} value={config.redlineRpm} {...LIMITS.redlineRpm} format={(value) => `${value} ${t('unit.rpm')}`}
     oninput={(redlineRpm) => onlive({ redlineRpm })} onchange={(redlineRpm) => onapply({ redlineRpm })} />
   <Choices label={t('builder.fuel')} options={FUELS} value={config.fuel} onchange={(fuel) => onapply({ fuel })} />
+  {#if config.fuel !== 'diesel'}
+    <div data-testid="fuel-system">
+      <Choices label={t('builder.fuelSystem')} options={FUEL_SYSTEMS} value={config.fuelSystem} onchange={(fuelSystem) => onapply({ fuelSystem })} />
+      <p class="help">{FUEL_SYSTEMS.find((item) => item.value === config.fuelSystem)?.help}</p>
+      {#if spec && spec.carb.throats > 0 && config.fuelSystem !== 'injection'}
+        <p class="help" data-testid="carb-spec">{t('builder.carb.spec', { throats: spec.carb.throats, mm: Math.round(spec.carb.throatMm), kpa: fixed(spec.carb.dropKpa, 1) })}</p>
+      {/if}
+      {#if config.fuelSystem !== 'injection' && config.aspiration !== 'natural'}
+        <p class="help" data-testid="carb-blown">{t('builder.carb.blown')}</p>
+      {/if}
+    </div>
+  {/if}
   <Choices label={t('builder.aspiration')} options={ASPIRATIONS} value={config.aspiration} onchange={(aspiration) => onapply({ aspiration })} />
   {#if config.aspiration === 'turbo'}
     <div>

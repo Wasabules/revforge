@@ -126,6 +126,8 @@ void DrivingModel::setPowertrain(const Powertrain& powertrain) {
     antiLagLostNm_ = 0.0;
     superchargerEngine_ = !powertrain.electric && powertrain.engine.aspiration == Aspiration::Supercharger;
     if (superchargerEngine_) supercharger_.setSpec(superchargerSpecOf(powertrain));
+    carbEngine_ = !powertrain.electric && fuelSystemOf(powertrain.engine) != FuelSystem::Injection;
+    if (carbEngine_) carb_.configure(carburetorSpecOf(powertrain.engine), litres * 1e-3);
     if (gear_ > gearing_.gears) gear_ = gearing_.gears;
     step_ = ShiftStep::None;
     ignitionCut_ = false;
@@ -824,6 +826,7 @@ void DrivingModel::updateEngine(double throttle, bool off) {
         // Rien ne brûle encore : l'arbre, s'il tournait, continue sur son élan.
         if (turboEngine_) stepTurbo(rpmNow, false);
         if (superchargerEngine_) stepSupercharger(rpmNow);
+        if (carbEngine_) carb_.prime();
         crankLeft_ -= kStep;
         cut_ = true;
         manifold_ = 0.0;
@@ -867,6 +870,7 @@ void DrivingModel::updateEngine(double throttle, bool off) {
         // Calé : plus de gaz, mais l'arbre garde son élan.
         if (turboEngine_) stepTurbo(rpmNow, false);
         if (superchargerEngine_) stepSupercharger(rpmNow);
+        if (carbEngine_) carb_.prime();
         torque_ = -kColdFriction * frictionTorqueNm(powertrain_, rpmNow) - bmepPumping(rpmNow);
         return;
     }
@@ -911,6 +915,7 @@ void DrivingModel::updateEngine(double throttle, bool off) {
     const double opened = throttle * (1.0 + softness) / (throttle + softness);
     double wantedManifold = std::max(opened, idleOpen);
     if (antiLag_.active) wantedManifold = std::max(wantedManifold, antiLagOpening(antiLag_.kind));
+    const double fillBefore = manifold_;
     manifold_ += (wantedManifold - manifold_) * std::min(1.0, kStep / manifoldTau_);
 
     // Turbine : tout est dans `TurboCharger`. Le moteur lui donne ce qu'il rejette, et reçoit la pression qui en résulte.
@@ -926,6 +931,19 @@ void DrivingModel::updateEngine(double throttle, bool off) {
         antiLagLostNm_ = produced - kept;
         produced = kept;
     }
+    if (carbEngine_) {
+        CarburetorInput in;
+        in.rpm = rpmNow;
+        in.airGps = consumption_.model().airGps(rpmNow, manifold_, indicated);
+        in.fill = manifold_;
+        in.fillRate = (manifold_ - fillBefore) / kStep;
+        in.throttle = throttle;
+        in.density = turboEngine_ ? 1.0 + boost_ * static_cast<double>(powertrain_.engine.boostBar) : 1.0;
+        carb_.step(in, kStep);
+        // Le moteur qui prend a son propre enrichissement : le film ne compte qu'ensuite.
+        if (catching_) carb_.prime();
+        else produced *= carb_.torqueShare();
+    }
     // Rupteur : le papillon reste ouvert, donc peu de pompage. Le moteur ne redescend que sur ses frottements.
     // Sur un turbo, s'y ajoute le gaz à pousser contre la turbine.
     // Sur un compresseur, ce que coûte son entraînement : la combustion le paie, et il s'ajoute au frein moteur.
@@ -935,6 +953,11 @@ void DrivingModel::updateEngine(double throttle, bool off) {
     // Pour la consommation : le couple au frein que demande cette charge d'air. Le calculateur qui retient le moteur
     // pendant un relais retarde l'allumage : il gaspille, il ne dépense pas moins. Le broutement s'annule en moyenne.
     burnt_.burning = !cut_;
+    // Le rupteur ne coupe que l'étincelle : le carburateur continue de débiter, et ce mélange part à l'échappement.
+    if (carbEngine_) {
+        burnt_.burning = !off;
+        burnt_.pumpGps = carb_.pumpGps();
+    }
     burnt_.brakeNm = manifold_ * indicated - friction - pumping;
     // Les pistons paient aussi le compresseur : c'est de l'essence, pas du couple à la roue.
     burnt_.frictionNm = friction + charger;

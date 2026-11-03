@@ -465,4 +465,12 @@ for (const [name, kind] of [['roots', 0], ['twin_screw', 1], ['centrifugal', 2]]
   const hash = render(rf, 20, 128, (step) => rf.rf_set_controls(step * TICK_S >= 1 ? 1 : 0, 0, 0));
   check(`compresseur, plein gaz, ${name}`, hash, native(...chargerArgs, '--supercharger', name, '--scenario', 'launch'));
 }
+// Le carburateur : son film, sa pompe et son souffle passent au bit près, comme le reste.
+for (const [name, system] of [['single', 1], ['multi', 2]]) {
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1200, 16, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6800, EXHAUST.sport, 0, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0, system);
+  rf.rf_set_mode(3);
+  check(`carburateur, ${name}`, render(rf, 30, 128), native('--cylinders', '4', '--cc', '2000', '--bore', '84', '--redline', '6800', '--exhaust', 'sport', '--body', 'compact', '--mass', '1200', '--rim', '16', '--carb', name, '--scenario', 'lap', '--seconds', '30'));
+}
 process.exit(failed ? 1 : 0);

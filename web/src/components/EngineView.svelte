@@ -157,7 +157,7 @@
 
   function labels2d(): Labels2D {
     // Relu à chaque image pour suivre la langue, mais refait seulement quand quelque chose change.
-    if (labelsCache && labelsLang === lang() && labelsCache.parts === names && labelsFuel === config.fuel && !!labelsCache.compressor === !!(layout?.turbo || layout?.charger) && labelsPipe === layout?.turboPipeMm) return labelsCache;
+    if (labelsCache && labelsLang === lang() && labelsCache.parts === names && labelsFuel === config.fuel && !!labelsCache.compressor === !!(layout?.turbo || layout?.charger) && !!labelsCache.carburetor === !!layout?.carb && labelsPipe === layout?.turboPipeMm) return labelsCache;
     labelsLang = lang();
     labelsPipe = layout?.turboPipeMm;
     labelsFuel = config.fuel;
@@ -179,6 +179,7 @@
       head: t('engine.part.head'),
       block: t('engine.part.block'),
       ...(layout?.valve.sohc ? { rocker: t('engine.part.rocker') } : {}),
+      ...(layout?.carb ? { carburetor: t('engine.part.carburetor') } : {}),
       ...(layout?.turbo ? {
         compressor: t('engine.part.compressor'),
         turbine: t('engine.part.turbine'),

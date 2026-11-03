@@ -20,6 +20,7 @@ SUPERCHARGER = {"roots": "Roots", "twin_screw": "TwinScrew", "centrifugal": "Cen
 ANTILAG = {"off": "Off", "retard": "Retard", "air": "AirInjection", "cut": "CylinderCut"}
 CAMSHAFT = {"dohc": "Dohc", "sohc": "Sohc"}
 AIR_FILTER = {"stock": "Stock", "panel": "Panel", "cone": "Cone", "stacks": "Stacks"}
+FUEL_SYSTEM = {"injection": "Injection", "single": "Carburetor", "multi": "MultiCarb"}
 BODY = {"city": "City", "compact": "Compact", "coupe": "Coupe", "supercar": "Supercar", "van": "Van", "retro": "Retro"}
 DRIVE = {"front": "Front", "rear": "Rear", "all": "All"}
 GEARBOX = {"synchro": "Synchro", "dog": "Dog", "sequential": "Sequential", "dual_clutch": "DualClutch", "converter": "Converter", "reducer": "Reducer"}
@@ -45,7 +46,8 @@ def main(source, target):
             f"TurboRelease::{RELEASE[p.get('turboRelease', 'dump_valve')]}, {p.get('boostBar', 1.0)}f, "
             f"ExhaustRouting::{ROUTING[p.get('routing', 'single')]}, TurboSize::{TURBO_SIZE[p.get('turboSize', 'medium')]}, "
             f"SuperchargerKind::{SUPERCHARGER[p.get('superchargerKind', 'roots')]}, AntiLag::{ANTILAG[p.get('antiLag', 'off')]}, "
-            f"{p.get('turboPipeMm', 400)}, Camshaft::{CAMSHAFT[p.get('camshaft', 'dohc')]}, AirFilter::{AIR_FILTER[p.get('airFilter', 'stock')]}}}"
+            f"{p.get('turboPipeMm', 400)}, Camshaft::{CAMSHAFT[p.get('camshaft', 'dohc')]}, AirFilter::{AIR_FILTER[p.get('airFilter', 'stock')]}, "
+            f"FuelSystem::{FUEL_SYSTEM[p.get('fuelSystem', 'injection')]}}}"
         )
         electric = "true" if p.get("electric") else "false"
         # Pas de valeur par défaut pour la voiture : chaque préréglage la donne en entier.
