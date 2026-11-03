@@ -490,4 +490,24 @@ for (const [name, system] of [['single', 1], ['multi', 2]]) {
   rf.rf_set_mode(3);
   check(`carburateur, ${name}`, render(rf, 30, 128), native('--cylinders', '4', '--cc', '2000', '--bore', '84', '--redline', '6800', '--exhaust', 'sport', '--body', 'compact', '--mass', '1200', '--rim', '16', '--carb', name, '--scenario', 'lap', '--seconds', '30'));
 }
+// Les rencontres de réglages : chacune par un chemin que les autres cas ne prennent pas.
+{
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1400, 18, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6500, EXHAUST.sport, 2, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 2);
+  check('compresseur derrière un cône', turboStab(rf, 24), native(...chargerArgs, '--supercharger', 'roots', '--filter', 'cone', '--scenario', 'turbo', '--seconds', '24'));
+}
+{
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1400, 18, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6500, EXHAUST.sport, 1, 0, 0, 0, 0, 1.3, ROUTING.single, TURBO.medium, 0, ANTI_LAG.air, 3000, 0, 3, 2);
+  check('turbo, tube de 3 m, anti-lag, cornets, corps multiples', turboStab(rf, 24), native(...turboArgs, '--turbo', 'medium', '--release', 'dump_valve', '--antilag', 'air', '--turbo-pipe', '3000', '--filter', 'stacks', '--carb', 'multi'));
+}
+{
+  const rf = load();
+  rf.rf_set_car(BODY.coupe, 1300, 18, DRIVE.rear, PLACEMENT.front, INSULATION.standard);
+  rf.rf_set_config(2, LAYOUT.rotary, 1308, 84, 8000, EXHAUST.sport, 2, 0, 0, 0, 0, 0.7, ROUTING.single, TURBO.medium, 1, 0, 400, 1, 2, 1);
+  rf.rf_set_mode(3);
+  check('birotor à vis, cône, carburateur', render(rf, 20, 128), native('--layout', 'rotary', '--cylinders', '2', '--cc', '1308', '--redline', '8000', '--exhaust', 'sport', '--aspiration', 'supercharger', '--boost', '0.7', '--supercharger', 'twin_screw', '--cam', 'sohc', '--filter', 'cone', '--carb', 'single', '--body', 'coupe', '--mass', '1300', '--rim', '18', '--drive', 'rear', '--insulation', 'standard', '--scenario', 'lap', '--seconds', '20'));
+}
 process.exit(failed ? 1 : 0);

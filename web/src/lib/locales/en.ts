@@ -204,6 +204,7 @@ export const en = {
   'fuelSystem.single': 'Carburetor',
   'fuelSystem.single.help': 'One venturi and a shared manifold: less torque at high revs, a richer mixture, a dip when you floor it at low revs, and it keeps feeding fuel on overrun.',
   'fuelSystem.multi': 'One per cylinder',
+  'fuelSystem.multi.rotary': 'One per rotor',
   'fuelSystem.multi.help': 'A short venturi for each cylinder: it breathes better than a single carburetor and answers faster. Louder intake, no fuel cut either.',
   'builder.release': 'Turbo blow-off',
   'builder.fuel': 'Fuel',

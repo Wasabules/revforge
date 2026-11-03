@@ -203,6 +203,7 @@ export const fr: Record<MessageKey, string> = {
   'fuelSystem.single': 'Carburateur',
   'fuelSystem.single.help': "Un seul venturi et une pipe commune : moins de couple à haut régime, un mélange plus riche, un creux quand on écrase la pédale à bas régime, et de l'essence encore au lever de pied.",
   'fuelSystem.multi': 'Un par cylindre',
+  'fuelSystem.multi.rotary': 'Un par rotor',
   'fuelSystem.multi.help': "Un venturi court par cylindre : il respire mieux qu'un carburateur unique et répond plus vite. Admission plus sonore, et pas de coupure non plus.",
   'builder.release': 'Décharge du turbo',
   'builder.fuel': 'Carburant',

@@ -817,7 +817,7 @@ La boîte automatique du modèle joue peu : un conducteur qui suit des rapports 
 | Ligne | 0,98 fois celle d'une compacte | Suit la longueur, comme les autres carrosseries |
 | Isolation | Sportive au choix de la carrosserie | **Supposée :** peu de garnissage, vitres fines. Aucune mesure d'habitacle d'époque lue. Le site la règle en choisissant la carrosserie et la retire en la quittant, sauf si on l'a changée à la main. En ligne de commande, `--body retro` ne la change pas : donner `--insulation light` |
 
-Le préréglage `retro_coupe` est un 6 cylindres en ligne de 2,5 L, 84 mm d'alésage, 6400 tr/min, à arbre unique. Rien n'y est réglé pour coller à un chiffre publié, et le modèle donne moins de puissance que la référence : 149 ch et 209 Nm, pour 171 ch et 222 Nm (Auto-Data, lu).
+Le préréglage `retro_coupe` est un 6 cylindres en ligne de 2,5 L, 84 mm d'alésage, 6400 tr/min, à arbre unique. Rien n'y est réglé pour coller à un chiffre publié, et le modèle donne moins de puissance que la référence : 137 ch et 208 Nm, pour 171 ch et 222 Nm (Auto-Data, lu). Ces chiffres comptent l'arbre unique : voir « Le simple arbre ».
 
 | | Coupé, préréglage | Compacte, même moteur, réglages de la compacte | Compacte, même moteur, même masse et mêmes jantes |
 |---|---:|---:|---:|
@@ -825,20 +825,20 @@ Le préréglage `retro_coupe` est un 6 cylindres en ligne de 2,5 L, 84 mm d'alé
 | CdA | 0,74 m² | 0,70 m² | 0,70 m² |
 | Masse, jantes, transmission | 1150 kg, 14", propulsion | 1350 kg, 18", traction | 1150 kg, 14", propulsion |
 | Rapports | 5 | 6 | 6 |
-| Vitesse maximale | 213 km/h | 218,5 km/h | 217 km/h |
-| 0 à 100 km/h | 8,45 s | 9,53 s | 8,45 s |
-| WLTC | 9,47 L/100 km | 9,49 L/100 km | 9,35 L/100 km |
-| 120 km/h | 9,34 L/100 km | 8,95 L/100 km | 9,01 L/100 km |
-| Habitacle, ralenti, plein gaz | 46,2, 76,0 dB(A) | 42,0, 70,8 dB(A) | avec la même isolation : 46,7, 76,0 dB(A) |
-| Dehors, à 5 m, plein gaz | 80,4 dB(A) | 80,6 dB(A) | 80,6 dB(A) |
+| Vitesse maximale | 207 km/h | 212 km/h | 210,5 km/h |
+| 0 à 100 km/h | 8,75 s | 9,71 s | 8,58 s |
+| WLTC | 9,65 L/100 km | 9,67 L/100 km | 9,56 L/100 km |
+| 120 km/h | 9,51 L/100 km | 9,13 L/100 km | 9,21 L/100 km |
+| Habitacle, ralenti, plein gaz | 43,9, 73,3 dB(A) | 39,6, 66,9 dB(A) | avec la même isolation : 44,4, 72,9 dB(A) |
+| Dehors, à 5 m, plein gaz | 77,4 dB(A) | 77,7 dB(A) | 77,7 dB(A) |
 
 Mesuré par `measurePerformance`, `--fuel 1` et `soundSheet`. Les niveaux restent des estimations.
 
 Face aux chiffres publiés : 8,3 s et 217 km/h en manuelle (E30 325i, vus cités, Cx donné à 0,38), 10 s et 206 km/h en automatique à 4 rapports (Auto-Data, lu, Cx donné à 0,35) ; 8 s et 210 km/h pour la Capri 2.8i (vus cités). Consommation : 12,7 L/100 km en ville et 6,8 sur route pour cette automatique, dans une norme d'époque qui n'est pas le WLTC.
 
-**Ce que la caisse change peu :** le CdA de la compacte, à 0,70 m², est déjà haut pour une voiture récente, et une petite surface frontale rattrape un mauvais Cx. L'écart de traînée n'est donc que de 6 %. Cela vaut 4 km/h en pointe, et 3,7 % à 120 km/h ; en WLTC, à basse vitesse, l'écart se confond avec celui des rapports. Dans l'habitacle, presque tout l'écart vient de l'isolation : à isolation égale, les deux caisses sont à moins de 1 dB.
+**Ce que la caisse change peu :** le CdA de la compacte, à 0,70 m², est déjà haut pour une voiture récente, et une petite surface frontale rattrape un mauvais Cx. L'écart de traînée n'est donc que de 6 %. Cela vaut 3,5 km/h en pointe, et 3,3 % à 120 km/h ; en WLTC, à basse vitesse, l'écart se confond avec celui des rapports. Dans l'habitacle, presque tout l'écart vient de l'isolation : à isolation égale, les deux caisses sont à moins de 1 dB.
 
-**Ce qui manque :** la résistance au roulement (0,0095) et l'adhérence sont celles de pneus récents, pour toutes les voitures. Le moteur n'a ni carburateur ni allumage d'époque : c'est le même modèle de couple, et sa consommation garde l'écart du tableau « Face aux chiffres publiés ». `camshaft: sohc` n'a d'effet que si ce réglage est modélisé.
+**Ce qui manque :** la résistance au roulement (0,0095) et l'adhérence sont celles de pneus récents, pour toutes les voitures. Le moteur n'a ni carburateur ni allumage d'époque : c'est le même modèle de couple, et sa consommation garde l'écart du tableau « Face aux chiffres publiés ».
 
 ## Le filtre à air
 
@@ -1011,7 +1011,51 @@ Un bicylindre à 360°, mesuré de même, a son plus fort rang à 1. `tests/rota
 
 L'égalité de couple et de puissance vient du choix de la cylindrée du 4 cylindres, pour la comparaison. Le birotor lui-même n'a pas été réglé : ses 167 kW et 227 Nm sont à −2 % et +8 % des 170 kW et 211 Nm du 13B-MSP de même cylindrée (chiffres de mémoire), écart laissé tel quel. Sur une ligne sport, il passe à 181 kW et 242 Nm. La ligne d'origine du préréglage est aussi celle qui tient le contrôle de « grain » de `engine_sound_test.cpp` : sur la ligne sport, très forte dans les graves, ce rapport tombe à −41 dB, sous le seuil de −40, dans la plage de −47 à −3 dB des voitures mesurées.
 
-**Ce qui reste simplifié.** Pas d'usure, pas de segments, pas de « ring-a-ding » au ralenti, pas de lumières variables : une admission à un seul calage. La température d'échappement du turbo suit la même loi qu'un moteur à pistons, alors qu'un rotatif rejette plus chaud. Dans `EngineView`, un rotatif turbo montre son moteur sans la chaîne du turbo, visible sur la vue du gaz et sur la voiture. Le gaz à l'écran (`GasNetwork`) calcule vraiment trois chambres par rotor, sur 1080°, avec un tube par rotor : leur volume s'y écrit comme un piston à bielle infinie, en degrés de cycle.
+**Ce qui reste simplifié.** Pas d'usure, pas de segments, pas de « ring-a-ding » au ralenti, pas de lumières variables : une admission à un seul calage. La température d'échappement du turbo suit la même loi qu'un moteur à pistons, alors qu'un rotatif rejette plus chaud. Dans `EngineView`, ce qui se branche sur ses lumières (turbo, compresseur, carburateurs, filtre) reste un schéma, sans roues animées : la chaîne complète reste sur la vue du gaz et sur la voiture. Le gaz à l'écran (`GasNetwork`) calcule vraiment trois chambres par rotor, sur 1080°, avec un tube par rotor : leur volume s'y écrit comme un piston à bielle infinie, en degrés de cycle.
+
+## Quand les réglages se rencontrent
+
+Chaque réglage a sa section. Ici, seulement ce qui n'existe que réuni, avec ses mesures. Les tests sont dans `tests/jonctions_test.cpp` et `web/tests/jonctions.spec.ts`.
+
+**Filtre et compresseur.** L'air passe par le filtre avant le compresseur : `airInletBehind` donne sa pression et sa température d'entrée, `filterDrop` suit le filtre, et le compresseur reste celui du papier d'origine. La densité perdue sort du calcul même du compresseur, par la température de sortie de l'échangeur (`coolK`), qui entre déjà dans `superchargerAirShare`. `turboChargeDensityShare` n'est donc pas appliqué en plus : il compterait la même chaleur deux fois. Il sert de recoupement, à 1 % près dans le test. Le gaz à l'écran lisait déjà `AIR_FILTER_GAS` à travers `CHARGER_INTAKE`.
+
+| V8 de 6,2 L, Roots, 0,7 bar | Papier | Panneau | Cône | Cornets |
+|---|---:|---:|---:|---:|
+| Perte à 88 % du régime maximal | 2,89 kPa | 2,46 kPa | 1,14 kPa | 0,19 kPa |
+| Air à l'entrée | 20 °C | 20 °C | 32 °C | 32 °C |
+| Après l'échangeur | 40,1 °C | 39,9 °C | 43,3 °C | 42,9 °C |
+| Entraînement | 76,2 Nm | 75,8 Nm | 74,5 Nm | 73,7 Nm |
+| Puissance | 393,6 kW | 394,1 kW | 390,1 kW | 391,2 kW |
+
+Sur un compresseur, un cône perd donc 1 % : il respire mieux, mais de l'air plus chaud, qu'on recomprime. Les cornets n'accordent rien ici : l'onde de `stackRamGain` n'atteint pas la soupape à travers le compresseur.
+
+**Carburateur et filtre.** Les facteurs de `breathing` se multiplient : ce sont deux pertes en série. Dans le son, un seul retrait de la boîte à air : celui des corps par cylindre (`kCarbOpenInlet`) s'efface devant la réponse calculée d'un cône ou de cornets, qui le contient déjà. Cornets et corps multiples à 3000 tr/min, devant la voiture, entre 100 et 800 Hz : +4,3 dB face à l'injection avant cette correction, +1,0 dB après. Sur le papier d'origine, rien ne change au bit près.
+
+Le souffle du col dépend du montage, et c'est la position du col qui décide. Un col unique est derrière le filtre : son souffle remonte le même chemin que l'aspiration, donc par la réponse du filtre, et sort là où il sort. Chaque corps d'un carburateur par cylindre a sa bouche : son souffle n'a que l'air devant lui, et il n'y a pas de réponse à traverser, seulement l'endroit où ces bouches s'ouvrent. Le papier d'origine reste le chemin calibré.
+
+**Carburateur et suralimentation.** `Supercharger` et `TurboCharger` reçoivent `breathing`, perte du col comprise : le couple la compte une fois. Part du couple gardée sur le V8 à 5000 tr/min, col unique : 0,926 en atmosphérique, 0,926 en turbo, 0,920 en compresseur, dont l'entraînement ne baisse pas avec elle. Comptée deux fois, elle serait à 0,857. En bas, le turbo la cache sous son plateau de calculateur. Le compresseur reçoit la densité au col et le mélange de pleine charge du turbo, qu'il n'avait pas.
+
+**Carburateur et anti-lag.** Un carburateur ne dose pas sur commande : le retard et l'injection d'air ne peuvent plus demander de surplus de carburant, le seul surplus est le mélange qu'il débite déjà (`carbRichness`), que `fuelGps` a déjà compté. Sur 2 L à 1,3 bar, pied levé, surplus de 0,20 g/s en injection et 0,13 g/s sur carburateur au retard, 1,05 et 0,12 g/s à l'injection d'air : celle-ci n'a presque plus rien à brûler au collecteur, c'est la cause et non un malus. La coupure n'en demande pas. L'anti-lag exige `!cut_` et l'absence de coupure n'y change rien : le circuit de ralenti reste un plancher, qui ne s'ajoute pas. Dans le son, la pression d'ouverture du mélange qui brûle encore s'écrit avant `evoRatio`. L'écart ne fait que 0,3 dB : aucun test ne peut l'y garder.
+
+**Anti-lag et tube.** La chaleur de l'anti-lag entre dans `stepHeat` comme une autre. Ce qui arrive imbrûlé s'enflamme au collecteur, et non à la turbine : `collectorK`. Sur 2 L à 1,3 bar, 3 s pied levé en quatrième :
+
+| Tube | Sans | Retard | Air | Coupure |
+|---|---:|---:|---:|---:|
+| 400 mm, arbre à 3 s | 21 700 tr/min | 93 700 | 104 200 | 95 800 |
+| 400 mm, reprise | 0,97 s | 0,53 s | 0,51 s | 0,54 s |
+| 3000 mm, arbre à 3 s | 21 900 tr/min | 57 700 | 76 400 | 59 800 |
+| 3000 mm, reprise | 2,18 s | 1,41 s | 1,26 s | 1,50 s |
+| T3 au plus haut, 400 puis 3000 mm | 813, 435 °C | 1072, 455 °C | 1030, 485 °C | 927, 442 °C |
+
+Toujours utile, moins sur un tube long : la paroi prend sa part. L'injection d'air à 400 mm se met à pomper au bout d'une seconde dans cette reprise en quatrième : l'arbre tombe de 149 000 à 104 000 tr/min. C'était déjà le cas avant de réunir les branches.
+
+Au passage, le tube court inversait la loi de paroi jusqu'à 2051 °C sans débit, pied levé : l'inversion s'arrête au débit d'un ralenti soutenu, 20 g/s sur 2 L.
+
+**Rotatif.** `valvetrain()` et `effectiveBoreMm()` disent ce qu'il n'a pas : arbre à cames et alésage y sont sans effet, au bit près dans le son. `strokeMm()` y donne le cylindre carré de sa chambre, et `--stroke` est ignoré avec un avertissement. Compresseur, carburateur et tube passent par `sweptCcPerTwoTurns` : le compresseur d'un birotor de 1,3 L déplace autant que celui d'un piston de 2,6 L, à 10 % près. Un corps de carburateur voit deux bouffées par cycle. Toute suralimentation prend le taux de compression du turbo.
+
+Le motif de coupure F C C F C garde un sens sur deux rotors, et il reste tel quel. Cinq est impair : il passe d'un rotor à l'autre, comme d'un cylindre à l'autre sur un 4 ou un 6, et chaque rotor allume 8 événements sur 20. À 3600 tr/min, les raies du motif gagnent 11 dB sur un moteur rond. Personne n'a écouté, et aucune préparation réelle n'a été consultée : c'est une déduction, pas une mesure.
+
+**Vues.** Le filtre choisi se voit sur un compresseur comme sur un turbo. Un carburateur soufflé n'a pas de second filtre. Le rotatif montre en schéma ce qui se branche sur ses lumières, sans roues animées.
 
 ## Calibration
 

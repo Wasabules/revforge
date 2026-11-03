@@ -799,7 +799,7 @@ The model's automatic gearbox matters little: a driver following longer gears, a
 | Line | 0.98 times a compact's | Follows length, like the other bodies |
 | Insulation | Sporty when choosing the body | **Assumed:** little trim, thin glass. No period cabin measurement read. The site sets it when you choose the body and takes it back when you leave, unless you changed it by hand. On the command line, `--body retro` does not change it: give `--insulation light` |
 
-The `retro_coupe` preset is a 2.5 L inline six, 84 mm bore, 6400 rpm, single cam. Nothing in it is tuned to match a published figure, and the model gives less power than the reference: 149 hp and 209 Nm, for 171 hp and 222 Nm (Auto-Data, read).
+The `retro_coupe` preset is a 2.5 L inline six, 84 mm bore, 6400 rpm, single cam. Nothing in it is tuned to match a published figure, and the model gives less power than the reference: 137 hp and 208 Nm, for 171 hp and 222 Nm (Auto-Data, read). These figures count the single cam: see "The single cam".
 
 | | Coupe, preset | Compact, same engine, compact settings | Compact, same engine, same mass and rims |
 |---|---:|---:|---:|
@@ -807,20 +807,20 @@ The `retro_coupe` preset is a 2.5 L inline six, 84 mm bore, 6400 rpm, single cam
 | CdA | 0.74 m² | 0.70 m² | 0.70 m² |
 | Mass, rims, drive | 1150 kg, 14", rear | 1350 kg, 18", front | 1150 kg, 14", rear |
 | Gears | 5 | 6 | 6 |
-| Top speed | 213 km/h | 218.5 km/h | 217 km/h |
-| 0 to 100 km/h | 8.45 s | 9.53 s | 8.45 s |
-| WLTC | 9.47 L/100 km | 9.49 L/100 km | 9.35 L/100 km |
-| 120 km/h | 9.34 L/100 km | 8.95 L/100 km | 9.01 L/100 km |
-| Cabin, idle, full throttle | 46.2, 76.0 dB(A) | 42.0, 70.8 dB(A) | with the same insulation: 46.7, 76.0 dB(A) |
-| Outside, at 5 m, full throttle | 80.4 dB(A) | 80.6 dB(A) | 80.6 dB(A) |
+| Top speed | 207 km/h | 212 km/h | 210.5 km/h |
+| 0 to 100 km/h | 8.75 s | 9.71 s | 8.58 s |
+| WLTC | 9.65 L/100 km | 9.67 L/100 km | 9.56 L/100 km |
+| 120 km/h | 9.51 L/100 km | 9.13 L/100 km | 9.21 L/100 km |
+| Cabin, idle, full throttle | 43.9, 73.3 dB(A) | 39.6, 66.9 dB(A) | with the same insulation: 44.4, 72.9 dB(A) |
+| Outside, at 5 m, full throttle | 77.4 dB(A) | 77.7 dB(A) | 77.7 dB(A) |
 
 Measured with `measurePerformance`, `--fuel 1` and `soundSheet`. Levels remain estimates.
 
 Against published figures: 8.3 s and 217 km/h with a manual (E30 325i, seen quoted, Cd given as 0.38), 10 s and 206 km/h with a 4-speed automatic (Auto-Data, read, Cd given as 0.35); 8 s and 210 km/h for the Capri 2.8i (seen quoted). Consumption: 12.7 L/100 km urban and 6.8 extra-urban for that automatic, under a period standard that is not WLTC.
 
-**What the body changes little:** the compact's CdA of 0.70 m² is already high for a recent car, and a small frontal area makes up for a poor Cd. The drag gap is therefore only 6 %. That is worth 4 km/h at the top and 3.7 % at 120 km/h; in WLTC, at low speed, the gap blends with that of the gearing. In the cabin, nearly all the gap comes from insulation: with equal insulation, the two bodies are within 1 dB.
+**What the body changes little:** the compact's CdA of 0.70 m² is already high for a recent car, and a small frontal area makes up for a poor Cd. The drag gap is therefore only 6 %. That is worth 3.5 km/h at the top and 3.3 % at 120 km/h; in WLTC, at low speed, the gap blends with that of the gearing. In the cabin, nearly all the gap comes from insulation: with equal insulation, the two bodies are within 1 dB.
 
-**What is missing:** rolling resistance (0.0095) and grip are those of recent tyres, for every car. The engine has no carburettor or period ignition: it is the same torque model, and its consumption keeps the gap of the "Against published figures" table. `camshaft: sohc` only has an effect if that setting is modelled.
+**What is missing:** rolling resistance (0.0095) and grip are those of recent tyres, for every car. The engine has no carburettor or period ignition: it is the same torque model, and its consumption keeps the gap of the "Against published figures" table.
 
 ## The air filter
 
@@ -993,7 +993,51 @@ A 360° twin, measured the same way, has its strongest order at 1. `tests/rotary
 
 The match in torque and power is a choice of the 4-cylinder's displacement, for the comparison. The twin-rotor itself was not tuned: its 167 kW and 227 Nm are at −2% and +8% of the 170 kW and 211 Nm of the 13B-MSP of the same displacement (figures from memory), a gap left as it is. On a sport line it reaches 181 kW and 242 Nm. The preset's stock line is also the one that holds the "grain" check of `engine_sound_test.cpp`: on the sport line, very strong in the bass, that ratio falls to −41 dB, under the −40 threshold, within the −47 to −3 dB range of measured cars.
 
-**What stays simplified.** No wear, no seals, no low-speed "ring-a-ding", no variable ports: an intake with a single timing. The turbo's exhaust temperature follows the piston law, although a rotary runs hotter. In `EngineView`, a turbocharged rotary shows its engine without the turbo chain, which remains visible on the gas view and on the car. The gas on screen (`GasNetwork`) truly computes three chambers per rotor, over 1080°, with one runner per rotor: their volume is written like a piston with an infinite rod, in cycle degrees.
+**What stays simplified.** No wear, no seals, no low-speed "ring-a-ding", no variable ports: an intake with a single timing. The turbo's exhaust temperature follows the piston law, although a rotary runs hotter. In `EngineView`, what connects to its ports (turbo, supercharger, carburetors, filter) is an outline, without animated wheels: the full chain stays on the gas view and on the car. The gas on screen (`GasNetwork`) truly computes three chambers per rotor, over 1080°, with one runner per rotor: their volume is written like a piston with an infinite rod, in cycle degrees.
+
+## When settings meet
+
+Each setting has its section. Here, only what exists when they are combined, with its measurements. The tests are in `tests/jonctions_test.cpp` and `web/tests/jonctions.spec.ts`.
+
+**Filter and supercharger.** Air goes through the filter before the supercharger: `airInletBehind` gives its inlet pressure and temperature, `filterDrop` follows the filter, and the supercharger stays the one sized on stock paper. The lost density comes from the supercharger's own computation, through the charge cooler's outlet temperature (`coolK`), which already enters `superchargerAirShare`. `turboChargeDensityShare` is therefore not applied on top: it would count the same heat twice. It serves as a cross-check, within 1 % in the test. The gas on screen already read `AIR_FILTER_GAS` through `CHARGER_INTAKE`.
+
+| 6.2 L V8, Roots, 0.7 bar | Paper | Panel | Cone | Stacks |
+|---|---:|---:|---:|---:|
+| Drop at 88 % of redline | 2.89 kPa | 2.46 kPa | 1.14 kPa | 0.19 kPa |
+| Inlet air | 20 °C | 20 °C | 32 °C | 32 °C |
+| After the cooler | 40.1 °C | 39.9 °C | 43.3 °C | 42.9 °C |
+| Drive | 76.2 Nm | 75.8 Nm | 74.5 Nm | 73.7 Nm |
+| Power | 393.6 kW | 394.1 kW | 390.1 kW | 391.2 kW |
+
+On a supercharger, a cone thus loses 1 %: it breathes better, but hotter air, which is then compressed. Stacks tune nothing here: the wave of `stackRamGain` doesn't reach the valve through the supercharger.
+
+**Carburetor and filter.** The factors in `breathing` multiply: they are two losses in series. In the sound, the airbox is removed only once: that of one carb per cylinder (`kCarbOpenInlet`) gives way to the computed response of a cone or stacks, which already contains it. Stacks and multiple carbs at 3000 rpm, in front of the car, from 100 to 800 Hz: +4.3 dB against injection before this fix, +1.0 dB after. On stock paper, nothing changes, to the bit.
+
+The throat's hiss depends on the layout, and where the throat sits decides. A single throat is behind the filter: its hiss climbs the same path as the induction, so through the filter's response, and comes out where that does. Each body of a carb per cylinder has its own mouth: its hiss has only air ahead of it, and there is no response to cross, only the place where those mouths open. Stock paper remains the calibrated path.
+
+**Carburetor and boost.** `Supercharger` and `TurboCharger` receive `breathing`, throat loss included: torque counts it once. Share of torque kept on the V8 at 5000 rpm, single throat: 0.926 naturally aspirated, 0.926 with a turbo, 0.920 with a supercharger, whose drive does not fall with it. Counted twice, it would be 0.857. Lower down, the turbo hides it under its ECU plateau. The supercharger gets the throat density and full-load mixture of the turbo, which it lacked.
+
+**Carburetor and anti-lag.** A carburetor doesn't meter on demand: retard and air injection can no longer ask for extra fuel, and the only surplus is the mixture it already delivers (`carbRichness`), already counted by `fuelGps`. On 2 L at 1.3 bar, pedal lifted, surplus of 0.20 g/s with injection and 0.13 g/s with a carb on retard, 1.05 and 0.12 g/s on air injection: the latter has almost nothing left to burn in the manifold, which is the cause and not a penalty. The cut asks for none. Anti-lag requires `!cut_`, and having no fuel cut changes nothing there: the idle circuit stays a floor, which doesn't add. In the sound, the opening pressure of the mixture still burning is written before `evoRatio`. The gap is only 0.3 dB: no test can hold it.
+
+**Anti-lag and pipe.** Anti-lag heat enters `stepHeat` like any other. What arrives unburnt ignites at the collector, not at the turbine: `collectorK`. On 2 L at 1.3 bar, 3 s pedal lifted in fourth:
+
+| Pipe | Off | Retard | Air | Cut |
+|---|---:|---:|---:|---:|
+| 400 mm, shaft at 3 s | 21,700 rpm | 93,700 | 104,200 | 95,800 |
+| 400 mm, catch | 0.97 s | 0.53 s | 0.51 s | 0.54 s |
+| 3000 mm, shaft at 3 s | 21,900 rpm | 57,700 | 76,400 | 59,800 |
+| 3000 mm, catch | 2.18 s | 1.41 s | 1.26 s | 1.50 s |
+| Peak T3, 400 then 3000 mm | 813, 435 °C | 1072, 455 °C | 1030, 485 °C | 927, 442 °C |
+
+Still useful, less so on a long pipe: the wall takes its share. Air injection at 400 mm starts to surge after a second in this fourth-gear run: the shaft falls from 149,000 to 104,000 rpm. That was already so before merging the branches.
+
+In passing, the short pipe inverted the wall law up to 2051 °C with no flow, pedal lifted: the inversion stops at the flow of a sustained idle, 20 g/s on 2 L.
+
+**Rotary.** `valvetrain()` and `effectiveBoreMm()` state what it lacks: camshaft and bore have no effect there, to the bit in the sound. `strokeMm()` gives the square cylinder of its chamber, and `--stroke` is ignored with a warning. Supercharger, carburetor and pipe go through `sweptCcPerTwoTurns`: the supercharger of a 1.3 L twin-rotor moves as much as that of a 2.6 L piston, within 10 %. A carb body sees two pulses per cycle. Any boost takes the turbo's compression ratio.
+
+The F C C F C cut pattern keeps its meaning on two rotors, and stays as it is. Five is odd: it moves from one rotor to the other, as from one cylinder to the next on a 4 or a 6, and each rotor fires 8 events out of 20. At 3600 rpm, the pattern's lines gain 11 dB over a smooth engine. Nobody has listened, and no real build was consulted: this is a deduction, not a measurement.
+
+**Views.** The chosen filter shows on a supercharger as on a turbo. A blown carburetor has no second filter. The rotary shows in outline what connects to its ports, without animated wheels.
 
 ## Calibration
 

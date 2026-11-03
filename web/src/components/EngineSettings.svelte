@@ -79,7 +79,7 @@
   {/if}
   {#if rotary || config.fuel !== 'diesel'}
     <div data-testid="fuel-system">
-      <Choices label={t('builder.fuelSystem')} options={FUEL_SYSTEMS} value={config.fuelSystem} onchange={(fuelSystem) => onapply({ fuelSystem })} />
+      <Choices label={t('builder.fuelSystem')} options={rotary ? FUEL_SYSTEMS.map((item) => (item.value === 'multi' ? { value: item.value, label: t('fuelSystem.multi.rotary') } : item)) : FUEL_SYSTEMS} value={config.fuelSystem} onchange={(fuelSystem) => onapply({ fuelSystem })} />
       <p class="help">{FUEL_SYSTEMS.find((item) => item.value === config.fuelSystem)?.help}</p>
       {#if spec && spec.carb.throats > 0 && config.fuelSystem !== 'injection'}
         <p class="help" data-testid="carb-spec">{t('builder.carb.spec', { throats: spec.carb.throats, mm: Math.round(spec.carb.throatMm), kpa: fixed(spec.carb.dropKpa, 1) })}</p>
