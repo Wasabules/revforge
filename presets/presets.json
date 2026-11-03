@@ -335,5 +335,24 @@
     "drive": "rear",
     "placement": "front",
     "insulation": "light"
+  },
+  {
+    "id": "twin_rotor_13",
+    "name": "Twin-rotor 1.3",
+    "description": "Rotary, two rotors. Smooth, buzzing, revs to 9000.",
+    "cylinders": 2,
+    "layout": "rotary",
+    "displacementCc": 1308,
+    "redlineRpm": 9000,
+    "exhaust": "stock",
+    "aspiration": "natural",
+    "fuel": "petrol",
+    "pops": "light",
+    "body": "coupe",
+    "massKg": 1300,
+    "rimInch": 18,
+    "drive": "rear",
+    "placement": "front",
+    "insulation": "standard"
   }
 ]

@@ -1,8 +1,11 @@
 import presetData from '../../../presets/presets.json';
 import { presetText, t } from './i18n.svelte';
 import { DISPLACEMENT_LIMITS, STROKE_LIMITS, engineStroke } from './stroke';
+import { isRotary, ROTOR_COUNTS } from './rotary';
 
-export type Layout = 'inline' | 'v' | 'cross_plane' | 'boxer';
+export { isRotary } from './rotary';
+
+export type Layout = 'inline' | 'v' | 'cross_plane' | 'boxer' | 'rotary';
 export type Exhaust = 'stock' | 'sport' | 'straight' | 'no_muffler' | 'no_resonator' | 'quiet';
 export type Routing = 'single' | 'dual' | 'h' | 'x';
 export type Placement = 'front' | 'mid' | 'rear';
@@ -90,6 +93,7 @@ export const LAYOUTS: { value: Layout; label: string }[] = [
   { value: 'v', get label() { return t('layout.v'); } },
   { value: 'cross_plane', get label() { return t('layout.cross_plane'); } },
   { value: 'boxer', get label() { return t('layout.boxer'); } },
+  { value: 'rotary', get label() { return t('layout.rotary'); } },
 ];
 export const EXHAUSTS: { value: Exhaust; label: string; pops: string }[] = [
   { value: 'stock', get label() { return t('exhaust.stock'); }, get pops() { return t('exhaust.stock.pops'); } },
@@ -251,6 +255,7 @@ export const BOX_MODELS: { id: string; label: string; note: string; settings: Pa
     settings: { boxKind: 'sequential', boxGears: 6, boxFamily: 'custom', boxRatios: '2.75,2,1.625,1.333,1.13,1', boxFinal: 3.444, boxTeeth: 'spur', boxHelix: 0, boxModule: 0, boxLimit: 325, boxFlywheel: 'single' } },
 ];
 export const CYLINDERS = [2, 3, 4, 5, 6, 8, 10, 12];
+export { ROTOR_COUNTS } from './rotary';
 export const LIMITS = {
   displacementCc: DISPLACEMENT_LIMITS,
   boreMm: { min: 60, max: 110, step: 1 },
@@ -339,6 +344,14 @@ export function cylinderCc(c: EngineConfig): number {
 /** Déduite de la cylindrée d'un cylindre et de son alésage. */
 export function strokeMm(c: EngineConfig): number {
   return engineStroke(c);
+}
+
+/** Un rotatif n'a que 2, 3 ou 4 rotors et ne brûle que de l'essence : tout ce qui change d'architecture ou lit un lien passe par ici. */
+export function coherentConfig(c: EngineConfig): EngineConfig {
+  if (!isRotary(c) || c.electric) return c;
+  const cylinders = ROTOR_COUNTS.includes(c.cylinders) ? c.cylinders : 2;
+  if (cylinders === c.cylinders && c.fuel === 'petrol') return c;
+  return { ...c, cylinders, fuel: 'petrol' };
 }
 
 const index = (list: { value: string }[], value: string) => list.findIndex((item) => item.value === value);
@@ -500,7 +513,7 @@ export function decodeConfig(link: string): EngineConfig | null {
   if (!CYLINDERS.includes(Number(cylinders))) return null;
   const numbers = [Number(cc), Number(bore), Number(redline), multiplier];
   if (numbers.some((value) => !Number.isFinite(value))) return null;
-  return {
+  return coherentConfig({
     ...DEFAULTS,
     ...car,
     ...(parsed as Pick<EngineConfig, 'layout' | 'exhaust' | 'aspiration' | 'fuel' | 'pops' | 'turboRelease'>),
@@ -509,5 +522,5 @@ export function decodeConfig(link: string): EngineConfig | null {
     boreMm: clamp(numbers[1], LIMITS.boreMm.min, LIMITS.boreMm.max),
     redlineRpm: clamp(numbers[2], LIMITS.redlineRpm.min, LIMITS.redlineRpm.max),
     multiplier: 0,
-  };
+  });
 }

@@ -68,7 +68,7 @@ else()
   target_link_libraries(revforge-render PRIVATE revforge_core)
 
   enable_testing()
-  add_executable(revforge_tests tests/main.cpp tests/engine_sound_test.cpp tests/engine_config_test.cpp tests/driving_model_test.cpp tests/powertrain_test.cpp tests/gearbox_test.cpp tests/acoustics_test.cpp tests/starter_test.cpp tests/shift_modes_test.cpp tests/turbo_test.cpp tests/consumption_test.cpp tests/retro_body_test.cpp tests/air_filter_test.cpp tests/turbo_pipe_test.cpp tests/anti_lag_test.cpp tests/valvetrain_test.cpp tests/supercharger_test.cpp tests/carburetor_test.cpp)
+  add_executable(revforge_tests tests/main.cpp tests/engine_sound_test.cpp tests/engine_config_test.cpp tests/driving_model_test.cpp tests/powertrain_test.cpp tests/gearbox_test.cpp tests/acoustics_test.cpp tests/starter_test.cpp tests/shift_modes_test.cpp tests/turbo_test.cpp tests/consumption_test.cpp tests/retro_body_test.cpp tests/air_filter_test.cpp tests/turbo_pipe_test.cpp tests/anti_lag_test.cpp tests/valvetrain_test.cpp tests/supercharger_test.cpp tests/carburetor_test.cpp tests/rotary_test.cpp)
   target_include_directories(revforge_tests PRIVATE tests/vendor core/src)
   target_link_libraries(revforge_tests PRIVATE revforge_core)
   # Avertissement d'un en-tête de la bibliothèque standard inclus par doctest.
@@ -95,6 +95,9 @@ else()
   # Sur un préréglage, la course s'applique à son alésage et à ses cylindres, pas à ceux donnés en plus.
   golden(stroke_preset 7f3a02ce --preset v10_open --stroke 95 --scenario steady --seconds 1)
   golden(stroke_preset_bore 7f3a02ce --preset v10_open --stroke 95 --bore 70 --cylinders 4 --scenario steady --seconds 1)
+  # Le rotatif : son calage, ses rangs, et le débit de deux fois sa cylindrée.
+  golden(lap_twin_rotor 5174c427 --preset twin_rotor_13 --scenario lap --seconds 20)
+  golden(steady_three_rotor_turbo a454f216 --layout rotary --cylinders 3 --cc 1962 --redline 8000 --exhaust sport --aspiration turbo --boost 0.8 --scenario steady --rpm 5000)
   # Les trajets et les modes de boîte : un moteur sans turbo, sur 40 s.
   golden(drive_stop_go_eco 40a3403c --preset inline_six --scenario lap --seconds 40 --drive-scenario stop_go --shift-mode eco)
   golden(drive_country_sport 3bd2f6e2 --preset inline_six --scenario lap --seconds 40 --drive-scenario country --shift-mode sport)

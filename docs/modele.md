@@ -966,6 +966,53 @@ La distribution change de voix, et chaque part est un choix marqué. Sous une t�
 
 **Au contact des autres réglages.** Le filtre à air (`withAirFilter`) et le venturi sont en série : leurs pressions s'ajoutent au premier ordre, car leurs facteurs se multiplient et restent petits. Le souffle du venturi rejoint `Source::Intake` directement : il ne passe pas par la réponse du filtre, et n'en suit donc pas l'emplacement. Avec un filtre « cornets » et un corps par cylindre, la boîte serait retirée deux fois : 6 dB ici, et ce que retire déjà le filtre. Un filtre qui n'a pas de sens sur un corps par cylindre n'est pas interdit.
 
+## Le moteur rotatif
+
+`Layout::Rotary`, un moteur Wankel. `cylinders` y compte les rotors, `displacementCc` la cylindrée habituelle : une chambre par rotor, 654 cm³ sur le moteur de référence. `isRotary(config)` existe en C++ (`engine_config.hpp`) et sur le site (`rotary.ts`, réexporté par `config.ts`) : c'est lui que lisent les réglages qui n'ont pas de sens ici.
+
+**Géométrie.** Rayon générateur R, excentricité e, largeur b, avec V = 3√3·R·e·b par chambre. R 105, e 15, b 80 mm donnent 654,7 cm³. `rotaryGeometry` les déduit de la cylindrée aux mêmes proportions : ni alésage, ni course. Le carter est la trace d'un sommet, H(u) = R·(sin u, cos u) − e·(sin 3u, cos 3u). Une couronne de 30 dents, de primitif 3e, roule sur un pignon fixe de 20 dents, de primitif 2e : le rotor tourne au tiers de l'arbre. `rotatif.spec.ts` vérifie sur le dessin que le volume mesuré entre le flanc et le carter donne la cylindrée, et suit V₀ + V/2·(1 − cos(2A/3)).
+
+**Cycle : la seule chose qui change les comptes.** Chaque chambre fait ses quatre temps en trois tours d'arbre, et chaque rotor a trois chambres : une explosion par rotor et par tour d'arbre, là où un cylindre en donne une pour deux tours. Une seule grandeur le porte, `sweptCcPerTwoTurns` : le volume balayé en deux tours vaut deux fois la cylindrée. Couple (`bmepToNm`, soit p·V/2π), débit d'air, turbo (`displacementM3`), pompage, papillon et consommation en découlent sans autre coefficient. Un birotor de 1,3 L avale donc comme un quatre temps de 2,6 L.
+
+**Rendement : la cause, pas un chiffre visé.** `rotaryEfficiencyShare` multiplie trois effets. Le taux de compression, 9,4 (8,5 en turbo), par le cycle idéal. La chambre allongée : `rotaryWallRatio` compare sa surface au point mort haut, une longue lame, à celle d'un cylindre carré de même volume, et trouve environ 1,8. À 12,5 % du rendement par unité d'écart, ordre de grandeur tiré des 10 à 15 % de l'énergie du carburant qui passent aux parois (Heywood), cela retire 10 %. Les fuites aux sommets, 5 %, sont supposées. Il en sort 0,83, qui s'applique à la pression moyenne et au rendement de `ConsumptionModel`. Les frottements, ramenés au volume balayé, valent 75 % de ceux d'un moteur à pistons, sans distribution ni bielles : c'est supposé.
+
+**Huile.** Un rotatif en brûle volontairement, dosée pour graisser ses segments : environ 8 g/h par litre et par 1000 tr/min, soit de l'ordre de 25 mL/h à 2000 tr/min. Le chiffre vient d'un souvenir de la pompe de dosage de 13B, **non retrouvé sur une fiche constructeur** ; il reste, comme le reste de l'huile, à un facteur trois près. Il n'y a ni usure ni segments d'apex simulés : ils n'existent que par ces fuites et cette huile.
+
+**Démarrage.** Trois chambres par rotor sur un cycle de trois tours, à 2/3 du bras de levier (`rotaryCompressionLoadNm`). Le gaz fuit par les sommets à bas régime : on prend n = 0,96, qui donne 8,6 bar au point mort haut, proche de la valeur d'atelier du 13B-MSP ([830 kPa à 250 tr/min, table Mazda](https://www.foxed.ca/rx7manual/2003mazdarx8/esicont/en/srvc/html/BHE010002000T04.html)), contre 13 à 14 sur un moteur à pistons. La table donne ce chiffre à un taux de 10,0 : on l'applique à 9,4, écart négligé. Le démarreur et le volant se dimensionnent sur le volume balayé : le premier comprime autant par tour qu'un 2,6 L, le second encaisse les mêmes explosions.
+
+**Son.** `firing` reste un cycle de deux tours : deux explosions par rotor, à 360°/rotors d'arbre. `cylinders` et `firingCount` du profil valent donc deux fois les rotors, et `boreM`, `strokeM` donnent un cylindre carré du volume d'une chambre : tout ce qui suit le débit, ligne comprise, tombe juste. Ce qui vient ensuite est propre au rotatif :
+
+- Des lumières (`kPortEvo`…) : ouverture à 195° d'arbre après le point mort haut, fermeture à 588°, admission de 572° à 850°, sur le cycle de 1080°. **Ce calage est celui d'un 13B à lumière périphérique, de mémoire, et n'a pas été recoupé sur un manuel constructeur** ; un Renesis, à échappement latéral, en diffère sensiblement.
+- Une seule largeur de lumière rend ce calage possible : le sommet d'avant l'ouvre, le sommet d'arrière la referme 120° de rotor plus loin, donc (588 − 195 − 360)/3 = 11° de rotor, 33° d'arbre. Elle s'ouvre sur 4° d'arbre, l'épaisseur du segment (supposée), au lieu de 15° d'une came.
+- La bouffée (`blowdownS`) : volume à l'ouverture sur section de lumière, 14 cm² sur la référence (supposé, à 30 % près), rapportés aux 2 ms du cylindre de référence : 1,6 ms. Le gaz s'ouvre sur 15 % de pression de plus, par une détente plus courte.
+- Le rotor chasse le même volume sur 393° au lieu de 240° : un débit plus continu.
+- Aucun bruit de distribution : aucune soupape ne retombe. Bloc à −5 dB (40 bar de pression maximale au lieu de 70, **ordre de grandeur non recoupé**), plancher au ralenti à −3 dB, moins d'à-coups (supposés).
+- **Une mémoire par chambre, et non par explosion.** Les gaz résiduels passent d'un cycle au suivant dans la même chambre, donc tous les trois tours, là où un cylindre les retrouve tous les deux tours. C'est de là que viennent les tiers d'ordre, et que disparaissent les demi-ordres, sans gain ajouté pour les obtenir. Un écart fixe entre les trois faces d'un rotor a été essayé, puis retiré : il ne changeait rien de mesurable, et le chiffre aurait été inventé.
+
+Rangs mesurés à 4000 tr/min, ligne d'origine, régime tenu (`tools/analyze_orders.py`, en dB sous le rang le plus fort) : les deux moteurs ont les mêmes rangs 2 et 4, ceux de la cadence, mais pas les mêmes sous-rangs.
+
+| Rang | 1 | 5/3 | 2 | 5/2 | 3 | 4 | 6 | moyenne demis | moyenne tiers |
+|---|---|---|---|---|---|---|---|---|---|
+| Birotor 1,3 L | −25,7 | −29,8 | 0 | −38,5 | −30,1 | −1,3 | −24,9 | −44,0 | −39,4 |
+| 4 cylindres 2,15 L | −21,2 | −38,7 | −2,9 | −25,7 | −28,2 | 0 | −22,5 | −34,8 | −41,2 |
+
+Un bicylindre à 360°, mesuré de même, a son plus fort rang à 1. `tests/rotary_test.cpp` protège les tiers et les demis.
+
+**Face à un 4 cylindres de même puissance** (même coupé de 1300 kg, 9000 tr/min, ligne d'origine) :
+
+| | Birotor 1,3 L | 4 cylindres 2,15 L |
+|---|---|---|
+| Couple | 227 Nm à 5400 tr/min | 225 Nm à 5400 tr/min |
+| Puissance | 167 kW à 8250 tr/min | 166 kW à 8150 tr/min |
+| 0-100 km/h | 7,1 s | 7,2 s |
+| WLTC | 13,35 L/100 km | 10,94 L/100 km |
+| Meilleur point de la carte | 287 g/kWh | 241 g/kWh |
+| Huile, WLTC | 707 mL/1000 km | 103 mL/1000 km |
+
+L'égalité de couple et de puissance vient du choix de la cylindrée du 4 cylindres, pour la comparaison. Le birotor lui-même n'a pas été réglé : ses 167 kW et 227 Nm sont à −2 % et +8 % des 170 kW et 211 Nm du 13B-MSP de même cylindrée (chiffres de mémoire), écart laissé tel quel. Sur une ligne sport, il passe à 181 kW et 242 Nm. La ligne d'origine du préréglage est aussi celle qui tient le contrôle de « grain » de `engine_sound_test.cpp` : sur la ligne sport, très forte dans les graves, ce rapport tombe à −41 dB, sous le seuil de −40, dans la plage de −47 à −3 dB des voitures mesurées.
+
+**Ce qui reste simplifié.** Pas d'usure, pas de segments, pas de « ring-a-ding » au ralenti, pas de lumières variables : une admission à un seul calage. La température d'échappement du turbo suit la même loi qu'un moteur à pistons, alors qu'un rotatif rejette plus chaud. Dans `EngineView`, un rotatif turbo montre son moteur sans la chaîne du turbo, visible sur la vue du gaz et sur la voiture. Le gaz à l'écran (`GasNetwork`) calcule vraiment trois chambres par rotor, sur 1080°, avec un tube par rotor : leur volume s'y écrit comme un piston à bielle infinie, en degrés de cycle.
+
 ## Calibration
 
 Le réglage est comparé à dix enregistrements de voitures de Wikimedia Commons (série « engine and

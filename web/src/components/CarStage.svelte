@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { BODIES, EXHAUST_LINES, TURBO_SCALE, type Body, type EngineConfig } from '../lib/config';
+  import { BODIES, EXHAUST_LINES, TURBO_SCALE, isRotary, type Body, type EngineConfig } from '../lib/config';
   import { animate, fit, gasColor, heatedPart, mix, pipeColor, readTheme, type Theme } from '../lib/canvas';
   import type { Telemetry } from '../lib/engine';
   import { fixed, t } from '../lib/i18n.svelte';
@@ -700,13 +700,15 @@
       ctx.fill();
       ctx.stroke();
       // Chaque case s'allume quand c'est le tour de son cylindre, à la même horloge que les autres vues.
-      const row = config.layout === 'inline' ? config.cylinders : Math.ceil(config.cylinders / 2);
+      const rotary = isRotary(config);
+      // Un rotor s'allume à chaque tour d'arbre : son horloge va deux fois plus vite, et chacun a sa case.
+      const row = config.layout === 'inline' || rotary ? config.cylinders : Math.ceil(config.cylinders / 2);
       const perCell = config.cylinders / row;
       const order = firingOrder(config.cylinders);
       const cellWidth = (blockWidth * scale - 6) / row;
       for (let i = 0; i < config.cylinders; i++) {
         const cell = Math.floor(i / perCell);
-        const phase = (motion.cycle + 1 - order.indexOf(i + 1) / config.cylinders) % 1;
+        const phase = ((motion.cycle * (rotary ? 2 : 1)) + 1 - order.indexOf(i + 1) / config.cylinders) % 1;
         if (i % perCell !== 0 && !(motion.burning && phase < 0.25)) continue;
         ctx.fillStyle = motion.burning && phase < 0.25 ? gasColor(0.4 + 0.6 * motion.load) : theme.bg;
         ctx.fillRect(X(left) + 3 + cell * cellWidth, Y(engineY + blockHeight) + 3, Math.max(cellWidth - 2, 1), blockHeight * scale * 0.42);
@@ -728,7 +730,7 @@
           labels.push({ x: engineX + blockWidth * 0.4, text: t('live.charger') });
         }
       }
-      labels.push({ x: engineX, text: t('car.engineLabel', { cylinders: config.cylinders, litres: fixed(litres, 1) }) });
+      labels.push({ x: engineX, text: t(rotary ? 'car.engineLabel.rotary' : 'car.engineLabel', { cylinders: config.cylinders, litres: fixed(litres, 1) }) });
 
       // Ligne d'échappement : du collecteur à la sortie, ses volumes suivent le réglage.
       const tail = 0.02;

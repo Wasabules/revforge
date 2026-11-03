@@ -6,6 +6,9 @@
   import { Engine2D, type Labels2D } from '../lib/engine2d';
   import { engineLayout, EnginePose, engineState, type EngineLayout, layoutKey } from '../lib/engineLayout';
   import type { ElectricScene, EngineScene } from '../lib/engineScene';
+  import { isRotary, rotaryKey, rotaryLayout, RotaryPose, rotaryShape, type RotaryLayout } from '../lib/rotary';
+  import { Rotary2D, type RotaryLabels } from '../lib/rotary2d';
+  import type { RotaryScene } from '../lib/rotaryScene';
   import { fixed, lang, speedLabel, t, type MessageKey } from '../lib/i18n.svelte';
   import { firingOrder, SLOW_MOTION, type Motion } from '../lib/motion';
   import { createStage3D, probeWebGL2, type Stage3D } from '../lib/render3d';
@@ -41,12 +44,20 @@
   let solid: HTMLCanvasElement | undefined = $state();
   let mounted = $state(false);
   let stage: Stage3D | null = null;
-  let scene: EngineScene | ElectricScene | null = null;
+  let scene: EngineScene | ElectricScene | RotaryScene | null = null;
   let sceneKey = '';
   let creating = false;
   let scenes: typeof import('../lib/engineScene') | null = null;
   let engineScene: EngineScene | null = null;
   let electricScene: ElectricScene | null = null;
+  // Le rotatif a ses propres pièces : aucun piston, aucune came.
+  let rotaryScenes: typeof import('../lib/rotaryScene') | null = null;
+  let rotaryPieces: RotaryScene | null = null;
+  let rotaryShapeNow: RotaryLayout | null = null;
+  let rotaryPose: RotaryPose | null = null;
+  let rotaryFlat: Rotary2D | null = null;
+  let rotaryLabels: RotaryLabels | null = null;
+  let rotaryLabelsLang = '';
 
   let currentKey = '';
   let lastConfig: EngineConfig | null = null;
@@ -63,19 +74,28 @@
   let labelY = new Float64Array(16);
   let labelOrder = new Int32Array(16);
   // Pour les tests et le coût par image.
-  const debug = { frames: 0, drawn: 0, skipped: 0, lastMs: 0, avgMs: 0, renderMs: 0, sparksDrawn: 0, flamesDrawn: 0, spraysDrawn: 0, mode: () => mode, live3d: () => live3d, stage: () => stage, scene: () => scene, pose: () => pose, layout: () => layout, flat: () => flatView };
+  const debug = { frames: 0, drawn: 0, skipped: 0, lastMs: 0, avgMs: 0, renderMs: 0, sparksDrawn: 0, flamesDrawn: 0, spraysDrawn: 0, mode: () => mode, live3d: () => live3d, stage: () => stage, scene: () => scene, pose: () => pose, layout: () => layout, flat: () => flatView, rotary: () => rotaryPose, rotaryLayout: () => rotaryShapeNow };
 
   function ensureLayout() {
     // Le réglage ne change d'objet que s'il change vraiment : pas de texte à refaire à chaque image.
     if (config === lastConfig) return;
     lastConfig = config;
-    const key = layoutKey(config);
+    const rotary = !config.electric && isRotary(config);
+    const key = rotary ? rotaryKey(config) : layoutKey(config);
     if (key === currentKey) return;
     currentKey = key;
-    if (config.electric) {
+    rotaryShapeNow = null;
+    rotaryPose = null;
+    rotaryFlat = null;
+    if (config.electric || rotary) {
       layout = null;
       pose = null;
       flatView = null;
+      if (rotary) {
+        rotaryShapeNow = rotaryLayout(config);
+        rotaryPose = new RotaryPose(rotaryShapeNow);
+        rotaryFlat = new Rotary2D(rotaryShapeNow);
+      }
       return;
     }
     layout = engineLayout(config);
@@ -89,21 +109,23 @@
     creating = true;
     const canvas = solid;
     // Les pièces 3D ne se chargent, elles aussi, qu'à la première image 3D.
-    const [created, built] = await Promise.all([
+    const [created, built, rotaryBuilt] = await Promise.all([
       createStage3D(canvas, {
         shadows: true,
         onLost: () => { live3d = false; },
         onRestored: () => { live3d = true; },
       }),
       import('../lib/engineScene').catch(() => null),
+      import('../lib/rotaryScene').catch(() => null),
     ]);
     creating = false;
     scenes = built;
+    rotaryScenes = rotaryBuilt;
     if (!mounted || mode !== '3d' || solid !== canvas) {
       created?.dispose();
       return;
     }
-    if (!created || !built) {
+    if (!created || !built || !rotaryBuilt) {
       created?.dispose();
       available = false;
       mode = '2d';
@@ -118,6 +140,7 @@
     scene = null;
     engineScene = null;
     electricScene = null;
+    rotaryPieces = null;
     sceneKey = '';
     stage?.dispose();
     stage = null;
@@ -142,12 +165,15 @@
 
   function ensureScene(s: Stage3D) {
     if (sceneKey === currentKey && scene) return;
-    if (!scenes) return;
+    if (!scenes || !rotaryScenes) return;
     scene?.dispose();
     sceneKey = currentKey;
     engineScene = null;
     electricScene = null;
-    if (config.electric || !layout) {
+    rotaryPieces = null;
+    if (rotaryShapeNow) {
+      scene = rotaryPieces = new rotaryScenes.RotaryScene(s, rotaryShapeNow);
+    } else if (config.electric || !layout) {
       scene = electricScene = new scenes.ElectricScene(s);
     } else {
       scene = engineScene = new scenes.EngineScene(s, layout);
@@ -200,6 +226,28 @@
       } : {}),
     };
     return labelsCache;
+  }
+
+  function labelsRotary(): RotaryLabels {
+    if (rotaryLabels && rotaryLabelsLang === lang() && rotaryLabels.parts === names) return rotaryLabels;
+    rotaryLabelsLang = lang();
+    rotaryLabels = {
+      front: t('engine.view.front'),
+      side: t('engine.view.rotaryAlong'),
+      parts: names,
+      rotor: t('engine.part.rotor'),
+      housing: t('engine.part.housing'),
+      eccentric: t('engine.part.eccentric'),
+      fixedGear: t('engine.part.fixedGear'),
+      rotorGear: t('engine.part.rotorGear'),
+      apex: t('engine.part.apex'),
+      exhaustPort: t('engine.part.exhaustPort'),
+      intakePort: t('engine.part.intakePort'),
+      plug: t('engine.part.plug'),
+      flywheel: t('engine.part.flywheel'),
+      ring: t('engine.part.ring'),
+    };
+    return rotaryLabels;
   }
 
   function drawElectric(ctx: CanvasRenderingContext2D, theme: Theme, cx: number, cy: number, radius: number) {
@@ -316,6 +364,7 @@
     const started = performance.now();
     ensureLayout();
     if (pose) pose.update(motion, telemetry, motion.gas.net, motion.gas.active, seconds);
+    if (rotaryPose) rotaryPose.update(motion, telemetry, motion.gas.net, motion.gas.active, seconds);
 
     const showing3d = mode === '3d' && !!stage && !stage.lost;
     if (showing3d && stage && stage.busy()) {
@@ -325,7 +374,8 @@
       debug.drawn++;
       ensureScene(stage);
       stage.setTheme(theme);
-      if (engineScene && pose) engineScene.update(pose, motion, theme);
+      if (rotaryPieces && rotaryPose) rotaryPieces.update(rotaryPose, motion, theme);
+      else if (engineScene && pose) engineScene.update(pose, motion, theme);
       else if (electricScene) electricScene.update(motion, theme);
       const rendered = stage.render();
       // Le canvas 2D sert alors aux noms : on ne l'efface que s'il a servi.
@@ -344,6 +394,8 @@
       const { ctx, width, height } = fit(flat);
       if (config.electric) {
         drawElectric(ctx, theme, width / 2, height / 2, Math.min(width, height) * 0.4);
+      } else if (rotaryFlat && rotaryPose) {
+        rotaryFlat.draw(ctx, width, height, rotaryPose, motion.painter, theme, labelsRotary());
       } else if (flatView && pose) {
         flatView.draw(ctx, width, height, pose, motion.painter, theme, labels2d());
       }
@@ -375,7 +427,7 @@
 
   const order = $derived(firingOrder(config.cylinders));
   const crankNote = $derived.by(() => {
-    if (config.electric) return '';
+    if (config.electric || isRotary(config)) return '';
     const shape = engineLayout(config);
     const parts = [t('engine.caption.crank', { angles: shape.throwAngles.map((value) => `${value}°`).join(' ') })];
     if (shape.splitDeg > 0) parts.push(t('engine.caption.split', { angle: shape.splitDeg }));
@@ -386,8 +438,15 @@
   const caption = $derived(
     config.electric
       ? t('engine.caption.electric', { slow: speedLabel(slow) })
+      : isRotary(config)
+      ? rotaryCaption()
       : t('engine.caption', { cylinders: config.cylinders, layout: t(`engine.layout.${config.layout}`), bore: config.boreMm, stroke: Math.round(strokeMm(config)), order: order.join('-'), slow: speedLabel(slow) }) + ` · ${crankNote}`,
   );
+  function rotaryCaption(): string {
+    const chamber = config.displacementCc / config.cylinders;
+    const shape = rotaryShape(chamber);
+    return t('engine.caption.rotary', { rotors: config.cylinders, r: Math.round(shape.radius), e: Math.round(shape.eccentricity * 10) / 10, b: Math.round(shape.width), cc: Math.round(chamber), interval: Math.round(360 / config.cylinders), slow: speedLabel(slow) });
+  }
   const stateKey = $derived(`engine.state.${engineState(telemetry)}` as MessageKey);
 </script>
 

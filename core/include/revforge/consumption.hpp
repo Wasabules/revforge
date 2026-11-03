@@ -54,6 +54,7 @@ private:
     bool diesel_ = false;
     bool turbo_ = false;
     double litres_ = 2.0;
+    double oilPerKrpm_ = 1.2;
     double redline_ = 6000.0;
     double baseEfficiency_ = 0.4;
     double fullRichness_ = 1.0;

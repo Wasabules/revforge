@@ -108,10 +108,11 @@ void DrivingModel::setPowertrain(const Powertrain& powertrain) {
     const double stallOmega = toOmega(0.4 * redline_);
     converterK_ = stallOmega / std::sqrt(std::max(fullLoadTorqueNm(powertrain, 0.4 * redline_, 1.0), 1.0));
     // Couple de chaque explosion : gaz et compression, un cylindre à la fois, une fois les autres retranchés.
-    const double firings = static_cast<double>(powertrain.engine.cylinders);
+    const double firings = static_cast<double>(powertrain.engine.firingsPerTwoTurns());
     const double overlap = firings <= 4.0 ? 1.0 : (firings <= 5.0 ? 0.8 : (firings <= 6.0 ? 0.55 : (firings <= 8.0 ? 0.35 : (firings <= 10.0 ? 0.25 : 0.15))));
-    const double fuelScale = powertrain.engine.fuel == Fuel::Diesel ? 2.0 : 1.0;
-    const double perCylinder = litres / firings * 4.0 * overlap * fuelScale;
+    const double fuelScale = powertrain.engine.burnsDiesel() ? 2.0 : 1.0;
+    // Un rotatif n'a pas de masses alternatives, et son couple s'étale sur 270° de chaque tour : moitié moins d'à-coups (supposé).
+    const double perCylinder = powertrain.engine.sweptCcPerTwoTurns() / 1000.0 / firings * 4.0 * overlap * fuelScale * (isRotary(powertrain.engine) ? 0.5 : 1.0);
     rippleIdleNm_ = 45.0 * perCylinder;
     rippleNm_ = 160.0 * perCylinder;
     // Un collecteur plus gros met plus de temps à se remplir.
@@ -743,7 +744,38 @@ double DrivingModel::bmepPumping(double rpm) const {
     return pumpingTorqueNm(powertrain_, std::max(rpm, idle_ + 1500.0), 0.0) * clamp(rpm / 1000.0, 0.2, 1.0);
 }
 
+double DrivingModel::rotaryCompressionLoadNm() const {
+    // Chaque rotor a trois chambres, décalées d'un tour d'arbre : le même calcul qu'un cylindre, sur un cycle de trois tours.
+    // Le volume suit 2/3 de l'angle de l'arbre : une compression dure plus longtemps, et pousse moins fort sur l'arbre.
+    const EngineConfig& e = powertrain_.engine;
+    const int rotors = e.rotors();
+    const double swept = static_cast<double>(e.displacementCc) * 1e-6 / rotors;
+    const double ratio = static_cast<double>(starter_.compressionRatio);
+    const double clearance = swept / (ratio - 1.0);
+    const double full = clearance + swept;
+    constexpr double kAtmosphere = 1e5;
+    // Les segments d'apex fuient à bas régime : de l'ordre de 8,5 bar à 250 tr/min, contre 13 à 14 sur un moteur à pistons.
+    constexpr double kCrankPolytropic = 0.96;
+    constexpr double kExpansionReturn = 0.8;
+    constexpr double kShare = 2.0 / 3.0;
+    double load = 0.0;
+    for (int rotor = 0; rotor < rotors; ++rotor) {
+        for (int face = 0; face < 3; ++face) {
+            const double shaft = crankAngle_ + 2.0 * kPi * (static_cast<double>(face) + static_cast<double>(rotor) / rotors);
+            const double phi = std::fmod(shaft * kShare, 4.0 * kPi);
+            const bool compressing = phi >= 3.0 * kPi;
+            if (!compressing && phi >= kPi) continue;
+            const double volume = clearance + swept * 0.5 * (1.0 - portable::cos(phi));
+            const double pressure = kAtmosphere * portable::pow(full / volume, kCrankPolytropic);
+            const double push = (pressure - kAtmosphere) * swept * 0.5 * kShare * -std::sin(phi);
+            load += compressing ? push : kExpansionReturn * push;
+        }
+    }
+    return load;
+}
+
 double DrivingModel::compressionLoadNm() const {
+    if (isRotary(powertrain_.engine)) return rotaryCompressionLoadNm();
     // Chaque cylindre comprime l'air enfermé, puis le gaz lui rend presque tout en se détendant.
     const double swept = static_cast<double>(powertrain_.engine.displacementCc) * 1e-6 / powertrain_.engine.cylinders;
     const double ratio = static_cast<double>(starter_.compressionRatio);
@@ -971,7 +1003,7 @@ void DrivingModel::updateEngine(double throttle, bool off) {
     lugging_ = manual_ && gear_ != 0 && meshed_ && locked_ && rpmNow < idle_ * 1.3 && speedMs_ > 0.5;
     // Trop bas en prise : chaque explosion donne un à-coup que rien n'amortit, ça broute.
     if (lugging_) {
-        const double beat = clock_ * 2.0 * kPi * rpmNow / 120.0 * powertrain_.engine.cylinders;
+        const double beat = clock_ * 2.0 * kPi * rpmNow / 120.0 * powertrain_.engine.firingsPerTwoTurns();
         torque_ += 0.5 * std::fabs(produced) * portable::sin(beat);
     }
 }
@@ -1190,7 +1222,7 @@ GearboxDrive DrivingModel::gearboxDrive() const {
     d.inputOmega = static_cast<float>(powertrain_.electric ? omega_ : inputOmega_);
     d.outputOmega = static_cast<float>(wheelOmega_ * overallFinal);
     d.torqueNm = static_cast<float>(powertrain_.electric ? torque_ : (driving ? gearTorque_ : 0.0));
-    d.firings = powertrain_.engine.cylinders;
+    d.firings = powertrain_.engine.firingsPerTwoTurns();
     d.gear = driving ? gear_ : 0;
     d.running = omega_ > 1.0 && !cut_ && crankLeft_ <= 0.0 && !stalled_ && !powertrain_.electric;
     d.coneSlip = static_cast<float>(coneSlip_);
@@ -1203,7 +1235,7 @@ GearboxDrive DrivingModel::gearboxDrive() const {
     if (d.running && (locked_ || clutch_ > 0.7) && box.kind != GearboxKind::Converter) {
         // Ce que chaque explosion impose au primaire : le couple rapporté au volant, passé par l'amortisseur du disque.
         // Résonance de 40 à 80 Hz sous charge (LuK), plus bas avec le pré-amortisseur au point mort.
-        double firesHz = toRpm(omega_) / 120.0 * powertrain_.engine.cylinders;
+        double firesHz = toRpm(omega_) / 120.0 * powertrain_.engine.firingsPerTwoTurns();
         double swing = (rippleIdleNm_ + rippleNm_ * manifold_) / inertia_;
         // Des explosions manquent : moins de coups, plus espacés, et le volant a plus de temps pour ralentir entre deux.
         if (antiLag_.active && antiLag_.kind == AntiLag::CylinderCut) {

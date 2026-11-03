@@ -24,7 +24,7 @@
   import Spectrum from './components/Spectrum.svelte';
   import Tachometer from './components/Tachometer.svelte';
   import Trends from './components/Trends.svelte';
-  import { AIR_FILTERS, BODIES, BOX_KINDS, CUSTOM_ID, DRIVES, EXHAUSTS, PRESETS, ROUTINGS, decodeConfig, encodeConfig, findPreset, strokeMm, type EngineConfig, type ShiftModeId, ANTI_LAGS, CAMSHAFTS, SUPERCHARGER_KINDS, FUEL_SYSTEMS } from './lib/config';
+  import { AIR_FILTERS, BODIES, BOX_KINDS, CUSTOM_ID, DRIVES, EXHAUSTS, PRESETS, ROUTINGS, decodeConfig, encodeConfig, findPreset, strokeMm, type EngineConfig, type ShiftModeId, ANTI_LAGS, CAMSHAFTS, SUPERCHARGER_KINDS, FUEL_SYSTEMS, isRotary } from './lib/config';
   import { heated, updateHeat, wallCelsius } from './lib/heat';
   import { TelemetryHistory } from './lib/history';
   import { Readings } from './lib/instruments';
@@ -395,7 +395,7 @@
     const hp = Math.round(spec.peakHp);
     const label = <T extends string>(list: { value: T; label: string }[], value: T) => list.find((item) => item.value === value)?.label ?? '';
     return {
-      engine: c.electric ? t('summary.electric', { hp }) : (c.aspiration === 'supercharger' ? t('summary.engine.charged', { litres: decimal(c.displacementCc / 1000), cylinders: c.cylinders, hp, bore: c.boreMm, stroke: Math.round(strokeMm(c)), kind: label(SUPERCHARGER_KINDS, c.superchargerKind) }) : t('summary.engine', { litres: decimal(c.displacementCc / 1000), cylinders: c.cylinders, hp, bore: c.boreMm, stroke: Math.round(strokeMm(c)) })) + (c.airFilter === 'stock' ? '' : ` · ${label(AIR_FILTERS, c.airFilter)}`) + (c.aspiration === 'turbo' && c.turboPipeMm !== 400 ? t('summary.turboPipe', { m: decimal(c.turboPipeMm / 1000) }) : '') + (c.camshaft === 'sohc' ? ` · ${label(CAMSHAFTS, c.camshaft)}` : '') + (c.fuel !== 'diesel' && c.fuelSystem !== 'injection' ? ` · ${label(FUEL_SYSTEMS, c.fuelSystem)}` : '') + (antiLagFitted ? ` · ${label(ANTI_LAGS, c.antiLag)}` : ''),
+      engine: c.electric ? t('summary.electric', { hp }) : (isRotary(c) ? t('summary.rotary', { litres: decimal(c.displacementCc / 1000), cylinders: c.cylinders, hp }) : t('summary.engine', { litres: decimal(c.displacementCc / 1000), cylinders: c.cylinders, hp, bore: c.boreMm, stroke: Math.round(strokeMm(c)) })) + (c.aspiration === 'supercharger' ? ` · ${label(SUPERCHARGER_KINDS, c.superchargerKind)}` : '') + (c.airFilter === 'stock' ? '' : ` · ${label(AIR_FILTERS, c.airFilter)}`) + (c.aspiration === 'turbo' && c.turboPipeMm !== 400 ? t('summary.turboPipe', { m: decimal(c.turboPipeMm / 1000) }) : '') + (c.camshaft === 'sohc' && !isRotary(c) ? ` · ${label(CAMSHAFTS, c.camshaft)}` : '') + (c.fuel !== 'diesel' && c.fuelSystem !== 'injection' ? ` · ${label(FUEL_SYSTEMS, c.fuelSystem)}` : '') + (antiLagFitted ? ` · ${label(ANTI_LAGS, c.antiLag)}` : ''),
       exhaust: c.electric ? t('summary.noExhaust') : t('summary.exhaust', { line: label(EXHAUSTS, c.exhaust), outlets: label(ROUTINGS, c.routing) }),
       gearbox: spec.gears === 1 ? t('spec.gears.one') : t('summary.gearbox', { gears: t('spec.gears.many', { gears: spec.gears }), kind: label(BOX_KINDS, c.boxKind) }),
       car: t('summary.car', { body: label(BODIES, c.body), mass: c.massKg, drive: label(DRIVES, c.drive) }),

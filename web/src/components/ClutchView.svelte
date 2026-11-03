@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { EngineConfig } from '../lib/config';
+  import { firingsPerCycle, sweptCc } from '../lib/rotary';
   import { animate, fit, readTheme, type Theme } from '../lib/canvas';
   import { activeClutch, bearingTouches, clutchDimensions, CLUTCH_SMOKE_C as SMOKE_FROM, emptyFrame, emptyTravel, pedalFromShare, readFrame, travelFromPedal, type ClutchDims } from '../lib/clutchMechanism';
   import { ClutchPainter, type Box, type ClutchLive } from '../lib/clutchDraw2d';
@@ -60,7 +61,7 @@
 
   /** Les cotes ne changent qu'avec le moteur, jamais à chaque image. */
   const hasClutch = $derived(!config.electric && config.boxKind !== 'converter');
-  const sized = $derived(clutchDimensions({ peakTorque, cylinders: config.cylinders, displacementCc: config.displacementCc, boxFlywheel: config.boxFlywheel, boxKind: config.boxKind }));
+  const sized = $derived(clutchDimensions({ peakTorque, cylinders: firingsPerCycle(config), displacementCc: sweptCc(config), boxFlywheel: config.boxFlywheel, boxKind: config.boxKind }));
   /** Un curseur qu'on fait glisser ne reconstruit rien tant qu'aucune cote n'a vraiment changé. */
   const dimsKey = $derived(`${sized.discDiameter}|${sized.flywheelThickness}|${sized.shaftR}|${sized.crankBolts}|${sized.coverBolts}|${sized.dampers}|${sized.dualMass}|${sized.kind}`);
   let dims: ClutchDims | null = null;

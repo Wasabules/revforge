@@ -121,6 +121,7 @@ Known limits:
 - With an automatic, a diesel can occasionally stall at very low speed; the site then offers a restart.
 - Anti-lag wears nothing out: nothing computes wear, so no part breaks and no time limit applies, and its bangs are assumed until someone listens.
 - Gear rattle has no isolated real recording to compare against, and several gearbox parameters (module, helix angle, backlash, wear rate) are assumed.
+- The rotary engine has no simulated wear or apex seals, and its port timing and oil metering are from memory, not checked against a manufacturer's manual. Turbocharged, its engine view does not draw the turbo chain.
 - The gas view follows the driving model without feeding back into it, so its pressures do not exactly match the displayed torque.
 - The turbo's pipe length changes its lag, its gas and its views, but the whine still comes from the engine bay, even on a rear-mounted turbo, and the pipe's own wave reflections are not in the sound.
 - The supercharger's whine level is assumed, not fitted to recordings, and heat soak, knock at high boost and the rotors' inertia are not modelled.

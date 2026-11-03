@@ -204,6 +204,7 @@ private:
     double rpmInGear(int gear) const;
     double ratio(int gear) const;
     double compressionLoadNm() const;
+    double rotaryCompressionLoadNm() const;
     void stepTurbo(double rpmNow, bool burning);
     void updateAntiLag(double throttle, double rpmNow, bool off);
     void stepSupercharger(double rpmNow);

@@ -1,10 +1,11 @@
 <script lang="ts">
   import Choices from './Choices.svelte';
   import Slider from './Slider.svelte';
-  import { AIR_FILTERS, ASPIRATIONS, CYLINDERS, FUELS, LAYOUTS, LIMITS, RELEASES, TURBO_SIZES, cylinderCc, strokeMm, type EngineConfig, ANTI_LAGS, CAMSHAFTS, SUPERCHARGER_KINDS, FUEL_SYSTEMS } from '../lib/config';
+  import { AIR_FILTERS, ASPIRATIONS, CYLINDERS, FUELS, LAYOUTS, LIMITS, RELEASES, TURBO_SIZES, cylinderCc, strokeMm, type EngineConfig, ANTI_LAGS, CAMSHAFTS, SUPERCHARGER_KINDS, FUEL_SYSTEMS, ROTOR_COUNTS, coherentConfig, isRotary } from '../lib/config';
   import type { Spec } from '../lib/engine';
   import { fixed, t } from '../lib/i18n.svelte';
   import { PISTON_SPEED_LIMIT, moveStroke, pistonSpeed, strokeOutside, strokeRange, strokeShape, strokeThumb, type StrokeAnchor } from '../lib/stroke';
+  import { rotaryShape } from '../lib/rotary';
 
   interface Props {
     config: EngineConfig;
@@ -25,37 +26,59 @@
   }
   const stroke = $derived(strokeMm(shown));
   const redlineSpeed = $derived(pistonSpeed(stroke, shown.redlineRpm));
+
+  const rotary = $derived(isRotary(config));
+  const shape = $derived(rotaryShape(cylinderCc(shown)));
+  /** Passer à un rotatif garde ce qui a un sens, et ramène le reste à ce qui existe : 2 rotors, essence. */
+  function chooseLayout(layout: EngineConfig['layout']) {
+    const next = coherentConfig({ ...config, layout });
+    onapply({ layout, cylinders: next.cylinders, fuel: next.fuel });
+  }
 </script>
 
 {#if config.electric}
   <p class="help">{t('builder.electricHelp')}</p>
 {:else}
   <p class="summary" data-testid="summary">
-    {t('builder.summary', { cylinders: shown.cylinders, litres: fixed(shown.displacementCc / 1000, 1), cc: Math.round(cylinderCc(shown)), stroke: Math.round(strokeMm(shown)) })}
+    {#if rotary}
+      {t('builder.summary.rotary', { rotors: shown.cylinders, litres: fixed(shown.displacementCc / 1000, 1), cc: Math.round(cylinderCc(shown)), r: Math.round(shape.radius), e: fixed(shape.eccentricity, 1), b: Math.round(shape.width) })}
+    {:else}
+      {t('builder.summary', { cylinders: shown.cylinders, litres: fixed(shown.displacementCc / 1000, 1), cc: Math.round(cylinderCc(shown)), stroke: Math.round(strokeMm(shown)) })}
+    {/if}
   </p>
-  <Choices label={t('builder.cylinders')} options={CYLINDERS.map((value) => ({ value, label: String(value) }))} value={config.cylinders} onchange={(cylinders) => onapply({ cylinders })} />
-  <Choices label={t('builder.layout')} options={LAYOUTS} value={config.layout} onchange={(layout) => onapply({ layout })} />
+  {#if rotary}
+    <Choices label={t('builder.rotors')} options={ROTOR_COUNTS.map((value) => ({ value, label: String(value) }))} value={config.cylinders} onchange={(cylinders) => onapply({ cylinders })} />
+  {:else}
+    <Choices label={t('builder.cylinders')} options={CYLINDERS.map((value) => ({ value, label: String(value) }))} value={config.cylinders} onchange={(cylinders) => onapply({ cylinders })} />
+  {/if}
+  <Choices label={t('builder.layout')} options={LAYOUTS} value={config.layout} onchange={chooseLayout} />
   <Slider label={t('builder.displacement')} value={shown.displacementCc} {...LIMITS.displacementCc} format={(value) => `${value} ${t('unit.cc')}`}
     oninput={(displacementCc) => onlive({ displacementCc })} onchange={(displacementCc) => onapply({ displacementCc })} />
-  <Slider label={t('builder.bore')} value={shown.boreMm} {...LIMITS.boreMm} format={(value) => `${value} mm`}
-    oninput={(boreMm) => onlive({ boreMm })} onchange={(boreMm) => onapply({ boreMm })} />
-  <div>
-    <!-- Le curseur va de cran en cran, le texte dit la course réelle, même hors plage. -->
-    <Slider label={t('builder.stroke')} value={strokeThumb(shown)} {...strokeRange(shown.boreMm, shown.cylinders)} format={() => `${fixed(stroke, 1)} mm`}
-      oninput={(target) => strokeMoved(target, onlive)} onchange={(target) => strokeMoved(target, onapply)} />
-    <p class="help">{t('builder.stroke.help')}</p>
-    <p class="help" data-testid="stroke-derived">{t('builder.stroke.derived', { ratio: fixed(shown.boreMm / stroke, 2), shape: t(`builder.stroke.shape.${strokeShape(shown.boreMm, stroke)}`), speed: fixed(redlineSpeed, 1) })}</p>
-    {#if redlineSpeed > PISTON_SPEED_LIMIT}
-      <p class="help" data-testid="stroke-fast">{t('builder.stroke.fast', { limit: PISTON_SPEED_LIMIT })}</p>
-    {/if}
-    {#if strokeOutside(shown)}
-      <p class="help" data-testid="stroke-outside">{t('builder.stroke.outside', { min: LIMITS.strokeMm.min, max: LIMITS.strokeMm.max })}</p>
-    {/if}
-  </div>
+  {#if rotary}
+    <p class="help" data-testid="rotary-help">{t('builder.rotary.help')}</p>
+  {:else}
+    <Slider label={t('builder.bore')} value={shown.boreMm} {...LIMITS.boreMm} format={(value) => `${value} mm`}
+      oninput={(boreMm) => onlive({ boreMm })} onchange={(boreMm) => onapply({ boreMm })} />
+    <div>
+      <!-- Le curseur va de cran en cran, le texte dit la course réelle, même hors plage. -->
+      <Slider label={t('builder.stroke')} value={strokeThumb(shown)} {...strokeRange(shown.boreMm, shown.cylinders)} format={() => `${fixed(stroke, 1)} mm`}
+        oninput={(target) => strokeMoved(target, onlive)} onchange={(target) => strokeMoved(target, onapply)} />
+      <p class="help">{t('builder.stroke.help')}</p>
+      <p class="help" data-testid="stroke-derived">{t('builder.stroke.derived', { ratio: fixed(shown.boreMm / stroke, 2), shape: t(`builder.stroke.shape.${strokeShape(shown.boreMm, stroke)}`), speed: fixed(redlineSpeed, 1) })}</p>
+      {#if redlineSpeed > PISTON_SPEED_LIMIT}
+        <p class="help" data-testid="stroke-fast">{t('builder.stroke.fast', { limit: PISTON_SPEED_LIMIT })}</p>
+      {/if}
+      {#if strokeOutside(shown)}
+        <p class="help" data-testid="stroke-outside">{t('builder.stroke.outside', { min: LIMITS.strokeMm.min, max: LIMITS.strokeMm.max })}</p>
+      {/if}
+    </div>
+  {/if}
   <Slider label={t('builder.redline')} value={config.redlineRpm} {...LIMITS.redlineRpm} format={(value) => `${value} ${t('unit.rpm')}`}
     oninput={(redlineRpm) => onlive({ redlineRpm })} onchange={(redlineRpm) => onapply({ redlineRpm })} />
-  <Choices label={t('builder.fuel')} options={FUELS} value={config.fuel} onchange={(fuel) => onapply({ fuel })} />
-  {#if config.fuel !== 'diesel'}
+  {#if !rotary}
+    <Choices label={t('builder.fuel')} options={FUELS} value={config.fuel} onchange={(fuel) => onapply({ fuel })} />
+  {/if}
+  {#if rotary || config.fuel !== 'diesel'}
     <div data-testid="fuel-system">
       <Choices label={t('builder.fuelSystem')} options={FUEL_SYSTEMS} value={config.fuelSystem} onchange={(fuelSystem) => onapply({ fuelSystem })} />
       <p class="help">{FUEL_SYSTEMS.find((item) => item.value === config.fuelSystem)?.help}</p>
