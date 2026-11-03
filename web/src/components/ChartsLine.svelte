@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { EngineConfig } from '../lib/config';
+  import { firingsPerCycle } from '../lib/rotary';
   import type { Engine } from '../lib/engine';
   import { Fft } from '../lib/fft';
   import type { TelemetryHistory } from '../lib/history';
@@ -56,7 +57,7 @@
   const xOf = (hz: number) => LEFT + (Math.log(hz / MIN_HZ) / Math.log(MAX_HZ / MIN_HZ)) * (WIDTH - LEFT - RIGHT);
   const yOf = (db: number) => TOP + (1 - (Math.max(db, FLOOR) - FLOOR) / (CEIL - FLOOR)) * (HEIGHT - TOP - BOTTOM);
   const path = $derived(response.map((point, i) => `${i ? 'L' : 'M'}${xOf(point.hz).toFixed(1)} ${yOf(point.db).toFixed(1)}`).join(' '));
-  const firing = $derived((rpm / 120) * config.cylinders);
+  const firing = $derived((rpm / 120) * firingsPerCycle(config));
   const orders = $derived(running && firing > 1 ? Array.from({ length: ORDERS }, (_, i) => firing * (i + 1)).filter((hz) => hz < MAX_HZ && hz > MIN_HZ) : []);
 
   let hover = $state<number | null>(null);

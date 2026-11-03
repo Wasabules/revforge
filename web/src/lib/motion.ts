@@ -9,6 +9,7 @@ import type { Telemetry } from './engine';
 import { GasFlow, gasKey } from './fluid';
 import { GasNetwork, type GasInputs } from './fluidGas';
 import { GasPainter } from './fluidRender';
+import { firingsPerCycle, isRotary } from './rotary';
 
 export const SLOW_MOTION = 12;
 
@@ -178,6 +179,7 @@ export class Motion {
   private meterNet: GasNetwork | null = null;
   private meterKey = '';
   private meterCycle = 0;
+  private meterTurns = 0;
   /** Dernier cylindre allumé, et temps écoulé depuis. */
   lastCylinder = 0;
   sinceFiring = 1;
@@ -324,6 +326,8 @@ export class Motion {
     }
     if (this.rpm <= 20 || seconds <= 0) return;
     const turns = (this.rpm / 120 / this.slow) * seconds;
+    this.meterTurns += turns;
+    inputs.turnsTotal = this.meterTurns;
     this.meterNet!.advance(seconds / this.slow, this.meterCycle, turns, inputs);
     this.meterCycle = (this.meterCycle + turns) % 1;
   }
@@ -354,19 +358,21 @@ export class Motion {
     this.gas.active = !config.electric;
     this.gas.flame = this.flame;
     this.gas.carSpeed = this.speed / 3.6;
+    inputs.turnsTotal = this.turns;
     this.gas.advance(seconds / this.slow, before, turns, inputs);
   }
 
   /** Une bouffée par explosion, au moment où le cycle atteint le tour de ce cylindre. */
   private emit(before: number, turns: number, config: EngineConfig): void {
-    const count = config.cylinders;
-    const order = firingOrder(count);
-    const banks = config.layout !== 'inline' && count >= 6 ? 2 : 1;
+    // Sur un rotatif, deux explosions par rotor en deux tours : on repasse par l'ordre d'allumage des rotors.
+    const count = firingsPerCycle(config);
+    const order = firingOrder(config.cylinders);
+    const banks = config.layout !== 'inline' && !isRotary(config) && count >= 6 ? 2 : 1;
     const from = Math.floor(before * count);
     const crossings = Math.floor((before + turns) * count) - from;
     for (let i = 1; i <= crossings; i++) {
       const slot = (from + i) % count;
-      const cylinder = order[slot] - 1;
+      const cylinder = order[slot % order.length] - 1;
       this.lastCylinder = cylinder;
       this.sinceFiring = 0;
       const push = 0.3 + 0.7 * this.load + 0.25 * this.boost * config.boostBar;

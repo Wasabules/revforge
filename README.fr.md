@@ -99,6 +99,7 @@ Limites connues :
 - La voiture ne recule jamais (démarrage en côte avec maintien supposé), toutes les voitures ont la même adhérence, et les trajets sont réglés en durée, pas en distance.
 - En automatique, un diesel peut parfois caler à très faible vitesse ; le site propose alors de le relancer.
 - Le claquement de boîte n'a aucun vrai enregistrement isolé pour comparaison, et plusieurs paramètres de boîte (module, angle d'hélice, jeu, vitesse d'usure) sont supposés.
+- Le moteur rotatif ne simule ni usure ni segments d'apex, et son calage de lumières et son dosage d'huile viennent de mémoire, sans recoupement sur un manuel constructeur. En turbo, sa vue du moteur ne dessine pas la chaîne du turbo.
 - La vue du gaz suit le modèle de conduite sans agir sur lui : ses pressions ne recoupent donc pas exactement le couple affiché.
 - Certaines valeurs réglementaires (ONU R51.03 et UE 540/2014) restent à contrôler sur les textes officiels.
 

@@ -557,10 +557,6 @@ int main(int argc, char** argv) {
         std::size_t count = 0;
         powertrain = presets(count)[0].powertrain();
     }
-    if (isRotary(config) && config.fuel == Fuel::Diesel) {
-        std::fprintf(stderr, "A rotary engine burns petrol: --fuel diesel is refused with --layout rotary\n");
-        return 2;
-    }
     // Sur un préréglage, les réglages donnés en plus l'emportent.
     if (exhaustChoice) powertrain.engine.exhaust = *exhaustChoice;
     if (routing) powertrain.engine.routing = *routing;

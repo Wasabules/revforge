@@ -117,6 +117,7 @@ Known limits:
 - The car never rolls backwards (hill starts assume hill hold), all cars share one tyre grip, and journeys are timed rather than distance-based.
 - With an automatic, a diesel can occasionally stall at very low speed; the site then offers a restart.
 - Gear rattle has no isolated real recording to compare against, and several gearbox parameters (module, helix angle, backlash, wear rate) are assumed.
+- The rotary engine has no simulated wear or apex seals, and its port timing and oil metering are from memory, not checked against a manufacturer's manual. Turbocharged, its engine view does not draw the turbo chain.
 - The gas view follows the driving model without feeding back into it, so its pressures do not exactly match the displayed torque.
 - Some regulatory values (UN R51.03 and EU 540/2014) still need checking against the official texts.
 

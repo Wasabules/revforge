@@ -15,6 +15,7 @@
 import type { EngineConfig, Exhaust, Layout } from './config';
 import { EXHAUST_LINES, TURBO_SCALE } from './exhaustLines';
 import { WALL_RISE_K } from './heat';
+import { CYCLE_PER_SHAFT, EXHAUST_PORT_SHARE, firingsPerCycle, INTAKE_PORT_SHARE, isRotary, rotaryCompression, rotaryShape, SHAFT_EVC, SHAFT_EVO, SHAFT_INTAKE_SWEEP, SHAFT_IVC, SHAFT_IVO, SHAFT_PORT_SWEEP, sweptCc, WALL_RATIO } from './rotary';
 
 export const GAMMA = 1.36;
 const G1 = GAMMA - 1;
@@ -125,6 +126,8 @@ export interface GasInputs {
   compressorOutK?: number;
   /** Ouverture de la wastegate, 0 à 1. Absente : déduite de `boost`. */
   wastegate?: number;
+  /** Cycles de deux tours parcourus depuis le début, sans repli : un rotatif en a besoin, son cycle dure trois tours. */
+  turnsTotal?: number;
 }
 
 export type IntakePartKind = 'duct' | 'filter' | 'inlet' | 'hot' | 'cooler' | 'cold';
@@ -155,6 +158,8 @@ const TURBO_INTAKE: { kind: IntakePartKind; length: number; area: number; drag: 
 /** Longueur de chaque collecteur (m) : mêmes ordres de grandeur que `EngineConfig::toProfile`. */
 function headerLength(layout: Layout, cylinder: number): number {
   switch (layout) {
+    // Une lumière par rotor, tout de suite un court tube : `headerM` de `applyRotary`.
+    case 'rotary': return 0.42;
     case 'inline': return 0.62;
     case 'v': return cylinder % 2 === 0 ? 0.55 : 0.72;
     case 'cross_plane': return cylinder % 2 === 0 ? 0.5 : 0.86;
@@ -316,6 +321,24 @@ export class GasNetwork {
   burntBlowdowns = 0;
   lastBlowdownCylinder = 0;
 
+  /** Tubes de collecteur : un par cylindre, ou un par rotor, ses trois chambres passant par la même lumière. */
+  runners = 0;
+  private rotary = false;
+  /** Sur un rotatif, le cycle d'une chambre dure trois tours d'arbre, et non deux : 2/3, 1 sinon. */
+  private cycleScale = 1;
+  private advanceScale = 1;
+  /** Explosions par cycle de deux tours. */
+  private firings = 0;
+  /** Calage du moteur, en degrés de son cycle : soupapes ou lumières. */
+  private evo = EVO;
+  private evc = EVC;
+  private ivo = IVO;
+  private ivc = IVC;
+  /** Balayage d'une lumière par le sommet du rotor (degrés de cycle) ; 0 : une soupape. */
+  private sweepEx = 0;
+  private sweepIn = 0;
+  private wallGain = 14;
+
   // ── Géométrie ──
   private boreArea = 0;
   private crank = 0;
@@ -407,8 +430,15 @@ export class GasNetwork {
 
   /** (Re)construit le réseau pour ce moteur. `order` : ordre d'allumage, cylindres numérotés depuis 1. */
   build(config: EngineConfig, order: number[]): void {
-    const count = config.cylinders;
-    const litres = config.displacementCc / 1000;
+    const rotary = isRotary(config);
+    this.rotary = rotary;
+    // Sur un rotatif, une « cylindre » du calcul est une chambre : trois par rotor, sur un cycle de trois tours d'arbre.
+    const count = rotary ? 3 * config.cylinders : config.cylinders;
+    const runners = rotary ? config.cylinders : count;
+    this.runners = runners;
+    this.firings = firingsPerCycle(config);
+    // Tubes, plénum et turbine se dimensionnent sur l'air avalé en deux tours d'arbre.
+    const litres = sweptCc(config) / 1000;
     const volume = litres * 1e-3;
     this.pipeDiameter = Math.min(Math.max(0.05 * Math.sqrt(litres / 2), 0.032), 0.09);
     const base = (Math.PI * this.pipeDiameter * this.pipeDiameter) / 4;
@@ -416,10 +446,10 @@ export class GasNetwork {
     const CELL_M = count >= 8 ? CELL_LARGE : CELL_SMALL;
     this.cell = CELL_M;
     this.turbo = config.aspiration === 'turbo';
-    this.diesel = config.fuel === 'diesel';
+    this.diesel = config.fuel === 'diesel' && !rotary;
     this.flutter = config.turboRelease === 'flutter';
     this.boostBar = config.boostBar;
-    this.banks = config.layout !== 'inline' && count >= 4 ? 2 : 1;
+    this.banks = config.layout !== 'inline' && count >= 4 && !rotary ? 2 : 1;
 
     // Géométrie du cylindre.
     const bore = config.boreMm / 1000;
@@ -432,12 +462,44 @@ export class GasNetwork {
     this.clearance = cylinderVolume / (ratio - 1);
     this.exhaustValve = 0.19 * this.boreArea;
     this.intakeValve = 0.24 * this.boreArea;
+    this.cycleScale = 1;
+    this.advanceScale = 1;
+    this.evo = EVO;
+    this.evc = EVC;
+    this.ivo = IVO;
+    this.ivc = IVC;
+    this.sweepEx = 0;
+    this.sweepIn = 0;
+    this.wallGain = 14;
+    if (rotary) {
+      // Le volume d'une chambre est V₀ + V/2·(1 − cos(2A/3)) : en degrés de cycle, la loi d'un piston à bielle infinie.
+      const shape = rotaryShape(config.displacementCc / config.cylinders);
+      const chamber = (config.displacementCc / config.cylinders) * 1e-6;
+      const fakeStroke = 2 * shape.eccentricity * 1e-3;
+      this.boreArea = chamber / fakeStroke;
+      this.crank = fakeStroke / 2;
+      this.rod = fakeStroke * 5000;
+      this.clearance = chamber / (rotaryCompression(config.aspiration) - 1);
+      const across = shape.radius * shape.width * 1e-6;
+      this.exhaustValve = EXHAUST_PORT_SHARE * across;
+      this.intakeValve = INTAKE_PORT_SHARE * across;
+      this.cycleScale = CYCLE_PER_SHAFT;
+      this.advanceScale = CYCLE_PER_SHAFT;
+      this.evo = SHAFT_EVO * CYCLE_PER_SHAFT;
+      this.evc = SHAFT_EVC * CYCLE_PER_SHAFT;
+      this.ivo = SHAFT_IVO * CYCLE_PER_SHAFT;
+      this.ivc = SHAFT_IVC * CYCLE_PER_SHAFT;
+      this.sweepEx = SHAFT_PORT_SWEEP * CYCLE_PER_SHAFT;
+      this.sweepIn = SHAFT_INTAKE_SWEEP * CYCLE_PER_SHAFT;
+      // La chambre allongée a presque deux fois plus de paroi pour le même volume.
+      this.wallGain = 14 * WALL_RATIO;
+    }
 
     // Collecteurs : un tube par cylindre, plus fins que la ligne qu'ils alimentent.
-    const runnerArea = base * Math.min(1, 1.15 / Math.sqrt(count));
-    const runnerCells = new Int32Array(count);
+    const runnerArea = base * Math.min(1, 1.15 / Math.sqrt(runners));
+    const runnerCells = new Int32Array(runners);
     let cells = 0;
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < runners; i++) {
       runnerCells[i] = Math.max(8, Math.round(headerLength(config.layout, i) / CELL_M));
       cells += runnerCells[i];
     }
@@ -519,13 +581,17 @@ export class GasNetwork {
 
     const runnerFirst = new Int32Array(count);
     let index = 0;
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < runners; i++) {
       runnerFirst[i] = index;
       for (let k = 0; k < runnerCells[i]; k++, index++) {
         this.area[index] = runnerArea;
         this.wallDecay[index] = 0.5 + 0.5 * (k / runnerCells[i]);
         if (k + 1 < runnerCells[i]) this.faceA[index] = runnerArea;
       }
+    }
+    if (rotary) {
+      // Les trois chambres d'un rotor soufflent dans le même tube.
+      for (let c = count - 1; c >= 0; c--) runnerFirst[c] = runnerFirst[Math.floor(c / 3)];
     }
     this.runnerFirst = runnerFirst;
     for (let b = 0; b < (this.banks === 2 ? 2 : 0); b++) {
@@ -614,7 +680,7 @@ export class GasNetwork {
       linkArea.push(area);
       this.zV[zone] += area * 2.5 * CELL_M;
     };
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < runners; i++) {
       const b = this.banks === 2 ? i % 2 : 0;
       link(runnerFirst[i] + runnerCells[i] - 1, zoneBank[b], 1, runnerArea);
     }
@@ -709,6 +775,13 @@ export class GasNetwork {
       this.bank[i] = this.banks === 2 ? i % 2 : 0;
       // Le cylindre au rang s de l'ordre d'allumage passe au point mort haut quand le cycle vaut s/N.
       this.phase[i] = 1 - order.indexOf(i + 1) / count;
+      if (rotary) {
+        // La face k du rotor au rang s explose quand l'arbre vaut s·360/rotors + 360·k, sur un cycle de 1080°.
+        const rotor = Math.floor(i / 3);
+        const face = i % 3;
+        const shaft = (order.indexOf(rotor + 1) * 360) / config.cylinders + 360 * face;
+        this.phase[i] = 1 - shaft / 1080;
+      }
     }
     this.reset();
   }
@@ -846,7 +919,8 @@ export class GasNetwork {
       let dt = (CFL * this.cell) / this.fastest;
       if (dt > left) dt = left;
       this.dt = dt;
-      this.cycleNow = cycle + turns * (seconds > 0 ? 1 - left / seconds : 0);
+      // Le cycle de `Motion` se replie tous les deux tours : une chambre a besoin de leur nombre total.
+      this.cycleNow = (this.rotary ? (inputs.turnsTotal ?? 0) - turns : cycle) + turns * (seconds > 0 ? 1 - left / seconds : 0);
       this.stepCylinders(inputs);
       this.stepOrgans(inputs);
       this.stepFluxes();
@@ -874,10 +948,11 @@ export class GasNetwork {
     const plenum = this.zonePlenum;
     let plenumOut = 0;
     const wallCylinder = T_AMB + 160 * inputs.heat;
-    const advance = ignitionAdvance(this.diesel, inputs.rpm);
+    const advance = ignitionAdvance(this.diesel, inputs.rpm) * this.advanceScale;
     const duration = burnDegrees(this.diesel, inputs.rpm);
+    const { evo, evc, ivo, ivc, sweepEx, sweepIn, wallGain, cycleScale } = this;
     for (let c = 0; c < this.cylinders; c++) {
-      let phase = cycle + this.phase[c];
+      let phase = cycle * cycleScale + this.phase[c];
       phase -= Math.floor(phase);
       const theta = phase * 720;
       this.cylTheta[c] = theta;
@@ -927,13 +1002,20 @@ export class GasNetwork {
       // Les parois reprennent une partie de la chaleur.
       pressure = (G1 * energy) / volume;
       let temperature = pressure / ((mass / volume) * R);
-      energy -= 14 * dt * (temperature - wallCylinder) * mass * CV;
+      energy -= wallGain * dt * (temperature - wallCylinder) * mass * CV;
 
       // Soupape d'échappement : la vidange pousse le gaz dans le collecteur.
       let exhaustFlow = 0;
-      if (theta > EVO && theta < EVC) {
-        const s = Math.sin((Math.PI * (theta - EVO)) / (EVC - EVO));
-        const lift = s * s;
+      if (theta > evo && theta < evc) {
+        // Une soupape suit sa came ; une lumière est découverte d'un bord à l'autre par le sommet du rotor.
+        const s = Math.sin((Math.PI * (theta - evo)) / (evc - evo));
+        let lift = s * s;
+        if (sweepEx > 0) {
+          const opening = (theta - evo) / sweepEx;
+          const closing = (evc - theta) / sweepEx;
+          lift = opening < closing ? opening : closing;
+          if (lift > 1) lift = 1;
+        }
         this.cylLiftEx[c] = lift;
         if (this.cylWasOpen[c] === 0) {
           this.cylWasOpen[c] = 1;
@@ -994,9 +1076,15 @@ export class GasNetwork {
 
       // Soupape d'admission : le cylindre aspire dans le plénum, et le gaz brûlé peut y refouler.
       let intakeFlow = 0;
-      if (theta > IVO && theta < IVC) {
-        const s = Math.sin((Math.PI * (theta - IVO)) / (IVC - IVO));
-        const lift = s * s;
+      if (theta > ivo && theta < ivc) {
+        const s = Math.sin((Math.PI * (theta - ivo)) / (ivc - ivo));
+        let lift = s * s;
+        if (sweepIn > 0) {
+          const opening = (theta - ivo) / sweepIn;
+          const closing = (ivc - theta) / sweepIn;
+          lift = opening < closing ? opening : closing;
+          if (lift > 1) lift = 1;
+        }
         this.cylLiftIn[c] = lift;
         const opening = this.intakeValve * lift;
         pressure = (G1 * energy) / volume;
@@ -1052,7 +1140,7 @@ export class GasNetwork {
       this.cylT[c] = (this.cylP[c] * volume) / (mass * R);
     }
     // Moyenne sur deux allumages : assez lente pour ne pas suivre chaque cylindre.
-    const interval = 2 / Math.max(turnsPerSecond * this.cylinders, 1);
+    const interval = 2 / Math.max(turnsPerSecond * this.firings, 1);
     const smooth = dt / (dt + Math.max(interval, 0.01));
     this.demand += (plenumOut - this.demand) * smooth;
   }

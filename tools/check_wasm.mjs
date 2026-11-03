@@ -110,6 +110,23 @@ function check(label, wasm, expected) {
   rf.rf_set_mode(3);
   check('tour complet, V10', render(rf, 60, 128), native('--preset', 'v10_open', '--scenario', 'lap'));
 }
+// Rotatif : deux rotors, une explosion par rotor et par tour d'arbre.
+{
+  const rf = load();
+  rf.rf_set_car(BODY.coupe, 1300, 18, DRIVE.rear, PLACEMENT.front, INSULATION.standard);
+  rf.rf_set_config(2, LAYOUT.rotary, 1308, 84, 9000, EXHAUST.sport, 0, 0, 0, 1, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+  rf.rf_set_mode(3);
+  check('tour complet, birotor', render(rf, 60, 128), native('--preset', 'twin_rotor_13', '--scenario', 'lap'));
+}
+// Rotatif turbo, trois rotors, pour la chaîne du turbo calée sur deux fois la cylindrée.
+{
+  const rf = load();
+  rf.rf_set_car(BODY.coupe, 1500, 18, DRIVE.rear, PLACEMENT.front, INSULATION.standard);
+  rf.rf_set_config(3, LAYOUT.rotary, 1962, 84, 8000, EXHAUST.sport, 1, 0, 0, 0, 0, 0.8, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+  rf.rf_set_mode(4);
+  rf.rf_set_manual_rpm(5000);
+  check('régime tenu, trois rotors turbo', render(rf, 4, 512), native('--layout', 'rotary', '--cylinders', '3', '--cc', '1962', '--redline', '8000', '--exhaust', 'sport', '--aspiration', 'turbo', '--boost', '0.8', '--body', 'coupe', '--mass', '1500', '--rim', '18', '--drive', 'rear', '--placement', 'front', '--scenario', 'steady', '--rpm', '5000'));
+}
 // Turbo et flutter au lever de pied.
 {
   const rf = load();

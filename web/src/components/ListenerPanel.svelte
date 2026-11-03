@@ -4,6 +4,7 @@
   import { animate, fit, readTheme } from '../lib/canvas';
   import { heatColors } from '../lib/heat';
   import type { EngineConfig } from '../lib/config';
+  import { firingsPerCycle } from '../lib/rotary';
   import { Listener, type CarPlan, type Engine, type ListenerValue, type SoundSheet, type Telemetry } from '../lib/engine';
   import { fixed, t } from '../lib/i18n.svelte';
   import { nearestLandmark } from '../lib/instruments';
@@ -209,7 +210,7 @@
       }
 
       // Les sorties d'échappement, et l'onde qui en part au rythme du moteur (même horloge que les autres vues).
-      const ripple = (motion.turns * Math.max(config.cylinders / 2, 1)) % 1;
+      const ripple = (motion.turns * Math.max(firingsPerCycle(config) / 2, 1)) % 1;
       const outlets = config.electric ? [] : config.routing === 'single' ? plan.sources.slice(0, 1) : plan.sources.slice(0, 2);
       for (const outlet of outlets) {
         const [ox, oy] = toScreen(outlet.x, outlet.y, g);

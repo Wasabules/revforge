@@ -81,6 +81,9 @@ else()
   golden(lap_boxer_turbo 555e6153 --preset boxer_four_turbo --scenario lap)
   golden(lap_diesel 524d49e4 --preset diesel_four --scenario lap)
   golden(lap_electric 9542ce3b --preset electric --scenario lap)
+  # Le rotatif : son calage, ses rangs, et le débit de deux fois sa cylindrée.
+  golden(lap_twin_rotor 675e95e9 --preset twin_rotor_13 --scenario lap --seconds 20)
+  golden(steady_three_rotor_turbo 0bc5385c --layout rotary --cylinders 3 --cc 1962 --redline 8000 --exhaust sport --aspiration turbo --boost 0.8 --scenario steady --rpm 5000)
   # Les trajets et les modes de boîte : un moteur sans turbo, sur 40 s.
   golden(drive_stop_go_eco 40a3403c --preset inline_six --scenario lap --seconds 40 --drive-scenario stop_go --shift-mode eco)
   golden(drive_country_sport 3bd2f6e2 --preset inline_six --scenario lap --seconds 40 --drive-scenario country --shift-mode sport)

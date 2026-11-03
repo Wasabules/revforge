@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { TURBO_SCALE, type EngineConfig } from '../lib/config';
+  import { TURBO_SCALE, isRotary, type EngineConfig } from '../lib/config';
   import { animate, fit, heatedPart, mix, pipeColor, readTheme, type Theme } from '../lib/canvas';
   import type { Telemetry } from '../lib/engine';
   import { fixed, speedLabel, t, whole } from '../lib/i18n.svelte';
@@ -112,9 +112,9 @@
     const bankGap = net.banks === 2 ? height * 0.085 : 0;
     const joinX = net.banks === 2 ? collectorX + span * 0.75 : collectorX;
     const runnerPoints: Float32Array[] = [];
-    const perBank = Math.ceil(net.cylinders / net.banks);
+    const perBank = Math.ceil(net.runners / net.banks);
     const spreadBank = net.banks === 2 ? height * 0.06 : height * 0.1;
-    for (let c = 0; c < net.cylinders; c++) {
+    for (let c = 0; c < net.runners; c++) {
       const bank = net.bank[c];
       const row = net.banks === 2 ? Math.floor(c / 2) : c;
       const place = perBank > 1 ? row / (perBank - 1) - 0.5 : 0;
@@ -278,7 +278,7 @@
   function drawRunners(ctx: CanvasRenderingContext2D, theme: Theme, view: Layout) {
     const net = motion.gas.net;
     ctx.lineJoin = 'round';
-    for (let c = 0; c < net.cylinders; c++) {
+    for (let c = 0; c < net.runners; c++) {
       const points = view.runnerPoints[c];
       const n = net.runnerCells[c];
       // Le dessous, en acier, puis le gaz par-dessus.
@@ -291,7 +291,7 @@
       ctx.stroke();
     }
     let first = 0;
-    for (let c = 0; c < net.cylinders; c++) {
+    for (let c = 0; c < net.runners; c++) {
       strokeSegments(ctx, theme, view.runnerPoints[c], first, net.runnerCells[c], view.runnerWidth);
       first += net.runnerCells[c];
     }
@@ -973,7 +973,7 @@
 
   onMount(() => animate(canvas, draw));
 
-  const dual = $derived(config.layout !== 'inline' && config.cylinders >= 4);
+  const dual = $derived(config.layout !== 'inline' && !isRotary(config) && config.cylinders >= 4);
   const caption = $derived(
     config.electric ? '' : [t(`gas.line.${config.exhaust}`), ...(dual ? [t('gas.banks')] : []), ...(config.aspiration === 'turbo' ? [t('gas.turboPulses')] : []), t('gas.legend', { speed: speedLabel(slow) })].join(' '),
   );

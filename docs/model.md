@@ -589,6 +589,53 @@ The model's automatic gearbox matters little: a driver following longer gears, a
 
 **Turbo and gearbox settings count:** these figures follow the model's real torque and pressure, and will move if those parts change.
 
+## The rotary engine
+
+`Layout::Rotary`, a Wankel engine. `cylinders` counts rotors there, `displacementCc` the usual figure: one chamber per rotor, 654 cc on the reference engine. `isRotary(config)` exists in C++ (`engine_config.hpp`) and on the site (`rotary.ts`, re-exported by `config.ts`): settings that make no sense here read it.
+
+**Geometry.** Generating radius R, eccentricity e, width b, with V = 3√3·R·e·b per chamber. R 105, e 15, b 80 mm give 654.7 cc. `rotaryGeometry` derives them from the displacement at the same proportions: no bore, no stroke. The housing is the path of a rotor tip, H(u) = R·(sin u, cos u) − e·(sin 3u, cos 3u). A 30-tooth ring gear, pitch radius 3e, rolls on a fixed 20-tooth gear, pitch radius 2e: the rotor turns at a third of the shaft. `rotatif.spec.ts` checks on the drawing that the volume measured between flank and housing gives the displacement, and follows V₀ + V/2·(1 − cos(2A/3)).
+
+**Cycle: the one thing that changes the sums.** Each chamber does its four strokes in three shaft turns, and each rotor has three chambers: one firing per rotor per shaft turn, where a cylinder gives one for two turns. A single quantity carries this, `sweptCcPerTwoTurns`: the volume swept in two turns is twice the displacement. Torque (`bmepToNm`, so p·V/2π), air flow, turbo (`displacementM3`), pumping, throttle and consumption follow with no other coefficient. A 1.3 L twin-rotor therefore breathes like a 2.6 L four-stroke.
+
+**Efficiency: the cause, not a target.** `rotaryEfficiencyShare` multiplies three effects. The compression ratio, 9.4 (8.5 turbocharged), through the ideal cycle. The long chamber: `rotaryWallRatio` compares its surface at top dead centre, a long blade, with a square cylinder of the same volume, and finds about 1.8. At 12.5% of efficiency per unit, an order of magnitude from the 10 to 15% of fuel energy that goes to the walls (Heywood), this removes 10%. Tip leakage, 5%, is assumed. That gives 0.83, applied to the mean pressure and to the efficiency of `ConsumptionModel`. Friction, referred to swept volume, is 75% of a piston engine's, with no valvetrain or rods: assumed.
+
+**Oil.** A rotary burns it on purpose, metered to lubricate its seals: about 8 g/h per litre and per 1000 rpm, on the order of 25 mL/h at 2000 rpm. The figure comes from memory of a 13B metering pump, **not found again on a manufacturer's sheet**; like all oil here, it holds within a factor of three. Neither wear nor apex seals are simulated: they exist only through this leakage and this oil.
+
+**Starting.** Three chambers per rotor over a three-turn cycle, at 2/3 of the lever arm (`rotaryCompressionLoadNm`). Gas leaks past the tips at low speed: n = 0.96 gives 8.6 bar at top dead centre, close to the workshop value of the 13B-MSP ([830 kPa at 250 rpm, Mazda table](https://www.foxed.ca/rx7manual/2003mazdarx8/esicont/en/srvc/html/BHE010002000T04.html)), against 13 to 14 on a piston engine. The table gives this at a ratio of 10.0; it is applied at 9.4, the difference neglected. Starter and flywheel are sized on swept volume: the former compresses as much per turn as a 2.6 L, the latter takes the same firings.
+
+**Sound.** `firing` remains a two-turn cycle: two firings per rotor, 360°/rotors of shaft apart. The profile's `cylinders` and `firingCount` are thus twice the rotors, and `boreM`, `strokeM` give a square cylinder of one chamber's volume: everything that follows flow, exhaust line included, comes out right. What comes next is specific to the rotary:
+
+- Ports (`kPortEvo`…): opening at 195° of shaft after top dead centre, closing at 588°, intake from 572° to 850°, over the 1080° cycle. **This timing is that of a peripheral-port 13B, from memory, and was not cross-checked against a manufacturer's manual**; a side-exhaust Renesis differs noticeably.
+- Only one port width makes this timing possible: the leading tip opens it, the trailing tip closes it 120° of rotor later, so (588 − 195 − 360)/3 = 11° of rotor, 33° of shaft. It opens over 4° of shaft, the thickness of the seal (assumed), instead of a cam's 15°.
+- The blowdown (`blowdownS`): volume at opening over port area, 14 cm² on the reference (assumed, within 30%), scaled from the 2 ms of the reference cylinder: 1.6 ms. Gas is released at 15% more pressure, from a shorter expansion.
+- The rotor pushes out the same volume over 393° instead of 240°: a more continuous flow.
+- No valvetrain noise: no valve lands. Block at −5 dB (40 bar peak pressure rather than 70, **order of magnitude, not cross-checked**), idle floor at −3 dB, less shaft ripple (assumed).
+- **One memory per chamber, not per firing.** Residual gas passes from one cycle to the next in the same chamber, so every three turns. Three faces within 3% (assumed) share that period. This is where the third orders come from, with no gain added to get them.
+
+Orders measured at 4000 rpm, sport line, held speed (`tools/analyze_orders.py`, in dB below the strongest order): both engines share order 2, the firing rate, but not the sub-orders.
+
+| Order | 1 | 5/3 | 2 | 5/2 | 3 | 4 | 6 | mean halves | mean thirds |
+|---|---|---|---|---|---|---|---|---|---|
+| Twin-rotor 1.3 L | −31.3 | −23.9 | 0 | −40.8 | −28.2 | −11.6 | −16.3 | −46.8 | −40.2 |
+| 4-cylinder 2.15 L | −24.2 | −31.6 | 0 | −27.9 | −24.9 | −8.6 | −13.7 | −35.7 | −44.2 |
+
+A 360° twin, measured the same way, has its strongest order at 1. `tests/rotary_test.cpp` protects thirds and halves.
+
+**Against a 4-cylinder of the same power** (same 1300 kg coupé, 9000 rpm, sport line):
+
+| | Twin-rotor 1.3 L | 4-cylinder 2.15 L |
+|---|---|---|
+| Torque | 242 Nm at 5600 rpm | 241 Nm at 5600 rpm |
+| Power | 181 kW at 8300 rpm | 180 kW at 8200 rpm |
+| 0-100 km/h | 6.9 s | 7.0 s |
+| WLTC | 13.4 L/100 km | 10.9 L/100 km |
+| Best point of the map | 285 g/kWh | 239 g/kWh |
+| Oil, WLTC | 704 mL/1000 km | 103 mL/1000 km |
+
+The match in torque and power is a choice of the 4-cylinder's displacement, for the comparison. The twin-rotor itself was not tuned: its 181 kW and 242 Nm exceed what is published for a 13B-MSP of the same displacement by 7 to 15%, a gap left as it is.
+
+**What stays simplified.** No wear, no seals, no low-speed "ring-a-ding", no variable ports: an intake with a single timing. The turbo's exhaust temperature follows the piston law, although a rotary runs hotter. In `EngineView`, a turbocharged rotary shows its engine without the turbo chain, which remains visible on the gas view and on the car. The gas on screen (`GasNetwork`) truly computes three chambers per rotor, over 1080°, with one runner per rotor: their volume is written like a piston with an infinite rod, in cycle degrees.
+
 ## Calibration
 
 The tuning is compared to ten car recordings from Wikimedia Commons ("engine and exhaust sound" series, CC BY 3.0: Shelby Cobra, Mustang GT, Shelby GT500,

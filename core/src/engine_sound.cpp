@@ -48,8 +48,8 @@ constexpr float kPortEvo = (195.0f - kRotaryOrigin) / 720.0f;
 constexpr float kPortEvc = (588.0f - kRotaryOrigin) / 720.0f;
 constexpr float kPortIvo = (572.0f - kRotaryOrigin) / 720.0f;
 constexpr float kPortIvc = (850.0f - kRotaryOrigin) / 720.0f;
-// Le sommet du rotor découvre la lumière sur sa largeur : environ 65° d'arbre pour la balayer, à 0,64 mm par degré.
-constexpr float kPortSweep = 65.0f / 720.0f;
+// Le sommet du rotor balaye la lumière en 33° d'arbre : la seule largeur qui donne ce calage, (588 - 195 - 360)/3 en degrés de rotor.
+constexpr float kPortSweep = 33.0f / 720.0f;
 // Le segment d'apex a une épaisseur : le gaz fuit dès qu'il atteint le bord, en 4° d'arbre. Aucune came n'adoucit ce front.
 constexpr float kPortEdge = 4.0f / 720.0f;
 // Le rotor chasse le même volume, sur 393° au lieu de 240° : le débit de chasse est plus faible, et plus continu.
