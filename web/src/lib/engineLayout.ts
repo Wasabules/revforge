@@ -11,6 +11,7 @@
  *
  * Ce calcul donne une vraie manivelle à condition de placer chaque numéro sur la bonne rangée : voir `placementOf`.
  */
+import { carburetorOf, type CarbGeometry } from './carburetor';
 import type { EngineConfig } from './config';
 import { TURBO_SCALE } from './exhaustLines';
 import { EVC, EVO, ignitionAdvance, IVC, IVO } from './fluidGas';
@@ -119,6 +120,8 @@ export interface EngineLayout {
   halfDeg: number;
   flat: boolean;
   fuel: EngineConfig['fuel'];
+  /** Le carburateur, à la place du plénum et de l'injection. `null` sans carburateur. */
+  carb: CarbGeometry | null;
   turbo: boolean;
   /** Diamètre des roues du turbo, rapporté au turbo moyen. */
   turboScale: number;
@@ -229,7 +232,7 @@ export function starterTeeth(cylinders: number, displacementCc: number): { ring:
 /** Ce qui fait changer les pièces du moteur : à clé égale, les mêmes maillages. */
 export function layoutKey(config: EngineConfig): string {
   if (config.electric) return 'electric';
-  return `${config.cylinders}|${config.layout}|${config.displacementCc}|${config.boreMm}|${config.fuel}|${config.aspiration}|${config.turboSize}|${config.turboRelease}|${config.boxFlywheel}`;
+  return `${config.cylinders}|${config.layout}|${config.displacementCc}|${config.boreMm}|${config.fuel}|${config.aspiration}|${config.turboSize}|${config.turboRelease}|${config.boxFlywheel}|${carburetorOf(config)?.kind ?? ''}|${carburetorOf(config) ? config.redlineRpm : ''}`;
 }
 
 export function engineLayout(config: EngineConfig): EngineLayout {
@@ -406,6 +409,7 @@ export function engineLayout(config: EngineConfig): EngineLayout {
     halfDeg,
     flat,
     fuel: config.fuel,
+    carb: carburetorOf(config),
     turbo: config.aspiration === 'turbo',
     turboScale: TURBO_SCALE[config.turboSize ?? 'medium'],
     releaseValve: config.turboRelease !== 'flutter',
@@ -656,6 +660,8 @@ export class EnginePose {
   /** Étincelle et jet de carburant, 1 à leur début puis ils s'éteignent. */
   spark: Float64Array;
   spray: Float64Array;
+  /** Remplissage, 0 à 1 : l'ouverture du volet dessiné en coupe. */
+  throttle = 0;
   /** Le gaz : température (K), part brûlée, flamme (0 à 1 de la masse brûlée, 0 sans combustion), jets aux soupapes (−1 à 1). */
   gasT: Float64Array;
   gasBurnt: Float64Array;
@@ -761,6 +767,7 @@ export class EnginePose {
     this.coolerOutK = clock.coolerOutK ?? 293;
 
     this.state = engineState(telemetry);
+    this.throttle = clock.load;
     const cranking = !!telemetry.cranking;
     const diesel = layout.fuel === 'diesel';
     const firing = firingAllowed(clock, telemetry);
@@ -785,7 +792,7 @@ export class EnginePose {
           this.lastSparkCylinder = i;
         }
       }
-      if (!diesel) {
+      if (!diesel && !layout.carb) {
         const sprayAt = wrap720(cylinder.firingDeg + PETROL_INJECTION_DEG - fromAngle);
         if (sprayAt < advanced) {
           this.spray[i] = 1;

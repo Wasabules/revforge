@@ -364,6 +364,10 @@ TEST_CASE("le souffle du venturi suit la vitesse de l'air, sans passer devant le
         const double before = dB(band(theirs, 8000.0, 16000.0) / band(theirs, 500.0, 2000.0));
         MESSAGE("8-16 kHz face à 500-2000 Hz, à 1500 tr/min pleine charge : " << airy << " dB, injection " << before << " dB");
         CHECK(airy < before + 2.0);
+        // Ce premier contrôle ne voit pas un souffle à niveau fixe, qui reste sous 6 kHz : la contre-épreuve l'a montré. Devant la voiture, tout près de lui, si.
+        const double frontDb = dB(band(drivenSound(*p, 1500.0f, 1.0f), 500.0, 4000.0) / band(drivenSound(injected, 1500.0f, 1.0f), 500.0, 4000.0));
+        MESSAGE("500-4000 Hz devant la voiture, à 1500 tr/min pleine charge : +" << frontDb << " dB");
+        CHECK(frontDb < 2.0);
     }
 }
 

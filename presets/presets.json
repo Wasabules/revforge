@@ -278,5 +278,23 @@
     "drive": "rear",
     "placement": "front",
     "insulation": "standard"
+  },
+  {
+    "id": "carb_twin_cam",
+    "name": "Twin-cam, one carb per cylinder",
+    "description": "A 1970s 2-litre on twin-choke carburetors: open intake, no fuel cut.",
+    "cylinders": 4,
+    "layout": "inline",
+    "displacementCc": 1962,
+    "boreMm": 84,
+    "redlineRpm": 6400,
+    "exhaust": "sport",
+    "fuelSystem": "multi",
+    "body": "coupe",
+    "massKg": 1040,
+    "rimInch": 14,
+    "drive": "rear",
+    "placement": "front",
+    "insulation": "light"
   }
 ]

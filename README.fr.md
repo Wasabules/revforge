@@ -12,7 +12,7 @@ Il n'y a aucun échantillon sonore. Tout ce qu'on entend est calculé, échantil
 
 ## Ce qu'on peut faire
 
-- **Construire le moteur.** Cylindres (de 2 à 12), architecture, cylindrée, alésage, régime maximal, essence ou diesel, et un turbo avec sa taille et sa pression. Puissance, couple, 0 à 100 km/h et vitesse de pointe découlent de ces réglages : rien n'est saisi à la main. Le temps de réponse du turbo vient d'un vrai bilan de puissance sur son arbre, et se sent dans la voiture.
+- **Construire le moteur.** Cylindres (de 2 à 12), architecture, cylindrée, alésage, régime maximal, essence ou diesel, injection ou carburateurs, et un turbo avec sa taille et sa pression. Puissance, couple, 0 à 100 km/h et vitesse de pointe découlent de ces réglages : rien n'est saisi à la main. Le temps de réponse du turbo vient d'un vrai bilan de puissance sur son arbre, et se sent dans la voiture.
 - **Choisir l'échappement.** Confort, origine, sans résonateur, sport, sans silencieux ou ligne directe, avec une ou deux sorties, et un pont en H ou en X sur un moteur en V. Chaque ligne est calculée depuis sa géométrie.
 - **Choisir la boîte, indépendamment du moteur.** Synchros, crabots, séquentielle, double embrayage ou convertisseur ; nombre de rapports, rapports issus de vrais nombres de dents, couple final, denture hélicoïdale ou droite, volant simple ou bi-masse. Une boîte mal adaptée a de vraies conséquences : on peut caler, manquer de vitesse ou la casser.
 - **Conduire.** Démarreur, calage, embrayage qu'on fait patiner, coup de gaz au rétrogradage, grattement si on passe sans débrayer, marche arrière, rupteur, coupure d'injection, détonations, décharge du turbo. Les automatiques ont des modes Éco, Normal, Sport, Piste et palettes, avec des points de passage issus des courbes du moteur.
@@ -67,7 +67,7 @@ cmake --build build
     --gearbox dog --teeth spur --listener cabin --insulation stripped --scenario launch --out cinq.wav
 ```
 
-Autres options utiles : `--turbo small|medium|large`, `--shift-mode`, `--drive-scenario`, et `--fuel 1` avec `--out none` pour la consommation. `--help` donne la liste complète.
+Autres options utiles : `--turbo small|medium|large`, `--carb injection|single|multi`, `--shift-mode`, `--drive-scenario`, et `--fuel 1` avec `--out none` pour la consommation. `--help` donne la liste complète.
 
 ## Comment le son est fabriqué
 
@@ -95,6 +95,7 @@ Limites connues :
 - Le ralenti du 4 cylindres sportif sort de la plage des vrais moteurs au comparateur, et reste trop haché.
 - À plein gaz, le limiteur resserre l'écart entre les lignes : environ 6 dB joués pour environ 22 dB estimés entre l'origine et la ligne directe.
 - Les vues 2D et 3D simplifient une partie de la mécanique (automatique schématique, double embrayage approché, distribution à double arbre partout) et n'ont pas été vérifiées sur beaucoup de cartes graphiques. Sans carte graphique, la 3D passe en rendu plus grossier et tourne lentement ; le bouton 2D reste fluide.
+- Les carburateurs sont toujours chauds : ni starter ni démarrage à froid, puisque rien ne calcule la température. Plusieurs constantes du film et du souffle sont supposées.
 - La consommation estimée lit environ 15 à 25 % au-dessus des chiffres officiels, et l'huile n'est qu'un ordre de grandeur, à un facteur trois près.
 - La voiture ne recule jamais (démarrage en côte avec maintien supposé), toutes les voitures ont la même adhérence, et les trajets sont réglés en durée, pas en distance.
 - En automatique, un diesel peut parfois caler à très faible vitesse ; le site propose alors de le relancer.

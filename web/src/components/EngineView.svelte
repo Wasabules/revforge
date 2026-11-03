@@ -156,7 +156,7 @@
 
   function labels2d(): Labels2D {
     // Relu à chaque image pour suivre la langue, mais refait seulement quand quelque chose change.
-    if (labelsCache && labelsLang === lang() && labelsCache.parts === names && labelsFuel === config.fuel && !!labelsCache.compressor === !!layout?.turbo) return labelsCache;
+    if (labelsCache && labelsLang === lang() && labelsCache.parts === names && labelsFuel === config.fuel && !!labelsCache.compressor === !!layout?.turbo && !!labelsCache.carburetor === !!layout?.carb) return labelsCache;
     labelsLang = lang();
     labelsFuel = config.fuel;
     labelsCache = {
@@ -176,6 +176,7 @@
       pan: t('engine.part.pan'),
       head: t('engine.part.head'),
       block: t('engine.part.block'),
+      ...(layout?.carb ? { carburetor: t('engine.part.carburetor') } : {}),
       ...(layout?.turbo ? {
         compressor: t('engine.part.compressor'),
         turbine: t('engine.part.turbine'),

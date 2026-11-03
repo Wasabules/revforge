@@ -89,6 +89,7 @@ private:
     double suspended_ = 0.0;
     double pumpLeft_ = 0.0;
     double pumpGps_ = 0.0;
+    double pumpRate_ = 0.0;
     double lastThrottle_ = 0.0;
     double torqueShare_ = 1.0;
     double lambda_ = 0.0;

@@ -281,7 +281,7 @@
       ctx.lineCap = 'butt';
       ctx.lineWidth = pipe;
       for (const part of net.intakeParts) {
-        if (part.kind === 'filter' || part.kind === 'cooler') continue;
+        if (part.kind === 'filter' || part.kind === 'cooler' || part.kind === 'venturi' || part.kind === 'duct') continue;
         const points = partFor(part.kind);
         const total = measure(points, airLengths);
         for (let k = 0; k < part.count; k++) {

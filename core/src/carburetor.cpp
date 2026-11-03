@@ -50,6 +50,7 @@ constexpr double kPumpCm3PerLitre = 0.4;
 constexpr double kPumpTauS = 0.25;
 // Un mouvement lent repart au réservoir par le gicleur de décharge : seul un pied franc fait jaillir (une course en moins de 2 s).
 constexpr double kPumpMinRatePerS = 0.5;
+constexpr double kPumpRateTauS = 0.1;
 // Un jet mal atomisé : il mouille surtout la pipe, et n'arrive au cylindre que par le film.
 constexpr double kPumpWallShare = 0.7;
 
@@ -156,8 +157,8 @@ double carburetorRichness(const CarburetorSpec& spec, double share, double rpm) 
     const double low = clamp((kIdleCircuitFlow - share * rpm / spec.redlineRpm) / kIdleCircuitSpan, 0.0, 1.0);
     richness += (1.0 / kIdleLambda - richness) * low;
     // La soupape d'enrichissement s'ouvre quand la dépression tombe : elle ne connaît ni la puissance ni la température.
-    const double near = clamp((share - 0.85) / 0.15, 0.0, 1.0);
-    richness += (1.0 / spec.fullLambda - richness) * near;
+    const double nearFull = clamp((share - 0.85) / 0.15, 0.0, 1.0);
+    richness += (1.0 / spec.fullLambda - richness) * nearFull;
     return richness;
 }
 
@@ -201,6 +202,7 @@ void Carburetor::step(const CarburetorInput& in, double dt) {
         film_ = share * wanted * tau;
         suspended_ = in.airGps > 0.0 ? wanted * std::max(chargeG_ * in.fill, kMinAheadG) / in.airGps : 0.0;
         pumpLeft_ = 0.0;
+        pumpRate_ = 0.0;
         lastThrottle_ = in.throttle;
         primed_ = true;
     }
@@ -211,7 +213,8 @@ void Carburetor::step(const CarburetorInput& in, double dt) {
     // La pompe suit le papillon : une course à l'ouverture, rien à la fermeture.
     const double opened = in.throttle - lastThrottle_;
     lastThrottle_ = in.throttle;
-    if (opened > kPumpMinRatePerS * dt) pumpLeft_ += spec_.pumpG * opened;
+    pumpRate_ += (opened / dt - pumpRate_) * std::min(dt / kPumpRateTauS, 1.0);
+    if (opened > 0.0 && pumpRate_ > kPumpMinRatePerS) pumpLeft_ += spec_.pumpG * opened;
     pumpGps_ = pumpLeft_ / kPumpTauS;
     pumpLeft_ -= pumpGps_ * dt;
 

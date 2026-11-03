@@ -190,6 +190,9 @@
         hot: [[turbineX - compressorR * 0.9, intakeY + compressorR * 0.4], [coolerX1 + 2, intakeY + compressorR * 0.9], [coolerX1 + 2, coolerY - coolerTall * 0.25], [coolerX1, coolerY]],
         cooler: [[coolerX1, coolerY], [coolerX0, coolerY]],
         cold: [[coolerX0, coolerY], [throttleX + 1, coolerY], [throttleX + 1, intakeY + tube * 0.9], [throttleX, intakeY]],
+        // Monté soufflé : le carburateur attend juste avant le papillon.
+        venturi: [[throttleX, intakeY], [throttleX, intakeY]],
+        duct: [[throttleX, intakeY], [throttleX, intakeY]],
       };
       net.intakeParts.forEach((part, p) => {
         const points = way[part.kind];
@@ -209,6 +212,10 @@
     } else {
       for (let i = 0; i <= net.intakeCount; i++) intakeX[i] = traceX[i];
       partTall[0] = tube * 1.1;
+      // Le col du venturi, et sa pipe : la largeur dessinée suit la section.
+      net.intakeParts.forEach((part, p) => {
+        if (p > 0) partTall[p] = tube * 1.1 * Math.min(Math.sqrt(part.area), 1.4);
+      });
     }
 
     return {
@@ -601,6 +608,24 @@
         const x1 = view.intakeX[i + 1];
         if (x0 === x1) continue;
         ctx.fillRect(Math.min(x0, x1), top, Math.abs(x1 - x0) + 0.5, tall);
+      }
+      // Le col : les parois se resserrent, le gaz passe au milieu.
+      for (let p = 0; p < net.intakeParts.length; p++) {
+        const part = net.intakeParts[p];
+        if (part.kind !== 'venturi') continue;
+        const i0 = part.first - net.intakeFirst;
+        const x0 = Math.min(view.intakeX[i0], view.intakeX[i0 + part.count]);
+        const x1 = Math.max(view.intakeX[i0], view.intakeX[i0 + part.count]);
+        const pinch = Math.max(1.5, (tall - view.partTall[p]) / 2);
+        ctx.fillStyle = theme.metal;
+        ctx.beginPath();
+        ctx.moveTo(x0 - 3, top);
+        ctx.lineTo((x0 + x1) / 2, top + pinch);
+        ctx.lineTo(x1 + 3, top);
+        ctx.moveTo(x0 - 3, top + tall);
+        ctx.lineTo((x0 + x1) / 2, top + tall - pinch);
+        ctx.lineTo(x1 + 3, top + tall);
+        ctx.fill();
       }
       // Parois du conduit.
       ctx.strokeStyle = theme.metal;
