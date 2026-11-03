@@ -1838,3 +1838,79 @@ Against the single cam, pushrods only lose their friction: −0.4 % torque, +1 t
 **On screen.** `engineLayout` places the cam in the block from the layout: at the bottom of the V, above the counterweights, or on the intake flank of an inline engine (`blockCamPosition`). The rockers reuse the single cam's lever, flipped: the stem leans towards the exhaust, the pushrod rises on the intake side, and the lifter axis aims at the pad at mid-lift. The lifter rises by the lift divided by the ratio (`lifterTop`), the pad follows the rocker's exact angle (`rockerPad`), and the pushrod joins them: its length varies by less than 3 % of the bore over a cycle (`culbuteurs.spec.ts`). The on-screen gas keeps the two-valve section (`twoValves`, `valves.ts`). The valvetrain panel shows the valve float speed, the moving mass and the springs computed by the C++ (`rf_valve_sheet`).
 
 **Listening still to do.** Lifter tick: `revforge-render --out idle_pushrods.wav --preset v8_cross_plane --cam ohv --scenario steady --rpm 800 --listener bay`, against `--cam sohc` and `--cam dohc`, then outside (`--listener outside`). Valve float: `revforge-render --out float.wav --preset hot_hatch_na --cam-lift 12.5 --cam-duration 200 --scenario lap`, against `--springs stiff`, and `--scenario steady --rpm 9000 --listener bay` against 7500.
+
+## Boost control
+
+Three ways to hold a turbo's pressure (`boostControl`, `--boost-control`), in `core/src/boost_control.cpp`. `TurboCharger` only gains one input, `TurboInput::gateDemand`: negative, it is the spring, and nothing changes, bit for bit. On a supercharger the setting has no meaning: it has no wastegate, its pressure follows the crankshaft. It is ignored there bit for bit, and the panel only offers it on a turbo.
+
+### The spring (`spring`), the original model
+
+A diaphragm, pushed by the charge pressure above the outside air, opens the wastegate against a spring. In `TurboCharger::step`:
+
+  g* = clamp((p + τa·dp/dt − p₀ − (1 − 0.2·b)·Δp) / (b·Δp), 0, 1),  then  dg/dt = (g* − g)/τg
+
+with Δp the preset's boost, b = 0.12 the spring's band (its stiffness over the diaphragm), τa = 0.12 s an anticipation, τg = 0.05 s the rod's lag. The preload cracks it open at 97.6 % of Δp, and it is wide open 12 % higher. `springGateDemand` redoes this as a pure function, checked bit for bit against the turbo's step.
+
+**Creep at high revs.** At equilibrium, p − p₀ = Δp·(0.976 + 0.12·g): the faster the engine turns, the more gas there is to dump, the wider the wastegate must open, and the more pressure the diaphragm must see. Full throttle at a held speed, deviation from Δp:
+
+| | 2500 rpm | 3500 | 4500 | 5500 | 6500 |
+|---|---:|---:|---:|---:|---:|
+| `hot_hatch_turbo` (1.3 bar) | −0.9 % | +0.7 % | +1.5 % | +2.0 % | +2.1 % |
+| `three_cyl_turbo` (1.2 bar) | +0.7 % | +2.2 % | +3.0 % | +3.3 % | +3.4 % (6000) |
+| `five_cyl_turbo` (1.5 bar) | −1.3 % | +0.4 % | +1.3 % | +1.8 % | +2.1 % (7000) |
+| `diesel_four` (1.8 bar) | −1.4 % | −0.7 % | −0.5 % (4500) | | |
+
+The other creep, that of a wastegate too small that saturates, does not occur on the presets: it never opens beyond 0.49 (`wastegateK` is twice the turbine).
+
+**Overshoot.** There is almost none: under 0.1 % on a tip-in at a held speed, thanks to the 0.12 s anticipation, which a purely pneumatic diaphragm does not have. Measured without it (a copy of `turbo.cpp` outside the repository): 2 to 19 % overshoot, then an oscillation that does not die out within 8 s, shaft and valve bouncing off each other. Removing the anticipation from the default to get this overshoot would change every turbo fingerprint, and leave the pressure oscillating: the spring stays as it is.
+
+### Electronic (`electronic`)
+
+This is an ECU's chain: absolute pressure sensor, control task, pulsed solenoid valve, diaphragm. As on vacuum-actuated wastegates (BMW N54 and N55, from memory), the diaphragm is held open by its spring and closed by the vacuum the solenoid valve sets: a failure opens the wastegate.
+
+- **The target.** An *absolute* pressure: p_c = p_ref + Δp, p_ref = 101,325 Pa, the atmosphere of the calibration. It falls with rpm where the compressor would exceed the speed its wheels can take: `turboSteady` gives, at each rpm, the pressure ratio where the 520 m/s limit bites, and the target is brought back to it (r_max·p_ambient). On the presets, at sea level, this limit does not bite: the target is flat.
+- **The solenoid valve.** 25 Hz, 5 ms to open, 3 ms to close (assumed orders of magnitude). The duty cycle is latched at the start of each period. Effective duty: 0 if the pulse is shorter than the opening time (duty < 12.5 %), 1 if the pause is shorter than the closing time (> 92.5 %), otherwise D + (t_c − t_o)·f. The diaphragm's vacuum follows within 40 ms (its hose, assumed), the opening is 1 − vacuum, then the same 50 ms lag as the spring.
+- **The PID.** A 10 ms task, ideal form: u = u_ff + Kc·e + I + D, bounded to [0, 1]. The derivative acts on the measurement, not the error (no kick when the target jumps), filtered at τD/10. The feedforward u_ff is the duty that holds `turboSteady`'s equilibrium opening at this rpm, interpolated between the target and half the boost, in pressure ratio.
+- **Anti-windup.** Conditional integration (Åström and Hägglund, *Advanced PID Control*, 2006): the integral stops when the valve is at its stop and the error pushes it there, and when the pressure is reaching the target on its own before τI (|dp/dt|·τI > |e|). Well below the target, when feedforward and proportional action saturate on their own, the loop is open: the integral restarts from zero, like an ECU leaving closed-loop control. Without this, after part-throttle climbs, the fourth-gear tip-in kept the earlier integral: a +27 % crest instead of +8 % on `three_cyl_turbo`.
+
+**Tuning the gains: a bench, then SIMC.** At configuration, a `TurboCharger` is held at full throttle at 40, 55, 70 and 88 % of the redline, wastegate set to its equilibrium opening, then closed by one point. The pressure's response gives a first-order-plus-dead-time model, δp = K·e^(−θs)/(τs + 1)·δu, by Smith's two-point method (28.3 % and 63.2 %: τ = 1.5·(t₆₃ − t₂₈), θ = t₆₃ − τ); the final value is extrapolated by Aitken's Δ². The effective delay adds half a task period and half a PWM period. Skogestad's SIMC rule (*Journal of Process Control* 13, 2003) with τc = θ gives Kc = τ/(2Kθ), τI = min(τ, 8θ), and τD = 40 ms cancels the diaphragm's hose. The gains are interpolated in rpm, like an ECU's tables. Measured by the test, on the complete linearised loop (delays, hose, filtered derivative):
+
+| | K (bar per unit opening) | τ | θ | Kc (per bar) | τI | Phase margin | Gain margin |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `hot_hatch_turbo`, 2600 rpm | 20.2 | 1.08 s | 0.076 s | 0.28 | 0.84 s | 57° | 3.0 |
+| `hot_hatch_turbo`, 5720 rpm | 7.6 | 0.65 s | 0.098 s | 0.37 | 0.69 s | 61° | > 100 |
+| `five_cyl_turbo`, 2800 rpm | 31.1 | 1.27 s | 0.071 s | 0.22 | 0.81 s | 55° | 3.0 |
+| `diesel_four`, 3150 rpm | 14.6 | 0.68 s | 0.10 s | 0.20 | 0.72 s | 61° | > 100 |
+
+The bench gain matches, within 25 %, the one given by two neighbouring `turboSteady` equilibria.
+
+**Against the spring**, full-throttle tip-in after 8 s at half load, held rpm (`tests/boost_control_test.cpp`):
+
+| | Steady-state error | 90 % of the pressure | Overshoot |
+|---|---|---|---|
+| Spring, `hot_hatch_turbo` 3500 / 5980 rpm | +0.8 % / +2.1 % | 0.68 s / 0.51 s | < 0.1 % |
+| Electronic, same | −0.03 % / −0.007 % | 0.62 s / 0.45 s | 3.9 % / 1.9 % |
+| Spring, `three_cyl_turbo` 3300 / 5520 rpm | +2.0 % / +3.3 % | 0.48 s / 0.43 s | < 0.1 % |
+| Electronic, same | −0.01 % / −0.002 % | 0.40 s / 0.34 s | 2.7 % / 5.3 % |
+
+No more creep, a 6 to 21 % shorter rise (the solenoid valve keeps the wastegate shut until the end, where the spring starts opening at 97.6 %), but an overshoot: 1 to 6 % above 3000 rpm, 9 % at 2500 rpm. In the car, in fourth from 1800 rpm (`--scenario turbo`), rpm rising: a +5.9 % crest on `hot_hatch_turbo`, +8.4 % on `three_cyl_turbo`, against +1.8 and +2.5 % for the spring, which are its creep. Without anti-windup: +137 % at 2500 rpm, +102 % at 3500, and still 1 to 3 % too high after 12 s.
+
+**Dead zones.** When the wastegate has almost nothing to dump, at the bottom of the range where the target becomes reachable, the wanted opening falls between 0 and 12.5 %, which the valve cannot hold: it alternates between both ends, and the pressure oscillates by ±2 % around 2.7 Hz (`five_cyl_turbo` and `diesel_four` around 2500 rpm). This is the limit of a pulsed solenoid valve; a lower frequency or a faster valve reduces it.
+
+**Altitude.** The spring's diaphragm breathes the outside air: it holds Δp above it, so less absolute pressure, less air, at altitude. The ECU aims at an absolute pressure: at 2000 m (79,495 Pa in the standard atmosphere), it asks for 0.218 bar more above the outside air, so a bigger pressure ratio, a faster shaft, more lag, up to the wheels' limit, which is a pressure ratio and lowers the absolute target. Ambient pressure is a parameter (`BoostControlInput::ambientPa`, `boostTargetPa`), at 101,325 Pa until the atmosphere is wired in; `turboSteady` and the turbo itself still keep their fixed atmosphere.
+
+### By gear (`by_gear`)
+
+The same control, with each gear's target bounded by the torque it can pass, taken from the car and not from a table:
+
+- the force the driven tyres pass, weight transfer included (the acceleration it gives loads the rear): F = μ·m·g·f/(1 + μ·h/L) for front drive, μ·m·g·(1 − f)/(1 − μ·h/L) for rear drive, μ·m·g for all-wheel drive, with μ = 1.05 (that of `DrivingModel`), f the share of weight on the front, h the height of the centre of gravity, L the wheelbase;
+- the crankshaft torque that gives it, C = F·r/(i·η), bounded by the gearbox's admissible torque;
+- the pressure that gives this torque, by inverting `fullLoadTorqueNm` by bisection: the filling model run backwards, like a torque-structured ECU.
+
+The engaged gear is read in `DrivingModel`; in neutral, first gear. On `three_cyl_turbo` (front drive, 1150 kg), first gear passes 137 Nm, against 192 Nm at the engine: the target falls there from 2.21 to 1.46-1.71 bar absolute depending on rpm, second gear (260 Nm) is not bounded. From a standing start, the peak slip in first falls from 5.6 to 1.9 m/s. But 0-100 km/h goes from 10.03 to 10.22 s: the model's tyre has no grip peak, more slip always gives a little more force, and limiting torque can only reduce it. On all-wheel drives (`hot_hatch_turbo`, 388 Nm in first for 357 Nm), nothing changes.
+
+**What does not change.** The spec sheet (`torqueCurveNm`) stays the spring's: at sea level, electronic control holds `turboSteady`'s equilibrium exactly, and the gearbox stays designed for this engine. WLTC consumption does not move: 8.90 L/100 km in both cases on `hot_hatch_turbo`, 6.34 and 6.32 on `three_cyl_turbo` by gear.
+
+**Telemetry.** `rf_boost_target` and `rf_boost_charge` (bar absolute), `rf_boost_duty` (−1 on a spring). The turbo boost chart shows the target next to the real pressure, and the manifold gauge the solenoid's duty cycle. `--trace` writes `target_abs_bar`, `charge_abs_bar` and `duty`.
+
+**What is assumed, and what is missing.** The valve's and hose's times are orders of magnitude, not measurements. The PWM is averaged: the diaphragm's 25 Hz ripple is not computed, nor the valve's click. No part-load target: the throttle keeps its role, and pressure builds ahead of it as with the spring. No surge margin in the target. A diesel keeps a wastegate here; variable geometry is another setting. Listening still to do: `--scenario turbo` and `--scenario launch`, with and without `--boost-control electronic`.

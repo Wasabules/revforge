@@ -74,7 +74,7 @@ cmake --build build
     --gearbox dog --teeth spur --listener cabin --insulation stripped --scenario launch --out cinq.wav
 ```
 
-Autres options utiles : `--turbo small|medium|large`, `--turbo-pipe MM`, `--filter stock|panel|cone|stacks`, `--carb injection|single|multi`, `--shift-mode`, `--drive-scenario`, et `--fuel 1` avec `--out none` pour la consommation. `--help` donne la liste complète.
+Autres options utiles : `--turbo small|medium|large`, `--turbo-pipe MM`, `--boost-control spring|electronic|by_gear`, `--filter stock|panel|cone|stacks`, `--carb injection|single|multi`, `--shift-mode`, `--drive-scenario`, et `--fuel 1` avec `--out none` pour la consommation. `--help` donne la liste complète.
 
 ## Comment le son est fabriqué
 
@@ -116,6 +116,7 @@ Limites connues :
 - La vue du gaz suit le modèle de conduite sans agir sur lui : ses pressions ne recoupent donc pas exactement le couple affiché.
 - Le niveau du sifflement du compresseur est supposé, sans enregistrement de référence ; ni la détonation à forte pression ni l'inertie des rotors ne sont modélisées.
 - Certaines valeurs réglementaires (ONU R51.03 et UE 540/2014) restent à contrôler sur les textes officiels.
+- La régulation électronique de la pression n'a pas de cible à charge partielle (le papillon garde son rôle), les temps de son électrovanne sont supposés et son ondulation à 25 Hz est moyennée ; la cible selon le rapport ne peut pas rendre une voiture plus rapide, le pneu du modèle n'ayant pas de pic d'adhérence.
 - La carrosserie des années 80 garde la résistance au roulement et l'adhérence de pneus récents, et sa surface frontale et sa faible isolation sont supposées.
 - Les VR et les W : la numérotation des cylindres du VR6 et du W16, l'ordre d'allumage du V16 (celui de Cadillac n'a pas été trouvé) et celui du V14 (aucune voiture de série n'en a eu ; calculé pour l'équilibre) sont supposés, le frottement ne dépend pas du nombre de paliers, et la distribution dessinée d'un VR ou d'un W est approchée.
 - L'air du jour garde 50 % d'humidité, et l'altitude ne le refroidit pas : la température se règle à part. Le réchauffement de l'air piégé par les parois est calé sur l'exposant de SAE J1349, et rien d'autre (refroidissement, cliquetis, calculateur, régulation du turbo) ne lit encore l'air du jour.

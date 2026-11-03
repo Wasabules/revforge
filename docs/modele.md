@@ -1875,3 +1875,79 @@ Face au simple arbre, les culbuteurs ne perdent que leur frottement : −0,4 % d
 **À l'écran.** `engineLayout` déduit l'arbre dans le bloc de l'architecture : au fond du V, au-dessus des contrepoids, ou sur le flanc d'admission d'un moteur en ligne (`blockCamPosition`). Les culbuteurs reprennent le levier du simple arbre, retourné : la queue penche vers l'échappement, la tige monte côté admission, et l'axe du poussoir vise le patin à mi-levée. Le poussoir monte de la levée divisée par le rapport (`lifterTop`), le patin suit l'angle exact du culbuteur (`rockerPad`), et la tige va de l'un à l'autre : sa longueur varie de moins de 3 % de l'alésage sur un tour (`culbuteurs.spec.ts`). Le gaz à l'écran garde la section de deux soupapes (`twoValves`, `valves.ts`). Le volet de la distribution affiche le régime d'affolement, la masse ramenée et les ressorts que calcule le C++ (`rf_valve_sheet`).
 
 **Écoute à faire.** Le tic des poussoirs : `revforge-render --out ralenti_culbuteurs.wav --preset v8_cross_plane --cam ohv --scenario steady --rpm 800 --listener bay`, face à `--cam sohc` et `--cam dohc`, puis dehors (`--listener outside`). L'affolement : `revforge-render --out affolement.wav --preset hot_hatch_na --cam-lift 12.5 --cam-duration 200 --scenario lap`, face à `--springs stiff`, et `--scenario steady --rpm 9000 --listener bay` face à 7500.
+
+## La régulation de pression
+
+Trois façons de tenir la pression d'un turbo (`boostControl`, `--boost-control`), dans `core/src/boost_control.cpp`. `TurboCharger` ne reçoit qu'une entrée de plus, `TurboInput::gateDemand` : négative, c'est le ressort, et rien ne change au bit près. Sur un compresseur mécanique, le réglage n'a pas de sens : il n'a pas de wastegate, sa pression suit le vilebrequin. Il y est ignoré au bit près, et le volet ne le propose que sur un turbo.
+
+### Le ressort (`spring`), le modèle d'origine
+
+Une membrane, poussée par la pression de charge au-dessus de l'air ambiant, ouvre la wastegate contre un ressort. Dans `TurboCharger::step` :
+
+  g* = clamp((p + τa·dp/dt − p₀ − (1 − 0,2·b)·Δp) / (b·Δp), 0, 1),  puis  dg/dt = (g* − g)/τg
+
+avec Δp la pression du préréglage, b = 0,12 la bande du ressort (sa raideur rapportée à la membrane), τa = 0,12 s une anticipation, τg = 0,05 s l'inertie de la tige. La précharge ouvre à 97,6 % de Δp, la wastegate est grande ouverte 12 % plus haut. `springGateDemand` refait ce calcul en fonction pure, vérifiée au bit près face au pas du turbo.
+
+**Dérive en haut (« creep »).** À l'équilibre, p − p₀ = Δp·(0,976 + 0,12·g) : plus le moteur tourne, plus il y a de gaz à jeter, plus la wastegate doit s'ouvrir, et plus la membrane doit voir de pression. Plein gaz à régime tenu, écart à Δp :
+
+| | 2500 tr/min | 3500 | 4500 | 5500 | 6500 |
+|---|---:|---:|---:|---:|---:|
+| `hot_hatch_turbo` (1,3 bar) | −0,9 % | +0,7 % | +1,5 % | +2,0 % | +2,1 % |
+| `three_cyl_turbo` (1,2 bar) | +0,7 % | +2,2 % | +3,0 % | +3,3 % | +3,4 % (6000) |
+| `five_cyl_turbo` (1,5 bar) | −1,3 % | +0,4 % | +1,3 % | +1,8 % | +2,1 % (7000) |
+| `diesel_four` (1,8 bar) | −1,4 % | −0,7 % | −0,5 % (4500) | | |
+
+L'autre dérive, celle d'une wastegate trop petite qui sature, n'existe pas sur les préréglages : elle ne s'ouvre jamais à plus de 0,49 (`wastegateK` vaut deux fois la turbine).
+
+**Dépassements.** Il n'y en a presque pas : moins de 0,1 % sur un coup de gaz à régime tenu, grâce à l'anticipation de 0,12 s, qu'une membrane purement pneumatique n'a pas. Chiffré sans elle (copie de `turbo.cpp` hors du dépôt) : 2 à 19 % de dépassement, puis une oscillation qui ne s'éteint pas en 8 s, l'arbre et la soupape se renvoyant la balle. Retirer l'anticipation au défaut pour obtenir ce dépassement changerait toutes les empreintes turbo, et laisserait la pression osciller : le ressort reste tel quel.
+
+### L'électronique (`electronic`)
+
+C'est la chaîne d'un calculateur : capteur de pression absolue, tâche de régulation, électrovanne découpée, membrane. Comme sur les wastegates à dépression (BMW N54 et N55, de mémoire), la membrane est ouverte au repos par son ressort et fermée par le vide que règle l'électrovanne : une panne ouvre la wastegate.
+
+- **La cible.** Une pression *absolue* : p_c = p_réf + Δp, p_réf = 101 325 Pa, l'atmosphère de la calibration. Elle baisse avec le régime là où le compresseur dépasserait la vitesse que ses roues supportent : `turboSteady` donne, à chaque régime, le rapport de pression où la limite de 520 m/s mord, et la cible y est ramenée (r_max·p_ambiant). Sur les préréglages, au niveau de la mer, cette limite ne mord pas : la cible est plate.
+- **L'électrovanne.** 25 Hz, 5 ms pour s'ouvrir, 3 ms pour se fermer (ordres de grandeur supposés). Le rapport cyclique est pris au début de chaque période. Rapport effectif : 0 si l'impulsion est plus courte que l'ouverture (rapport < 12,5 %), 1 si la pause est plus courte que la fermeture (> 92,5 %), sinon D + (t_f − t_o)·f. Le vide de la membrane suit en 40 ms (son tuyau, supposé), l'ouverture vaut 1 − vide, puis la même inertie de 50 ms que le ressort.
+- **Le PID.** Tâche de 10 ms, forme idéale : u = u_ff + Kc·e + I + D, borné à [0, 1]. La dérivée porte sur la mesure, pas sur l'écart (pas de coup quand la cible saute), filtrée à τD/10. La précommande u_ff est le rapport cyclique qui tient l'ouverture d'équilibre de `turboSteady` à ce régime, interpolée entre la cible et la mi-pression, en rapport de pression.
+- **L'anti-emballement.** Intégration conditionnelle (Åström et Hägglund, *Advanced PID Control*, 2006) : l'intégrale s'arrête quand l'électrovanne est en butée et que l'écart l'y pousse, et quand la pression rejoint d'elle-même la cible avant τI (|dp/dt|·τI > |e|). Bien sous la cible, quand la précommande et l'action proportionnelle saturent seules, la boucle est ouverte : l'intégrale repart de zéro, comme un calculateur qui sort de régulation. Sans cela, après des montées en mi-pédale, la reprise en quatrième gardait l'intégrale d'avant : crête de +27 % au lieu de +8 % sur `three_cyl_turbo`.
+
+**Le réglage des gains : un banc, puis SIMC.** À la configuration, un `TurboCharger` est tenu plein gaz à 40, 55, 70 et 88 % du régime maximal, wastegate fixée à son ouverture d'équilibre, puis on la ferme d'un point. La réponse de la pression donne un modèle du premier ordre à retard, δp = K·e^(−θs)/(τs + 1)·δu, par la méthode des deux points de Smith (28,3 % et 63,2 % : τ = 1,5·(t₆₃ − t₂₈), θ = t₆₃ − τ) ; la valeur finale est prolongée par le Δ² d'Aitken. Le retard effectif ajoute une demi-période de tâche et de découpage. La règle SIMC de Skogestad (*Journal of Process Control* 13, 2003) avec τc = θ donne Kc = τ/(2Kθ), τI = min(τ, 8θ), et τD = 40 ms compense le tuyau de la membrane. Les gains sont interpolés en régime, comme les tables d'un calculateur. Mesuré par le test, sur la boucle linéarisée complète (retards, tuyau, dérivée filtrée) :
+
+| | K (bar par ouverture) | τ | θ | Kc (par bar) | τI | Marge de phase | Marge de gain |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `hot_hatch_turbo`, 2600 tr/min | 20,2 | 1,08 s | 0,076 s | 0,28 | 0,84 s | 57° | 3,0 |
+| `hot_hatch_turbo`, 5720 tr/min | 7,6 | 0,65 s | 0,098 s | 0,37 | 0,69 s | 61° | > 100 |
+| `five_cyl_turbo`, 2800 tr/min | 31,1 | 1,27 s | 0,071 s | 0,22 | 0,81 s | 55° | 3,0 |
+| `diesel_four`, 3150 tr/min | 14,6 | 0,68 s | 0,10 s | 0,20 | 0,72 s | 61° | > 100 |
+
+Le gain du banc retrouve, à 25 % près, celui que donnent deux équilibres voisins de `turboSteady`.
+
+**Face au ressort**, coup de gaz plein pied après 8 s à mi-charge, régime tenu (`tests/boost_control_test.cpp`) :
+
+| | Erreur établie | 90 % de la pression | Dépassement |
+|---|---|---|---|
+| Ressort, `hot_hatch_turbo` 3500 / 5980 tr/min | +0,8 % / +2,1 % | 0,68 s / 0,51 s | < 0,1 % |
+| Électronique, idem | −0,03 % / −0,007 % | 0,62 s / 0,45 s | 3,9 % / 1,9 % |
+| Ressort, `three_cyl_turbo` 3300 / 5520 tr/min | +2,0 % / +3,3 % | 0,48 s / 0,43 s | < 0,1 % |
+| Électronique, idem | −0,01 % / −0,002 % | 0,40 s / 0,34 s | 2,7 % / 5,3 % |
+
+Plus de dérive, une montée de 6 à 21 % plus courte (l'électrovanne tient la wastegate fermée jusqu'au bout, là où le ressort commence à s'ouvrir à 97,6 %), mais un dépassement : 1 à 6 % au-dessus de 3000 tr/min, 9 % à 2500 tr/min. En voiture, en quatrième depuis 1800 tr/min (`--scenario turbo`), le régime montant : +5,9 % en crête sur `hot_hatch_turbo`, +8,4 % sur `three_cyl_turbo`, face à +1,8 et +2,5 % pour le ressort, qui sont sa dérive. Sans anti-emballement : +137 % à 2500 tr/min, +102 % à 3500, et encore 1 à 3 % trop haut au bout de 12 s.
+
+**Les zones mortes.** Quand la wastegate n'a presque rien à jeter, en bas du régime où la cible devient atteignable, l'ouverture voulue tombe entre 0 et 12,5 %, que l'électrovanne ne sait pas tenir : elle alterne entre les deux bouts, et la pression oscille de ±2 % vers 2,7 Hz (`five_cyl_turbo` et `diesel_four` vers 2500 tr/min). C'est la limite d'une électrovanne découpée ; une fréquence plus basse ou une électrovanne plus rapide la réduit.
+
+**L'altitude.** La membrane du ressort respire l'air ambiant : elle tient Δp au-dessus de lui, donc moins de pression absolue, moins d'air, en altitude. Le calculateur vise une pression absolue : à 2000 m (79 495 Pa en atmosphère standard), il demande 0,218 bar de plus au-dessus de l'air ambiant, donc un rapport de pression plus grand, un arbre plus rapide, plus de retard, jusqu'à la limite des roues, qui est un rapport de pression et fait baisser la cible absolue. La pression ambiante est un paramètre (`BoostControlInput::ambientPa`, `boostTargetPa`), à 101 325 Pa tant que l'atmosphère n'est pas branchée ; `turboSteady` et le turbo, eux, gardent encore leur atmosphère fixe.
+
+### Selon le rapport (`by_gear`)
+
+La même régulation, avec une cible bornée sur chaque rapport par le couple qu'il peut passer, tiré de la voiture et non d'une table :
+
+- la force que passent les pneus moteurs, report de charge compris (l'accélération qu'elle donne charge l'arrière) : F = μ·m·g·f/(1 + μ·h/L) en traction, μ·m·g·(1 − f)/(1 − μ·h/L) en propulsion, μ·m·g en intégrale, avec μ = 1,05 (celui de `DrivingModel`), f la part du poids sur l'avant, h la hauteur du centre de gravité, L l'empattement ;
+- le couple au vilebrequin qui la donne, C = F·r/(i·η), borné par le couple admissible de la boîte ;
+- la pression qui donne ce couple, en inversant `fullLoadTorqueNm` par dichotomie : le modèle de remplissage, à l'envers, comme un calculateur à structure de couple.
+
+Le rapport engagé se lit dans `DrivingModel` ; au point mort, la première. Sur `three_cyl_turbo` (traction, 1150 kg), la première passe 137 Nm, face à 192 Nm au moteur : la cible y tombe de 2,21 à 1,46-1,71 bar absolus selon le régime, la deuxième (260 Nm) n'est pas bornée. Au départ arrêté, le glissement maximal en première passe de 5,6 à 1,9 m/s. Mais le 0-100 km/h passe de 10,03 à 10,22 s : le pneu du modèle n'a pas de pic d'adhérence, plus de glissement donne toujours un peu plus de force, et limiter le couple ne peut que la réduire. Sur les intégrales (`hot_hatch_turbo`, 388 Nm en première pour 357 Nm), rien ne change.
+
+**Ce qui ne change pas.** La fiche (`torqueCurveNm`) reste celle du ressort : au niveau de la mer, l'électronique tient exactement l'équilibre de `turboSteady`, et la boîte reste dessinée pour ce moteur. La consommation au WLTC ne bouge pas : 8,90 L/100 km dans les deux cas sur `hot_hatch_turbo`, 6,34 et 6,32 sur `three_cyl_turbo` selon le rapport.
+
+**Télémétrie.** `rf_boost_target` et `rf_boost_charge` (bar absolus), `rf_boost_duty` (−1 sur un ressort). Le graphique de la pression du turbo montre la cible à côté de la pression réelle, et la jauge du collecteur le rapport cyclique de l'électrovanne. `--trace` écrit `target_abs_bar`, `charge_abs_bar` et `duty`.
+
+**Ce qui est supposé, et ce qui manque.** Les temps de l'électrovanne et du tuyau sont des ordres de grandeur, pas des mesures. Le découpage est moyenné : l'ondulation à 25 Hz de la membrane n'est pas calculée, ni le claquement de l'électrovanne. Pas de cible à charge partielle : le papillon garde son rôle, et la pression monte avant lui comme avec le ressort. Pas de marge au pompage dans la cible. Un diesel garde ici une wastegate ; la géométrie variable est un autre réglage. Écoute à faire : `--scenario turbo` et `--scenario launch`, avec et sans `--boost-control electronic`.

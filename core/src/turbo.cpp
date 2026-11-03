@@ -634,7 +634,9 @@ void TurboCharger::step(double dt, const TurboInput& input) {
     const double overBar = (anticipated - (spec.ambientPa + (1.0 - 0.2 * kWastegateBand) * spec.targetBar * 1e5)) / (kWastegateBand * spec.targetBar * 1e5);
     // Le calculateur ouvre aussi pour protéger les roues : un petit turbo à bout de débit y arrive avant la pression demandée.
     const double overSpeed = (tip - spec.tipLimit) / (0.02 * spec.tipLimit);
-    const double wantedGate = clamp(overBar > overSpeed ? overBar : overSpeed, 0.0, 1.0);
+    // Une régulation électronique commande la membrane elle-même (boost_control.cpp) ; le ressort seul suit la pression.
+    const double demanded = input.gateDemand >= 0.0 ? input.gateDemand : overBar;
+    const double wantedGate = clamp(demanded > overSpeed ? demanded : overSpeed, 0.0, 1.0);
     s.wastegate += (wantedGate - s.wastegate) * dt / kWastegateS;
 
     const double passage = spec.turbineK + spec.wastegateK * s.wastegate;

@@ -152,6 +152,11 @@ void DrivingModel::setPowertrain(const Powertrain& powertrain) {
     starter_ = powertrain.profile().starter;
     turboEngine_ = !powertrain.electric && powertrain.engine.aspiration == Aspiration::Turbo;
     if (turboEngine_) turbo_.setSpec(turboSpecOf(powertrain));
+    // La régulation de pression : rien à calculer sur une wastegate à ressort, qui reste dans `TurboCharger`.
+    const bool controlled = turboEngine_ && powertrain.engine.boostControl != BoostControl::Spring;
+    if (controlled && (!boostControlled_ || boostSpec_.kind != powertrain.engine.boostControl)) boostController_.reset();
+    boostSpec_ = turboEngine_ ? boostControlSpecFor(powertrain, gearing_, kTyreGrip) : BoostControlSpec{};
+    boostControlled_ = controlled;
     // Un diesel n'a ni papillon à entrouvrir, ni étincelle à retarder : voir docs/modele.md.
     antiLagEngine_ = turboEngine_ && powertrain.engine.fuel == Fuel::Petrol && powertrain.engine.antiLag != AntiLag::Off;
     antiLag_.kind = antiLagEngine_ ? powertrain.engine.antiLag : AntiLag::Off;
@@ -975,8 +980,22 @@ void DrivingModel::stepTurbo(double rpmNow, bool burning) {
         input.ecu.firedShare = cut_ ? 0.0 : ecu_.firedShare;
         input.ecu.fuelOnCut = fuelOnCut_;
     }
+    if (boostControlled_) {
+        // Le calculateur lit la pression de charge et le rapport engagé, et commande la membrane par son électrovanne.
+        BoostControlInput control;
+        control.rpm = rpmNow;
+        control.gear = gear_;
+        control.chargePa = turbo_.state().chargePa;
+        input.gateDemand = boostController_.step(boostSpec_, kStep, control);
+    }
     turbo_.step(kStep, input);
     boost_ = std::max(turbo_.boost(), 0.0);
+}
+
+double DrivingModel::boostTargetPa() const {
+    constexpr double kAmbientPa = 101325.0;
+    if (!turboEngine_) return kAmbientPa;
+    return boostControlled_ && boostController_.targetPa() > 0.0 ? boostController_.targetPa() : revforge::boostTargetPa(boostSpec_, rpm(), gear_, kAmbientPa);
 }
 
 void DrivingModel::updateAntiLag(double throttle, double rpmNow, bool off) {

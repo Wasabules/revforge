@@ -70,7 +70,7 @@ void usage() {
         "          --stereo 1: two ears (otherwise one microphone at the centre of the head)\n"
         "          --db 1: also print the estimated A-weighted level\n"
         "          --fuel 1: also print the estimated fuel, oil or energy used, and the best of the engine's fuel map\n"
-        "          --trace FILE: write the turbo, its anti-lag, the fuel and the knock as CSV, one line per slice\n"
+        "          --trace FILE: write the turbo, its boost control, its anti-lag, the fuel, the knock and the engine management as CSV, one line per slice\n"
         "          --thermal FILE: write the engine temperatures and what a cold engine changes as CSV, one line per 0.1 s\n"
         "          --walk 1: the head walks through the car at 1.2 m/s (with lap)\n"
         "          --valves 1: also print the valvetrain: moving mass, springs, valve float rpm");
@@ -171,7 +171,7 @@ std::FILE* g_trace = nullptr;
 
 void traceHeader() {
     std::fputs("t,rpm,throttle,gear,boost,shaft_rpm,t3_c,turbine_kw,compressor_kw,air_g_s,heat_kw,fuel_g_s,torque_nm,lost_nm,antilag,kmh,flow_kg_s,blowoff,wastegate,charge_bar,exhaust_bar,trip_l,pops,advance_deg,knock_limit_deg,knock_retard_deg,knock_share,knocks,"
-               "ecu_advance_deg,lambda,fired,limiter,launch,flat,traction,slip_ms\n", g_trace);
+               "ecu_advance_deg,lambda,fired,limiter,launch,flat,traction,slip_ms,target_abs_bar,charge_abs_bar,duty\n", g_trace);
 }
 
 void traceLine(const DrivingModel& model, const EngineSound& sound, double t) {
@@ -183,8 +183,10 @@ void traceLine(const DrivingModel& model, const EngineSound& sound, double t) {
                  (s.chargePa - model.turbo().spec().ambientPa) / 1e5, (s.turbineInPa - model.turbo().spec().ambientPa) / 1e5, model.consumption().fuelTripL(), static_cast<unsigned>(sound.pops()),
                  model.sparkAdvanceDeg(), model.knockLimitDeg(), model.knockRetardDeg(), model.knockShare(), static_cast<unsigned>(sound.knocks()));
     // Le calculateur : avance face à la carte d'origine, λ demandé, part des explosions, ce qui agit, glissement des roues.
-    std::fprintf(g_trace, "%.2f,%.3f,%.3f,%d,%d,%d,%.3f,%.3f\n", model.ecuAdvanceDeg(), model.ecuLambda(), model.ecuFiredShare(), model.limiterActive() ? 1 : 0, model.launchHolding() ? 1 : 0,
+    std::fprintf(g_trace, "%.2f,%.3f,%.3f,%d,%d,%d,%.3f,%.3f,", model.ecuAdvanceDeg(), model.ecuLambda(), model.ecuFiredShare(), model.limiterActive() ? 1 : 0, model.launchHolding() ? 1 : 0,
                  model.flatShifting() ? 1 : 0, model.ecuAction().traction, model.wheelSlip());
+    // La régulation de pression : la cible et la charge, en absolu (bar), et le rapport cyclique de l'électrovanne (−1 : ressort).
+    std::fprintf(g_trace, "%.4f,%.4f,%.3f\n", model.boostTargetPa() / 1e5, s.chargePa / 1e5, model.boostDuty());
 }
 
 /** `--thermal` : les températures et ce que le moteur froid change, pour mesurer la mise en température sans rien écouter. */

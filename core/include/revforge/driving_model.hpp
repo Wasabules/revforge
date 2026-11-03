@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "revforge/cam.hpp"
+#include "revforge/boost_control.hpp"
 #include "revforge/carburetor.hpp"
 #include "revforge/combustion.hpp"
 #include "revforge/consumption.hpp"
@@ -185,6 +186,14 @@ public:
     void setFilterSootG(double grams) { dpf_.setSootG(grams); }
     /** La recirculation en ce moment : part des gaz recirculés dans la charge. */
     double egrShare() const { return egrShare_; }
+    /**
+     * La régulation de pression (boost_control.hpp) : la pression absolue demandée (Pa), l'air ambiant sur un moteur sans
+     * turbo ; et le rapport cyclique de l'électrovanne, −1 sur une wastegate à ressort, qui n'en a pas.
+     */
+    double boostTargetPa() const;
+    double boostDuty() const { return boostControlled_ ? boostController_.duty() : -1.0; }
+    const BoostControlSpec& boostControl() const { return boostSpec_; }
+    const BoostController& boostController() const { return boostController_; }
 
     /** Essence, huile ou énergie : une lecture de ce que fait le moteur. Rien n'en revient vers la physique. */
     const ConsumptionMeter& consumption() const { return consumption_; }
@@ -333,6 +342,9 @@ private:
     double antiLagLostNm_ = 0.0;
     Supercharger supercharger_;
     bool superchargerEngine_ = false;
+    BoostControlSpec boostSpec_;
+    BoostController boostController_;
+    bool boostControlled_ = false;
     Carburetor carb_;
     bool carbEngine_ = false;
     // L'injection : le film d'une injection indirecte (seulement hors des 90 °C de la calibration), la pompe haute pression d'une

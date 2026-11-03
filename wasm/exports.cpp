@@ -305,6 +305,13 @@ int rf_antilag_active() { return g_model->antiLagActive() ? 1 : 0; }
 float rf_antilag_heat_kw() { return static_cast<float>(g_model->turbo().antiLag().collectorHeatW / 1000.0); }
 float rf_antilag_air_flow() { return static_cast<float>(g_model->turbo().antiLag().airFlow); }
 float rf_antilag_lost_nm() { return static_cast<float>(g_model->antiLagLostNm()); }
+/**
+ * La régulation de pression, en bar absolus : la pression demandée et celle qui règne avant le papillon. Le rapport cyclique
+ * de l'électrovanne, de 0 à 1 ; −1 sur une wastegate à ressort, qui n'en a pas. Sans turbo : l'air ambiant, et −1.
+ */
+float rf_boost_target() { return static_cast<float>(g_model->boostTargetPa() / 1e5); }
+float rf_boost_charge() { return static_cast<float>((g_model->supercharged() ? g_model->supercharger().state().chargePa : g_model->turbo().state().chargePa) / 1e5); }
+float rf_boost_duty() { return static_cast<float>(g_model->boostDuty()); }
 /** Ce que le moteur a choisi : diamètre de la roue (mm), inertie de l'arbre (kg·m²). */
 float rf_intake_air_c(float rpm) { return static_cast<float>(intakeAirK(g_powertrain, static_cast<double>(rpm)) - 273.15); }
 float rf_intake_drop_kpa(float rpm) { return static_cast<float>(intakeDropPa(g_powertrain, static_cast<double>(rpm)) / 1000.0); }

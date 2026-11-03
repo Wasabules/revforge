@@ -74,7 +74,7 @@ cmake --build build
     --gearbox dog --teeth spur --listener cabin --insulation stripped --scenario launch --out five.wav
 ```
 
-Other useful options: `--turbo small|medium|large`, `--turbo-pipe MM`, `--filter stock|panel|cone|stacks`, `--carb injection|single|multi`, `--shift-mode`, `--drive-scenario`, and `--fuel 1` with `--out none` for consumption figures. `--help` lists everything.
+Other useful options: `--turbo small|medium|large`, `--turbo-pipe MM`, `--boost-control spring|electronic|by_gear`, `--filter stock|panel|cone|stacks`, `--carb injection|single|multi`, `--shift-mode`, `--drive-scenario`, and `--fuel 1` with `--out none` for consumption figures. `--help` lists everything.
 
 ## How the sound is made
 
@@ -140,6 +140,7 @@ Known limits:
 - Knock comes from a single-zone cycle with assumed constants, a little too sensitive to the compression ratio; it only costs the advance taken away (no wear, no failure), and its sound (level, duration) still awaits listening.
 - The port-injection fuel film only acts away from 90 °C coolant, which nothing computes yet; the injector tick levels are calibrated on one published study, and at full load the common rail's combustion noise comes out 2 to 4 dB above the pump's, a model result nobody has checked. A particulate filter starts halfway between regenerations, so a regeneration rarely shows in a trip.
 - The cam's gas-exchange cycle has no exhaust tuning matched to the cam, so a race cam gains less up top and loses less idle vacuum than in reality; consumption does not see its residual gas, and the on-screen gas does not follow the phaser or the profile switch live. Nobody has listened to the lumpy idle yet.
+- Electronic boost control has no part-load target (the throttle keeps its role), its solenoid valve's timings are assumed and its 25 Hz ripple is averaged; by-gear boost cannot make a car quicker, since the tyre model has no grip peak.
 
 ## Repository layout
 

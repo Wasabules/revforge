@@ -1030,12 +1030,14 @@ export const fr: Record<MessageKey, string> = {
   // ── Pression : régulation ──
   'builder.boostControl': 'Régulation de pression',
   'boostControl.spring': 'Ressort',
-  'boostControl.spring.help': 'La wastegate s\'ouvre contre un ressort : la pression dérive en haut et dépasse sa cible.',
+  'boostControl.spring.help': 'Une membrane ouvre la wastegate contre son ressort : elle tient la pression au-dessus de l\'air extérieur, et dérive de 2 à 3 % en haut.',
   'boostControl.electronic': 'Électronique',
-  'boostControl.electronic.help': 'Une électrovanne et une boucle fermée tiennent une pression cible.',
+  'boostControl.electronic.help': 'Une électrovanne découpée à 25 Hz et un PID tiennent une pression absolue : pas de dérive, un dépassement bref quand le turbo se lance, plus de pression à fournir en altitude.',
   'boostControl.by_gear': 'Selon le rapport',
-  'boostControl.by_gear.help': 'La même, avec une cible plus basse sur les premiers rapports.',
+  'boostControl.by_gear.help': 'La même, chaque rapport borné au couple que ses pneus et la boîte peuvent passer : moins de pression sur les premiers rapports.',
   'summary.boostControl': 'régulation : {kind}',
+  'charts.boost.target': 'Cible',
+  'gauge.boostDuty': ' · électrovanne {duty} %',
   // ── Air de charge : échangeur, injection d'eau, protoxyde d'azote ──
   'builder.intercooler': 'Échangeur',
   'intercooler.air_to_air': 'Air-air',

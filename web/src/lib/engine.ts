@@ -45,6 +45,13 @@ export interface Telemetry {
   antiLagHeatKw: number;
   antiLagAirFlow: number;
   antiLagLostNm: number;
+  /**
+   * La régulation de pression, en bar absolus : la pression que vise la wastegate (ressort) ou le calculateur (électronique,
+   * selon le rapport), et celle qui règne avant le papillon. Le rapport cyclique de l'électrovanne, 0 à 1 ; −1 sans électrovanne.
+   */
+  boostTargetBar: number;
+  boostChargeBar: number;
+  boostDuty: number;
   /** Le compresseur mécanique : l'arbre (tr/min), ce qu'il prend au vilebrequin (kW), la part du débit rendue à l'entrée. Les pressions et températures sont les mêmes champs que pour un turbo. */
   chargerRpm: number;
   chargerKw: number;
@@ -158,7 +165,7 @@ export interface Telemetry {
 }
 
 export const IDLE_TELEMETRY: Telemetry = {
-  rpm: 0, speed: 0, gear: 0, throttle: 0, load: 0, boost: 0, turbine: 0, turboRelease: 0, turboRpm: 0, turboCharge: 0, turboPlenum: 0, turboOutlet: 0, turboInlet: 0, turboExhaust: 0, turboWastegate: 0, turboBlowoff: 0, turboFlow: 0, turboOutC: 20, turboCoolC: 20, intakeAirC: 20, turboGasC: 20, antiLag: 0, antiLagHeatKw: 0, antiLagAirFlow: 0, antiLagLostNm: 0, chargerRpm: 0, chargerKw: 0, chargerSpill: 0, torque: 0, power: 0, clutch: 0, clutchInputRpm: 0, clutchSlipKw: 0, clutchTorque: 0, wheelRpm: 0, slip: 0, pops: 0, cut: 0, shifting: 0, cranking: 0, stalled: 0, lugging: 0, legKind: 0, legTarget: 0, gradePct: 0, underpowered: 0, levelDbA: 0, listenerX: 0, listenerY: 0, listenerZ: 0, peak: 0, outputRpm: 0, meshed: 0, shiftStep: 0, grinding: 0, overload: 0, boxWear: 0, boxBroken: 0, boxPending: 0, boxConeSlip: 0, boxRattle: 0, boxLoose0: 0, boxLoose1: 0, boxLoose2: 0, boxLoose3: 0, fuelLph: 0, fuelLper100km: 0, fuelTripL: 0, fuelAvgLper100km: 0, tripKm: 0, co2GPerKm: 0, oilGph: 0, oilTripMl: 0, oilMlPer1000km: 0, energyKwhPer100km: 0, energyAvgKwhPer100km: 0, energyTripKwh: 0,
+  rpm: 0, speed: 0, gear: 0, throttle: 0, load: 0, boost: 0, turbine: 0, turboRelease: 0, turboRpm: 0, turboCharge: 0, turboPlenum: 0, turboOutlet: 0, turboInlet: 0, turboExhaust: 0, turboWastegate: 0, turboBlowoff: 0, turboFlow: 0, turboOutC: 20, turboCoolC: 20, intakeAirC: 20, turboGasC: 20, antiLag: 0, antiLagHeatKw: 0, antiLagAirFlow: 0, antiLagLostNm: 0, boostTargetBar: 0, boostChargeBar: 0, boostDuty: -1, chargerRpm: 0, chargerKw: 0, chargerSpill: 0, torque: 0, power: 0, clutch: 0, clutchInputRpm: 0, clutchSlipKw: 0, clutchTorque: 0, wheelRpm: 0, slip: 0, pops: 0, cut: 0, shifting: 0, cranking: 0, stalled: 0, lugging: 0, legKind: 0, legTarget: 0, gradePct: 0, underpowered: 0, levelDbA: 0, listenerX: 0, listenerY: 0, listenerZ: 0, peak: 0, outputRpm: 0, meshed: 0, shiftStep: 0, grinding: 0, overload: 0, boxWear: 0, boxBroken: 0, boxPending: 0, boxConeSlip: 0, boxRattle: 0, boxLoose0: 0, boxLoose1: 0, boxLoose2: 0, boxLoose3: 0, fuelLph: 0, fuelLper100km: 0, fuelTripL: 0, fuelAvgLper100km: 0, tripKm: 0, co2GPerKm: 0, oilGph: 0, oilTripMl: 0, oilMlPer1000km: 0, energyKwhPer100km: 0, energyAvgKwhPer100km: 0, energyTripKwh: 0,
   coolantC: 20, oilC: 20, metalC: 20, thermostat: 0, fan: 0, oilViscosity: 0, coldFrictionNm: 0, coldIdleRpm: 0, coldEnrichment: 0, warmFrictionNm: 0,
   sparkAdvance: 0, knockLimit: 0, knockRetard: 0, knockShare: 0,
   ecuAdvance: 0, ecuLambda: 0, ecuFired: 1, ecuLimiter: 0, ecuLaunch: 0, ecuFlat: 0, ecuTraction: 0,
@@ -322,6 +329,9 @@ interface RfExports {
   rf_antilag_heat_kw(): number;
   rf_antilag_air_flow(): number;
   rf_antilag_lost_nm(): number;
+  rf_boost_target(): number;
+  rf_boost_charge(): number;
+  rf_boost_duty(): number;
   rf_render(frames: number): void;
   rf_render_stereo(frames: number): void;
   rf_set_listener(listener: number): void;
