@@ -3,6 +3,7 @@
 #include <cmath>
 
 #include "portable_math.hpp"
+#include "revforge/air_filter.hpp"
 
 namespace revforge {
 
@@ -91,7 +92,7 @@ double airDensity(double pa, double kelvin) { return pa / (kAirR * kelvin); }
 double powerSevenHalves(double x) { return x * x * x * std::sqrt(x); }
 
 /** Hauteur isentropique pour ce rapport de pression (J/kg). */
-double headFor(double ratio) { return kAirCp * kAmbientK * (portable::pow(ratio > 0.1 ? ratio : 0.1, 2.0 / 7.0) - 1.0); }
+double headFor(double ratio, double inletK = kAmbientK) { return kAirCp * inletK * (portable::pow(ratio > 0.1 ? ratio : 0.1, 2.0 / 7.0) - 1.0); }
 
 /** Un orifice, régularisé autour de zéro : débit volumique par unité de section, signé. */
 double orificeSpeed(double across, double rho) { return std::sqrt(2.0 / rho) * across / std::sqrt(magnitude(across) + kOrificeSoftPa); }
@@ -100,15 +101,15 @@ double orificeSpeed(double across, double rho) { return std::sqrt(2.0 / rho) * a
 double sweptFlow(const SuperchargerSpec& spec, double omega) { return spec.rotorVolumeM3 * omega / (2.0 * kPi); }
 
 /** Ce que déplace le compresseur (kg/s) pour cette vitesse et ces pressions. */
-double compressorFlowAt(const SuperchargerSpec& spec, double omega, double inletPa, double outletPa) {
+double compressorFlowAt(const SuperchargerSpec& spec, double omega, double inletPa, double inletK, double outletPa) {
     if (centrifugal(spec)) {
         const double tip = omega * 0.5 * spec.wheelDiameterM;
-        const double ratio = powerSevenHalves(1.0 + kHeadCoefficient * tip * tip / (kAirCp * kAmbientK));
+        const double ratio = powerSevenHalves(1.0 + kHeadCoefficient * tip * tip / (kAirCp * inletK));
         const double choke = spec.chokeFlow * omega / spec.referenceOmega;
         const double flow = spec.curveConductance * (inletPa * ratio - outletPa);
         return flow > choke ? choke : (flow < -spec.chokeFlow ? -spec.chokeFlow : flow);
     }
-    const double rho = airDensity(inletPa, kAmbientK);
+    const double rho = airDensity(inletPa, inletK);
     // Les fuites suivent l'écart de pression, pas la vitesse : à bas régime, elles mangent une bonne part de ce qui passe.
     return rho * (sweptFlow(spec, omega) - spec.leakArea * orificeSpeed(outletPa - inletPa, rho));
 }
@@ -123,22 +124,22 @@ double displacementWork(const SuperchargerSpec& spec, double inletPa, double out
 }
 
 /** Puissance sur l'arbre du compresseur (W), avec la température de sortie qui en résulte. */
-double shaftPower(const SuperchargerSpec& spec, double omega, double inletPa, double outletPa, double flow, double* outK) {
+double shaftPower(const SuperchargerSpec& spec, double omega, double inletPa, double inletK, double outletPa, double flow, double* outK) {
     const double share = omega / spec.referenceOmega;
     if (centrifugal(spec)) {
-        const double head = positive(headFor(outletPa / inletPa));
+        const double head = positive(headFor(outletPa / inletPa, inletK));
         const double tip = omega * 0.5 * spec.wheelDiameterM;
         const double rho = airDensity(kAtmosphere, kAmbientK);
         const double windage = kWindage * rho * tip * tip * tip * spec.wheelDiameterM * spec.wheelDiameterM;
-        *outK = kAmbientK + head / kCentrifugalEta / kAirCp;
+        *outK = inletK + head / kCentrifugalEta / kAirCp;
         return positive(flow) * head / kCentrifugalEta + windage + spec.frictionW * share * share;
     }
     const double swept = sweptFlow(spec, omega);
     const double work = swept * displacementWork(spec, inletPa, outletPa);
     // Tout ce travail finit dans l'air qui sort, y compris celui de ce qui a fui et qu'il a fallu recomprimer.
-    const double floorFlow = 0.2 * airDensity(inletPa, kAmbientK) * swept;
+    const double floorFlow = 0.2 * airDensity(inletPa, inletK) * swept;
     const double net = flow > floorFlow ? flow : floorFlow;
-    *outK = kAmbientK + (net > 1e-6 ? work / (net * kAirCp) : 0.0);
+    *outK = inletK + (net > 1e-6 ? work / (net * kAirCp) : 0.0);
     return work + spec.frictionW * share * share;
 }
 
@@ -167,11 +168,20 @@ double shaftOmegaAt(const SuperchargerSpec& spec, double rpm) { return rpm * 2.0
 struct Ends {
     double inletPa;
     double outletPa;
+    double inletK;
 };
 
-Ends endsFor(const SuperchargerSpec& spec, double chargePa, double engineFlow, double coolK) {
+Ends endsFor(const SuperchargerSpec& spec, double chargePa, double engineFlow, double coolK, double rpm) {
     Ends e;
-    e.inletPa = kAtmosphere - spec.filterDrop * engineFlow * engineFlow;
+    if (spec.inletFilter == AirFilter::Stock) {
+        e.inletPa = kAtmosphere - spec.filterDrop * engineFlow * engineFlow;
+        e.inletK = kAmbientK;
+    } else {
+        // Le compresseur reste celui qui a été dimensionné sur le papier d'origine : seul change l'air qu'il reçoit.
+        const AirInlet in = airInletBehind(spec.inletFilter, spec.inletPlacement, engineFlow, spec.ratedFlow, rpm / (kSuperchargerRatedShare * spec.redlineRpm));
+        e.inletPa = in.pressurePa;
+        e.inletK = in.temperatureK;
+    }
     e.outletPa = chargePa + spec.coolerDrop * engineFlow * engineFlow / airDensity(chargePa, coolK);
     return e;
 }
@@ -191,12 +201,12 @@ Point pointAt(const SuperchargerSpec& spec, double rpm, double breathing, double
     const double omega = shaftOmegaAt(spec, rpm);
     const double plenum = chargePa * fill;
     double coolK = kAmbientK;
-    Ends ends{kAtmosphere, kAtmosphere};
+    Ends ends{kAtmosphere, kAtmosphere, kAmbientK};
     for (int pass = 0; pass < 2; ++pass) {
         p.engineFlow = engineFlowAt(spec, rpm, breathing, plenum, coolK);
-        ends = endsFor(spec, chargePa, p.engineFlow, coolK);
-        p.compressorFlow = compressorFlowAt(spec, omega, ends.inletPa, ends.outletPa);
-        p.shaftW = shaftPower(spec, omega, ends.inletPa, ends.outletPa, p.compressorFlow, &p.outK);
+        ends = endsFor(spec, chargePa, p.engineFlow, coolK, rpm);
+        p.compressorFlow = compressorFlowAt(spec, omega, ends.inletPa, ends.inletK, ends.outletPa);
+        p.shaftW = shaftPower(spec, omega, ends.inletPa, ends.inletK, ends.outletPa, p.compressorFlow, &p.outK);
         coolK = coolerOutlet(p.outK, p.engineFlow, spec.ratedFlow);
     }
     p.coolK = coolK;
@@ -233,7 +243,7 @@ SuperchargerSpec superchargerSpecFor(const EngineConfig& e, double breathingAtSi
         s.pulsesPerTurn = kWheelBlades;
         const double lossPa = kCurveLossShare * s.targetBar * 1e5;
         s.curveConductance = s.ratedFlow / lossPa;
-        const Ends ends = endsFor(s, chargePa, s.ratedFlow, coolK);
+        const Ends ends = endsFor(s, chargePa, s.ratedFlow, coolK, ratedRpm);
         const double head = headFor((ends.outletPa + lossPa) / ends.inletPa);
         double tip = std::sqrt(head / kHeadCoefficient);
         // Une roue d'aluminium ne tient pas plus : au-delà, la pression demandée n'est plus atteinte.
@@ -268,13 +278,13 @@ SuperchargerSpec superchargerSpecFor(const EngineConfig& e, double breathingAtSi
     for (int pass = 0; pass < 5; ++pass) {
         setLosses(coolK);
         const double flow = kEngineVolumetric * breathingAtSizing * airDensity(chargePa, coolK) * s.displacementM3 * sizingRpm / 120.0;
-        const Ends ends = endsFor(s, chargePa, flow, coolK);
+        const Ends ends = endsFor(s, chargePa, flow, coolK, sizingRpm);
         s.leakArea = leak * portable::pow(s.rotorVolumeM3, 2.0 / 3.0);
         const double rho = airDensity(ends.inletPa, kAmbientK);
         const double perSecond = flow / rho + s.leakArea * orificeSpeed(ends.outletPa - ends.inletPa, rho);
         s.rotorVolumeM3 = perSecond * 2.0 * kPi / sizingOmega;
         double outK = kAmbientK;
-        shaftPower(s, sizingOmega, ends.inletPa, ends.outletPa, flow, &outK);
+        shaftPower(s, sizingOmega, ends.inletPa, ends.inletK, ends.outletPa, flow, &outK);
         coolK = coolerOutlet(outK, flow, s.ratedFlow);
     }
     s.leakArea = leak * portable::pow(s.rotorVolumeM3, 2.0 / 3.0);
@@ -364,8 +374,8 @@ void Supercharger::step(double dt, const SuperchargerInput& input) {
     // Ce qui entre dans le volume moins ce qui en sort, pour une pression donnée.
     const auto surplus = [&spec, rpm, omega, fill, coolK, breathing, opening](double chargePa) {
         const double engine = engineFlowAt(spec, rpm, breathing, chargePa * fill, coolK);
-        const Ends ends = endsFor(spec, chargePa, engine, coolK);
-        return compressorFlowAt(spec, omega, ends.inletPa, ends.outletPa) - engine - bypassFlowAt(spec, opening, ends.outletPa, ends.inletPa);
+        const Ends ends = endsFor(spec, chargePa, engine, coolK, rpm);
+        return compressorFlowAt(spec, omega, ends.inletPa, ends.inletK, ends.outletPa) - engine - bypassFlowAt(spec, opening, ends.outletPa, ends.inletPa);
     };
     // Implicite : la pente est raide, soupape ouverte, et le pas de 1 ms ne la tiendrait pas.
     const double gain = kAirR * coolK / spec.chargeVolumeM3;
@@ -379,16 +389,16 @@ void Supercharger::step(double dt, const SuperchargerInput& input) {
     s.plenumPa = next * fill;
 
     const double engine = engineFlowAt(spec, rpm, breathing, s.plenumPa, coolK);
-    const Ends ends = endsFor(spec, next, engine, coolK);
+    const Ends ends = endsFor(spec, next, engine, coolK, rpm);
     s.engineFlow = engine;
     s.inletPa = ends.inletPa;
     s.outletPa = ends.outletPa;
-    s.compressorFlow = compressorFlowAt(spec, omega, ends.inletPa, ends.outletPa);
+    s.compressorFlow = compressorFlowAt(spec, omega, ends.inletPa, ends.inletK, ends.outletPa);
     const double returned = s.compressorFlow - engine;
     s.spillShare = s.compressorFlow > 1e-6 ? clamp(returned / s.compressorFlow, 0.0, 1.0) : 0.0;
 
     double outK = kAmbientK;
-    s.shaftW = shaftPower(spec, omega, ends.inletPa, ends.outletPa, s.compressorFlow, &outK) / spec.driveEfficiency;
+    s.shaftW = shaftPower(spec, omega, ends.inletPa, ends.inletK, ends.outletPa, s.compressorFlow, &outK) / spec.driveEfficiency;
     s.compressorOutK = outK;
     s.coolerOutK += (coolerOutlet(outK, engine, spec.ratedFlow) - s.coolerOutK) * dt / kCoolerMassS;
 }

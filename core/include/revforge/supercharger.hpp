@@ -37,6 +37,8 @@ struct SuperchargerSpec {
     double filterDrop = 1.0;         // perte du filtre à l'entrée, Pa par (kg/s)²
     double coolerDrop = 1.0;         // perte de l'échangeur, Pa·(kg/m³) par (kg/s)²
     double bypassArea = 2e-3;        // soupape de dérivation grande ouverte (m²)
+    AirFilter inletFilter = AirFilter::Stock;  // ce qui fixe la température et la perte à l'entrée du compresseur
+    EnginePlacement inletPlacement = EnginePlacement::Front;
 };
 
 /** Ce qui change d'une milliseconde à l'autre, en unités physiques. */

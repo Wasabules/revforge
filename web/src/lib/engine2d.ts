@@ -232,7 +232,7 @@ export class Engine2D {
       if (layout.carb.kind === 'multi' && layout.banks === 1) xMax = Math.max(xMax, bore * 2.75);
       else yMax = Math.max(yMax, plenum.y + bore * 1.5);
     } else if (!layout.turbo && !layout.charger) {
-    // Le filtre, et ses cornets : ils dépassent du moteur.
+      // Le filtre, et ses cornets : ils dépassent du moteur.
       if (layout.airFilter === 'stacks') {
         for (const cylinder of layout.cylinders) {
           const stack = stackOf(layout, cylinder);

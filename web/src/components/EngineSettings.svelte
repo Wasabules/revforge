@@ -13,7 +13,6 @@
     spec: Spec;
     onapply: (next: Partial<EngineConfig>) => void;
     onlive: (next: Partial<EngineConfig>) => void;
-    spec?: Spec;
   }
   let { config, shown, spec, onapply, onlive }: Props = $props();
 

@@ -313,6 +313,11 @@ double intakeDropPa(const Powertrain& p, double rpm) {
         const double flow = turboSteady(spec, rpm, breathing(e, rpm)).flow;
         return spec.filterDrop * flow * flow;
     }
+    if (e.aspiration == Aspiration::Supercharger) {
+        const SuperchargerSpec spec = superchargerSpecOf(p);
+        const double flow = superchargerSteady(spec, rpm, breathing(e, rpm)).flow;
+        return spec.filterDrop * flow * flow;
+    }
     const double flow = naturalFlowKgS(e, rpm) * kInletK / intakeAirK(p, rpm);
     return naturalFilterCoefficient(liters(e) * 1e-3, naturalFlowKgS(e, kRatedShare * static_cast<double>(e.redlineRpm))) * flow * flow * airFilterDropShare(e.airFilter);
 }
@@ -321,7 +326,14 @@ double breathingOf(const Powertrain& p, double rpm) { return breathing(p.engine,
 
 SuperchargerSpec superchargerSpecOf(const Powertrain& p) {
     const double redline = static_cast<double>(p.engine.redlineRpm);
-    return superchargerSpecFor(p.engine, breathing(p.engine, kVolumetricSizingShare * redline), breathing(p.engine, kSuperchargerRatedShare * redline));
+    SuperchargerSpec spec = superchargerSpecFor(p.engine, breathing(p.engine, kVolumetricSizingShare * redline), breathing(p.engine, kSuperchargerRatedShare * redline));
+    // Comme le turbo : le compresseur reste celui du papier d'origine, seul change l'air qu'il reçoit.
+    if (p.engine.airFilter != AirFilter::Stock) {
+        spec.filterDrop *= airFilterDropShare(p.engine.airFilter);
+        spec.inletFilter = p.engine.airFilter;
+        spec.inletPlacement = placementOf(p.car);
+    }
+    return spec;
 }
 
 double superchargerDriveNm(const Powertrain& p, double rpm, double fill) {
