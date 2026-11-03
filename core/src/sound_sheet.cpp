@@ -77,7 +77,7 @@ float lineLossDb(const Powertrain& p, double fromHz, double toHz) {
     ExhaustLine line(static_cast<float>(kRate));
     line.compute(Exhaust::Straight, profile.exhaustScale, displacement, profile.cylinders);
     const double open = line.lossDb(fromHz, toHz);
-    line.compute(profile.exhaust, profile.exhaustScale, displacement, profile.cylinders);
+    line.compute(profile.exhaust, profile.exhaustScale, displacement, profile.cylinders, profile.filterResistance);
     return static_cast<float>(line.lossDb(fromHz, toHz) - open);
 }
 

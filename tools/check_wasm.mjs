@@ -777,4 +777,31 @@ for (const [label, changes, options, pipe] of [
   const hash = render(rf, 10, 128, (step) => rf.rf_set_controls(step * TICK_S >= 1 ? 1 : 0, 0, 0));
   check('calculateur, électrique', hash, native('--preset', 'electric', '--traction', 'full', '--scenario', 'launch', '--seconds', '10'));
 }
+// L'injection : la rampe commune, la recirculation et le filtre changent le son et la consommation d'un diesel ; l'injection
+// directe ajoute son tic sous le capot. Chacun de ces réglages change le rendu : un argument mal routé se verrait ici.
+{
+  const railed = () => {
+    const rf = load();
+    rf.rf_set_car(BODY.van, 1950, 16, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+    rf.rf_set_gearbox(BOX.synchro, 0, 0, 0, 0, 0, 0, 0, 1);
+    tune(rf, { dieselInjection: DIESEL_INJECTION.common_rail, egr: 1, particulateFilter: 1 });
+    rf.rf_set_config(4, LAYOUT.inline, 2000, 85, 4500, EXHAUST.stock, 1, 1, 0, 0, 0, 1.8, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0, 0);
+    rf.rf_set_mode(3);
+    return rf;
+  };
+  const dieselArgs = ['--preset', 'diesel_four', '--diesel-injection', 'common_rail', '--egr', '1', '--dpf', '1', '--scenario', 'lap'];
+  check('injection : rampe commune, recirculation, filtre', render(railed(), 20, 128), native(...dieselArgs, '--seconds', '20'));
+  const rf = railed();
+  driveLikeNative(rf, 60);
+  checkFigures('injection : rampe commune, consommation', rf, nativeFigures(...dieselArgs));
+}
+{
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1250, 17, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  tune(rf, { egr: 1, particulateFilter: 1 });
+  rf.rf_set_config(4, LAYOUT.inline, 1998, 82, 7300, EXHAUST.sport, 0, 0, 0, 1, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0, FUEL_SYSTEM.direct);
+  rf.rf_set_listener(LISTENER.bay);
+  rf.rf_set_mode(3);
+  check('injection directe, recirculation, filtre, sous le capot', render(rf, 20, 128), native('--preset', 'hot_hatch_na', '--fuel-system', 'direct', '--egr', '1', '--dpf', '1', '--listener', 'bay', '--scenario', 'lap', '--seconds', '20'));
+}
 process.exit(failed ? 1 : 0);

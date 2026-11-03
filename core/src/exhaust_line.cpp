@@ -40,6 +40,12 @@ constexpr double kCat = 0.001;
 constexpr double kBranchQ = 8.0;
 // Impédance de source, en ρc/S : un multicylindre tend vers 1, à un facteur 2 près. Elle amortit les résonances du tube.
 constexpr double kSourceImpedance = 2.0;
+// Le filtre à particules : un monolithe de 15 cm, dont le son ne passe que par les canaux d'entrée, un tiers de la section
+// frontale (2,5 fois le tube, à 1,25 fois la cylindrée). Ses canaux de 1,1 mm perdent par viscosité et conduction :
+// α = (1/(r·c))·√(νω/2)·(1 + (γ − 1)/√Pr), soit 0,0675 Np/m/√Hz à r = 0,55 mm et ν = 5e-5 m²/s (Kirchhoff).
+constexpr double kFilterLengthM = 0.15;
+constexpr double kFilterAreaShare = 2.5;
+constexpr double kFilterWallLoss = 0.0675;
 
 // Origine : un catalyseur, un résonateur accordé, et un silencieux à deux chambres (une fois replié, c'est un 3 passes).
 constexpr std::array<Section, 10> kStock{{
@@ -199,7 +205,7 @@ double ExhaustLine::lossDb(double fromHz, double toHz) const {
     return count == 0 ? 0.0 : -10.0 * std::log10(std::max(sum / count, 1e-20));
 }
 
-const std::vector<float>& ExhaustLine::compute(Exhaust exhaust, float scale, double displacementM3, int cylinders) {
+const std::vector<float>& ExhaustLine::compute(Exhaust exhaust, float scale, double displacementM3, int cylinders, double filterResistance) {
     const Section* sections = kStock.data();
     std::size_t count = kStock.size();
     if (exhaust == Exhaust::Sport) {
@@ -224,6 +230,8 @@ const std::vector<float>& ExhaustLine::compute(Exhaust exhaust, float scale, dou
     // Un résonateur vise le bourdonnement de la croisière : la cadence d'allumage à 2500 tr/min.
     const double branchHz = std::clamp(static_cast<double>(cylinders) / 2.0 * 2500.0 / 60.0, 60.0, 260.0);
     const double branchOmega = 2.0 * kPi * branchHz;
+    // Le filtre suit le catalyseur ; sans catalyseur, le premier tube.
+    const std::size_t filterAfter = count > 1 && sections[1].absorption > 0.0 ? 1 : 0;
 
     const int half = kFftSize / 2;
     for (int k = 0; k <= half; ++k) {
@@ -251,6 +259,16 @@ const std::vector<float>& ExhaustLine::compute(Exhaust exhaust, float scale, dou
             if (s.fibre > 0.0 && hz > 0.0) alpha += s.fibre * std::pow(hz / 1000.0, 0.45);
             blurred += blur * length;
             total = total * tube(omega, alpha, length, kAirDensity * kSoundSpeed / area);
+            if (filterResistance > 0.0 && i == filterAfter) {
+                // Le monolithe : ses canaux, et au milieu ses parois poreuses, une résistance en série (Darcy) qui ne dépend pas
+                // de la fréquence.
+                const double piece = 0.5 * kFilterLengthM;
+                const double channels = kAirDensity * kSoundSpeed / (baseArea * kFilterAreaShare);
+                const double lossy = kFilterWallLoss * root + blur;
+                blurred += blur * kFilterLengthM;
+                const Matrix wall{{1.0, 0.0}, {filterResistance * kAirDensity * kSoundSpeed / baseArea, 0.0}, {0.0, 0.0}, {1.0, 0.0}};
+                total = total * tube(omega, lossy, piece, channels) * wall * tube(omega, lossy, piece, channels);
+            }
         }
         // Sortie à l'air libre : tube non bafflé, Levine et Schwinger par l'ajustement de Silva et al. (2009).
         const double outletArea = baseArea * sections[count - 1].area;

@@ -9,6 +9,8 @@
 #include "revforge/combustion.hpp"
 #include "revforge/driving_model.hpp"
 #include "revforge/ecu.hpp"
+#include "revforge/injection.hpp"
+#include "revforge/particulate_filter.hpp"
 #include "revforge/valvetrain.hpp"
 
 namespace revforge {
@@ -113,7 +115,7 @@ double breathing(const EngineConfig& e, double rpm) {
         case Exhaust::ResonatorDelete: shape *= 0.97 - 0.03 * fraction; break;
         case Exhaust::Quiet: shape *= 0.95 - 0.05 * fraction; break;
     }
-    if (fuelSystemOf(e) != FuelSystem::Injection) shape *= carburetorBrakeShare(e, rpm, shape);
+    if (hasCarburetor(e)) shape *= carburetorBrakeShare(e, rpm, shape);
     return shape;
 }
 
@@ -409,8 +411,8 @@ double steadyBoost(const Powertrain& p, double rpm) {
 namespace {
 
 /**
- * Le couple que donne l'air admis, brûlé comme le moteur d'origine : taux de compression d'origine, essence de référence, et
- * carte d'origine du calculateur.
+ * Le couple que donne l'air admis, brûlé comme le moteur d'origine : taux de compression d'origine, essence de référence,
+ * carte d'origine du calculateur, et l'injection d'origine (indirecte, ou pompe mécanique sur un diesel).
  */
 double airTorqueNm(const Powertrain& p, double rpm, double boost) {
     const EngineConfig& e = p.engine;
@@ -433,23 +435,56 @@ double airTorqueNm(const Powertrain& p, double rpm, double boost) {
     return withAmbientAir(p, rpm, e.airFilter == AirFilter::Stock ? charged : withAirFilter(p, rpm, boost, charged), boost);
 }
 
+/** La pompe haute pression et le filtre à particules : ils ne changent rien sans injection directe ni filtre. */
+bool injectionChanges(const Powertrain& p) { return !p.electric && (directInjected(p.engine) || particulateFiltered(p.engine)); }
+
+/** Ce que coûtent à pleine charge la pompe haute pression et le filtre, à sa suie moyenne (Nm). */
+double injectionLossNm(const Powertrain& p, double rpm, double boost) {
+    return directPumpTorqueNm(p, rpm, 1.0, boost) + filterPumpingTorqueNm(p, rpm, 1.0, boost, meanSootG(p));
+}
+
 }  // namespace
+
+/** La charge d'un cylindre à pleine charge (mg de gazole par cycle), à la limite de fumée de la pompe mécanique. */
+DieselPoint dieselPointOf(const Powertrain& p, double rpm, double load, double boost) {
+    const EngineConfig& e = p.engine;
+    DieselPoint point;
+    point.rpm = rpm;
+    point.load = load;
+    point.redlineRpm = static_cast<double>(e.redlineRpm);
+    point.cylinderM3 = static_cast<double>(e.displacementCc) * 1e-6 / std::max(e.cylinders, 1);
+    point.strokeM = static_cast<double>(e.strokeMm()) / 1000.0;
+    point.intakeK = intakeAirK(p, rpm);
+    point.intakeBar = e.aspiration == Aspiration::Natural ? 1.0 : 1.0 + static_cast<double>(e.boostBar) * boost;
+    const double airMg = kInletDensity * point.intakeBar * point.cylinderM3 * kVolumetric * 1e6;
+    point.fullFuelMg = airMg / (14.5 * smokeLimitLambda(dieselInjectionBar(false, rpm, point.redlineRpm, 1.0)));
+    point.commonRail = commonRailed(e);
+    return point;
+}
 
 double fullLoadTorqueNm(const Powertrain& p, double rpm, double boost) {
     if (p.electric) {
         const double omega = std::max(rpm, 1.0) * 2.0 * kPi / 60.0;
         return std::min(kElectricTorqueNm, kElectricPowerW / omega);
     }
-    const bool stockBurn = combustionStock(p.engine);
-    const bool stockMap = !ecuMapTuned(p.engine);
-    if (stockBurn && stockMap) return airTorqueNm(p, rpm, boost);
-    // Le même air, brûlé autrement : le taux de compression change le rendement, le carburant l'énergie par kilogramme d'air et la
-    // densité de la charge (« La combustion ») ; la carte du calculateur, l'avance et la richesse (ecu.cpp). Seul le travail des
-    // gaz en dépend : les frottements restent. Les deux parts sont indépendantes : le carburant donne l'énergie par kilogramme
-    // d'air à richesse égale, la carte l'écart de richesse et d'avance à ce carburant.
+    const EngineConfig& e = p.engine;
+    const bool stockBurn = combustionStock(e);
+    const bool stockMap = !ecuMapTuned(e);
+    const bool direct = directInjected(e);
+    const bool rail = commonRailed(e);
+    if (stockBurn && stockMap && !direct && !rail) return airTorqueNm(p, rpm, boost);
+    // Le même air, brûlé autrement. Seul le travail des gaz en dépend : les frottements restent. Chaque part est indépendante et
+    // vaut exactement la sienne quand les autres sont d'origine :
+    // - la combustion : le taux de compression change le rendement, le carburant l'énergie par kilogramme d'air (« La combustion ») ;
+    // - la carte du calculateur : l'écart d'avance et de richesse à ce carburant (ecu.cpp) ;
+    // - l'injection directe : la charge refroidie par le carburant est plus dense (injection.cpp) ;
+    // - la rampe commune : elle brûle plus de gazole avant de fumer, et le brûle plus vite.
     const double friction = frictionTorqueNm(p, rpm);
-    const double share = stockBurn ? ecuFullLoadShare(p.engine)
-                         : (stockMap ? combustionTorqueShare(p.engine) : combustionTorqueShare(p.engine) * ecuFullLoadShare(p.engine));
+    double share = 1.0;
+    if (!stockBurn) share *= combustionTorqueShare(e);
+    if (!stockMap) share *= ecuFullLoadShare(e);
+    if (direct) share *= 1.0 + directFillGain(rpm, static_cast<double>(e.redlineRpm), intakeAirK(p, rpm));
+    if (rail) share *= commonRailTorqueShare(dieselPointOf(p, rpm, 1.0, boost));
     return (airTorqueNm(p, rpm, boost) + friction) * share - friction;
 }
 
@@ -463,16 +498,23 @@ double torqueCurveNm(const Powertrain& p, double rpm) {
         const double friction = frictionTorqueNm(p, rpm);
         return (torque + friction) * knock->steadyTorqueShare(rpm) - friction;
     };
-    if (p.electric || p.engine.aspiration == Aspiration::Natural) return full(0.0);
+    // La pompe haute pression et le filtre à particules se paient au vilebrequin, comme l'entraînement d'un compresseur.
+    const bool injection = injectionChanges(p);
+    if (p.electric || p.engine.aspiration == Aspiration::Natural) {
+        const double torque = full(0.0);
+        return injection ? torque - injectionLossNm(p, rpm, 0.0) : torque;
+    }
     // Pas d'arbre à lancer : la pression d'équilibre, moins ce que coûte l'entraînement.
     if (p.engine.aspiration == Aspiration::Supercharger) {
         const SuperchargerSteady steady = superchargerSteady(superchargerSpecOf(p), rpm, breathing(p.engine, rpm));
-        return full(steady.boost) - steady.driveNm;
+        const double torque = full(steady.boost) - steady.driveNm;
+        return injection ? torque - injectionLossNm(p, rpm, steady.boost) : torque;
     }
     // L'arbre stabilisé : la courbe de la fiche ne dit rien du retard. La contre-pression, elle, se paie toujours.
     const TurboSpec spec = turboSpecOf(p);
     const TurboSteady steady = turboSteady(spec, rpm, breathing(p.engine, rpm));
-    return full(steady.boost) - turboBackPressureNm(spec, steady.chargePa, steady.turbineInPa, steady.flow, 1.0);
+    const double torque = full(steady.boost) - turboBackPressureNm(spec, steady.chargePa, steady.turbineInPa, steady.flow, 1.0);
+    return injection ? torque - injectionLossNm(p, rpm, steady.boost) : torque;
 }
 
 double frictionTorqueNm(const Powertrain& p, double rpm) {
@@ -502,6 +544,50 @@ double engineInertia(const Powertrain& p) {
 }
 
 double idleRpmOf(const Powertrain& p) { return static_cast<double>(p.profile().idleRpm); }
+
+ExhaustState exhaustStateOf(const Powertrain& p, double rpm, double fill, double boost) {
+    ExhaustState out;
+    if (p.electric) return out;
+    const EngineConfig& e = p.engine;
+    const bool diesel = e.burnsDiesel();
+    const double charged = e.aspiration == Aspiration::Natural ? 1.0 : 1.0 + static_cast<double>(e.boostBar) * boost;
+    const double share = clamp(fill, 0.0, 1.0);
+    // Un diesel n'a pas de papillon : il avale tout, et dose son gazole. Un essence dose l'air, à richesse 1, plus riche à fond.
+    const double air = naturalFlowKgS(e, rpm) * charged * (diesel ? 1.0 : std::max(share, 0.08));
+    if (diesel) {
+        out.lambda = smokeLambdaOf(p, rpm) / std::max(share, 0.05);
+    } else {
+        out.lambda = share > 0.85 ? 0.88 : 1.0;
+    }
+    const double fuelPerAir = 1.0 / ((diesel ? 14.5 : 14.7) * out.lambda);
+    out.fuelGps = air * fuelPerAir * 1000.0;
+    out.kgS = air * (1.0 + fuelPerAir);
+    out.kelvin = exhaustGasK(diesel, intakeAirK(p, rpm), fuelPerAir);
+    return out;
+}
+
+double directPumpTorqueNm(const Powertrain& p, double rpm, double fill, double boost) {
+    if (p.electric || !directInjected(p.engine)) return 0.0;
+    const ExhaustState gas = exhaustStateOf(p, rpm, fill, boost);
+    return directPumpNm(gas.fuelGps, directRailBar(fill, rpm, static_cast<double>(p.engine.redlineRpm)), rpm);
+}
+
+double filterPumpingTorqueNm(const Powertrain& p, double rpm, double fill, double boost, double sootG) {
+    if (p.electric || !particulateFiltered(p.engine)) return 0.0;
+    const ParticulateFilterSpec spec = particulateFilterSpecOf(p.engine);
+    const ExhaustState gas = exhaustStateOf(p, rpm, fill, boost);
+    return filterPumpingNm(spec, filterBackPressurePa(spec, sootG, gas.kgS, gas.kelvin));
+}
+
+double meanSootG(const Powertrain& p) {
+    ParticulateFilter filter;
+    filter.configure(particulateFilterSpecOf(p.engine));
+    return filter.sootG();
+}
+
+double smokeLambdaOf(const Powertrain& p, double rpm) {
+    return smokeLimitLambda(dieselInjectionBar(commonRailed(p.engine), rpm, static_cast<double>(p.engine.redlineRpm), 1.0));
+}
 
 double redlineRpmOf(const Powertrain& p) { return p.electric ? kElectricMaxRpm : static_cast<double>(p.engine.redlineRpm); }
 

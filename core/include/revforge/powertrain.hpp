@@ -4,6 +4,7 @@
 
 #include "revforge/engine_config.hpp"
 #include "revforge/gearbox.hpp"
+#include "revforge/injection.hpp"
 #include "revforge/supercharger.hpp"
 #include "revforge/turbo.hpp"
 
@@ -91,6 +92,27 @@ double pumpingTorqueNm(const Powertrain& p, double rpm, double manifold);
 double engineInertia(const Powertrain& p);
 double idleRpmOf(const Powertrain& p);
 double redlineRpmOf(const Powertrain& p);
+
+// ── L'injection, la recirculation et le filtre à particules : voir « L'injection » dans docs/modele.md ──
+
+/** Ce qui sort du moteur à ce régime et à ce remplissage (0 à 1), pression de turbo donnée : débit, température, richesse. */
+struct ExhaustState {
+    double kgS = 0.0;
+    double kelvin = 300.0;
+    double fuelGps = 0.0;
+    double lambda = 1.0;
+};
+ExhaustState exhaustStateOf(const Powertrain& p, double rpm, double fill, double boost);
+/** Ce que prend la pompe haute pression d'une injection directe à ce remplissage (Nm). 0 sans injection directe. */
+double directPumpTorqueNm(const Powertrain& p, double rpm, double fill, double boost);
+/** Le pompage contre le filtre à particules, à cette charge de suie (Nm). 0 sans filtre. */
+double filterPumpingTorqueNm(const Powertrain& p, double rpm, double fill, double boost, double sootG);
+/** La suie d'un filtre en service, en moyenne : à mi-chemin entre deux régénérations (g). */
+double meanSootG(const Powertrain& p);
+/** Excès d'air sous lequel ce diesel fume, à pleine charge et à ce régime. */
+double smokeLambdaOf(const Powertrain& p, double rpm);
+/** Le point de fonctionnement d'un diesel, pour sa combustion : cylindre, régime, part de la pleine charge, pression du turbo. */
+DieselPoint dieselPointOf(const Powertrain& p, double rpm, double load, double boost);
 
 struct PowerSummary {
     double peakTorqueNm = 0.0;

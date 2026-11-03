@@ -27,12 +27,15 @@
   let intakeNode = $state<HTMLElement>();
   let coolantNode = $state<HTMLElement>();
   let oilNode = $state<HTMLElement>();
+  let filterNode = $state<HTMLElement>();
 
   const turbo = $derived(config.aspiration === 'turbo' && !config.electric);
   // L'air d'admission n'a d'intérêt que s'il n'est plus celui du dehors : un filtre sous le capot.
   const hotAir = $derived(!config.electric && (config.airFilter === 'cone' || config.airFilter === 'stacks'));
   const charged = $derived(config.aspiration === 'supercharger' && !config.electric);
   const boosted = $derived(turbo || charged);
+  // Le filtre à particules : sur un diesel ou une injection directe d'essence, comme le calcul (`particulateFiltered`).
+  const filtered = $derived(!config.electric && config.particulateFilter && (config.fuel === 'diesel' || config.fuelSystem === 'direct') && config.layout !== 'rotary');
   /** Une échelle qui finit sur une graduation : tout ce que la simulation peut atteindre y tient. */
   const roundedUp = (value: number, step: number) => Math.ceil(value / step - 1e-9) * step;
 
@@ -64,6 +67,7 @@
     let lastIntakeLang = lang();
     let lastCoolant = '';
     let lastOil = '';
+    let lastFilter = '';
     const stops = [
       clock.add((text) => {
         if (!text) return;
@@ -122,6 +126,17 @@
         if (extra > 0) line += t('gauge.oil.friction', { pct: whole(extra) });
         oilNode.textContent = line;
       }),
+      clock.add((text) => {
+        if (!text) return;
+        if (!filterNode) return;
+        const now = running() ? telemetry() : null;
+        const kpa = now ? Math.round(now.dpfKpa) : 0;
+        const c = now ? Math.round(now.dpfC) : 20;
+        const next = t(now && now.dpfRegen ? 'gauge.dpf.regen' : 'gauge.dpf.sub', { kpa: whole(kpa), c: whole(c) });
+        if (next === lastFilter) return;
+        lastFilter = next;
+        filterNode.textContent = next;
+      }),
     ];
     return () => {
       stop();
@@ -157,6 +172,11 @@
     <Gauge id="oil" label={t('gauge.oil')} note={t('gauge.oil.note')} unit="°C" min={0} max={160} step={40} minor={20} zone={{ from: 140, to: 160 }} mark={100} {clock} read={() => readings.oilC}>
       <span data-testid="gauge-oil-sub" bind:this={oilNode}></span>
     </Gauge>
+    {#if filtered}
+      <Gauge id="dpf" label={t('gauge.dpf')} note={t('gauge.dpf.note')} unit="%" min={0} max={120} step={20} minor={10} {clock} read={() => (running() ? telemetry().dpfLoad * 100 : 0)}>
+        <span data-testid="gauge-dpf-state" bind:this={filterNode}></span>
+      </Gauge>
+    {/if}
   {/if}
 </div>
 

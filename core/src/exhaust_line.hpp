@@ -24,7 +24,11 @@ public:
      * (un débit en m³/s) à la dérivée du débit qui sort (m³/s²). La ligne garde ainsi son vrai niveau : une ligne
      * directe laisse tout passer, un silencieux retient 30 dB. La pression à 1 m en découle (rayonnement d'un monopôle).
      */
-    const std::vector<float>& compute(Exhaust exhaust, float scale, double displacementM3, int cylinders = 4);
+    /**
+     * `filterResistance` : un filtre à particules après le catalyseur, de cette résistance rapportée à ρc/S du tube (voir
+     * `filterLineResistance`). 0 : pas de filtre, et rien ne change.
+     */
+    const std::vector<float>& compute(Exhaust exhaust, float scale, double displacementM3, int cylinders = 4, double filterResistance = 0.0);
 
     /** Énergie de la dernière réponse (racine de la somme des carrés) : sert à ce qui doit suivre son niveau. */
     float gain() const { return gain_; }

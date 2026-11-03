@@ -145,6 +145,13 @@ export interface Telemetry {
   ecuLaunch: number;
   ecuFlat: number;
   ecuTraction: number;
+  /** Le filtre à particules : remplissage (0 après une régénération, 1 à la suivante), contre-pression (kPa), régénération (0 ou 1), température (°C). */
+  dpfLoad: number;
+  dpfKpa: number;
+  dpfRegen: number;
+  dpfC: number;
+  /** Part de gaz d'échappement recirculés dans la charge, en ce moment. */
+  egrShare: number;
 }
 
 export const IDLE_TELEMETRY: Telemetry = {
@@ -152,6 +159,7 @@ export const IDLE_TELEMETRY: Telemetry = {
   coolantC: 20, oilC: 20, metalC: 20, thermostat: 0, fan: 0, oilViscosity: 0, coldFrictionNm: 0, coldIdleRpm: 0, coldEnrichment: 0, warmFrictionNm: 0,
   sparkAdvance: 0, knockLimit: 0, knockRetard: 0, knockShare: 0,
   ecuAdvance: 0, ecuLambda: 0, ecuFired: 1, ecuLimiter: 0, ecuLaunch: 0, ecuFlat: 0, ecuTraction: 0,
+  dpfLoad: 0, dpfKpa: 0, dpfRegen: 0, dpfC: 0, egrShare: 0,
 };
 
 export interface CurvePoint {
@@ -241,6 +249,12 @@ export interface Spec {
   ecu: { rpm: number; sparkDeg: number; fullShare: number; exhaustC: number; stockExhaustC: number };
   curve: CurvePoint[];
   box: BoxSpec;
+  /**
+   * L'injection, calculée (0 là où elle n'a pas de sens) : refroidissement de la charge d'une injection directe (K) et remplissage
+   * gagné (part), pression d'injection à pleine charge (bar), couple gagné à 1500 tr/min par la rampe commune (part), claquement
+   * au ralenti face à la pompe mécanique (dB), recirculation la plus forte (part), contre-pression du filtre propre et plein (kPa).
+   */
+  injection: { coolingK: number; fillGain: number; railBar: number; lowEnd: number; knockDb: number; egr: number; dpfCleanKpa: number; dpfFullKpa: number };
 }
 
 /** La voiture vue de dessus, en mètres (voir `Telemetry.listenerX`), pour la placer sur le plan. */
@@ -266,7 +280,7 @@ export interface SoundSheet {
   lineLoss: { hz: number; db: number }[];
 }
 
-export const EMPTY_SPEC: Spec = { idle: 0, redline: 7000, peakTorque: 0, peakTorqueRpm: 0, peakHp: 0, peakHpRpm: 0, gears: 0, ratios: [], turboWheelMm: 0, turboInertia: 0, intakeDropKpa: 0, intakeAirC: 20, chargerRatio: 0, chargerVolume: 0, chargerWheelMm: 0, zeroTo100: 0, topSpeed: 0, starter: { direct: false, kw: 0, ring: 0, pinion: 0, helix: 0 }, carb: { throats: 0, throatMm: 0, dropKpa: 0 }, combustion: { ratio: 0, efficiency: 1, marginDeg: 0, marginRpm: 0, sensor: false }, ecu: { rpm: 0, sparkDeg: 0, fullShare: 1, exhaustC: 0, stockExhaustC: 0 }, curve: [], box: EMPTY_BOX };
+export const EMPTY_SPEC: Spec = { idle: 0, redline: 7000, peakTorque: 0, peakTorqueRpm: 0, peakHp: 0, peakHpRpm: 0, gears: 0, ratios: [], turboWheelMm: 0, turboInertia: 0, intakeDropKpa: 0, intakeAirC: 20, chargerRatio: 0, chargerVolume: 0, chargerWheelMm: 0, zeroTo100: 0, topSpeed: 0, starter: { direct: false, kw: 0, ring: 0, pinion: 0, helix: 0 }, carb: { throats: 0, throatMm: 0, dropKpa: 0 }, combustion: { ratio: 0, efficiency: 1, marginDeg: 0, marginRpm: 0, sensor: false }, ecu: { rpm: 0, sparkDeg: 0, fullShare: 1, exhaustC: 0, stockExhaustC: 0 }, curve: [], box: EMPTY_BOX, injection: { coolingK: 0, fillGain: 0, railBar: 0, lowEnd: 0, knockDb: 0, egr: 0, dpfCleanKpa: 0, dpfFullKpa: 0 } };
 
 interface RfExports {
   memory: WebAssembly.Memory;
@@ -340,6 +354,13 @@ interface RfExports {
   rf_knock_limit(): number;
   rf_knock_retard(): number;
   rf_knock_share(): number;
+  rf_injection_figure(item: number): number;
+  rf_dpf_kpa_at(full: number): number;
+  rf_dpf_load(): number;
+  rf_dpf_kpa(): number;
+  rf_dpf_regen(): number;
+  rf_dpf_c(): number;
+  rf_egr_share(): number;
   rf_starter_ring(): number;
   rf_starter_pinion(): number;
   rf_starter_helix(): number;
@@ -686,6 +707,16 @@ export class Engine {
       ecu: this.ecuSpec(rf),
       curve,
       box: this.boxSpec(rf, gears, redline),
+      injection: {
+        coolingK: rf.rf_injection_figure(0),
+        fillGain: rf.rf_injection_figure(1),
+        railBar: rf.rf_injection_figure(2),
+        lowEnd: rf.rf_injection_figure(3),
+        knockDb: rf.rf_injection_figure(4),
+        egr: rf.rf_injection_figure(5),
+        dpfCleanKpa: rf.rf_dpf_kpa_at(0),
+        dpfFullKpa: rf.rf_dpf_kpa_at(1),
+      },
     };
   }
 
