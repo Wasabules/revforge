@@ -696,11 +696,28 @@ double camSwitchRpm(const EngineConfig& e, double floatRpm) {
     return floatRpm > 0.0 && rpm > floatRpm ? 0.0 : rpm;
 }
 
+namespace {
+
+/** Le ralenti d'une came d'origine n'a pas de tables : le dernier est gardé, la fiche le demande trois fois. */
+CamIdle stockIdleOf(const EngineConfig& e, double rpm) {
+    static bool known = false;
+    static EngineConfig last;
+    static CamIdle idle;
+    if (!known || !(last == e)) {
+        idle = idleOf(e, stockCamProfile(e), rpm);
+        last = e;
+        known = true;
+    }
+    return idle;
+}
+
+}  // namespace
+
 CamIdle camIdle(const EngineConfig& e) {
     Powertrain powertrain;
     powertrain.engine = e;
     const double rpm = idleRpmOf(powertrain);
-    if (camIsStock(e)) return idleOf(e, stockCamProfile(e), rpm);
+    if (camIsStock(e)) return stockIdleOf(e, rpm);
     return idleTables(e, rpm).idleLow;
 }
 
@@ -708,7 +725,7 @@ CamIdle stockIdle(const EngineConfig& e) {
     Powertrain powertrain;
     powertrain.engine = e;
     const double rpm = idleRpmOf(powertrain);
-    if (camIsStock(e)) return idleOf(e, stockCamProfile(e), rpm);
+    if (camIsStock(e)) return stockIdleOf(e, rpm);
     return idleTables(e, rpm).idleStock;
 }
 
