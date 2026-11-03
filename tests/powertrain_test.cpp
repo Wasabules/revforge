@@ -386,3 +386,27 @@ TEST_CASE("tous les préréglages roulent sans erreur") {
         CHECK(model.rpm() <= model.redlineRpm() + 100.0);
     }
 }
+
+TEST_CASE("à cylindrée constante, la course ne pèse sur le couple qu'au-delà de 24 m/s") {
+    Powertrain square = referencePowertrain();
+    square.engine.displacementCc = 2000;
+    square.engine.boreMm = 86;
+    square.engine.redlineRpm = 6000;
+    Powertrain shortStroke = square;
+    shortStroke.engine.boreMm = 96;
+    Powertrain longStroke = square;
+    longStroke.engine.boreMm = 76;
+    longStroke.engine.redlineRpm = 8500;
+    // Sous 24 m/s, le carré et le super-carré respirent pareil : le modèle n'a pas d'autre effet de la course.
+    for (double rpm = 1000.0; rpm <= 6000.0; rpm += 500.0) {
+        CHECK(torqueCurveNm(shortStroke, rpm) == doctest::Approx(torqueCurveNm(square, rpm)));
+    }
+    // 110 mm à 7000 tr/min : 25,7 m/s. Une course plus courte, même alésage de régime, passe sans perte.
+    Powertrain sameRedline = longStroke;
+    sameRedline.engine.boreMm = 96;
+    CHECK(longStroke.engine.strokeMm() > 110.0f);
+    CHECK(torqueCurveNm(longStroke, 7000.0) < torqueCurveNm(sameRedline, 7000.0) * 0.98);
+    // La fiche le voit : le pic de puissance recule et baisse.
+    CHECK(powerSummary(longStroke).peakPowerKw < powerSummary(sameRedline).peakPowerKw * 0.97);
+    CHECK(powerSummary(longStroke).peakPowerRpm < powerSummary(sameRedline).peakPowerRpm);
+}

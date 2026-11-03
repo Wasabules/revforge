@@ -435,3 +435,40 @@ TEST_CASE("la ligne ne forme pas de peigne régulier dans les médiums") {
         CHECK(regular < 0.53);
     }
 }
+
+TEST_CASE("la course se traduit en une cylindrée entière, et revient d'où elle vient") {
+    EngineConfig c;
+    c.cylinders = 4;
+    c.boreMm = 86;
+    c.displacementCc = displacementForStroke(c.boreMm, c.cylinders, 86.0);
+    CHECK(c.displacementCc == 1998);
+    CHECK(c.strokeMm() == doctest::Approx(86.0f).epsilon(0.001));
+    // Le plus petit cylindre du site : l'arrondi à l'entier ne déplace la course que de moins de 0,09 mm.
+    c.cylinders = 2;
+    c.boreMm = 60;
+    for (double stroke = 106.5; stroke <= 130.0; stroke += 0.5) {
+        c.displacementCc = displacementForStroke(c.boreMm, c.cylinders, stroke);
+        CHECK(std::abs(static_cast<double>(c.strokeMm()) - stroke) < 0.09);
+    }
+}
+
+TEST_CASE("à cylindrée constante, alésage et course se partagent le son, sans changer le débit") {
+    const auto render = [](int bore) {
+        EngineConfig c;
+        c.cylinders = 4;
+        c.displacementCc = 2000;
+        c.boreMm = bore;
+        EngineSound sound(kRate);
+        sound.setProfile(c.toProfile());
+        sound.setVolume(0.7f);
+        sound.setTargetRpm(4000.0f);
+        std::vector<float> out(static_cast<std::size_t>(kRate));
+        sound.render(out.data(), kRate);
+        double energy = 0.0;
+        for (std::size_t i = out.size() / 2; i < out.size(); ++i) energy += static_cast<double>(out[i]) * out[i];
+        return energy;
+    };
+    // La bouffée dure √course : plus courte, elle rend le même volume plus vite, donc plus fort.
+    CHECK(render(96) > render(86) * 1.02);
+    CHECK(render(86) > render(76) * 1.02);
+}

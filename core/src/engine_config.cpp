@@ -172,4 +172,10 @@ EngineProfile electricProfile() {
     return p;
 }
 
+int displacementForStroke(int boreMm, int cylinders, double strokeMm) {
+    const double boreCm = static_cast<double>(boreMm) / 10.0;
+    const double cc = km::kPi / 4.0 * boreCm * boreCm * (strokeMm / 10.0) * static_cast<double>(cylinders);
+    return static_cast<int>(std::floor(cc + 0.5));
+}
+
 }  // namespace revforge

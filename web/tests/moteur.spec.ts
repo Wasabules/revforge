@@ -75,7 +75,7 @@ test.describe('mécanique', () => {
     // Des réglages impossibles à dessiner sont bornés, et la mécanique le sait.
     const extreme = engineLayout(make({ cylinders: 2, displacementCc: 7000, boreMm: 60 }));
     expect(extreme.strokeClamped).toBe(true);
-    expect(extreme.stroke).toBeLessThanOrEqual(60 * 1.8);
+    expect(extreme.stroke).toBeLessThanOrEqual(60 * 2.2);
   });
 
   test('les manetons sont à l\'angle qu\'exige chaque architecture', () => {

@@ -39,6 +39,8 @@ void usage() {
         "          --pops off|light|strong --release dump_valve|flutter --boost BAR --turbo small|medium|large\n"
         "          --supercharger roots|twin_screw|centrifugal --antilag off|retard|air|cut --turbo-pipe MM\n"
         "          --cam dohc|sohc --filter stock|panel|cone|stacks\n"
+        "          --stroke MM  sets --cc from the bore and the cylinders, in any order, and replaces --cc if both are given.\n"
+        "                       On a --preset: applied to the preset's own bore and cylinders, which --bore and --cylinders do not change.\n"
         "Car:      --body city|compact|coupe|supercar|van --mass KG --rim INCHES --drive front|rear|all\n"
         "          --placement front|mid|rear --insulation stripped|light|standard|comfort|luxury --windows open|closed\n"
         "Gearbox:  --gearbox synchro|dog|sequential|dual_clutch|converter --gears N --family matched|short|close|long\n"
@@ -430,6 +432,7 @@ int main(int argc, char** argv) {
     std::optional<int> turboPipeChoice;
     std::optional<Camshaft> camshaftChoice;
     std::optional<AirFilter> airFilterChoice;
+    std::optional<double> strokeChoice;
     bool customListener = false;
     Powertrain powertrain = referencePowertrain();
     EngineConfig& config = powertrain.engine;
@@ -532,6 +535,13 @@ int main(int argc, char** argv) {
             else if (arg == "--turbo-pipe") turboPipeChoice = std::atoi(value.c_str());
             else if (arg == "--cam") camshaftChoice = pick<Camshaft>(value, {{"dohc", Camshaft::Dohc}, {"sohc", Camshaft::Sohc}});
             else if (arg == "--filter") airFilterChoice = pick<AirFilter>(value, {{"stock", AirFilter::Stock}, {"panel", AirFilter::Panel}, {"cone", AirFilter::Cone}, {"stacks", AirFilter::Stacks}});
+            else if (arg == "--stroke") {
+                strokeChoice = std::atof(value.c_str());
+                if (*strokeChoice <= 0.0) {
+                    std::fprintf(stderr, "Expected a stroke in mm: %s\n", value.c_str());
+                    return 2;
+                }
+            }
             else if (arg == "--fuel") config.fuel = pick<Fuel>(value, {{"petrol", Fuel::Petrol}, {"diesel", Fuel::Diesel}});
             else if (arg == "--pops") config.pops = pick<PopLevel>(value, {{"off", PopLevel::Off}, {"light", PopLevel::Light}, {"strong", PopLevel::Strong}});
             else if (arg == "--release") config.turboRelease = pick<TurboRelease>(value, {{"dump_valve", TurboRelease::DumpValve}, {"flutter", TurboRelease::Flutter}});
@@ -565,6 +575,8 @@ int main(int argc, char** argv) {
     if (turboPipeChoice) powertrain.engine.turboPipeMm = *turboPipeChoice;
     if (camshaftChoice) powertrain.engine.camshaft = *camshaftChoice;
     if (airFilterChoice) powertrain.engine.airFilter = *airFilterChoice;
+    // À la fin : la course se lit sur l'alésage et les cylindres retenus, ceux du préréglage s'il y en a un.
+    if (strokeChoice) powertrain.engine.displacementCc = displacementForStroke(powertrain.engine.boreMm, powertrain.engine.cylinders, *strokeChoice);
     if (customCar) {
         if (!presetId.empty()) {
             if (car.placement != EnginePlacement::Natural) powertrain.car.placement = car.placement;

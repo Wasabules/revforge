@@ -1,5 +1,6 @@
 import presetData from '../../../presets/presets.json';
 import { presetText, t } from './i18n.svelte';
+import { DISPLACEMENT_LIMITS, STROKE_LIMITS, engineStroke } from './stroke';
 
 export type Layout = 'inline' | 'v' | 'cross_plane' | 'boxer';
 export type Exhaust = 'stock' | 'sport' | 'straight' | 'no_muffler' | 'no_resonator' | 'quiet';
@@ -241,8 +242,10 @@ export const BOX_MODELS: { id: string; label: string; note: string; settings: Pa
 ];
 export const CYLINDERS = [2, 3, 4, 5, 6, 8, 10, 12];
 export const LIMITS = {
-  displacementCc: { min: 600, max: 7000, step: 50 },
+  displacementCc: DISPLACEMENT_LIMITS,
   boreMm: { min: 60, max: 110, step: 1 },
+  /** La plage complète : `strokeRange` la resserre pour que la cylindrée reste dans ses limites. */
+  strokeMm: STROKE_LIMITS,
   redlineRpm: { min: 3000, max: 12000, step: 100 },
   boostBar: { min: 0.3, max: 3.5, step: 0.1 },
   turboPipeMm: { min: 150, max: 3000, step: 50 },
@@ -324,8 +327,7 @@ export function cylinderCc(c: EngineConfig): number {
 
 /** Déduite de la cylindrée d'un cylindre et de son alésage. */
 export function strokeMm(c: EngineConfig): number {
-  const boreCm = c.boreMm / 10;
-  return (cylinderCc(c) / ((Math.PI / 4) * boreCm * boreCm)) * 10;
+  return engineStroke(c);
 }
 
 const index = (list: { value: string }[], value: string) => list.findIndex((item) => item.value === value);

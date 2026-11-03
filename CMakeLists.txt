@@ -81,6 +81,12 @@ else()
   golden(lap_boxer_turbo 555e6153 --preset boxer_four_turbo --scenario lap)
   golden(lap_diesel 524d49e4 --preset diesel_four --scenario lap)
   golden(lap_electric 9542ce3b --preset electric --scenario lap)
+  # `--stroke` ne fait que calculer `--cc` : mêmes empreintes que la cylindrée écrite en entier, quel que soit l'ordre.
+  golden(stroke_cc 56bd11c4 --cylinders 4 --bore 96 --cc 1999 --redline 6800 --scenario steady --seconds 1)
+  golden(stroke_args 56bd11c4 --stroke 69.05 --redline 6800 --bore 96 --cylinders 4 --cc 3000 --scenario steady --seconds 1)
+  # Sur un préréglage, la course s'applique à son alésage et à ses cylindres, pas à ceux donnés en plus.
+  golden(stroke_preset 7f3a02ce --preset v10_open --stroke 95 --scenario steady --seconds 1)
+  golden(stroke_preset_bore 7f3a02ce --preset v10_open --stroke 95 --bore 70 --cylinders 4 --scenario steady --seconds 1)
   # Les trajets et les modes de boîte : un moteur sans turbo, sur 40 s.
   golden(drive_stop_go_eco 40a3403c --preset inline_six --scenario lap --seconds 40 --drive-scenario stop_go --shift-mode eco)
   golden(drive_country_sport 3bd2f6e2 --preset inline_six --scenario lap --seconds 40 --drive-scenario country --shift-mode sport)

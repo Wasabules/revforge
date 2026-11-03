@@ -329,6 +329,35 @@ dans l'échappement, et les arcs mobiles d'une des prises vers 2,6 kHz ne sont p
 très peu de prises, et le diesel de 2 L sur des prises de 3 L. Le son étant surtout du bruit, son risque principal
 reste « l'aspirateur », que seule l'oreille peut écarter.
 
+## La course
+
+La course n'est pas un réglage stocké : `V = π/4 × alésage² × course × cylindres` la déduit de la cylindrée et de l'alésage, qui restent ce que le lien de partage garde. Le curseur est une autre façon d'écrire la cylindrée, comme sur un vrai moteur : un vilebrequin plus long à alésage constant, un « stroker ». Quand il bouge, l'alésage reste et la cylindrée s'ajuste, arrondie à l'entier ; quand la cylindrée, l'alésage ou le nombre de cylindres bougent, il suit. `web/src/lib/stroke.ts` fait le calcul, `--stroke` de la CLI aussi (`displacementForStroke`).
+
+**Bornes.** De 40 mm (un V8 de Formule 1 de 2,4 L, 98 mm d'alésage, soit 39,8 mm) à 130 mm (Bugatti Royale, 125 × 130), resserrées pour que la cylindrée reste entre 600 et 7000 cm³. Le pas de 0,5 mm garde l'aller-retour exact : sur le plus petit cylindre, l'arrondi de la cylindrée à l'entier déplace la course de moins de 0,09 mm, moins que le demi-pas. Revenir au cran de départ rend la cylindrée de départ, celle d'un préréglage comprise. Hors de ces bornes, un préréglage, un lien ou les deux autres curseurs restent permis : le texte dit la vraie course, le curseur reste en butée, et rien n'est réécrit tant qu'on n'y touche pas. Les vues dessinent à l'échelle tout ce que le curseur atteint, de 0,36 à 2,2 alésages.
+
+**Ce que la course change vraiment.**
+
+- *Le couple*, seulement par la vitesse moyenne du piston : au-delà de 24 m/s, `breathing` perd `0,012 × excès²`, sans descendre sous 0,55. C'est un bon indicateur : le débit par les soupapes, dont la section suit l'alésage, se lit sur la vitesse du piston (indice de Mach de Taylor). Un V8 de Formule 1 de 39,8 mm à 18 000 tr/min fait 23,9 m/s. Sous cette limite, à cylindrée égale, la courbe ne bouge pas.
+- *Le son* : la bouffée d'échappement dure `√course` et rejette le même volume, donc plus la course est courte, plus elle est brève et forte (`blowdownBase`, `linePressure`). Le débit moyen et la ligne, eux, suivent la cylindrée.
+- *Le dessin et le gaz* : la manivelle, la bielle (1,6 course), la hauteur du bloc, le volume de chaque cylindre et la section du piston.
+- *La cylindrée*, si l'alésage reste : tout ce qui en découle.
+
+**À 2 L et 4 cylindres, 6800 tr/min** (carrosserie compacte, ligne sport) :
+
+| | Super-carré, 96 × 69,1 | Carré, 86 × 86,1 | Longue course, 76 × 110,2 |
+|---|---|---|---|
+| Couple max | 173,6 Nm à 4100 tr/min | identique | identique |
+| Puissance max | 132 ch à 6250 tr/min | identique | identique |
+| Vitesse du piston au rupteur | 15,7 m/s | 19,5 m/s | 25,0 m/s |
+| WLTC | 8,85 L/100 km | identique | identique |
+| 90 km/h | 6,70 L/100 km | identique | identique |
+| LAeq, plein gaz | 90,9 dB(A) | 90,0 dB(A) | 89,0 dB(A) |
+| Bande 8-16 kHz, plein gaz | 17,1 dB | 17,9 dB | 19,0 dB |
+
+À 8500 tr/min, la longue course atteint 31,2 m/s : 182 ch à 6750 tr/min au lieu de 191 ch à 7800.
+
+**Ce que la course ne change pas, et pourquoi.** Trois effets réels manquent, et les ajouter déplacerait toutes les empreintes, puisque tout moteur a une course : le frottement (`frictionTorqueNm` suit le régime, pas la vitesse du piston), l'inertie (`engineInertia` suit la cylindrée, pas le rayon de manivelle ni la masse du piston) et le régime du pic de couple (une part fixe du régime maximal). La consommation à cylindrée égale ne dépend donc pas de la course. Ajouter le seul frottement à la consommation ne serait pas plus juste : une longue course frotte plus, mais perd moins de chaleur par ses parois et brûle plus vite (Filipi et Assanis, *International Journal of Engine Research* 1(2), 2000, lu seulement à travers des résumés de seconde main). Le modèle n'a ni l'un ni l'autre, et n'en montrer qu'un donnerait le mauvais sens : ce bilan reste à faire. Le plancher de 0,55 reste un choix de modèle : au-delà de 30 m/s, aucun moteur réel ne donne de référence.
+
 ## La boîte
 
 Une pièce qu'on choisit et qu'on règle (`GearboxConfig`), indépendante du moteur : on peut monter la même sur deux
