@@ -1792,3 +1792,86 @@ Une came de course ne donne rien sans régime : à 6800 tr/min, elle perd 13 % d
 **Ce que la came expose aux autres sujets**, en fonctions pures de `cam.hpp` : `intakeClosingAbdcDeg`, `effectiveCompressionRatio`, `valveOverlapDeg`, `overlapFactor` et `residualGasFraction` (qui reçoivent les pressions en paramètres), `combustionCov`, `camDurationAtLiftDeg`, `camProfileOf` (levée et durée effectives), `camNoseDecelerationMs2`. Elle lit le régime d'affolement des soupapes en paramètre de `camSwitchRpm` : un second profil qui ne servirait qu'au-delà ne bascule pas. Elle lit aussi `compressionRatio`.
 
 **Ce qui n'est pas modélisé.** Le tube primaire n'est pas accordé à la came : le balayage par l'onde d'échappement reste celui d'un tube amorti. Le cycle n'a qu'un γ et pas de transfert de chaleur. La consommation ne voit que le couple : une came de course y gagne 2,4 %, parce que son couple maximal plus bas fait travailler le moteur plus près de sa pleine charge, alors qu'en réel ses gaz résiduels la feraient plutôt perdre. Le gaz à l'écran et le dessin suivent le profil de base, sans le déphaseur ni la bascule en direct, et le gaz ne suit pas la levée. L'affolement n'a ici aucune conséquence : il appartient aux culbuteurs. **Rien n'a été écouté** : à faire, `revforge-render --out ralenti.wav --preset hot_hatch_na --scenario idle --seconds 8 --cam-duration 300 --cam-lift 13 --lsa 104`, la même chose sans les options de came, et `--vvt two_step --scenario launch --listener bay` pour la bascule.
+
+## Les culbuteurs et l'affolement
+
+`Camshaft::Ohv` ne se fait plus passer pour un simple arbre : un seul arbre dans le bloc pour tout le moteur, des poussoirs hydrauliques, des tiges, des culbuteurs de rapport 1,6 et deux soupapes en ligne sous une culasse en coin. L'affolement des soupapes, lui, vaut pour toutes les distributions. Tout est dans `core/src/valve_float.cpp` (fonctions pures) et `core/src/valvetrain_sound.cpp` (les deux bruits, chacun à son générateur). `revforge-render --valves 1` imprime la distribution d'un réglage.
+
+**Les pièces, ramenées à la soupape.** Ce que voit le ressort est la masse équivalente m = m_soupape + m_coupelle + m_ressort/3 + m_godet + I_culbuteur/L² + (m_poussoir + m_tige)/R², R étant le rapport du culbuteur : ce qui est côté came bouge R fois moins vite. Une soupape pèse comme une tête pleine de 6,5 mm d'épaisseur équivalente (44 g à 33 mm, 103 g à 50,8 mm, l'ordre de vraies soupapes, de mémoire) ; coupelle 18 %, ressort 90 % (un tiers suit), godet 70 %, culbuteur de simple arbre 80 %, culbuteur embouti 60 %, poussoir 85 % de la soupape (supposés d'après des pièces courantes). Un bras pivotant entre ses bouts donne I/L² = m (R² − R + 1)/(3R²). La tige fait 2,1 fois la course (183 mm sur un Small Block, 188 sur un LS), un tube de 0,155 fois la tête (6 mm au moins) alésé à 60 %. Les raideurs s'ajoutent en série, vues de la soupape : queue E·A/L, came et godet 30 kN/mm, bras de culbuteur 12 kN/mm, colonne d'huile du poussoir 40 kN/mm et tige E·A/L, ces deux dernières multipliées par R² (ordres de grandeur supposés). D'où f_n = √(k/m)/2π :
+
+| 2 L, 86 × 86 | Masse ramenée | Fréquence propre | Ressort posé, ouvert |
+|---|---:|---:|---:|
+| Double arbre | 94 g | 2,2 kHz | 231 N, 579 N |
+| Simple arbre | 117 g | 1,15 kHz | 287 N, 717 N |
+| Culbuteurs | 147 g | 800 Hz | 361 N, 903 N |
+| LS1, 99 × 92, 6000 tr/min | 203 g | 716 Hz | 489 N, 1222 N (110 et 275 lb) |
+| Small Block 350, 101,6 × 88,4, 5500 tr/min | 215 g | 708 Hz | 445 N, 1113 N (100 et 250 lb) |
+
+Les ressorts publiés (de mémoire) : 80 et 200 lb sur un Small Block de série, 76 à 85 et 220 à 240 lb sur un LS1, 105 et 280 lb sur un LS6. Le modèle est 20 à 25 % au-dessus du Small Block, entre les deux LS. Les fréquences propres publiées sont de 2 à 3 kHz pour une attaque directe et de 500 à 900 Hz pour des culbuteurs.
+
+**La décélération au nez.** La loi de levée accélère en demi-sinus sur chaque flanc, puis décélère en demi-sinus sur les 60 % du milieu de l'ouverture (supposé : une came de route décélère sur la moitié aux deux tiers de son ouverture, moins fort qu'elle n'accélère). La levée vaut L = v_max·T·s avec s = (1 − f)/4 + f/π, f = 0,6, et la décélération au nez a = π·v_max/(f·T), soit a = π·L·ω²/(f·s·D²) ≈ 18·L·ω²/D², D étant la durée en radians de vilebrequin. Elle suit le carré du régime. La came d'origine lève 0,12 fois l'alésage (`valvetrain.cpp`) sur 240° (le son, `kEvo` à `kEvc`) : 613 g au nez à 7200 tr/min sur 86 mm d'alésage, l'ordre des cames de route.
+
+**Le ressort d'origine.** Le constructeur le dimensionne en cinématique pour la came d'origine : à pleine levée, F = 1,25·m·a(zone rouge), et la force posée vaut 2,5 fois moins (80 et 200 lb, 105 et 280 lb). La souplesse de la chaîne n'y est pas : c'est elle qui sépare les distributions. Une zone rouge plus haute, c'est un ressort plus fort : le préréglage décrit le moteur tel que son constructeur l'a fait tourner.
+
+**Le régime d'affolement.** La soupape quitte la came quand l'inertie, amplifiée par la chaîne, dépasse le ressort au nez. Au premier ordre, la décélération vue de la soupape vaut a/(1 − (f_d/f_n)²), f_d = 1/(2·f·T) étant la fréquence du demi-sinus de décélération. D'où m·α·N²/(1 − β·N²) = F, soit N² = F/(m·α + β·F), avec a = α·N² et (f_d/f_n)² = β·N². Avec le ressort d'origine, N_f = N_r·√(1,25/(1 + 1,25·β·N_r²)) : la marge du constructeur, moins ce que la chaîne lui prend. `valveFloatRpm(const EngineConfig&)` la donne ; le rupteur et la came la liront.
+
+| Préréglage, ressorts d'origine | Zone rouge | Affolement | Marge |
+|---|---:|---:|---:|
+| `city_14` | 6200 | 6921 | +11,6 % |
+| `four_cyl_sport` | 7200 | 8027 | +11,5 % |
+| `three_cyl_turbo` | 6000 | 6698 | +11,6 % |
+| `hot_hatch_turbo` | 6500 | 7252 | +11,6 % |
+| `hot_hatch_na` | 7300 | 8140 | +11,5 % |
+| `five_cyl_turbo` | 7000 | 7807 | +11,5 % |
+| `inline_six` | 8000 | 8913 | +11,4 % |
+| `v6_gt` | 6500 | 7251 | +11,5 % |
+| `flat_six` | 7800 | 8682 | +11,3 % |
+| `boxer_four_turbo` | 6800 | 7578 | +11,4 % |
+| `v8_cross_plane` | 6000 | 6692 | +11,5 % |
+| `v10_open` | 8500 | 9467 | +11,4 % |
+| `v12` | 8900 | 9901 | +11,2 % |
+| `diesel_four` | 4500 | 5026 | +11,7 % |
+| `retro_coupe` (simple arbre) | 6400 | 7099 | +10,9 % |
+| `v8_supercharged` | 6400 | 7133 | +11,5 % |
+| `carb_twin_cam` | 6400 | 7140 | +11,6 % |
+| `twin_rotor_13`, `electric` | — | sans soupapes | — |
+
+Tous restent de 11 à 12 % au-dessus de leur zone rouge, où le rupteur coupe : rien ne change au défaut, et les 29 empreintes sont restées. C'est l'ordre des affolements connus, de 5 à 15 % au-dessus du rupteur ; le LS1 en sort à 6584 tr/min pour 6000, ses ressorts d'origine étant donnés bons jusqu'à 6300 à 6500 environ. Sur des culbuteurs, la chaîne prend 1 à 2 points de plus de la marge (de +7,9 à +10,9 % sur ces mêmes moteurs) : ils peuvent tourner haut, mais au prix de ressorts bien plus forts, qui frottent.
+
+Une came plus pointue avec ses ressorts d'origine abaisse l'affolement : sur `hot_hatch_na`, 12,5 mm de levée sur 200° le font tomber à 6490 tr/min, sous la zone rouge ; des ressorts raides le remontent à 7394. La came réglable lit ces nombres par `camLobeOf` (`camLiftMm`, `camDurationDeg`, 0 d'origine) ; le ressort, lui, reste celui de la came d'origine.
+
+**Des ressorts raides.** 30 % de force en plus, posés comme ouverts (de 24 à 50 % sur les ressorts de préparation courants) : l'affolement monte d'environ √1,3, de 13 à 14 %. Le frottement came-poussoir suit la charge, donc 30 % de plus sur lui : +0,03 bar à 6000 tr/min sur un 2 L de 86 mm de course, de 1 à 4 % du frottement total, plus au ralenti où la came pèse le plus. Comme le reste du frottement de distribution, il est pris au couple au frein dans `breathing` (rapporté à 12 bar de pression moyenne indiquée, comme `sohcBreathingRatio`) et ajouté à `frictionTorqueNm`, que lisent la conduite et la consommation.
+
+**Au-delà de l'affolement.** La force demandée dépasse le ressort d'un rapport ρ = (N/N_f)²·(1 − β·N_f²)/(1 − β·N²). La soupape ne décélère plus qu'à 1/ρ de ce que veut la came : elle reste en l'air ρ fois plus longtemps, et l'admission ferme en retard de Δθ = f·D·(ρ − 1), borné par le flanc de fermeture ((1 − f)·D/2, 48° d'origine). Le piston remonte pendant ce temps et repousse la charge : le cylindre en garde V(fermeture + Δθ)/V(fermeture), bielle de 1,6 course et taux d'origine. La soupape retombe à v_flanc·(1 − 1/ρ), v_flanc = L·ω/(s·D), au lieu de la vitesse de la rampe de fermeture (0,013 mm par degré, supposé), et rebondit : chaque rebond garde e = 0,5 de la vitesse (supposé) et dure 2·e·m·v/F₀. Le rebond est chaotique : chaque cycle garde sa charge à ± la perte moyenne près. Sur `hot_hatch_na`, à 10 % au-delà : 30° de retard, 79 % de la charge gardée, une arrivée à 1,3 m/s pour 0,7 m/s sur la rampe. La courbe de couple plonge (`valveFloatShare`, exactement 1 en dessous), et le son suit.
+
+**Le frottement et l'inertie des culbuteurs.** Le frottement came-poussoir d'un double arbre suit Patton, Nitschke et Heywood (C = 133, voir « Le simple arbre ») ; le simple arbre en a 50 %. Le ressort étant dimensionné sur la masse ramenée, et la came le voyant multiplié par le rapport, les culbuteurs en ont (m·R)_culbuteurs/(m·R)_simple arbre fois plus que le simple arbre : 2,2 fois le double arbre sur le 2 L, 0,144 bar à la zone rouge contre 0,067 et 0,100. C'est de 3 à 10 % du frottement total, le plus au ralenti. Un seul arbre dans le bloc pour tout le moteur, au lieu de deux par rangée : de −0,1 à −0,3 % d'inertie. Les poussoirs et les tiges vont et viennent : leur énergie, ramenée au vilebrequin, pèse moins de 10⁻⁵ kg·m², négligée.
+
+**Le remplissage des culbuteurs.** Deux soupapes en ligne, le long du vilebrequin, sont bornées par le même bord et le même pont que deux soupapes en travers : la même section que le simple arbre, donc le même décrochage en haut, le même accord plus bas, la même bouffée allongée. Ce qui distingue vraiment une culasse à culbuteurs n'est pas modélisé : le pincement des conduits par les tiges, la paroi qui masque des soupapes en ligne, la culasse hémisphérique d'un Hemi.
+
+| Moteur | Distribution | Couple maximal | Puissance maximale | 0 à 100 km/h | WLTC | Affolement |
+|---|---|---|---|---|---|---|
+| 2 L, 86 × 86, 6500 tr/min, compacte de 1200 kg | double | 168,5 Nm à 3900 | 89,9 kW à 5950 | 9,95 s | 8,40 L | 7251 |
+| | simple | 166,9 Nm à 3050 | 79,7 kW à 5700 | 10,38 s | 8,48 L | 7205 |
+| | culbuteurs | 166,2 Nm à 3050 | 79,5 kW à 5700 | 10,40 s | 8,58 L | 7140 |
+| | culbuteurs, ressorts raides | 165,6 Nm à 3100 | 79,2 kW à 5700 | 10,44 s | 8,69 L | 8099 |
+| `hot_hatch_na` | double | 194,1 Nm à 4500 | 117,8 kW à 6750 | 8,72 s | 9,07 L | 8140 |
+| | culbuteurs | 188,2 Nm à 3400 | 95,8 kW à 6100 | 9,44 s | 9,16 L | 7985 |
+| | culbuteurs, ressorts raides | 187,5 Nm à 3400 | 95,5 kW à 6100 | 9,46 s | 9,25 L | 9047 |
+| `v8_cross_plane` | double | 428,9 Nm à 3700 | 214,0 kW à 5550 | 6,95 s | 13,90 L | 6692 |
+| | simple | 424,0 Nm à 3000 | 194,5 kW à 5400 | 6,78 s | 14,13 L | 6646 |
+| | culbuteurs | 422,3 Nm à 3000 | 193,8 kW à 5400 | 6,78 s | 14,35 L | 6592 |
+| | culbuteurs, ressorts raides | 420,7 Nm à 3000 | 193,1 kW à 5400 | 6,78 s | 14,56 L | 7478 |
+
+Face au simple arbre, les culbuteurs ne perdent que leur frottement : −0,4 % de couple, +1 à +1,6 % au WLTC. Face au double arbre, c'est surtout la section de deux soupapes qui coûte. Un vrai couple : la Corvette de 1992, LT1 à culbuteurs (101,6 × 88,4, rupteur vers 5700), 224 kW à 5000 et 461 Nm à 3600 ; la ZR-1, LT5 à double arbre (99 × 93, 7000), 280 kW à 5800 puis 302 kW (chiffres de mémoire). Le modèle donne 208 kW à 5200 et 472 Nm à 2850 au premier, 315 kW à 6450 et 542 Nm à 4350 au second : un écart de 1,52 au lieu de 1,25 à 1,35. Le sens est juste, l'écart trop grand : la zone rouge plus haute du LT5 pousse aussi sa pression moyenne (`naturalBmep`), et le LT1 avait ses propres conduits et sa propre came. Rien n'a été ajusté pour coller à ces chiffres. Deux autres moteurs à tiges, réglés comme eux (de mémoire) : le Ford Windsor 302 HO (101,6 × 76,2), 168 kW à 4200 et 407 Nm à 3200, que le modèle donne à 173 kW à 5300 et 386 Nm à 2850 (zone rouge de 5800 supposée), soupapes affolées à 6376 tr/min ; le BMC série A de 1275 cm³ de la Mini Cooper S (70,6 × 81,3), 57 kW à 5800 et 107 Nm à 3000, que le modèle donne à 51 kW à 5700 et 106 Nm à 3100 (zone rouge de 6500), 97 g en mouvement à chaque soupape, une chaîne à 964 Hz, soupapes affolées à 7179 tr/min.
+
+**Le son des poussoirs.** À chaque ouverture, le corps du poussoir, poussé par la came sur sa rampe, rattrape la course de fuite du plongeur et frappe tout ce qui est au-dessus : la tige, le culbuteur et la soupape, vus du poussoir multipliés par R². L'impulsion vaut μ·v, μ étant la masse réduite des deux côtés et v la vitesse de la rampe divisée par le rapport. Rapportée à celle du culbuteur d'un simple arbre qui rattrape son jeu sur la queue (`kRockerShare`, le seul niveau supposé de cette chaîne), elle donne 1,79 fois plus sur le V8 : +5 dB. Le choc fait sonner la tige en flexion, à son deuxième mode d'une poutre appuyée, 4·(π/2L²)·√(EI/ρA) : 2,1 kHz sur le V8, 1,9 à 2,9 kHz sur les moteurs publiés. Il rayonne par le couvre-culasse, comme le culbuteur, et à son propre générateur. Mesuré face au simple arbre au ralenti (800 tr/min) : relief de la bande du choc en fenêtres de 1 ms +2,6 dB sous le capot, −0,04 dB dehors, et la bande 8-16 kHz face à 500-2000 Hz ne bouge pas dehors (−66,91 dB contre −66,91). Le choc ne passe donc pas devant l'échappement. Un rattrapage mécanique (poussoirs à jeu) frapperait plus fort ; le modèle suppose des poussoirs hydrauliques, dont le film d'huile n'est pas modélisé autrement.
+
+**Le son de l'affolement.** Moins de charge, ce sont des bouffées plus faibles ; un rebond chaotique, des cycles inégaux ; une soupape qui retombe vite, un siège qui claque. Le claquement suit la vitesse d'arrivée (impulsion m·v), rapportée au tic d'origine du siège, calé au ralenti où la soupape se pose à la vitesse de la rampe à ce régime, et à son propre générateur ; il finit ses rebonds quand le régime retombe. Mesuré sur `hot_hatch_na`, face au même moteur dont les soupapes ne s'affoleraient jamais : à 15 % au-delà (9361 tr/min), −2,4 dB(A) dehors et un écart d'énergie d'un cycle à l'autre de 0,33 au lieu de 0,18 ; à 25 % au-delà, +1,7 dB sous le capot entre 6 et 12 kHz. Sous l'affolement, le son est identique au bit près (test). En conduite, le rupteur arrête le moteur avant l'affolement d'origine : il ne s'entend qu'avec une came plus pointue, ou un rétrogradage qui fait passer le moteur au-delà.
+
+**Ce que lisent et exposent les autres sujets.** Exposés : `valveFloatRpm(const EngineConfig&)` (0 sans soupapes), et pour un réglage donné `valvetrainParts`, `valveSpringOf`, `noseDecelerationMs2`, `valvetrainProfileOf`, `floatOverload`, `floatTrappedShare`, `valveFloatShare`. Lus comme paramètres : `camLiftMm` et `camDurationDeg` (`camLobeOf`, 0 d'origine), dont la fermeture de l'admission se déduit à cheval sur l'axe de came (50° après le point mort bas d'origine) ; `compressionRatio` (0 : la règle du démarreur). Un rotatif et un deux-temps n'ont pas de soupapes (`hasValves`) : rien de tout cela ne s'y applique.
+
+**Ce qui est supposé, et ce qui manque.** Une chaîne à un degré de liberté, amplifiée au premier ordre : ni rebond de la tige, ni pompage du poussoir hydraulique quand la soupape s'affole (il la tiendrait ouverte), ni flexion de l'arbre. La marge de 1,25, la loi de levée, les parts des pièces et les raideurs sont supposées, chiffrées depuis quelques pièces connues de mémoire. La soupape d'échappement, plus légère, n'est pas calculée à part : celle d'admission s'affole la première. Les gaz résiduels d'un échappement qui ferme tard ne sont pas comptés. La vue dessine toujours une culasse en coin, soupapes en ligne.
+
+**À l'écran.** `engineLayout` déduit l'arbre dans le bloc de l'architecture : au fond du V, au-dessus des contrepoids, ou sur le flanc d'admission d'un moteur en ligne (`blockCamPosition`). Les culbuteurs reprennent le levier du simple arbre, retourné : la queue penche vers l'échappement, la tige monte côté admission, et l'axe du poussoir vise le patin à mi-levée. Le poussoir monte de la levée divisée par le rapport (`lifterTop`), le patin suit l'angle exact du culbuteur (`rockerPad`), et la tige va de l'un à l'autre : sa longueur varie de moins de 3 % de l'alésage sur un tour (`culbuteurs.spec.ts`). Le gaz à l'écran garde la section de deux soupapes (`twoValves`, `valves.ts`). Le volet de la distribution affiche le régime d'affolement, la masse ramenée et les ressorts que calcule le C++ (`rf_valve_sheet`).
+
+**Écoute à faire.** Le tic des poussoirs : `revforge-render --out ralenti_culbuteurs.wav --preset v8_cross_plane --cam ohv --scenario steady --rpm 800 --listener bay`, face à `--cam sohc` et `--cam dohc`, puis dehors (`--listener outside`). L'affolement : `revforge-render --out affolement.wav --preset hot_hatch_na --cam-lift 12.5 --cam-duration 200 --scenario lap`, face à `--springs stiff`, et `--scenario steady --rpm 9000 --listener bay` face à 7500.

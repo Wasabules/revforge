@@ -18,7 +18,7 @@ import { carburetorOf } from './carburetor';
 import type { EngineConfig, Exhaust, Layout } from './config';
 import { EXHAUST_LINES, TURBO_SCALE } from './exhaustLines';
 import { WALL_RISE_K } from './heat';
-import { sohcSectionShare } from './valves';
+import { sohcSectionShare, twoValves } from './valves';
 import { camShift } from './cam';
 import { CYCLE_PER_SHAFT, EXHAUST_PORT_SHARE, firingsPerCycle, INTAKE_PORT_SHARE, isRotary, rotaryCompression, rotaryShape, SHAFT_EVC, SHAFT_EVO, SHAFT_INTAKE_SWEEP, SHAFT_IVC, SHAFT_IVO, SHAFT_PORT_SWEEP, sweptCc, WALL_RATIO } from './rotary';
 
@@ -618,9 +618,8 @@ export class GasNetwork {
     this.clearance = cylinderVolume / (ratio - 1);
     this.exhaustValve = 0.19 * this.boreArea;
     this.intakeValve = 0.24 * this.boreArea;
-    // Socle : les culbuteurs (`ohv`, deux soupapes) comme le simple arbre.
-    if ((config.camshaft === 'sohc' || config.camshaft === 'ohv') && !rotary) {
-      // Deux soupapes au lieu de quatre : le même calcul de section que le C++ (`valves.ts`).
+    if (twoValves(config.camshaft ?? 'dohc') && !rotary) {
+      // Deux soupapes au lieu de quatre, sous un simple arbre comme sous des culbuteurs : le même calcul de section que le C++ (`valves.ts`).
       const share = sohcSectionShare(config.boreMm);
       this.exhaustValve *= share.exhaust;
       this.intakeValve *= share.intake;

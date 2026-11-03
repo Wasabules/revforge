@@ -291,5 +291,7 @@ TEST_CASE("le simple arbre : temps réel, blocs, parole tenue au changement d'ar
     EngineProfile back = single;
     back.camshaft = Camshaft::Dohc;
     const EngineProfile twin = withCam(findPreset("hot_hatch_na")->powertrain(), Camshaft::Dohc).profile();
+    // L'affolement dépend des pièces de la distribution : lui aussi revient avec elles.
+    back.valves = twin.valves;
     CHECK(back == twin);
 }

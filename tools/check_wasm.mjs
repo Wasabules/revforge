@@ -832,4 +832,45 @@ const camLoad = (changes) => {
   const hash = render(rf, 12, 128, (step) => rf.rf_set_controls(step * TICK_S >= 1 ? 1 : 0, 0, 0));
   check('came, deux profils et déphaseur, plein gaz', hash, native(...camArgs, '--vvt', 'phased_two_step', '--scenario', 'launch', '--seconds', '12'));
 }
+// Les culbuteurs : le choc des poussoirs au ralenti, puis tout un tour, au son comme à la consommation (frottement de came).
+{
+  const pushrodV8 = (changes) => {
+    const rf = load();
+    rf.rf_set_car(BODY.coupe, 1700, 19, DRIVE.rear, PLACEMENT.front, INSULATION.light);
+    tune(rf, changes);
+    rf.rf_set_config(8, LAYOUT.cross_plane, 5000, 96, 6000, EXHAUST.sport, 0, 0, 0, 1, 0, 1, ROUTING.dual, TURBO.medium, 0, 0, 400, CAMSHAFT.ohv, 0);
+    return rf;
+  };
+  const steady = pushrodV8({});
+  steady.rf_set_mode(4);
+  steady.rf_set_manual_rpm(900);
+  check('culbuteurs, ralenti tenu', render(steady, 4, 512), native('--preset', 'v8_cross_plane', '--cam', 'ohv', '--scenario', 'steady', '--rpm', '900'));
+  const lap = pushrodV8({ valveSprings: SPRINGS.stiff });
+  lap.rf_set_mode(3);
+  check('culbuteurs et ressorts raides, tour de V8', render(lap, 30, 128), native('--preset', 'v8_cross_plane', '--cam', 'ohv', '--springs', 'stiff', '--scenario', 'lap', '--seconds', '30'));
+  const fuel = pushrodV8({ valveSprings: SPRINGS.stiff });
+  fuel.rf_set_mode(3);
+  driveLikeNative(fuel, 30);
+  checkFigures('culbuteurs et ressorts raides, consommation', fuel, nativeFigures('--preset', 'v8_cross_plane', '--cam', 'ohv', '--springs', 'stiff', '--scenario', 'lap', '--seconds', '30'));
+}
+// L'affolement : une came plus pointue avec ses ressorts d'origine le fait tomber sous la zone rouge. Au-delà, le remplissage
+// chute, les cycles se dispersent et le siège claque ; régime tenu au-dessus, puis le tour, où la conduite l'atteint.
+{
+  const pointed = { camLiftMm: 12.5, camDurationDeg: 200 };
+  const options = ['--cam-lift', '12.5', '--cam-duration', '200'];
+  const hatch = () => {
+    const rf = load();
+    rf.rf_set_car(BODY.compact, 1250, 17, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+    tune(rf, pointed);
+    rf.rf_set_config(4, LAYOUT.inline, 1998, 82, 7300, EXHAUST.sport, 0, 0, 0, 1, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+    return rf;
+  };
+  const steady = hatch();
+  steady.rf_set_mode(4);
+  steady.rf_set_manual_rpm(7200);
+  check('affolement, régime tenu au-delà', render(steady, 4, 512), native('--preset', 'hot_hatch_na', ...options, '--scenario', 'steady', '--rpm', '7200'));
+  const lap = hatch();
+  lap.rf_set_mode(3);
+  check('affolement, tour', render(lap, 30, 128), native('--preset', 'hot_hatch_na', ...options, '--scenario', 'lap', '--seconds', '30'));
+}
 process.exit(failed ? 1 : 0);

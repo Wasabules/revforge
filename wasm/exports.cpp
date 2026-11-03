@@ -10,6 +10,7 @@
 #include "revforge/particulate_filter.hpp"
 #include "revforge/powertrain.hpp"
 #include "revforge/sound_sheet.hpp"
+#include "revforge/valve_float.hpp"
 #include "../core/src/exhaust_line.hpp"
 
 using namespace revforge;
@@ -630,5 +631,26 @@ float rf_cam_spec(int which) {
 }
 int rf_cam_high() { return g_model->camDrive().high ? 1 : 0; }
 float rf_cam_phaser() { return g_model->camDrive().phaserDeg; }
+
+/**
+ * La distribution de ce réglage (voir « Les culbuteurs et l'affolement ») : 0 régime d'affolement (tr/min, 0 sans soupapes),
+ * 1 masse ramenée à la soupape (g), 2 et 3 ressort posé et à pleine levée (N), 4 fréquence propre de la chaîne (Hz),
+ * 5 rapport du culbuteur.
+ */
+float rf_valve_sheet(int item) {
+    const EngineConfig& e = g_powertrain.engine;
+    if (g_powertrain.electric || !hasValves(e)) return 0.0f;
+    if (item == 0) return static_cast<float>(valveFloatRpm(e));
+    const ValvetrainParts parts = valvetrainParts(e.valvetrain(), static_cast<double>(e.boreMm), static_cast<double>(e.strokeMm()));
+    const ValveSpring spring = valveSpringOf(e);
+    switch (item) {
+        case 1: return static_cast<float>(parts.effectiveKg * 1000.0);
+        case 2: return static_cast<float>(spring.preloadN);
+        case 3: return static_cast<float>(spring.forceN(camLobeOf(e).liftMm));
+        case 4: return static_cast<float>(parts.naturalHz);
+        case 5: return static_cast<float>(parts.ratio);
+        default: return 0.0f;
+    }
+}
 
 }  // extern "C"

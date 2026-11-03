@@ -15,6 +15,7 @@
 #include "revforge/driving_model.hpp"
 #include "revforge/engine_sound.hpp"
 #include "revforge/presets.hpp"
+#include "revforge/valve_float.hpp"
 
 using namespace revforge;
 
@@ -71,7 +72,33 @@ void usage() {
         "          --fuel 1: also print the estimated fuel, oil or energy used, and the best of the engine's fuel map\n"
         "          --trace FILE: write the turbo, its anti-lag, the fuel and the knock as CSV, one line per slice\n"
         "          --thermal FILE: write the engine temperatures and what a cold engine changes as CSV, one line per 0.1 s\n"
-        "          --walk 1: the head walks through the car at 1.2 m/s (with lap)");
+        "          --walk 1: the head walks through the car at 1.2 m/s (with lap)\n"
+        "          --valves 1: also print the valvetrain: moving mass, springs, valve float rpm");
+}
+
+/** La distribution : ses pièces, son ressort et son régime d'affolement (voir « Les culbuteurs et l'affolement »). */
+void printValves(const Powertrain& powertrain) {
+    const EngineConfig& e = powertrain.engine;
+    if (powertrain.electric || !hasValves(e)) {
+        std::printf("Valvetrain: none, no valves\n");
+        return;
+    }
+    const Camshaft kind = e.valvetrain();
+    const ValvetrainParts parts = valvetrainParts(kind, static_cast<double>(e.boreMm), static_cast<double>(e.strokeMm()));
+    const CamLobe cam = camLobeOf(e);
+    const ValveSpring spring = valveSpringOf(e);
+    const double floatRpm = valveFloatRpm(e);
+    const double redline = static_cast<double>(e.redlineRpm);
+    const char* name = kind == Camshaft::Ohv ? "pushrods (OHV)" : (kind == Camshaft::Sohc ? "single overhead cam" : "twin overhead cams");
+    std::printf("Valvetrain: %s, %d valves per cylinder, rocker ratio %.2f, intake head %.1f mm\n", name, twoValves(kind) ? 2 : 4, parts.ratio, parts.headMm);
+    std::printf("Moving mass at the valve %.1f g: valve %.1f, retainer %.1f, a third of the spring %.1f, bucket %.1f, rocker %.1f, lifter and pushrod / ratio^2 %.1f\n",
+                parts.effectiveKg * 1000.0, parts.valveKg * 1000.0, parts.retainerKg * 1000.0, parts.springKg * 1000.0 / 3.0, parts.bucketKg * 1000.0,
+                parts.rockerAtValveKg * 1000.0, (parts.lifterKg + parts.pushrodKg) / (parts.ratio * parts.ratio) * 1000.0);
+    std::printf("Stiffness at the valve %.1f kN/mm, natural frequency %.0f Hz\n", parts.stiffnessNPerM / 1e6, parts.naturalHz);
+    std::printf("Cam: %.2f mm over %.0f deg; nose deceleration %.0f m/s^2 at the redline\n", cam.liftMm, cam.durationDeg, noseDecelerationMs2(cam, redline));
+    std::printf("Spring: %.0f N seated, %.0f N at full lift, %.1f N/mm\n", spring.preloadN, spring.forceN(cam.liftMm), spring.rateNPerMm);
+    std::printf("Valve float: %.0f rpm, %+.1f %% from the redline\n", floatRpm, (floatRpm / redline - 1.0) * 100.0);
+    std::printf("Cam friction at the redline: %.3f bar, of which stiff springs %.3f bar\n", followerFrictionBar(e, redline), springFrictionDeltaBar(e, redline));
 }
 
 template <typename T>
@@ -618,7 +645,7 @@ void passby(EngineSound& sound, DrivingModel& model, Output& out, int rate, floa
 
 int main(int argc, char** argv) {
     std::string out, scenario = "lap", presetId, at;
-    bool stereo = false, showDb = false, walk = false, showFuel = false, showKnock = false;
+    bool stereo = false, showDb = false, walk = false, showFuel = false, showKnock = false, showValves = false;
     ShiftMode shiftMode = ShiftMode::Normal;
     DriveScenario driveScenario = DriveScenario::City;
     double kmh = 90.0;
@@ -693,6 +720,7 @@ int main(int argc, char** argv) {
         else if (arg == "--db") showDb = value != "0";
         else if (arg == "--fuel") showFuel = value != "0";
         else if (arg == "--knock") showKnock = value != "0";
+        else if (arg == "--valves") showValves = value != "0";
         else if (arg == "--trace") {
             g_trace = std::fopen(value.c_str(), "w");
             if (g_trace == nullptr) {
@@ -934,6 +962,7 @@ int main(int argc, char** argv) {
     if (silent) {
         if (showFuel) printFuel(model, powertrain, measured, driver.restarts);
         if (showKnock) printKnock(powertrain, sound);
+        if (showValves) printValves(powertrain);
         return 0;
     }
     if (out == "-") {
@@ -946,11 +975,13 @@ int main(int argc, char** argv) {
         std::printf("%08x\n", hash);
         if (showFuel) printFuel(model, powertrain, measured, driver.restarts);
         if (showKnock) printKnock(powertrain, sound);
+        if (showValves) printValves(powertrain);
         return 0;
     }
     writeWav(out, pcm, rate, channels);
     if (showFuel) printFuel(model, powertrain, measured, driver.restarts);
     if (showKnock) printKnock(powertrain, sound);
+    if (showValves) printValves(powertrain);
     if (showDb) std::printf("LAeq %.1f dB(A), LAFmax %.1f dB(A)\n", 10.0 * std::log10(output.energy / static_cast<double>(std::max(output.reads, 1L))), output.loudest);
     return 0;
 }

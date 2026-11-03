@@ -5,7 +5,7 @@
  * construction ; dessiner une image n'alloue rien.
  */
 import { mix, type Theme } from './canvas';
-import { collectorPosition, DEG, type Cylinder, type EngineLayout, type EnginePose, lobeNoseDeg, lobeRadius, plenumPosition, stackOf, rockerOutline, hasOpenStacks } from './engineLayout';
+import { collectorPosition, DEG, type Cylinder, type EngineLayout, type EnginePose, lifterTop, lobeNoseDeg, lobeRadius, plenumPosition, rockerPad, stackOf, rockerOutline, hasOpenStacks, valveSide } from './engineLayout';
 import { chargerUnit, lobedOutline, type ChargerUnit } from './superchargerLayout';
 import { turboChain, type TurboChain, type TurboUnit } from './turboChain';
 import { heatColors } from './heat';
@@ -45,8 +45,11 @@ export interface Labels2D {
   pan: string;
   head: string;
   block: string;
-  /** Le culbuteur d'un simple arbre. */
+  /** Le culbuteur d'un simple arbre ou d'un moteur à culbuteurs. */
   rocker?: string;
+  /** Les tiges et les poussoirs d'un moteur à culbuteurs. */
+  pushrod?: string;
+  lifter?: string;
   /** Le carburateur : absent sur une injection. */
   carburetor?: string;
   /** Les pièces du turbo : absentes sur un moteur qui n'en a pas. */
@@ -93,6 +96,9 @@ export class Engine2D {
   private readonly signList: readonly number[];
   /** Les cylindres coupés de face : le premier de chaque culasse, et sur un VR celui de chaque rangée, la plus loin d'abord. */
   private readonly sections: readonly Cylinder[];
+  /** De quoi placer tige et poussoir sans allouer : unités de côté (voir `rockerPad`, `lifterTop`). */
+  private readonly pad = [0, 0];
+  private readonly lifted = [0, 0];
 
   constructor(private readonly layout: EngineLayout) {
     const { bore, crank, rod, pinRadius, mainRadius, deck, valve } = layout;
@@ -189,10 +195,10 @@ export class Engine2D {
     this.oil = polyPath([[-panWidth * 0.86, yBottom + 0.5], [panWidth * 0.86, yBottom + 0.5], [panWidth * 0.93, oilTop], [-panWidth * 0.93, oilTop]]);
 
     // Les conduits, dans la culasse.
-    const port = (radius: number): Path2D => {
+    // Sous des culbuteurs, les deux soupapes sont du côté de l'échappement : vue du côté de l'admission, la sienne est en miroir.
+    const port = (radius: number, seatX: number): Path2D => {
       const path = new Path2D();
       const portY = deck + bore * 0.62;
-      const seatX = valve.x;
       const seatY = deck + valve.seatRise + radius * 0.2;
       path.moveTo(W, portY + radius);
       path.bezierCurveTo(W * 0.72, portY + radius, seatX + radius * 1.1, portY + radius * 0.4, seatX + radius, seatY);
@@ -201,13 +207,13 @@ export class Engine2D {
       path.closePath();
       return path;
     };
-    this.portIn = port(valve.radiusIn * 0.68);
-    this.portEx = port(valve.radiusEx * 0.68);
+    this.portIn = port(valve.radiusIn * 0.68, valve.inline ? -valve.x : valve.x);
+    this.portEx = port(valve.radiusEx * 0.68, valve.x);
 
     // Les bossages de came, un par cylindre, tout autour de leur arbre.
     for (const cylinder of layout.cylinders) {
       for (const exhaust of [false, true]) {
-        const side = exhaust ? -cylinder.intakeSide : cylinder.intakeSide;
+        const side = valveSide(valve, cylinder, exhaust);
         const open = exhaust ? layout.timing.evo : layout.timing.ivo;
         const close = exhaust ? layout.timing.evc : layout.timing.ivc;
         const nose = lobeNoseDeg(cylinder, valve.followerDeg, side, open, close);
@@ -504,9 +510,24 @@ export class Engine2D {
         // Au-dessus du culbuteur d'admission de la première rangée.
         const first = layout.byBank[0][0];
         const b = first.betaDeg * DEG;
-        const x = first.intakeSide * layout.valve.rocker.pivotX;
+        const x = valveSide(layout.valve, first, false) * layout.valve.rocker.pivotX;
         const y = layout.valve.coverTop + bore * 0.08;
         labelAt(labels.rocker, x * Math.cos(b) + y * Math.sin(b), -x * Math.sin(b) + y * Math.cos(b));
+      }
+      const pushrod = layout.valve.pushrod;
+      if (pushrod && labels.pushrod && labels.lifter) {
+        // À côté de la tige et du poussoir de la dernière rangée dessinée, vers l'extérieur.
+        const last = layout.byBank[layout.banks - 1][0];
+        const b = last.betaDeg * DEG;
+        const side = valveSide(layout.valve, last, false);
+        const valve = layout.valve;
+        const at = (along: number, out: number, text: string) => {
+          const x = side * (valve.camX + pushrod.axisX * along + pushrod.axisY * out);
+          const y = valve.camY + pushrod.axisY * along - pushrod.axisX * out;
+          labelAt(text, x * Math.cos(b) + y * Math.sin(b), -x * Math.sin(b) + y * Math.cos(b));
+        };
+        at(valve.camBase + pushrod.lifterLength * 0.5, -bore * 0.42, labels.lifter);
+        at(valve.camBase + pushrod.lifterLength + bore * 0.9, -bore * 0.3, labels.pushrod);
       }
       if (labels.carburetor) {
         const plenum = plenumPosition(layout);
@@ -706,8 +727,9 @@ export class Engine2D {
     }
 
     // Les soupapes et leur commande : la coupe passe par une admission et un échappement.
-    this.drawValve(ctx, cylinder, side, valve.radiusIn, pose.liftIn[i] * valve.lift, theme.metal, theme, px, false, pose);
-    this.drawValve(ctx, cylinder, -side, valve.radiusEx, pose.liftEx[i] * valve.lift, theme.text, theme, px, true, pose);
+    // Sous des culbuteurs, les deux soupapes sont l'une derrière l'autre : la coupe les montre superposées.
+    this.drawValve(ctx, cylinder, valveSide(valve, cylinder, false), valve.radiusIn, pose.liftIn[i] * valve.lift, theme.metal, theme, px, false, pose);
+    this.drawValve(ctx, cylinder, valveSide(valve, cylinder, true), valve.radiusEx, pose.liftEx[i] * valve.lift, theme.text, theme, px, true, pose);
 
     // L'allumage. Sur un simple arbre, l'arbre occupe le milieu : bougie ou injecteur entrent à côté, penchés vers l'échappement.
     const tip = deck + roof - bore * 0.03;
@@ -769,8 +791,8 @@ export class Engine2D {
     const jetIn = pose.jetIn[i];
     const jetEx = pose.jetEx[i];
     const space = Math.max(deck - crown + roof * 0.5, 1);
-    if (jetIn > 0.02 || jetIn < -0.02) this.jet(ctx, side, deck + valve.seatRise - pose.liftIn[i] * valve.lift, Math.min(Math.abs(jetIn) * 1.8, 1) * space, jetIn > 0 ? theme.cool : theme.accent, px);
-    if (jetEx > 0.02 || jetEx < -0.02) this.jet(ctx, -side, deck + valve.seatRise - pose.liftEx[i] * valve.lift, Math.min(Math.abs(jetEx) * 1.4, 1) * space, jetEx > 0 ? '#ffeed6' : theme.cool, px);
+    if (jetIn > 0.02 || jetIn < -0.02) this.jet(ctx, valveSide(valve, cylinder, false), deck + valve.seatRise - pose.liftIn[i] * valve.lift, Math.min(Math.abs(jetIn) * 1.8, 1) * space, jetIn > 0 ? theme.cool : theme.accent, px);
+    if (jetEx > 0.02 || jetEx < -0.02) this.jet(ctx, valveSide(valve, cylinder, true), deck + valve.seatRise - pose.liftEx[i] * valve.lift, Math.min(Math.abs(jetEx) * 1.4, 1) * space, jetEx > 0 ? '#ffeed6' : theme.cool, px);
 
     ctx.restore();
 
@@ -841,6 +863,42 @@ export class Engine2D {
       ctx.stroke();
     }
     ctx.restore();
+
+    const pushrod = valve.pushrod;
+    if (pushrod && valve.rocker) {
+      // Le poussoir, posé sur la came dans son alésage, puis la tige, jusqu'au patin du culbuteur.
+      const angle = exhaust ? pose.rockerEx[cylinder.index] : pose.rockerIn[cylinder.index];
+      const share = lift / valve.lift;
+      lifterTop(valve, share, this.lifted);
+      rockerPad(valve, angle, this.pad);
+      const along = pushrod.lifterLength;
+      const bottomX = this.lifted[0] - pushrod.axisX * along;
+      const bottomY = this.lifted[1] - pushrod.axisY * along;
+      ctx.fillStyle = theme.metal;
+      ctx.strokeStyle = theme.text;
+      ctx.lineWidth = px;
+      ctx.beginPath();
+      const nx = pushrod.axisY * pushrod.lifterRadius;
+      const ny = -pushrod.axisX * pushrod.lifterRadius;
+      ctx.moveTo(side * (bottomX + nx), bottomY + ny);
+      ctx.lineTo(side * (this.lifted[0] + nx), this.lifted[1] + ny);
+      ctx.lineTo(side * (this.lifted[0] - nx), this.lifted[1] - ny);
+      ctx.lineTo(side * (bottomX - nx), bottomY - ny);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.strokeStyle = theme.text;
+      ctx.lineWidth = pushrod.rodRadius * 2;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(side * this.lifted[0], this.lifted[1]);
+      ctx.lineTo(side * this.pad[0], this.pad[1]);
+      ctx.stroke();
+      ctx.strokeStyle = theme.metal;
+      ctx.lineWidth = pushrod.rodRadius;
+      ctx.stroke();
+      ctx.lineCap = 'butt';
+    }
 
     if (valve.rocker && this.rockerPath) {
       // Le culbuteur : dessiné du côté +1, en miroir de l'autre. Il bascule autour de son axe.
@@ -1877,6 +1935,25 @@ export class Engine2D {
       const up = lobeRadius(valve.camBase, valve.camLift, fromNose + 180, open, close);
       ctx.fillStyle = theme.text;
       const lobeHalf = valve.sohc ? bore * 0.065 : bore * 0.075;
+      const pushrod = valve.pushrod;
+      if (pushrod) {
+        // Culbuteurs : la came est en bas, le poussoir monte d'elle, la tige monte au culbuteur. Leur hauteur se lit sur l'axe du cylindre.
+        ctx.fillRect(u + dz - lobeHalf, valve.camY - up, lobeHalf * 2, down + up);
+        lifterTop(valve, share, this.lifted);
+        rockerPad(valve, exhaust ? pose.rockerEx[i] : pose.rockerIn[i], this.pad);
+        const lifterBottom = this.lifted[1] - pushrod.axisY * pushrod.lifterLength;
+        ctx.fillStyle = theme.metal;
+        ctx.fillRect(u + dz - pushrod.lifterRadius, lifterBottom, pushrod.lifterRadius * 2, this.lifted[1] - lifterBottom);
+        ctx.strokeRect(u + dz - pushrod.lifterRadius, lifterBottom, pushrod.lifterRadius * 2, this.lifted[1] - lifterBottom);
+        ctx.fillStyle = theme.text;
+        ctx.fillRect(u + dz - pushrod.rodRadius, this.lifted[1], pushrod.rodRadius * 2, this.pad[1] - this.lifted[1]);
+        // Le culbuteur, vu de côté : un bras au-dessus de la queue.
+        ctx.fillStyle = theme.raised;
+        const rockerY = Math.min(this.pad[1], stemTop - lift) + bore * 0.02;
+        ctx.fillRect(u + dz - valve.rocker!.width / 2, rockerY, valve.rocker!.width, bore * 0.08);
+        ctx.strokeRect(u + dz - valve.rocker!.width / 2, rockerY, valve.rocker!.width, bore * 0.08);
+        continue;
+      }
       ctx.fillRect(u + dz - lobeHalf, valve.camY - down, lobeHalf * 2, down + up);
     }
     // L'allumage, au milieu ; à côté de l'arbre sur un simple arbre.

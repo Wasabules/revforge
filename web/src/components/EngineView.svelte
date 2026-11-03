@@ -206,6 +206,7 @@
       head: t('engine.part.head'),
       block: t('engine.part.block'),
       ...(layout?.valve.sohc ? { rocker: t('engine.part.rocker') } : {}),
+      ...(layout?.valve.pushrod ? { pushrod: t('engine.part.pushrod'), lifter: t('engine.part.lifter') } : {}),
       ...(layout?.carb ? { carburetor: t('engine.part.carburetor') } : {}),
       ...(layout?.turbo ? {
         compressor: t('engine.part.compressor'),

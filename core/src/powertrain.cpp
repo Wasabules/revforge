@@ -12,6 +12,7 @@
 #include "revforge/ecu.hpp"
 #include "revforge/injection.hpp"
 #include "revforge/particulate_filter.hpp"
+#include "revforge/valve_float.hpp"
 #include "revforge/valvetrain.hpp"
 
 namespace revforge {
@@ -97,8 +98,8 @@ double breathing(const EngineConfig& e, double rpm) {
     const double redline = static_cast<double>(e.redlineRpm);
     // Un moteur suralimenté, turbo ou compresseur, a des cames plus sages : son couple culmine un peu plus tôt.
     double peakAt = (e.aspiration == Aspiration::Natural ? 0.62 : 0.6) * redline;
-    // Moins de section, un gaz plus rapide : l'admission s'accorde plus bas (voir « Le simple arbre »).
-    if (e.valvetrain() == Camshaft::Sohc) peakAt *= sohcTuningRatio(static_cast<double>(e.boreMm));
+    // Moins de section, un gaz plus rapide : l'admission s'accorde plus bas (voir « Le simple arbre »). Les culbuteurs aussi ont deux soupapes.
+    if (twoValves(e.valvetrain())) peakAt *= sohcTuningRatio(static_cast<double>(e.boreMm));
     double shape;
     if (rpm <= peakAt) {
         const double below = 1.0 - rpm / peakAt;
@@ -114,7 +115,13 @@ double breathing(const EngineConfig& e, double rpm) {
         shape *= std::max(1.0 - 0.012 * excess * excess, 0.55);
         // Deux soupapes au lieu de quatre : le gaz qui passe mal, calculé depuis la section et la vitesse du piston.
         // L'indice de Mach se compte dans l'air du jour : 343 m/s à 20 °C.
-        if (e.valvetrain() == Camshaft::Sohc) shape *= sohcBreathingRatio(static_cast<double>(e.boreMm), static_cast<double>(e.strokeMm()), rpm, ambientAirOf(e).soundSpeedMs);
+        if (twoValves(e.valvetrain())) shape *= sohcBreathingRatio(static_cast<double>(e.boreMm), static_cast<double>(e.strokeMm()), rpm, ambientAirOf(e).soundSpeedMs);
+        // Les culbuteurs et des ressorts raides frottent plus sur la came : c'est autant de couple au frein en moins.
+        const double cam = valvetrainBrakeShare(e, rpm);
+        if (cam < 1.0) shape *= cam;
+        // Au-delà de l'affolement, l'admission ferme en retard et le piston repousse la charge : exactement 1 en dessous.
+        const double kept = valveFloatShare(e, rpm);
+        if (kept < 1.0) shape *= kept;
     }
     // Une ligne libre gagne en haut, mais perd la contre-pression qui aide en bas.
     const double fraction = clamp(rpm / redline, 0.0, 1.0);
@@ -557,6 +564,9 @@ double frictionTorqueNm(const Powertrain& p, double rpm) {
     const double k = rpm / 1000.0;
     double bar = 0.9 + 0.12 * k + 0.03 * k * k + (p.engine.burnsDiesel() ? 0.3 : 0.0);
     if (p.engine.valvetrain() == Camshaft::Sohc) bar += sohcFrictionDeltaBar(static_cast<double>(p.engine.strokeMm()), rpm);
+    // Les culbuteurs chargent la came plus fort, et des ressorts raides aussi : voir « Les culbuteurs et l'affolement ».
+    if (p.engine.valvetrain() == Camshaft::Ohv) bar += ohvFrictionDeltaBar(p.engine, rpm);
+    if (p.engine.valveSprings == ValveSprings::Stiff) bar += springFrictionDeltaBar(p.engine, rpm);
     return bmepToNm(p.engine, isRotary(p.engine) ? bar * kRotaryFrictionShare : bar);
 }
 
@@ -574,6 +584,7 @@ double engineInertia(const Powertrain& p) {
     if (p.electric) return 0.05;
     const double light = clamp(6500.0 / static_cast<double>(p.engine.redlineRpm), 0.6, 1.2);
     const double inertia = (0.03 + 0.055 * liters(p.engine)) * light;
+    if (p.engine.valvetrain() == Camshaft::Ohv) return inertia + ohvInertiaDelta(p.engine);
     return p.engine.valvetrain() == Camshaft::Sohc ? inertia + sohcInertiaDelta(p.engine) : inertia;
 }
 

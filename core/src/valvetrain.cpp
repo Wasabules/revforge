@@ -58,7 +58,8 @@ double quarterValveMm(double boreMm, double reach) {
 ValveTrainGeometry valveTrainOf(Camshaft camshaft, double boreMm) {
     ValveTrainGeometry v;
     const double lift = kLiftPerBore * boreMm;
-    if (camshaft == Camshaft::Sohc) {
+    // Deux soupapes : en travers sous un simple arbre, en ligne sous des culbuteurs. Le même bord et le même pont les bornent.
+    if (camshaft != Camshaft::Dohc) {
         v.perCylinder = 2;
         v.intakeMm = (boreMm - 2.0 * kEdgeMm - kBridgeTwoValvesMm) / (1.0 + kExhaustShare);
         v.exhaustMm = kExhaustShare * v.intakeMm;
