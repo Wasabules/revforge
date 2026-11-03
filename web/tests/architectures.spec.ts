@@ -113,7 +113,8 @@ test.describe('architectures, sans navigateur', () => {
   });
 
   test('le gaz : chaque cylindre souffle dans le collecteur de sa culasse, et 16 cylindres tiennent dans une image', () => {
-    for (const over of [NEW[4], NEW[6], { cylinders: 12, layout: 'v', displacementCc: 6500, boreMm: 90 }] as Partial<EngineConfig>[]) {
+    // Le V12 d'abord : il chauffe le compilateur, et sert de référence.
+    for (const over of [{ cylinders: 12, layout: 'v', displacementCc: 6500, boreMm: 90 }, NEW[6], NEW[4]] as Partial<EngineConfig>[]) {
       const config = make({ ...over, exhaust: 'sport', body: 'supercar', redlineRpm: 8500 });
       const net = new GasNetwork();
       net.build(config, firingOrderOf(config));
