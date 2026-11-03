@@ -145,3 +145,34 @@ TEST_CASE("jonction carburateur et filtre : le souffle d'un col unique remonte l
     CHECK(behindStacks > behindPaper + 0.5);
     CHECK(behindStacks < 6.0);
 }
+
+TEST_CASE("jonction carburateur et suralimentation : une seule perte, la même part") {
+    const auto engine = [](Aspiration aspiration, FuelSystem system) {
+        Powertrain p = findPreset("v8_supercharged")->powertrain();
+        p.engine.aspiration = aspiration;
+        p.engine.fuelSystem = system;
+        return p;
+    };
+    for (const FuelSystem system : {FuelSystem::Carburetor, FuelSystem::MultiCarb}) {
+        const double natural = torqueCurveNm(engine(Aspiration::Natural, system), 5000.0) / torqueCurveNm(engine(Aspiration::Natural, FuelSystem::Injection), 5000.0);
+        for (const Aspiration aspiration : {Aspiration::Turbo, Aspiration::Supercharger}) {
+            const double blown = torqueCurveNm(engine(aspiration, system), 5000.0) / torqueCurveNm(engine(aspiration, FuelSystem::Injection), 5000.0);
+            MESSAGE("part du couple à 5000 tr/min : atmosphérique " << natural << ", suralimenté " << blown);
+            CHECK(blown == doctest::Approx(natural).epsilon(0.015));
+            // Comptée deux fois, elle tomberait au carré.
+            CHECK(blown > natural * natural + 0.01);
+        }
+    }
+    // Le compresseur est un moteur suralimenté comme un autre : même mélange de pleine charge qu'un turbo.
+    CHECK(carburetorSpecOf(engine(Aspiration::Supercharger, FuelSystem::Carburetor).engine).fullLambda == carburetorSpecOf(engine(Aspiration::Turbo, FuelSystem::Carburetor).engine).fullLambda);
+    CHECK(carburetorSpecOf(engine(Aspiration::Natural, FuelSystem::Carburetor).engine).fullLambda > carburetorSpecOf(engine(Aspiration::Turbo, FuelSystem::Carburetor).engine).fullLambda);
+    // Soufflé, le col voit de l'air dense : même vitesse pour plus de masse, donc d'autant plus de film.
+    const auto filmAt4000 = [](const Powertrain& p) {
+        DrivingModel m(p);
+        for (int i = 0; i < 4000 && m.rpm() < 4000.0; ++i) m.stepPedal(0.01, 1.0, 0.0);
+        return m.carburetor().filmG();
+    };
+    const double ratio = filmAt4000(engine(Aspiration::Supercharger, FuelSystem::Carburetor)) / filmAt4000(engine(Aspiration::Natural, FuelSystem::Carburetor));
+    MESSAGE("film soufflé / atmosphérique : " << ratio);
+    CHECK(ratio > 1.3);
+}

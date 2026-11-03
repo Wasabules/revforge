@@ -107,7 +107,7 @@ CarburetorSpec carburetorSpecOf(const EngineConfig& e) {
     s.spread = shared ? kSharedSpread : kPerCylinderSpread;
     // Le gicleur vise le cylindre le plus pauvre : la moyenne est d'autant plus riche que l'écart est grand.
     s.partLambda = 1.0 - s.spread;
-    s.fullLambda = (e.aspiration == Aspiration::Turbo ? kBestLambdaTurbo : kBestLambda) * (1.0 - s.spread);
+    s.fullLambda = (e.aspiration != Aspiration::Natural ? kBestLambdaTurbo : kBestLambda) * (1.0 - s.spread);
     s.pumpG = kPumpCm3PerLitre * litres * kFuelKgM3 / 1000.0;
     return s;
 }

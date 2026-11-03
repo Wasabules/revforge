@@ -970,7 +970,7 @@ void DrivingModel::updateEngine(double throttle, bool off) {
         in.fill = manifold_;
         in.fillRate = (manifold_ - fillBefore) / kStep;
         in.throttle = throttle;
-        in.density = turboEngine_ ? 1.0 + boost_ * static_cast<double>(powertrain_.engine.boostBar) : 1.0;
+        in.density = turboEngine_ || superchargerEngine_ ? 1.0 + boost_ * static_cast<double>(powertrain_.engine.boostBar) : 1.0;
         carb_.step(in, kStep);
         // Le moteur qui prend a son propre enrichissement : le film ne compte qu'ensuite.
         if (catching_) carb_.prime();
