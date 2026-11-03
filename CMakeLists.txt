@@ -155,19 +155,24 @@ else()
   golden(blips_cold_carb 558e94b7 --preset carb_twin_cam --start cold --ambient -10 --scenario blips --seconds 8)
   # La combustion : des carburateurs à 12:1 qui cliquettent sans capteur, l'E85 sur un turbo, un diesel moins comprimé au démarrage, un rotor plus creusé.
   # Intégration : cd653d6e -> 854924ae. La vaporisation prend à l'air la part d'un carburateur (0,5, injection), non plus 0,15 pour toute alimentation.
-  golden(knock_carb 854924ae --preset carb_twin_cam --compression 12 --scenario turbo --seconds 16)
+  # Finitions (régulation) : 854924ae -> 116e2eb4. le cycle de la carte du cliquetis perd sa chaleur aux parois pas à pas (Woschni) et libère 0,95 de l'énergie de l'air au lieu de 0,80 net : la pression des gaz frais monte plus pendant la combustion, la limite de ces carburateurs sans capteur recule de 3 à 5°, et la zone qui cliquette monte de 2000 à 3000 tr/min (371 combustions entendues en 16 s au lieu de 111).
+  golden(knock_carb 116e2eb4 --preset carb_twin_cam --compression 12 --scenario turbo --seconds 16)
   # Intégration : 8c6eee0c -> 98ff3f12. La vaporisation prend à l'air la part d'une injection indirecte (0,2, injection), non plus 0,15.
   golden(compression_e85_turbo 98ff3f12 --preset hot_hatch_turbo --compression 10.5 --grade e85 --scenario launch --seconds 6)
   golden(compression_diesel_start a48c481b --preset diesel_four --compression 15 --scenario start)
-  golden(compression_rotary f21ca74c --preset twin_rotor_13 --compression 11 --scenario lap --seconds 10)
+  # Finitions (régulation) : f21ca74c -> 6a26909f. le cycle de la carte du cliquetis perd sa chaleur aux parois pas à pas (Woschni) et libère 0,95 de l'énergie de l'air au lieu de 0,80 net ; la carte d'origine est recalculée par le même cycle, et le capteur retire autrement l'avance (marge la plus faible −12,4 -> −10,1°).
+  golden(compression_rotary 6a26909f --preset twin_rotor_13 --compression 11 --scenario lap --seconds 10)
   # Le calculateur, actif : la coupure d'allumage et ses détonations, le rupteur progressif avec une carte réglée, le
   # launch control au frein (le 0-100 s'écrit avant l'empreinte), le passage à fond, l'antipatinage.
   golden(ecu_ignition_cut 2af90e2c --cylinders 4 --cc 2000 --bore 86 --redline 7200 --pops strong --exhaust sport --limiter ignition_cut --scenario blips)
   # Intégration : 99069727 -> 6b783b4b. La part de couple de l'avance passe par la carte du cliquetis, qui part de la carte d'origine réelle ; le calculateur garde carburant et chaleur.
-  golden(ecu_soft_map 6b783b4b --cylinders 4 --cc 2000 --bore 86 --redline 7200 --exhaust sport --limiter soft --advance 6 --lambda 0.95 --scenario blips)
-  golden(ecu_launch_control 7fd42b07 --preset hot_hatch_turbo --launch 4500 --scenario launch_control)
+  # Finitions (régulation) : 6b783b4b -> 32de2eaa. Le meilleur couple est le sommet du cycle (pertes aux parois), où la carte d'origine se place au-dessus de 3000 tr/min : +6° y coûtent (2.0 atmosphérique, puissance maximale −1,5 % au lieu de +2,1 %) ; les 15° du rupteur progressif coûtent 7,0 % (corrélation d'Ayala) au lieu de 4,9 % (parabole de 68°).
+  golden(ecu_soft_map 32de2eaa --cylinders 4 --cc 2000 --bore 86 --redline 7200 --exhaust sport --limiter soft --advance 6 --lambda 0.95 --scenario blips)
+  # Finitions (régulation) : 7fd42b07 -> 872a4d0a. Les 25° de retard du launch control coûtent 15,9 % de couple (corrélation d'Ayala, que le cycle retrouve) au lieu de 13,5 % : 4411 tr/min au lâcher au lieu de 4406, 0-100 en 6,11 s au lieu de 6,10.
+  golden(ecu_launch_control 872a4d0a --preset hot_hatch_turbo --launch 4500 --scenario launch_control)
   golden(ecu_flat_shift 7d3dc773 --preset hot_hatch_turbo --flat-shift 1 --scenario launch --seconds 12)
-  golden(ecu_traction 0bc683ee --cylinders 8 --layout cross_plane --cc 7000 --bore 99 --redline 6000 --exhaust sport --body coupe --mass 1700 --rim 19 --drive rear --traction sport --scenario launch --seconds 10)
+  # Finitions (régulation) : 0bc683ee -> 23397c54. L'antipatinage retire le même couple, mais par un autre retard (l'inverse de la corrélation d'Ayala) : plus de chaleur au gaz, et 25° laissent 84,1 % au lieu de 86,5 % avant de couper. 0-100 de la fiche inchangé, 6,20 s.
+  golden(ecu_traction 23397c54 --cylinders 8 --layout cross_plane --cc 7000 --bore 99 --redline 6000 --exhaust sport --body coupe --mass 1700 --rim 19 --drive rear --traction sport --scenario launch --seconds 10)
   # L'injection : le tic d'une injection directe (sous le capot, au ralenti), la rampe commune, la recirculation et le filtre.
   # Intégration : 19ac1ec5 -> 038cacdf. La chaleur latente vient du carburant (350 kJ/kg, combustion), et la carte du cliquetis lit le refroidissement de l'injection directe.
   golden(injection_direct_blips 038cacdf --preset hot_hatch_na --fuel-system direct --scenario blips)
@@ -178,7 +183,8 @@ else()
   golden(injection_petrol_egr db5318c3 --preset city_14 --egr 1 --scenario lap --seconds 20)
   # La came : ralenti d'une came pointue, bascule de deux profils, déphaseur sur un tour.
   golden(cam_race_idle 84564533 --preset hot_hatch_na --scenario idle --seconds 6 --cam-duration 300 --cam-lift 13 --lsa 104)
-  golden(cam_two_step_launch 8f78b11d --preset hot_hatch_na --vvt two_step --scenario launch --seconds 10)
+  # Finitions (régulation) : 8f78b11d -> d7b94152. le cycle de la carte du cliquetis perd sa chaleur aux parois pas à pas (Woschni) et libère 0,95 de l'énergie de l'air au lieu de 0,80 net : marge la plus faible −2,8 -> −2,3°, et 2 combustions entendues qui cliquettent en 10 s au lieu de 0.
+  golden(cam_two_step_launch d7b94152 --preset hot_hatch_na --vvt two_step --scenario launch --seconds 10)
   golden(cam_phased_lap 6b59c2ee --preset hot_hatch_na --vvt phased --scenario lap --seconds 20)
   # Les culbuteurs : le choc des poussoirs au ralenti sous le capot, puis un tour avec des ressorts raides. L'affolement :
   # le son seul, tenu au-delà (8140 tr/min sur ce moteur), là où aucun rupteur ne l'arrête.
@@ -195,7 +201,8 @@ else()
   golden(vgt_diesel c1df8a8e --preset diesel_four --vgt 1 --scenario turbo --seconds 12)
   # L'air de charge : sans échangeur, air-eau, injection d'eau, protoxyde.
   # Intégration : 07dfbb8d -> 34de3f5e. La carte du cliquetis lit la charge sans échangeur (air de charge), plus chaude.
-  golden(charge_none_turbo 34de3f5e --preset hot_hatch_turbo --intercooler none --scenario turbo)
+  # Finitions (régulation) : 34de3f5e -> 7f5a5c89. le cycle de la carte du cliquetis perd sa chaleur aux parois pas à pas (Woschni) et libère 0,95 de l'énergie de l'air au lieu de 0,80 net : 94 combustions entendues qui cliquettent au lieu de 89, marge la plus faible −11,9° au lieu de −11,8°.
+  golden(charge_none_turbo 7f5a5c89 --preset hot_hatch_turbo --intercooler none --scenario turbo)
   golden(charge_water_cooler efc2c12e --preset v8_supercharged --intercooler water --scenario launch --seconds 10)
   golden(charge_water_injection 59ac8a9c --preset hot_hatch_turbo --water 1 --scenario launch --seconds 10)
   golden(charge_nitrous bedbec6d --preset hot_hatch_na --nitrous 75 --scenario launch --seconds 10)
