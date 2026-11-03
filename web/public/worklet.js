@@ -162,6 +162,13 @@ class RevforgeProcessor extends AudioWorkletProcessor {
         knockLimit: rf.rf_knock_limit(),
         knockRetard: rf.rf_knock_retard(),
         knockShare: rf.rf_knock_share(),
+        ecuAdvance: rf.rf_ecu_advance(),
+        ecuLambda: rf.rf_ecu_lambda(),
+        ecuFired: rf.rf_ecu_fired(),
+        ecuLimiter: rf.rf_ecu_limiter(),
+        ecuLaunch: rf.rf_ecu_launch(),
+        ecuFlat: rf.rf_ecu_flat(),
+        ecuTraction: rf.rf_ecu_traction(),
         peak: this.peak,
       });
       this.peak = 0;

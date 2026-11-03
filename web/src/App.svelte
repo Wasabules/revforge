@@ -81,7 +81,8 @@
       telemetry = next;
       const now = performance.now();
       telemetryLog.push(next, now);
-      if (next.cut && !next.cranking) limiterUntil = now + 400;
+      // Le rupteur progressif ne coupe pas tout : il se lit à part. Le launch control et le passage à fond ont leur voyant.
+      if ((next.cut || next.ecuLimiter) && !next.cranking && !next.ecuLaunch && !next.ecuFlat) limiterUntil = now + 400;
       limiter = now < limiterUntil;
     },
     (message) => (failure = () => message),
@@ -517,8 +518,14 @@
           <p class="flag"><span>{t('common.state')}</span><strong data-testid="box-overload">{t('state.overload')}</strong></p>
         {:else if running && telemetry.lugging}
           <p class="flag"><span>{t('common.state')}</span><strong>{t('state.lugging')}</strong></p>
+        {:else if running && telemetry.ecuLaunch}
+          <p class="flag info"><span>{t('common.state')}</span><strong data-testid="live-launch">{t('state.launch')}</strong></p>
         {:else if limiter && running && !telemetry.cranking}
           <p class="flag danger"><span>{t('common.state')}</span><strong>{t('state.limiter')}</strong></p>
+        {:else if running && telemetry.ecuFlat}
+          <p class="flag info"><span>{t('common.state')}</span><strong data-testid="live-flat">{t('state.flatShift')}</strong></p>
+        {:else if running && telemetry.ecuTraction > 0.02}
+          <p class="flag"><span>{t('common.state')}</span><strong data-testid="live-traction">{t('state.traction')}</strong></p>
         {:else if telemetry.cranking}
           <p class="flag info"><span>{t('common.state')}</span><strong>{t('state.cranking')}</strong></p>
         {:else if Math.abs(telemetry.slip) > 4}

@@ -4,19 +4,25 @@
   import Slider from './Slider.svelte';
   import TunedSlider from './TunedSlider.svelte';
   import { LIMITS, ON_OFF, REV_LIMITERS, TRACTION_CONTROLS, isRotary, type EngineConfig } from '../lib/config';
-  import { fixed, t } from '../lib/i18n.svelte';
+  import type { Spec } from '../lib/engine';
+  import { fixed, t, whole } from '../lib/i18n.svelte';
 
   /** Calculateur : la carte d'avance et de richesse, le rupteur, le launch control, le passage à fond, l'antipatinage. */
   interface Props {
     config: EngineConfig;
     shown: EngineConfig;
+    spec: Spec;
     onapply: (next: Partial<EngineConfig>) => void;
     onlive: (next: Partial<EngineConfig>) => void;
   }
-  let { config, shown, onapply, onlive }: Props = $props();
+  let { config, shown, spec, onapply, onlive }: Props = $props();
 
   /** Avance et richesse se règlent sur un moteur à étincelle : un diesel s'allume par compression, toujours en excès d'air. */
   const spark = $derived(isRotary(config) || config.fuel !== 'diesel');
+  /** Un carburateur dose lui-même son mélange : la richesse n'est pas au calculateur (même règle que `fullLoadLambdaOf`). */
+  const carburetted = $derived(config.fuelSystem === 'single' || config.fuelSystem === 'multi');
+  /** La richesse d'origine à pleine charge, celle de la consommation : d'où part le curseur. */
+  const stockLambda = $derived(config.aspiration === 'natural' ? 0.88 : 0.82);
   const signed = (value: number) => (value > 0 ? `+${value}` : String(value));
 </script>
 
@@ -27,10 +33,20 @@
         oninput={(ignitionOffsetDeg) => onlive({ ignitionOffsetDeg })} onchange={(ignitionOffsetDeg) => onapply({ ignitionOffsetDeg })} />
       <p class="help">{t('builder.advance.help')}</p>
     </div>
-    <!-- 0 : la carte d'origine. Le curseur part de la richesse courante d'une pleine charge d'essence. -->
-    <TunedSlider label={t('builder.lambda')} value={shown.fullLoadLambda} {...LIMITS.fullLoadLambda} start={0.88} testid="lambda"
-      format={(value) => t('builder.lambda.value', { lambda: fixed(value, 2) })} help={t('builder.lambda.help')}
-      onlive={(fullLoadLambda) => onlive({ fullLoadLambda })} onapply={(fullLoadLambda) => onapply({ fullLoadLambda })} />
+    {#if carburetted}
+      <p class="help" data-testid="lambda-carb">{t('builder.lambda.carb')}</p>
+    {:else}
+      <!-- 0 : la carte d'origine. Le curseur part de la richesse d'origine de ce moteur à pleine charge. -->
+      <TunedSlider label={t('builder.lambda')} value={shown.fullLoadLambda} {...LIMITS.fullLoadLambda} start={stockLambda} testid="lambda"
+        format={(value) => t('builder.lambda.value', { lambda: fixed(value, 2) })} help={t('builder.lambda.help')}
+        onlive={(fullLoadLambda) => onlive({ fullLoadLambda })} onapply={(fullLoadLambda) => onapply({ fullLoadLambda })} />
+    {/if}
+    {#if spec.ecu.rpm > 0}
+      <!-- Ce que la carte donne, calculé par le C++ : rien n'est écrit à la main. -->
+      <p class="figures" data-testid="ecu-figures">
+        {t('builder.ecu.figures', { rpm: whole(spec.ecu.rpm), deg: whole(spec.ecu.sparkDeg), share: fixed(spec.ecu.fullShare, 3), egt: whole(spec.ecu.exhaustC), stock: whole(spec.ecu.stockExhaustC) })}
+      </p>
+    {/if}
   {/if}
   <div data-testid="rev-limiter">
     <Choices label={t('builder.revLimiter')} options={REV_LIMITERS} value={config.revLimiter} onchange={(revLimiter) => onapply({ revLimiter })} />
@@ -51,4 +67,5 @@
 
 <style>
   .help { margin: 0; color: var(--text-dim); font-size: var(--type-small); }
+  .figures { margin: 0; font-size: var(--type-small); font-variant-numeric: tabular-nums; }
 </style>

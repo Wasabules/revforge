@@ -25,8 +25,9 @@ constexpr int kTick = 128;
 
 void usage() {
     std::puts(
-        "revforge-render --out file.wav|-|none [--preset ID | settings] [--scenario lap|blips|launch|start|steady|passby|rattle|shifts|turbo|grind|reverse|clutchblips|idle|cruise|wltc|tipin]\n"
+        "revforge-render --out file.wav|-|none [--preset ID | settings] [--scenario lap|blips|launch|launch_control|start|steady|passby|rattle|shifts|turbo|grind|reverse|clutchblips|idle|cruise|wltc|tipin]\n"
         "  --scenario tipin  held at --rpm in third, then flat out: prints the torque of the first second\n"
+        "  --scenario launch_control  brake and throttle held for 3 s, then the brake released: prints the 0-100 km/h from the release\n"
         "  --out none        drive the model without rendering any sound: for the figures of --fuel\n"
         "  --list            list the presets\n"
         "  --seconds N       duration (lap: 60, or one loop of --drive-scenario; blips: 14, steady: 4)\n"
@@ -142,17 +143,21 @@ struct Output {
 std::FILE* g_trace = nullptr;
 
 void traceHeader() {
-    std::fputs("t,rpm,throttle,gear,boost,shaft_rpm,t3_c,turbine_kw,compressor_kw,air_g_s,heat_kw,fuel_g_s,torque_nm,lost_nm,antilag,kmh,flow_kg_s,blowoff,wastegate,charge_bar,exhaust_bar,trip_l,pops,advance_deg,knock_limit_deg,knock_retard_deg,knock_share,knocks\n", g_trace);
+    std::fputs("t,rpm,throttle,gear,boost,shaft_rpm,t3_c,turbine_kw,compressor_kw,air_g_s,heat_kw,fuel_g_s,torque_nm,lost_nm,antilag,kmh,flow_kg_s,blowoff,wastegate,charge_bar,exhaust_bar,trip_l,pops,advance_deg,knock_limit_deg,knock_retard_deg,knock_share,knocks,"
+               "ecu_advance_deg,lambda,fired,limiter,launch,flat,traction,slip_ms\n", g_trace);
 }
 
 void traceLine(const DrivingModel& model, const EngineSound& sound, double t) {
     const TurboState& s = model.turbo().state();
     const AntiLagState& a = model.turbo().antiLag();
-    std::fprintf(g_trace, "%.4f,%.1f,%.3f,%d,%.4f,%.0f,%.1f,%.3f,%.3f,%.3f,%.3f,%.4f,%.2f,%.2f,%d,%.2f,%.4f,%.3f,%.3f,%.4f,%.4f,%.6f,%u,%.2f,%.2f,%.2f,%.4f,%u\n", t, model.rpm(), model.throttle(), model.gear(), model.boost(),
+    std::fprintf(g_trace, "%.4f,%.1f,%.3f,%d,%.4f,%.0f,%.1f,%.3f,%.3f,%.3f,%.3f,%.4f,%.2f,%.2f,%d,%.2f,%.4f,%.3f,%.3f,%.4f,%.4f,%.6f,%u,%.2f,%.2f,%.2f,%.4f,%u,", t, model.rpm(), model.throttle(), model.gear(), model.boost(),
                  s.shaftOmega * 60.0 / (2.0 * 3.141592653589793), s.turbineInK - 273.15, s.turbinePowerW / 1000.0, s.compressorPowerW / 1000.0, a.airFlow * 1000.0, a.collectorHeatW / 1000.0,
                  model.consumption().fuelGps(), model.torqueNm(), model.antiLagLostNm(), model.antiLagActive() ? 1 : 0, model.speedKmh(), s.compressorFlow, s.blowOff, s.wastegate,
                  (s.chargePa - model.turbo().spec().ambientPa) / 1e5, (s.turbineInPa - model.turbo().spec().ambientPa) / 1e5, model.consumption().fuelTripL(), static_cast<unsigned>(sound.pops()),
                  model.sparkAdvanceDeg(), model.knockLimitDeg(), model.knockRetardDeg(), model.knockShare(), static_cast<unsigned>(sound.knocks()));
+    // Le calculateur : avance face à la carte d'origine, λ demandé, part des explosions, ce qui agit, glissement des roues.
+    std::fprintf(g_trace, "%.2f,%.3f,%.3f,%d,%d,%d,%.3f,%.3f\n", model.ecuAdvanceDeg(), model.ecuLambda(), model.ecuFiredShare(), model.limiterActive() ? 1 : 0, model.launchHolding() ? 1 : 0,
+                 model.flatShifting() ? 1 : 0, model.ecuAction().traction, model.wheelSlip());
 }
 
 /** `--thermal` : les températures et ce que le moteur froid change, pour mesurer la mise en température sans rien écouter. */
@@ -209,6 +214,7 @@ void play(EngineSound& sound, DrivingModel& model, Output& out, int rate, Drive 
         sound.setDrive(static_cast<float>(model.load()), static_cast<float>(model.boost()), model.cut(), model.cranking(), static_cast<float>(model.throttle()));
         sound.setTurbo(model.turboDrive());
         sound.setSupercharger(model.superchargerDrive());
+        sound.setEcu(model.ecuDrive());
         sound.setStarter(model.starterPowered(), model.starterMeshed(), static_cast<float>(model.starterLoad()));
         sound.setRoad(static_cast<float>(model.speedKmh() / 3.6), static_cast<float>(model.wheelSlip()));
         sound.setGearbox(model.box(), model.gearboxDrive());
@@ -234,6 +240,28 @@ void launch(EngineSound& sound, DrivingModel& model, Output& out, int rate) {
     play(sound, model, out, rate, [&model, rate](int step, double dt) {
         model.stepPedal(dt, static_cast<double>(step) * kTick / rate >= 1.0 ? 1.0 : 0.0, 0.0);
     });
+}
+
+/**
+ * Un départ arrêté comme sur une piste : une seconde au ralenti, puis pied sur le frein et au plancher pendant
+ * `kLaunchStageS`, puis on lâche le frein, pied au plancher jusqu'au bout. Avec le launch control, il tient le régime et
+ * la pression monte ; sans lui, le rupteur tient le moteur et l'embrayage patine contre les freins. Écrit le régime et la
+ * pression au lâcher, et le 0-100 km/h compté depuis le lâcher.
+ */
+void launchControl(EngineSound& sound, DrivingModel& model, Output& out, int rate) {
+    const double release = 1.0 + kLaunchStageS;
+    double rpmAtRelease = 0.0, boostAtRelease = 0.0, reached = 0.0;
+    play(sound, model, out, rate, [&](int step, double dt) {
+        const double t = static_cast<double>(step) * kTick / rate;
+        if (rpmAtRelease == 0.0 && t >= release) {
+            rpmAtRelease = model.rpm();
+            boostAtRelease = model.boost();
+        }
+        model.stepPedal(dt, t >= 1.0 ? 1.0 : 0.0, t >= 1.0 && t < release ? 1.0 : 0.0);
+        if (reached == 0.0 && t >= release && model.speedKmh() >= 100.0) reached = t + dt - release;
+    });
+    std::printf("Launch: %.0f rpm and %.2f of the boost at brake release; 0-100 km/h in %.2f s from the release%s\n", rpmAtRelease, boostAtRelease, reached,
+                reached == 0.0 ? " (not reached)" : "");
 }
 
 /** Point mort, moteur au ralenti : embrayé, ça claque ; débrayé, ça se tait ; puis de nouveau embrayé. */
@@ -840,6 +868,7 @@ int main(int argc, char** argv) {
         else if (scenario == "cruise") seconds = 180;
         else if (scenario == "wltc") seconds = 1800;
         else if (scenario == "tipin") seconds = 16;
+        else if (scenario == "launch_control") seconds = 16;
     }
     EngineSound sound(rate);
     sound.setProfile(profile);
@@ -866,6 +895,8 @@ int main(int argc, char** argv) {
         blips(sound, model, output, rate);
     } else if (scenario == "launch") {
         launch(sound, model, output, rate);
+    } else if (scenario == "launch_control") {
+        launchControl(sound, model, output, rate);
     } else if (scenario == "start") {
         start(sound, model, output, rate);
     } else if (scenario == "passby") {

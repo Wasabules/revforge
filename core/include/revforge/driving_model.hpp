@@ -6,6 +6,7 @@
 #include "revforge/combustion.hpp"
 #include "revforge/consumption.hpp"
 #include "revforge/driver_scenarios.hpp"
+#include "revforge/ecu.hpp"
 #include "revforge/powertrain.hpp"
 #include "revforge/shift_logic.hpp"
 #include "revforge/thermal.hpp"
@@ -186,6 +187,21 @@ public:
     double sparkAdvanceDeg() const { return knockAdvance_; }
     double knockLimitDeg() const { return knockLimit_; }
     KnockDrive knockDrive() const { return knockDrive_; }
+    /** Le calculateur : ce qu'il fait à ce pas, au-delà de sa carte (ecu.hpp). Tout au neutre sans réglage. */
+    const EcuAction& ecuAction() const { return ecu_; }
+    /** Ce que le son doit savoir du calculateur : à donner à `EngineSound::setEcu`. Inactif au défaut. */
+    EcuDrive ecuDrive() const;
+    /** L'avance, en écart à la carte d'origine (°, positif : plus tôt) : son décalage, moins ce que le pas retarde. */
+    double ecuAdvanceDeg() const;
+    /** Le λ demandé à ce remplissage. 0 sans objet : diesel, voiture électrique. */
+    double ecuLambda() const;
+    /** Part des explosions qui ont lieu : 0 pendant une coupure, 1 sans rien de coupé. */
+    double ecuFiredShare() const { return cut_ ? 0.0 : ecu_.firedShare; }
+    /** Le rupteur agit, quel qu'il soit. Le launch control, lui, se lit à part. */
+    bool limiterActive() const { return !launchHold_ && (limiterCut_ || ecu_.limiter); }
+    bool launchHolding() const { return launchHold_; }
+    /** Le passage à fond coupe l'allumage en ce moment. */
+    bool flatShifting() const { return ecu_.flat; }
 
 private:
     enum class Driver { Pilot, Pedal, Neutral, Off };
@@ -211,6 +227,8 @@ private:
     void trackOverload(double torque);
     void updateClutch(bool wantsToMove);
     void updateEngine(double pedal, bool off);
+    double stepEcu(double throttle, double rpmNow, bool off);
+    void finishEcu(double rpmNow, double indicated, bool off);
     void integrate(double brakePedal);
     void drivenStep(double tyre, double wheelInertia);
     void freeStep(double tyre, double wheelInertia);
@@ -369,6 +387,28 @@ private:
     double knockLimit_ = 0.0;
     double knockPerCylinder_ = 1.0;
     KnockDrive knockDrive_;
+    // Le calculateur (ecu.hpp) : la carte s'écarte de l'origine, ou il agit à chaque pas. Rien de cela ne s'exécute au défaut.
+    bool ecuMap_ = false;
+    bool ecuEngine_ = false;
+    double limiterRpm_ = 6200.0;
+    bool sparkEngine_ = false;
+    double mapRetard_ = 0.0;
+    double lambdaRatio_ = 1.0;
+    EcuAction ecu_;
+    double ecuShare_ = 1.0;
+    bool fuelOnCut_ = false;
+    RevLimiter limiterKind_ = RevLimiter::Stock;
+    double launchRpm_ = 0.0;
+    bool launchHold_ = false;
+    bool flatShift_ = false;
+    bool flatUpshift_ = false;
+    bool flatCut_ = false;
+    double tractionTarget_ = 0.0;
+    double tractionIntegral_ = 0.0;
+    double portK_ = 293.0;
+    double ignition_ = 0.0;
+    double unburntJoules_ = 0.0;
+    double exhaustShare_ = 0.0;
 
     // Voiture
     double speedMs_ = 0.0;

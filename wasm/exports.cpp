@@ -246,6 +246,7 @@ static void advance(int frames) {
         g_sound->setDrive(static_cast<float>(g_model->load()), static_cast<float>(g_model->boost()), g_model->cut(), g_model->cranking(), static_cast<float>(g_model->throttle()));
         g_sound->setTurbo(g_model->turboDrive());
         g_sound->setSupercharger(g_model->superchargerDrive());
+        g_sound->setEcu(g_model->ecuDrive());
         g_sound->setStarter(g_model->starterPowered(), g_model->starterMeshed(), static_cast<float>(g_model->starterLoad()));
         g_sound->setRoad(static_cast<float>(g_model->speedKmh() / 3.6), static_cast<float>(g_model->wheelSlip()));
         g_sound->setGearbox(g_model->box(), g_model->gearboxDrive());
@@ -538,5 +539,24 @@ float rf_cold_idle_rpm() { return static_cast<float>(g_model->coldIdleRpm()); }
 float rf_cold_enrichment() { return static_cast<float>(g_model->coldEnrichment()); }
 /** Les frottements du moteur chaud à ce régime (Nm) : pour lire les frottements en plus en pourcentage. */
 float rf_warm_friction_nm(float rpm) { return static_cast<float>(frictionTorqueNm(g_powertrain, static_cast<double>(rpm))); }
+
+// ── Le calculateur : ce qu'il fait en ce moment, et sa carte pour la fiche (ecu.hpp) ──
+
+/** L'avance face à la carte d'origine (°, positif : plus tôt), et le λ demandé (0 : sans objet). */
+float rf_ecu_advance() { return static_cast<float>(g_model->ecuAdvanceDeg()); }
+float rf_ecu_lambda() { return static_cast<float>(g_model->ecuLambda()); }
+/** Part des explosions qui ont lieu, de 0 à 1. */
+float rf_ecu_fired() { return static_cast<float>(g_model->ecuFiredShare()); }
+int rf_ecu_limiter() { return g_model->limiterActive() ? 1 : 0; }
+int rf_ecu_launch() { return g_model->launchHolding() ? 1 : 0; }
+int rf_ecu_flat() { return g_model->flatShifting() ? 1 : 0; }
+/** Part du couple que retire l'antipatinage, de 0 à 1. */
+float rf_ecu_traction() { return static_cast<float>(g_model->ecuAction().traction); }
+/** La fiche : le couple de pleine charge face à la carte d'origine, l'avance demandée, le gaz à la sortie des cylindres (°C). */
+float rf_ecu_full_share() { return g_powertrain.electric ? 1.0f : static_cast<float>(ecuFullLoadShare(g_powertrain.engine)); }
+float rf_ecu_spark_deg(float rpm, float load) { return g_powertrain.electric ? 0.0f : static_cast<float>(demandedAdvanceDeg(g_powertrain.engine, rpm, load)); }
+float rf_ecu_exhaust_c(float rpm, int stockMap) {
+    return g_powertrain.electric ? 0.0f : static_cast<float>(fullLoadExhaustK(g_powertrain.engine, rpm, stockMap != 0) - 273.15);
+}
 
 }  // extern "C"

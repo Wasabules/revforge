@@ -1,6 +1,7 @@
 #pragma once
 
 #include "revforge/anti_lag.hpp"
+#include "revforge/ecu.hpp"
 #include "revforge/engine_config.hpp"
 #include "revforge/turbo_pipe.hpp"
 
@@ -43,6 +44,7 @@ struct TurboSpec {
      */
     double ambientPa = 101325.0;
     double ambientK = 293.0;
+    EcuExhaust ecu;                 // la carte du calculateur, si elle s'écarte de l'origine : avance et richesse
 };
 
 /** Ce qui change d'une milliseconde à l'autre, en unités physiques. */
@@ -86,6 +88,7 @@ struct TurboInput {
     bool burning = false;
     AntiLagCommand antiLag;
     double carbRichness = 0.0;  // 1/λ imposé par un carburateur, qui ne dose pas sur commande. 0 : un calculateur qui dose.
+    EcuExhaust ecu;             // ce que le calculateur retarde ou coupe à ce pas (la carte est dans `TurboSpec::ecu`)
 };
 
 /** Le point d'équilibre à pleine charge : ce que donnent les courbes de la fiche. */
@@ -168,5 +171,12 @@ double turboChargeDensityShare(double boostBar, double boost, double inletRiseK,
  * l'échangeur et les parois. Exactement 1 dans l'air de référence.
  */
 double turboAmbientChargeShare(double boostBar, double boost, double inletRiseK, double flowShare, double ambientPa, double ambientK);
+
+/**
+ * Le gaz à la sortie des cylindres, le modèle de `TurboCharger` : la part de l'énergie du carburant qu'il emporte, et
+ * l'échauffement (K) si elle lui revenait toute, à ce remplissage. Pour qui n'a pas de turbo : le calculateur.
+ */
+double exhaustHeatShare(bool diesel, double redlineRpm, double rpm, double fill);
+double exhaustHeatRiseK(bool diesel, double fill);
 
 }  // namespace revforge

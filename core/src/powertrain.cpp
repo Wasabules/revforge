@@ -8,6 +8,7 @@
 #include "revforge/carburetor.hpp"
 #include "revforge/combustion.hpp"
 #include "revforge/driving_model.hpp"
+#include "revforge/ecu.hpp"
 #include "revforge/valvetrain.hpp"
 
 namespace revforge {
@@ -277,6 +278,8 @@ TurboSpec turboSpecOf(const Powertrain& p) {
     spec.ambientPa = air.pressurePa;
     spec.ambientK = air.temperatureK;
     spec.pipe.ambientK = air.temperatureK;
+    // De même pour la carte du calculateur : elle ne change que le gaz qu'il reçoit.
+    spec.ecu = ecuMapExhaust(p.engine);
     return spec;
 }
 
@@ -405,7 +408,10 @@ double steadyBoost(const Powertrain& p, double rpm) {
 
 namespace {
 
-/** Le couple que donne l'air admis, brûlé comme le moteur d'origine : taux de compression d'origine, essence de référence. */
+/**
+ * Le couple que donne l'air admis, brûlé comme le moteur d'origine : taux de compression d'origine, essence de référence, et
+ * carte d'origine du calculateur.
+ */
 double airTorqueNm(const Powertrain& p, double rpm, double boost) {
     const EngineConfig& e = p.engine;
     // Sous le ralenti, la combustion devient instable : le couple s'effondre.
@@ -434,11 +440,17 @@ double fullLoadTorqueNm(const Powertrain& p, double rpm, double boost) {
         const double omega = std::max(rpm, 1.0) * 2.0 * kPi / 60.0;
         return std::min(kElectricTorqueNm, kElectricPowerW / omega);
     }
-    if (combustionStock(p.engine)) return airTorqueNm(p, rpm, boost);
+    const bool stockBurn = combustionStock(p.engine);
+    const bool stockMap = !ecuMapTuned(p.engine);
+    if (stockBurn && stockMap) return airTorqueNm(p, rpm, boost);
     // Le même air, brûlé autrement : le taux de compression change le rendement, le carburant l'énergie par kilogramme d'air et la
-    // densité de la charge. Seul le travail des gaz en dépend : les frottements restent. Voir « La combustion » dans docs/modele.md.
+    // densité de la charge (« La combustion ») ; la carte du calculateur, l'avance et la richesse (ecu.cpp). Seul le travail des
+    // gaz en dépend : les frottements restent. Les deux parts sont indépendantes : le carburant donne l'énergie par kilogramme
+    // d'air à richesse égale, la carte l'écart de richesse et d'avance à ce carburant.
     const double friction = frictionTorqueNm(p, rpm);
-    return (airTorqueNm(p, rpm, boost) + friction) * combustionTorqueShare(p.engine) - friction;
+    const double share = stockBurn ? ecuFullLoadShare(p.engine)
+                         : (stockMap ? combustionTorqueShare(p.engine) : combustionTorqueShare(p.engine) * ecuFullLoadShare(p.engine));
+    return (airTorqueNm(p, rpm, boost) + friction) * share - friction;
 }
 
 double torqueCurveNm(const Powertrain& p, double rpm) {
@@ -577,6 +589,11 @@ Performance measurePerformance(const Powertrain& p) {
     Powertrain warm = p;
     warm.engine.startTemp = StartTemp::Warm;
     DrivingModel model(warm);
+    // Avec le launch control, on part comme sur une piste : pied sur le frein et au plancher, le temps que le régime et la
+    // pression montent ; le chronomètre part au lâcher du frein.
+    if (!p.electric && p.engine.launchRpm > 0) {
+        for (int i = 0; i < static_cast<int>(kLaunchStageS / kStep); ++i) model.stepPedal(kStep, 1.0, 1.0);
+    }
     // Le chronomètre part une fois la première engagée, embrayage au point de patinage.
     for (int i = 0; i < 100 && !model.meshed(); ++i) model.stepPedal(kStep, 1.0, 0.0);
     for (int i = 0; i < 40 * 100; ++i) {

@@ -72,6 +72,11 @@ private:
     double carbAirShare_ = 1.0;
     // L'air du jour, rapporté à l'air de référence : ce qu'il reste d'air dans un litre de cylindrée (atmosphere.hpp).
     double ambientAirShare_ = 1.0;
+    // La carte du calculateur, si elle s'écarte de l'origine (ecu.hpp) : l'avance change ce que chaque gramme donne au piston,
+    // la richesse ce qu'il en faut par gramme d'air.
+    bool ecuMap_ = false;
+    double sparkEfficiency_ = 1.0;
+    double lambdaRatio_ = 1.0;
 };
 
 /** L'état du moteur à ce pas, tel que `DrivingModel` le donne. */
@@ -89,6 +94,7 @@ struct ConsumptionInput {
     double extraFuelGps = 0.0;  // l'anti-lag : carburant au-delà de ce que demande le cylindre
     double extraAirGps = 0.0;   // l'anti-lag : air qui n'est pas passé par les cylindres
     double enrichment = 0.0;    // moteur froid : carburant ajouté, en part de celui qui brûle, qui repart imbrûlé
+    double fuelShare = 1.0;     // le calculateur : part des cylindres qui reçoivent leur carburant (coupure d'injection partielle)
 };
 
 /**

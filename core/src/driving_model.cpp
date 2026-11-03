@@ -65,6 +65,23 @@ constexpr double kAntiLagHoldShare = 0.95;
 constexpr double kKnockRetardPerEventDeg = 1.5;
 constexpr double kKnockRecoverDegPerS = 1.0;
 constexpr double kKnockMaxRetardDeg = 20.0;
+// Le calculateur (ecu.hpp). Launch control : pied au plancher, voiture arrêtée, moteur désaccouplé ; il s'arrête quand
+// l'embrayage a rattrapé le moteur. La boîte pilotée tient l'embrayage ouvert tant qu'on garde le pied sur le frein.
+constexpr double kLaunchPedal = 0.9;
+constexpr double kLaunchArmMs = 1.0;
+constexpr double kLaunchCaughtShare = 0.97;
+constexpr double kLaunchBrake = 0.05;
+// Passage à fond : pied au-delà de 80 % à la montée.
+constexpr double kFlatPedal = 0.8;
+// Antipatinage : une régulation proportionnelle et intégrale du glissement (m/s) vers la part du couple retirée.
+// Réglée à l'essai pour ne pas battre avec la torsion des arbres de roue (2 à 3 Hz en première) : elle s'établit en
+// moins d'une seconde (supposé, voir docs/modele.md).
+constexpr double kTractionKp = 0.1;
+constexpr double kTractionKi = 1.0;
+// Le gaz à la sortie des cylindres : le modèle de la turbine (turbo.cpp), à l'air de référence.
+constexpr double kPortIntakeK = 293.0;
+constexpr double kPortHeatS = 0.35;
+constexpr double kPortCoolS = 0.9;
 
 double approach(double from, double to, double maxStep) {
     const double delta = to - from;
@@ -160,6 +177,31 @@ void DrivingModel::setPowertrain(const Powertrain& powertrain) {
     step_ = ShiftStep::None;
     ignitionCut_ = false;
     torqueScale_ = 1.0;
+    // Le calculateur : sa carte, et ce qu'il fait à chaque pas. Au défaut, rien de cela ne s'exécute.
+    {
+        const EngineConfig& e = powertrain.engine;
+        // Le régime du rupteur : le régime maximal, tant que l'affolement des soupapes (culbuteurs) n'est pas branché ici.
+        limiterRpm_ = limiterRpmFor(redline_, 0.0);
+        ecuMap_ = !powertrain.electric && ecuMapTuned(e);
+        mapRetard_ = ecuMap_ ? mapRetardDeg(e) : 0.0;
+        lambdaRatio_ = ecuMap_ ? lambdaFullLoadRatio(e) : 1.0;
+        sparkEngine_ = !powertrain.electric && !e.burnsDiesel();
+        // Un diesel n'a pas d'étincelle à couper : sa coupure redevient celle de l'injection, comme à l'origine.
+        limiterKind_ = powertrain.electric || (e.revLimiter == RevLimiter::IgnitionCut && !sparkEngine_) ? RevLimiter::Stock : e.revLimiter;
+        launchRpm_ = !powertrain.electric && e.launchRpm > 0 ? std::min(static_cast<double>(e.launchRpm), 0.95 * redline_) : 0.0;
+        flatShift_ = !powertrain.electric && e.flatShift;
+        tractionTarget_ = tractionSlipTarget(e.tractionControl);
+        ecuEngine_ = limiterKind_ != RevLimiter::Stock || launchRpm_ > 0.0 || flatShift_ || tractionTarget_ > 0.0;
+        ecu_ = EcuAction{};
+        ecuShare_ = 1.0;
+        fuelOnCut_ = false;
+        launchHold_ = false;
+        flatUpshift_ = false;
+        flatCut_ = false;
+        tractionIntegral_ = 0.0;
+        unburntJoules_ = 0.0;
+        burnt_.fuelShare = 1.0;
+    }
     if (powertrain.electric) {
         gear_ = 1;
         pendingGear_ = 1;
@@ -344,7 +386,8 @@ void DrivingModel::substep(Driver driver, double pedal, double brakePedal) {
         brakePedal = speedMs_ > 0.0 ? 0.4 : 0.0;
     } else if (!powertrain_.electric) {
         selectGear(pedal > 0.02);
-        if (shiftLiftsPedal()) pedal = 0.0;
+        // Le passage à fond garde le pied au plancher : c'est le calculateur qui coupe.
+        if (shiftLiftsPedal() && !flatUpshift_) pedal = 0.0;
     }
     updateClutch(pedal > 0.02);
 
@@ -604,6 +647,7 @@ void DrivingModel::beginShift(int next) {
     downshifting_ = next < gear_ && next > 0;
     pendingGear_ = next;
     fromNeutral_ = !meshed_;
+    flatUpshift_ = flatShift_ && !powerShift() && !fromNeutral_ && gear_ > 0 && next > gear_ && throttle_ > kFlatPedal;
     // Passer la première à l'arrêt n'est pas un changement de rapport : le suivant n'a pas à attendre.
     if (!fromNeutral_) sinceShift_ = 0.0;
     selectorClicks_ += 1.0;
@@ -803,9 +847,12 @@ void DrivingModel::updateClutch(bool wantsToMove) {
     } else if (step_ == ShiftStep::None && meshed_ && gear_ != 0 && !locked_) {
         if (gear_ == 1 && speedKmh() < 25.0) {
             // Démarrage : l'embrayage patine autour d'un régime qui suit l'accélérateur.
-            const double launch = idle_ + (std::max(peakTorqueRpm_ * 0.8, idle_ * 1.6) - idle_) * throttle_;
+            // Le launch control tient le moteur au régime choisi : l'embrayage patine autour de lui.
+            const double launch = launchHold_ ? launchRpm_ : idle_ + (std::max(peakTorqueRpm_ * 0.8, idle_ * 1.6) - idle_) * throttle_;
             wanted = clamp((toRpm(omega_) - launch * 0.85) / (launch * 0.3), 0.0, 1.0);
             if (!wantsToMove && speedMs_ < 0.5) wanted = 0.0;
+            // Pied sur le frein, la boîte pilotée garde l'embrayage ouvert : on le lâche, elle part.
+            if (launchHold_ && !manual_ && brake_ > kLaunchBrake) wanted = 0.0;
             rate = 2.5;
         } else if (gear_ < 0 && speedKmh() < 15.0) {
             // Marche arrière : même démarrage, plus doux.
@@ -904,6 +951,11 @@ void DrivingModel::stepTurbo(double rpmNow, bool burning) {
     input.burning = burning;
     input.antiLag = antiLag_;
     if (carbEngine_ && antiLag_.active) input.carbRichness = carburetorRichness(carb_.spec(), manifold_, rpmNow);
+    if (ecuEngine_ && burning) {
+        input.ecu.retardDeg = ecu_.retardDeg;
+        input.ecu.firedShare = cut_ ? 0.0 : ecu_.firedShare;
+        input.ecu.fuelOnCut = fuelOnCut_;
+    }
     turbo_.step(kStep, input);
     boost_ = std::max(turbo_.boost(), 0.0);
 }
@@ -967,6 +1019,11 @@ void DrivingModel::updateEngine(double throttle, bool off) {
         double available = fullLoadTorqueNm(powertrain_, rpmNow, 0.0);
         if (gear_ == 0) available *= 0.12;
         torque_ = off ? 0.0 : (throttle > 0.01 ? throttle * available : -regen * (1.0 - throttle));
+        // L'antipatinage d'une voiture électrique retire directement du couple au moteur.
+        if (ecuEngine_) {
+            stepEcu(throttle, rpmNow, off);
+            if (torque_ > 0.0 && ecu_.traction > 0.0) torque_ *= 1.0 - ecu_.traction;
+        }
         burnt_.motorNm = torque_;
         torque_ -= frictionTorqueNm(powertrain_, rpmNow);
         return;
@@ -1040,17 +1097,24 @@ void DrivingModel::updateEngine(double throttle, bool off) {
     // Rupteur : la combustion s'arrête, puis reprend un peu plus bas.
     // Elle laisse le moteur redescendre de 4 % : c'est ce rebond qu'on entend, une dizaine de fois par seconde.
     cutHeld_ = std::max(cutHeld_ - kStep, 0.0);
-    if (rpmNow >= redline_ && !limiterCut_) {
+    // Le calculateur : le launch control déplace ce régime ; le rupteur progressif remplace la coupure franche (ecu.hpp).
+    double limit = limiterRpm_;
+    bool hardLimiter = true;
+    if (ecuEngine_) {
+        limit = stepEcu(throttle, rpmNow, off);
+        hardLimiter = limiterKind_ != RevLimiter::Soft || launchHold_;
+    }
+    if (hardLimiter && rpmNow >= limit && !limiterCut_) {
         limiterCut_ = true;
         cutHeld_ = kLimiterMinCutS;
-    } else if (limiterCut_ && cutHeld_ <= 0.0 && rpmNow < redline_ * (1.0 - limiterDrop_)) {
+    } else if (limiterCut_ && cutHeld_ <= 0.0 && rpmNow < limit * (1.0 - limiterDrop_)) {
         limiterCut_ = false;
         // Jamais deux rebonds identiques : le calculateur reprend à une explosion près.
         limiterSeed_ = limiterSeed_ * 1664525u + 1013904223u;
         const double draw = static_cast<double>(limiterSeed_ >> 16 & 0xFFFF) / 65535.0;
         limiterDrop_ = kLimiterDropShare * (0.65 + 0.7 * draw);
     }
-    cut_ = off || limiterCut_ || ignitionCut_;
+    cut_ = off || limiterCut_ || ignitionCut_ || flatCut_;
     if (antiLagEngine_) updateAntiLag(throttle, rpmNow, off);
 
     double friction = frictionTorqueNm(powertrain_, rpmNow);
@@ -1090,12 +1154,17 @@ void DrivingModel::updateEngine(double throttle, bool off) {
 
     // Turbine : tout est dans `TurboCharger`. Le moteur lui donne ce qu'il rejette, et reçoit la pression qui en résulte.
     // Le compresseur, lui, ne demande rien aux gaz : il tourne avec le vilebrequin.
-    if (turboEngine_) stepTurbo(rpmNow, !cut_);
+    // Une coupure d'allumage laisse passer le carburant : il brûle encore, mais dans la ligne.
+    if (ecuEngine_ || ecuMap_) finishEcu(rpmNow, indicated, off);
+    if (turboEngine_) stepTurbo(rpmNow, !cut_ || fuelOnCut_);
     else if (superchargerEngine_) stepSupercharger(rpmNow);
     else boost_ = 0.0;
 
     double produced = cut_ ? 0.0 : manifold_ * indicated * torqueScale_;
     if (knockEngine_) produced *= stepKnock(rpmNow);
+    // Le calculateur : ce que retirent le retard et les cylindres coupés, et la richesse, qui ne s'écarte qu'à pleine charge.
+    if (ecuEngine_ && ecuShare_ != 1.0) produced *= ecuShare_;
+    if (lambdaRatio_ != 1.0) produced *= lambdaLoadRatio(powertrain_.engine, manifold_) / lambdaRatio_;
     antiLagLostNm_ = 0.0;
     if (antiLag_.active) {
         const double kept = produced * antiLagTorqueShare(antiLag_.kind);
@@ -1124,13 +1193,17 @@ void DrivingModel::updateEngine(double throttle, bool off) {
     torque_ = produced - friction - pumping;
     // Pour la consommation : le couple au frein que demande cette charge d'air. Le calculateur qui retient le moteur
     // pendant un relais retarde l'allumage : il gaspille, il ne dépense pas moins. Le broutement s'annule en moyenne.
-    burnt_.burning = !cut_;
+    burnt_.burning = !cut_ || fuelOnCut_;
+    // Une coupure d'injection partielle : l'air de ces cylindres passe, leur carburant non.
+    if (ecuEngine_) burnt_.fuelShare = fuelOnCut_ ? 1.0 : ecu_.firedShare;
     // Le rupteur ne coupe que l'étincelle : le carburateur continue de débiter, et ce mélange part à l'échappement.
     if (carbEngine_) {
         burnt_.burning = !off;
         burnt_.pumpGps = carb_.pumpGps();
     }
     burnt_.brakeNm = manifold_ * indicated - friction - pumping;
+    // La richesse ne s'écarte de l'origine qu'à pleine charge : le couple de cet air suit la même rampe que le moteur.
+    if (lambdaRatio_ != 1.0) burnt_.brakeNm = manifold_ * indicated * lambdaLoadRatio(powertrain_.engine, manifold_) / lambdaRatio_ - friction - pumping;
     // Les pistons paient aussi le compresseur : c'est de l'essence, pas du couple à la roue.
     burnt_.frictionNm = friction + charger;
     burnt_.fullGrossNm = indicated;
@@ -1457,6 +1530,150 @@ void DrivingModel::integrate(double brakePedal) {
     // À l'arrêt, freins serrés : les roues ne tournent plus.
     if (speedMs_ <= 0.0 && brakePedal > 0.02 && !meshed_) wheelOmega_ = 0.0;
     if (!meshed_) wheelOmega_ += (speedMs_ / radius_ - wheelOmega_) * std::min(1.0, kStep / 0.05);
+}
+
+// ── Le calculateur : voir ecu.hpp et « Le calculateur » dans docs/modele.md ──
+
+/**
+ * Ce que le calculateur décide à ce pas : le launch control, l'antipatinage, le rupteur progressif, le passage à fond.
+ * Renvoie le régime de la coupure franche : celui du launch control s'il tient le moteur, sinon le régime maximal.
+ */
+double DrivingModel::stepEcu(double throttle, double rpmNow, bool off) {
+    EcuAction a;
+    if (flatUpshift_ && step_ == ShiftStep::None) flatUpshift_ = false;
+
+    // Launch control : armé à l'arrêt, pied au plancher, moteur désaccouplé. Il lâche dès que la voiture roule, ou que
+    // l'embrayage a rattrapé le moteur : l'embrayage se ferme alors sur tout le couple, depuis ce régime.
+    if (launchRpm_ > 0.0) {
+        const bool floored = throttle >= kLaunchPedal && !off && !catching_ && !stalled_;
+        const bool caught = meshed_ && gear_ != 0 && inputOmega_ >= kLaunchCaughtShare * omega_;
+        if (!floored) launchHold_ = false;
+        else if (!launchHold_) launchHold_ = speedMs_ < kLaunchArmMs && clutch_ < 0.5;
+        else if (caught || speedMs_ >= kLaunchArmMs) launchHold_ = false;
+    }
+
+    // Antipatinage : le glissement que calcule déjà le modèle, ramené vers sa cible par une action proportionnelle et intégrale.
+    // Il n'agit que roues tenues par le moteur : un embrayage qui patine ne transmet que sa capacité, quoi que fasse l'allumage,
+    // et couper le moteur le ferait seulement caler.
+    if (tractionTarget_ > 0.0) {
+        const bool coupled = powertrain_.electric || locked_ || clutch_ > 0.9 || gearing_.box.kind == GearboxKind::Converter;
+        const bool driving = coupled && meshed_ && gear_ > 0 && throttle > 0.05 && !off && !cut_;
+        const double error = wheelSlip() - tractionTarget_;
+        const double proportional = kTractionKp * error;
+        // L'intégrale ne grossit pas dans le sens où la commande sature déjà : sans quoi, une fois le glissement retombé,
+        // elle tiendrait le moteur coupé le temps de se vider, et il calerait presque (anti-emballement).
+        const bool saturated = (proportional + tractionIntegral_ >= 1.0 && error > 0.0) || (proportional + tractionIntegral_ <= 0.0 && error < 0.0);
+        // Un grand écart passe par la part proportionnelle : l'intégrale n'en prend qu'un mètre par seconde au plus, pour tenir la
+        // cible sans emporter le moteur quand les roues reprennent d'un coup.
+        if (!driving) tractionIntegral_ = 0.0;
+        else if (!saturated) tractionIntegral_ = clamp(tractionIntegral_ + kTractionKi * clamp(error, -1.0, 1.0) * kStep, 0.0, 1.0);
+        a.traction = driving ? clamp(proportional + tractionIntegral_, 0.0, 1.0) : 0.0;
+    }
+
+    double retard = 0.0;
+    double fired = 1.0;
+    // Le rupteur progressif : du retard sur les derniers 3 %, puis des cylindres coupés au-delà du régime maximal.
+    if (limiterKind_ == RevLimiter::Soft && !launchHold_) {
+        const double start = limiterRpm_ * (1.0 - kSoftRetardBand);
+        if (rpmNow > start) {
+            a.limiter = true;
+            if (sparkEngine_) retard += kSoftRetardDeg * clamp((rpmNow - start) / (limiterRpm_ * kSoftRetardBand), 0.0, 1.0);
+            fired *= 1.0 - clamp((rpmNow - limiterRpm_) / (limiterRpm_ * kSoftCutBand), 0.0, 1.0);
+        }
+    }
+    // Le launch control retarde l'étincelle tant qu'il tient : moins de couple, et le travail perdu part dans le gaz.
+    if (launchHold_ && sparkEngine_) retard += kLaunchRetardDeg;
+    // L'antipatinage retarde d'abord, puis coupe des cylindres. Sur une voiture électrique, `updateEngine` retire le couple.
+    if (a.traction > 0.0 && !powertrain_.electric) {
+        double tractionRetard = 0.0;
+        double tractionFired = 1.0;
+        tractionActuation(1.0 - a.traction, sparkEngine_ ? kTractionMaxRetardDeg : 0.0, tractionRetard, tractionFired);
+        retard += tractionRetard;
+        fired *= tractionFired;
+    }
+
+    // Le passage à fond : à la montée, pied au plancher, l'allumage coupé tient le moteur au régime du rapport suivant.
+    flatCut_ = flatUpshift_ && step_ != ShiftStep::None && pendingGear_ > 0 && rpmNow > rpmInGear(pendingGear_);
+
+    a.retardDeg = retard;
+    a.firedShare = fired;
+    a.launch = launchHold_;
+    a.flat = flatCut_;
+    ecu_ = a;
+    ecuShare_ = retard == 0.0 && fired == 1.0 ? 1.0 : ecuActionShare(a, mapRetard_);
+    return launchHold_ ? launchRpm_ : limiterRpm_;
+}
+
+/**
+ * Une fois la coupure connue : si le carburant passe encore, ce qu'il emporte vers la ligne, et le gaz qui peut l'enflammer.
+ * Sur un turbo, c'est le gaz de `TurboCharger` ; sinon, le même modèle, suivi ici avec la même inertie des parois.
+ */
+void DrivingModel::finishEcu(double rpmNow, double indicated, bool off) {
+    // La coupure d'allumage du rupteur ou du launch control, le passage à fond ; et sur un carburateur, qui ne sait pas couper
+    // l'essence, les cylindres que le calculateur coupe. Le rupteur d'origine d'un carburateur reste celui d'origine.
+    const bool sparkCut = (limiterCut_ && (limiterKind_ == RevLimiter::IgnitionCut || launchHold_)) || flatCut_ || (ignitionCut_ && flatUpshift_);
+    fuelOnCut_ = sparkEngine_ && !off && (sparkCut || (carbEngine_ && ecu_.firedShare < 1.0));
+    if (ecuEngine_) {
+        ecu_.limiter = ecu_.limiter || (limiterCut_ && !launchHold_);
+        ecu_.flat = flatCut_ || (ignitionCut_ && flatUpshift_);
+    }
+
+    const bool diesel = powertrain_.engine.burnsDiesel();
+    exhaustShare_ = exhaustHeatShare(diesel, redline_, rpmNow, manifold_);
+    if (turboEngine_) {
+        ignition_ = antiLagIgnition(turbo_.collectorK());
+    } else if (!powertrain_.electric) {
+        // Le gaz à la sortie des cylindres : la carte, ce que le pas retarde ou coupe, et ce qui brûle encore au collecteur.
+        const double rise = exhaustHeatRiseK(diesel, manifold_);
+        const bool burning = !cut_ || fuelOnCut_;
+        const double normal = burning ? kPortIntakeK + exhaustShare_ * rise : kPortIntakeK + 60.0;
+        EcuExhaust gas = ecuMapExhaust(powertrain_.engine);
+        gas.retardDeg = ecu_.retardDeg;
+        gas.firedShare = cut_ ? 0.0 : ecu_.firedShare;
+        gas.fuelOnCut = fuelOnCut_;
+        const double target = burning && (gas.active() || cut_) ? ecuExhaustK(gas, kPortIntakeK, normal, rise, manifold_, antiLagIgnition(portK_)) : normal;
+        portK_ += (target - portK_) * kStep / (target > portK_ ? kPortHeatS : kPortCoolS);
+        ignition_ = antiLagIgnition(portK_);
+    }
+
+    // Le mélange d'un cylindre coupé : ce qui peut en brûler au collecteur, à chaque ouverture (J).
+    unburntJoules_ = 0.0;
+    if (fuelOnCut_) {
+        const double air = consumption_.model().airGps(rpmNow, manifold_, indicated);
+        const double events = std::max(rpmNow / 120.0 * powertrain_.engine.firingsPerTwoTurns(), 1.0);
+        const FuelSpec& fuel = consumption_.model().fuel();
+        const double grams = air / events / (fuel.stoichiometricAfr * demandedLambda(powertrain_.engine, manifold_));
+        unburntJoules_ = grams * fuel.lowerHeatingJPerG * kUnburntCollectorShare;
+    }
+}
+
+EcuDrive DrivingModel::ecuDrive() const {
+    EcuDrive d;
+    if (!ecuEngine_ && !ecuMap_) return d;
+    EcuExhaust gas = ecuMapExhaust(powertrain_.engine);
+    gas.retardDeg = ecu_.retardDeg;
+    const double evo = sparkEngine_ ? ecuEvoRatio(gas, exhaustShare_, manifold_) : 1.0;
+    const bool cutting = cut_ && fuelOnCut_;
+    if (evo == 1.0 && ecu_.firedShare >= 1.0 && !cutting) return d;
+    d.active = true;
+    d.evoRatio = static_cast<float>(evo);
+    d.firedShare = static_cast<float>(ecu_.firedShare);
+    d.fuelOnCut = fuelOnCut_;
+    d.unburntJoules = static_cast<float>(unburntJoules_);
+    d.ignition = static_cast<float>(ignition_);
+    return d;
+}
+
+double DrivingModel::ecuAdvanceDeg() const {
+    if (!sparkEngine_) return 0.0;
+    return static_cast<double>(powertrain_.engine.ignitionOffsetDeg) - ecu_.retardDeg;
+}
+
+double DrivingModel::ecuLambda() const {
+    if (!sparkEngine_) return 0.0;
+    // Un carburateur dose lui-même : c'est son mélange qu'on lit.
+    if (carbEngine_) return carb_.lambda();
+    return demandedLambda(powertrain_.engine, manifold_);
 }
 
 }  // namespace revforge
