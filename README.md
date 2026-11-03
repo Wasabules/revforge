@@ -17,6 +17,7 @@ There are no audio samples. Everything you hear is computed sample by sample fro
 - **Choose the exhaust.** Comfort, stock, no resonator, sport, muffler delete or straight pipe, with one or two outlets and an H or X pipe on V engines. Each line is computed from its geometry.
 - **Choose the gearbox, independently of the engine.** Synchromesh, dog box, sequential, dual clutch or torque converter; number of gears, ratios built from real tooth counts, final drive, helical or straight-cut gears, single or dual-mass flywheel. A badly matched gearbox has real consequences: you can stall, run out of speed, or break it.
 - **Drive it.** Starter, stalling, a clutch you can slip, rev-matching, grinding when you shift without the clutch, reverse, rev limiter, fuel cut, pops and bangs, turbo blow-off. Automatics offer Eco, Normal, Sport, Track and paddle shift modes, with shift points derived from the engine's curves.
+- **Tune the engine management.** Spark advance and full-load mixture, a stock, soft or ignition-cut rev limiter (the unburnt fuel bangs in the exhaust), launch control that builds boost at a standstill, flat shifting and slip control, each one computed from its cause.
 - **Go for a ride.** Nine journeys, from city traffic to a mountain pass, a track lap, a drag run or towing a trailer, with slopes, corners and the trailer felt by the car.
 - **Watch the gauges.** A wide dashboard with tachometer, manifold pressure, exhaust temperature and back-pressure, power and torque on their curves, and estimated fuel and oil consumption. Every needle reads a simulated value. Settings live in side panels, so you hear each change as you make it.
 - **Stand wherever you want.** Drag yourself around the car on a top-down map, or jump to front, rear, side, ear in the tailpipe, cabin or under the hood. Sources sit at their real positions, in true stereo, with an estimated dB(A) reading.
@@ -119,6 +120,7 @@ Known limits:
 - Carburetors are always warm: no choke and no cold start, since nothing computes temperature. Several film and noise constants are assumed.
 - The car never rolls backwards (hill starts assume hill hold), all cars share one tyre grip, and journeys are timed rather than distance-based.
 - With an automatic, a diesel can occasionally stall at very low speed; the site then offers a restart.
+- Slip control can only hold wheelspin back: the model's tyre has no grip peak, so it never shortens a 0-100. The stock spark map is assumed to sit at best torque until knock is modelled, and the limiter and launch control bangs are assumed until someone listens.
 - Anti-lag wears nothing out: nothing computes wear, so no part breaks and no time limit applies, and its bangs are assumed until someone listens.
 - Gear rattle has no isolated real recording to compare against, and several gearbox parameters (module, helix angle, backlash, wear rate) are assumed.
 - The rotary engine has no simulated wear or apex seals, and its port timing and oil metering are from memory, not checked against a manufacturer's manual. Its engine view shows what connects to its ports in outline only.

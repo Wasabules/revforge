@@ -1087,3 +1087,98 @@ Le rendu est identique au bit près entre le natif et WebAssembly : calculs en `
 `float`, ordre des tirages aléatoires figé, pas de contraction en virgule flottante, physique à pas
 fixe. La parité avec la version Kotlin d'origine (CANCitroen) a été abandonnée lors de cette
 refonte. `tools/compare_wav.py` compare deux rendus.
+
+## Le calculateur
+
+Le calculateur (`core/src/ecu.cpp`, `ecu.hpp`) a deux parties. Sa **carte**, l'avance et la richesse, est faite de fonctions pures que lisent le couple, la consommation, la turbine et le son. Ce qu'il **fait à chaque pas** de `DrivingModel`, le rupteur, le launch control, le passage à fond et l'antipatinage, sort par `EcuAction`, et va au son par `EcuDrive`, avec son propre générateur. Au défaut, rien de tout cela ne s'exécute : les empreintes et `check_wasm` sont inchangés, et un test vérifie qu'un tour entier sans réglage ne voit jamais le calculateur agir.
+
+### La carte d'avance
+
+Le couple indiqué suit une parabole autour du meilleur couple (MBT) : `T/T_MBT = 1 − (Δ/68°)²`, Δ l'écart au MBT en degrés de vilebrequin, à peu près symétrique de part et d'autre (Heywood, *Internal Combustion Engine Fundamentals*, chap. 9 : une courbe plate au sommet, quelques pour cent à ±10°). C'est la parabole de l'anti-lag : 2,2 % à 10°, 8,7 % à 20°. **Supposé :** la carte d'origine est au MBT. Le cliquetis (sujet « combustion ») l'en éloignera : `knockRetardDeg` est déjà un paramètre de `demandedAdvanceDeg`, `mapRetardDeg` et `ecuFullLoadShare`, à 0 tant qu'il n'est pas branché. Le décalage `--advance` de ±10° ne peut donc ici que perdre du couple ; l'avance ne gagne qu'en sortant d'un cliquetis.
+
+L'avance demandée, en degrés avant le point mort haut (`demandedAdvanceDeg`), part de `mbtAdvanceDeg` : l'étincelle qui place la moitié de la combustion vers 8° après le point mort haut. De l'étincelle à cette moitié, 34° à 3000 tr/min plein gaz, × (N/3000)^0,25 (la turbulence suit le piston : la durée en degrés croît peu), × (1 + 0,6 (1 − remplissage)) à faible charge. Il en sort 26° à 3000 tr/min plein gaz, 32° à 6000, 31° à mi-charge à 1500 ; des cartes publiées d'atmosphériques donnent 25 à 35° à pleine charge. Ordre de grandeur, supposé : rien d'autre ne le lit encore que la fiche.
+
+Le travail que le piston ne reçoit pas part dans le gaz, moins 20 % dans les parois : `ΔQ_gaz = η_i (1 − T/T_MBT) × 0,8` de l'énergie du carburant, η_i = 0,405 (0,375 suralimenté), le rendement de `ConsumptionModel`. Du côté avancé, ce travail part dans les parois, pas dans le gaz. **Limite :** près du MBT, la hausse de température d'échappement est sans doute sous-estimée, puisque la baisse des pertes aux parois avec le retard n'est pas comptée (Heywood, chap. 12) : +17 K pour 10° de retard à pleine charge, quand on cite souvent quelques dizaines.
+
+### La richesse
+
+`--lambda` règle la richesse à pleine charge ; 0 garde celle d'origine, 0,88 (0,82 suralimenté), celle de `ConsumptionModel`. Le couple par kilogramme d'air suit la courbe que lit déjà le carburateur (`torqueOfRichness`, d'après Heywood, chap. 5) : un sommet plat vers λ 0,87, puis −6,3 % à λ 1, −12,7 % à λ 1,1 et −3,4 % à λ 0,70 face à λ 0,88. La richesse ne s'écarte de la boucle fermée (λ 1) qu'au-dessus de 85 % de remplissage, la rampe de la consommation : le couple à charge partielle ne change pas. Un carburateur dose par ses gicleurs, un diesel brûle toujours en excès d'air : le réglage ne leur fait rien, et le site le cache.
+
+L'échauffement du gaz suit la température de flamme adiabatique d'un hydrocarbure dans l'air à 298 K (tables usuelles, ordre de grandeur) : un sommet vers φ = 1,05, −2 % à λ 0,88, −6 % à 0,82, −14 % à 0,70. **Limite :** sur un vrai moteur, enrichir refroidit davantage l'échappement, en partie parce que cela permet d'avancer sans cliquetis : cette part reviendra au cliquetis.
+
+### Ce que la carte change
+
+Le couple de pleine charge (`fullLoadTorqueNm`, donc les courbes, la fiche et la conduite) est multiplié hors frottements : `(T + T_f) × part − T_f`. La consommation suit l'air : à air égal, une étincelle décalée tire moins de chaque gramme, donc le rendement de `ConsumptionModel` est multiplié par la même part, et la richesse règle ce qu'il faut de carburant par gramme d'air. La turbine reçoit le gaz plus chaud ou plus froid (`TurboSpec::ecu`, le turbo restant celui d'origine), et le son ouvre la soupape sur autant de pression en plus (`evoRatio`, le même bilan que l'anti-lag).
+
+Mesuré sur `hot_hatch_na` (2,0 L, 7300 tr/min) ; consommation en WLTC, à chaud :
+
+| | Origine | Avance −10° | −5° | +5° | λ 1,0 | λ 0,80 | λ 0,75 | λ 1,1 |
+|---|---|---|---|---|---|---|---|---|
+| Couple maximal (Nm) | 194,1 | 189,2 | 192,9 | 192,9 | 179,7 | 194,0 | 191,3 | 165,5 |
+| Puissance maximale (kW) | 117,8 | 114,5 | 117,0 | 117,0 | 108,2 | 117,7 | 115,9 | 98,6 |
+| g/kWh à la puissance maximale | 304 | 313 | 306 | 306 | 291 | 334 | 362 | 290 |
+| Gaz à la sortie des cylindres, puissance maximale | 863 °C | +17 K | +4 K | 0 | +20 K | −41 K | −69 K | −18 K |
+| WLTC (L/100 km) | 9,07 | 9,30 | 9,13 | 9,13 | 9,05 | 9,07 | 9,07 | 9,03 |
+| 0-100 km/h (s) | 8,72 | 8,82 | 8,75 | 8,75 | 9,14 | 8,72 | 8,80 | 9,60 |
+
+Sur `hot_hatch_turbo` : λ 1 retire 6,9 % de couple (0-100 en 7,15 s au lieu de 6,86), 10° de retard 2,3 % et 1,9 % de carburant en WLTC (9,07 L/100 km au lieu de 8,90).
+
+λ 0,80 ne change presque rien au couple, mais coûte 10 % de carburant de plus à la puissance maximale ; λ 1 en économise 4 %, pour 8 % de puissance en moins. Le WLTC touche rarement la pleine charge : la richesse n'y change presque rien, l'avance si.
+
+### Le rupteur
+
+- **D'origine (`stock`), le comportement d'avant ce calculateur, inchangé.** Au régime maximal, la combustion est coupée, injection et étincelle (un carburateur, lui, continue de débiter), pendant 30 ms au moins, et ne reprend que 2,6 à 5,4 % plus bas : 4 % × (0,65 + 0,7 u), u tiré d'un générateur à congruence à chaque reprise, pour que deux rebonds ne soient jamais identiques. Le papillon reste ouvert : peu de pompage, pas de décharge du turbo. Au son, la pression des bouffées tombe de 95 %, et tout ce qui suit le débit avec elle (voir « Le rupteur », plus haut).
+- **Progressif (`soft`).** Sur les 3 % sous le régime maximal, l'étincelle recule jusqu'à 15° (5 % de couple) ; au-delà, une part croissante des cylindres est coupée, tous à +2 % : une coupure d'injection, explosion par explosion, dans l'ordre d'allumage (au son, un accumulateur qui en saute la part voulue). Sur un 2,0 L au point mort, pied au plancher, il tient à +1,4 % sans une seule coupure franche, avec 40 % des explosions.
+- **Coupure d'allumage (`ignition_cut`).** Le même rebond que l'origine, mais seule l'étincelle est coupée : le carburant est toujours injecté. Le mélange du cylindre coupé arrive au collecteur, où 45 % en brûle si le gaz y dépasse 800 K, entièrement à 1100 K : les chiffres de la coupure de cylindres de l'anti-lag. Sur un turbo, cette chaleur va à la turbine ; sur un atmosphérique, c'est le gaz à la sortie des cylindres, suivi avec la même inertie des parois que celui de la turbine (0,35 s pour chauffer, 0,9 s pour refroidir), qui dit s'il s'enflamme. Au son, chaque ouverture d'un cylindre coupé a 45 % × allumage de chances de détoner, à l'amplitude √(E/90 J) d'une détonation ordinaire, E l'énergie de ce qui brûle : environ 760 J par cylindre sur un 2,0 L à 7200 tr/min, deux fois celle d'un cylindre coupé par l'anti-lag. Trois coups de gaz au rupteur sur un 2,0 L : 23 détonations contre aucune, et 47 mL d'essence contre 25 en 14 s. **Pas fait :** le gaz à l'écran montre cette coupure comme celle d'origine, des bouffées qui n'ont pas brûlé, sans la flamme du collecteur.
+
+Un diesel n'a pas d'étincelle : sa coupure d'allumage redevient la coupure d'injection d'origine, et le progressif n'y coupe que l'injection. Le régime du rupteur passe par `limiterRpmFor` : le régime maximal, ou 2 % sous l'affolement des soupapes s'il arrive avant (sujet « culbuteurs », 0 tant qu'il n'est pas branché).
+
+### Le launch control
+
+Il s'arme pied au plancher (90 %), voiture arrêtée, moteur désaccouplé : embrayage enfoncé, ou boîte pilotée qui garde l'embrayage ouvert tant que le pied reste sur le frein. Il tient le régime choisi par la coupure d'allumage (même rebond), avec 25° de retard (supposé : l'ordre de grandeur des calculateurs de préparation). Le retard et le mélange qui brûle au collecteur chauffent la turbine : à l'arrêt, la pression monte. Il lâche dès que la voiture roule (1 m/s) ou que l'embrayage a rattrapé le moteur : l'embrayage se ferme alors depuis ce régime, sur tout le couple. Le 0-100 de la fiche s'en sert : trois secondes de frein et de pied au plancher, chronomètre au lâcher du frein. `--scenario launch_control` fait le même départ et écrit ses chiffres.
+
+| 0-100 km/h de la fiche, chronomètre au lâcher du frein | Sans | Launch control |
+|---|---|---|
+| `hot_hatch_turbo` (2,0 L turbo, traction avant), à 4500 tr/min | 6,86 s | 6,13 s |
+| V8 de 7,0 L atmosphérique, propulsion, 1700 kg, à 3500 tr/min | 6,18 s | 6,03 s |
+
+À l'arrêt, `hot_hatch_turbo` à 4500 tr/min : 4406 tr/min et 1,03 de la pression demandée au lâcher du frein, le gaz avant la turbine jusqu'à 1129 °C (899 sans launch control), 27 détonations en trois secondes.
+
+**Limite :** sans launch control, la boîte pilotée laisse déjà l'embrayage patiner contre les freins (à 2350 tr/min sur `hot_hatch_turbo`), ce qui charge aussi le turbo : ce départ en force, irréaliste pour un embrayage sec, donne même 5,94 s depuis le lâcher, contre 6,10 avec le launch control. C'est le comportement d'avant, gardé. De même, frein serré, les roues motrices patinent (le frein agit sur la caisse) : l'antipatinage y coupe le moteur.
+
+### Le passage à fond
+
+À la montée, pied au-delà de 80 %, sur une boîte à synchros ou à crabots que pilote le robot : le pied n'est plus levé. Le calculateur coupe l'étincelle, le carburant passant toujours, tant que le moteur dépasse le régime du rapport suivant : il l'y tient pendant le passage. Papillon ouvert, pas de vide : la soupape de décharge reste fermée, et le mélange qui brûle au collecteur garde la turbine lancée. Sur une séquentielle, la coupure d'origine laisse aussi passer le carburant. Une double embrayage ou un convertisseur passent déjà sous charge : rien n'y change. Sur `hot_hatch_turbo`, plein gaz : la pression au plus bas pendant les passages reste à 0,99 à 1,02 de la pression demandée au lieu de tomber à 0,16 à 0,23 ; 150 km/h en 13,3 s au lieu de 13,8 ; 0-100 en 6,54 s au lieu de 6,86 ; une à quatre détonations par passage.
+
+### L'antipatinage
+
+Une régulation proportionnelle et intégrale du glissement des roues motrices que calcule déjà `DrivingModel` (m/s), vers la part du couple à retirer : `u = 0,1 e + ∫ 1,0 e dt`. L'intégrale ne prend qu'un mètre par seconde d'écart au plus, et ne grossit pas dans le sens où la commande sature (anti-emballement) : sans cela, une fois les roues reprises, elle tenait le moteur coupé jusqu'à 550 tr/min. Le retard d'abord, jusqu'à 25° (13,5 % de couple), puis des cylindres coupés, à l'injection. Sur une voiture électrique, le couple du moteur directement. Il n'agit que roues tenues par le moteur : un embrayage qui patine ne transmet que sa capacité, et couper l'allumage ne ferait que caler le moteur.
+
+**La cible, et ce que le pneu en fait.** Le pneu du modèle, `F = μN s/√(1+s²)`, s en m/s, **n'a pas de sommet** : il pousse d'autant plus qu'il glisse. La cible se lit donc sur sa courbe, comme la part de l'adhérence que le mode laisse en réserve pour tenir en virage : 90 % en sport (2,1 m/s), 80 % en complet (1,3 m/s), supposées. Le glissement moyen en première, une fois l'embrayage serré, tient à ces cibles à 15 % près (testé). Un vrai pneu a son sommet vers 10 % de glissement, au-delà duquel il perd de l'adhérence, et l'antipatinage y fait gagner du temps ; ici, il ne peut que retenir le patinage, et le payer. Changer le pneu changerait le défaut : ce n'est pas fait.
+
+| 0-100 km/h de la fiche | Sans | Sport | Complet |
+|---|---|---|---|
+| V8 de 7,0 L, propulsion, pneu du modèle | 6,18 s | 6,20 s | 6,86 s |
+| Le même, pneu à sommet (essai sur une copie, non livré) | 6,38 s | 5,86 s | 6,10 s |
+| `hot_hatch_turbo`, traction avant | 6,86 s | 6,86 s | 6,86 s |
+
+Le pneu à sommet de l'essai suit la forme de Pacejka, `sin(1,4 atan(0,92 s))` : son sommet à 2,25 m/s, 81 % en glissement franc. Avec lui, l'antipatinage sport fait gagner une demi-seconde, et le complet trois dixièmes : c'est ce que changerait le branchement d'un vrai pneu, à faire pour toutes les voitures à la fois. La traction avant du 2,0 L turbo ne glisse jamais jusqu'à ses cibles dans un départ ordinaire.
+
+### Le son, et ce qui reste à écouter
+
+Tout passe par `setEcu` : la pression à l'ouverture des cylindres allumés (retard, richesse), les explosions sautées de la coupure partielle, et les détonations d'un cylindre dont seule l'étincelle est coupée, par le chemin des `pops`. Mesuré en coups de gaz (2,0 L) : au rupteur, la bande 30-120 Hz gagne 2,6 dB avec la coupure d'allumage ; le progressif efface les rayures du rebond sur le spectrogramme. Au launch control, la coupure en rafales s'y voit comme une suite de bandes verticales, à l'arrêt. **Rien n'a été écouté :** la chance de détoner, l'énergie qui brûle et la part de 90 J sont reprises de l'anti-lag, et seule l'écoute dira si ces détonations sonnent comme une vraie coupure d'allumage. Commandes : voir le compte rendu, ou `revforge-render --out x.wav --cylinders 4 --cc 2000 --bore 86 --redline 7200 --exhaust sport --limiter ignition_cut --scenario blips`, `--preset hot_hatch_turbo --launch 4500 --scenario launch_control`, `--preset hot_hatch_turbo --flat-shift 1 --scenario launch --seconds 16`.
+
+### Ce qu'il lit, et ce qu'il expose
+
+| Grandeur | Fonction | Valeur tant que rien n'est branché |
+|---|---|---|
+| Lue : avance retirée par le cliquetis (combustion) | paramètre `knockRetardDeg` | 0 |
+| Lue : régime d'affolement des soupapes (culbuteurs) | `limiterRpmFor(redline, valveFloatRpm)` | 0 : le régime maximal |
+| Lue : température d'eau (thermique) | `warmupRichness(coolantC)`, `demandedLambda(…, coolantC)` | 90 °C : aucun enrichissement |
+| Lue : air ambiant (atmosphère) | gaz à la sortie des cylindres, `kPortIntakeK` | 293 K |
+| Exposée : avance demandée (° avant PMH) | `demandedAdvanceDeg(e, rpm, load, knock)`, `mbtAdvanceDeg` | |
+| Exposée : richesse demandée | `demandedLambda(e, load, coolantC)`, `fullLoadLambdaOf` | |
+| Exposée : couple et chaleur selon l'avance et λ | `sparkTorqueShare`, `sparkExhaustGain`, `lambdaTorqueShare`, `lambdaHeatShare`, `ecuFullLoadShare` | |
+| Exposée : ce qu'il fait au pas | `DrivingModel::ecuAction()`, `ecuAdvanceDeg()`, `ecuLambda()` | |
+
+Télémétrie : `rf_ecu_advance`, `rf_ecu_lambda`, `rf_ecu_fired`, `rf_ecu_limiter`, `rf_ecu_launch`, `rf_ecu_flat`, `rf_ecu_traction` (voyants et tableau des grandeurs) ; fiche : `rf_ecu_full_share`, `rf_ecu_spark_deg`, `rf_ecu_exhaust_c`. `--trace` en écrit les colonnes.

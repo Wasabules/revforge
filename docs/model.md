@@ -1063,3 +1063,98 @@ such as the Cobra.
 
 The render is bit-identical between native and WebAssembly: calculations in `double` rounded to `float`, frozen order of random draws, no floating-point
 contraction, fixed-step physics. Parity with the original Kotlin version (CANCitroen) was abandoned during this rework. `tools/compare_wav.py` compares two renders.
+
+## The engine management
+
+The engine management (`core/src/ecu.cpp`, `ecu.hpp`) has two parts. Its **map**, spark advance and mixture, is a set of pure functions read by the torque, the fuel figures, the turbine and the sound. What it **does at each step** of `DrivingModel`, the rev limiter, the launch control, the flat shift and the slip control, comes out through `EcuAction`, and reaches the sound through `EcuDrive`, with its own random generator. At the defaults none of this runs: the fingerprints and `check_wasm` are unchanged, and a test checks that a whole lap without any setting never sees the engine management act.
+
+### The spark map
+
+Indicated torque follows a parabola around the best-torque timing (MBT): `T/T_MBT = 1 − (Δ/68°)²`, Δ the crank-angle offset from MBT, roughly symmetric on both sides (Heywood, *Internal Combustion Engine Fundamentals*, ch. 9: a flat top, a few percent at ±10°). It is the anti-lag's parabola: 2.2 % at 10°, 8.7 % at 20°. **Assumed:** the stock map sits at MBT. Knock (the "combustion" topic) will pull it away: `knockRetardDeg` is already a parameter of `demandedAdvanceDeg`, `mapRetardDeg` and `ecuFullLoadShare`, at 0 until it is wired. The ±10° `--advance` offset can therefore only lose torque here; advance only gains by getting out of knock.
+
+The requested advance, in degrees before top dead centre (`demandedAdvanceDeg`), starts from `mbtAdvanceDeg`: the spark that puts half the burn about 8° after top dead centre. From spark to that half, 34° at 3000 rpm full throttle, × (N/3000)^0.25 (turbulence follows the piston: the duration in degrees grows little), × (1 + 0.6 (1 − fill)) at light load. That gives 26° at 3000 rpm full throttle, 32° at 6000, 31° at half load at 1500; published maps of naturally aspirated engines give 25 to 35° at full load. An assumed order of magnitude: only the spec sheet reads it so far.
+
+The work the piston does not get goes into the gas, minus 20 % into the walls: `ΔQ_gas = η_i (1 − T/T_MBT) × 0.8` of the fuel energy, η_i = 0.405 (0.375 boosted), the efficiency of `ConsumptionModel`. On the advanced side that work goes into the walls, not the gas. **Limit:** near MBT the rise in exhaust temperature is probably underestimated, since the lower wall losses with retard are not counted (Heywood, ch. 12): +17 K for 10° of retard at full load, where a few tens are often quoted.
+
+### The mixture
+
+`--lambda` sets the full-load mixture; 0 keeps the stock one, 0.88 (0.82 boosted), that of `ConsumptionModel`. Torque per kilogram of air follows the curve the carburettor already reads (`torqueOfRichness`, after Heywood, ch. 5): a flat top around λ 0.87, then −6.3 % at λ 1, −12.7 % at λ 1.1 and −3.4 % at λ 0.70 against λ 0.88. The mixture only leaves closed loop (λ 1) above 85 % fill, the fuel model's ramp: part-load torque does not change. A carburettor meters through its jets, a diesel always burns with excess air: the setting does nothing to them, and the site hides it.
+
+Gas heating follows the adiabatic flame temperature of a hydrocarbon in air at 298 K (usual tables, order of magnitude): a peak around φ = 1.05, −2 % at λ 0.88, −6 % at 0.82, −14 % at 0.70. **Limit:** on a real engine, enrichment cools the exhaust more, partly because it allows more advance without knock: that part will belong to knock.
+
+### What the map changes
+
+Full-load torque (`fullLoadTorqueNm`, hence the curves, the spec sheet and the driving) is scaled outside friction: `(T + T_f) × share − T_f`. The fuel follows the air: for the same air, a shifted spark gets less from each gram, so the efficiency of `ConsumptionModel` is scaled by the same share, and the mixture sets the fuel needed per gram of air. The turbine gets hotter or cooler gas (`TurboSpec::ecu`, the turbo staying the stock one), and the sound opens the valve on that much more pressure (`evoRatio`, the anti-lag's balance).
+
+Measured on `hot_hatch_na` (2.0 L, 7300 rpm); fuel on a warm WLTC:
+
+| | Stock | Advance −10° | −5° | +5° | λ 1.0 | λ 0.80 | λ 0.75 | λ 1.1 |
+|---|---|---|---|---|---|---|---|---|
+| Peak torque (Nm) | 194.1 | 189.2 | 192.9 | 192.9 | 179.7 | 194.0 | 191.3 | 165.5 |
+| Peak power (kW) | 117.8 | 114.5 | 117.0 | 117.0 | 108.2 | 117.7 | 115.9 | 98.6 |
+| g/kWh at peak power | 304 | 313 | 306 | 306 | 291 | 334 | 362 | 290 |
+| Gas at the cylinder outlet, peak power | 863 °C | +17 K | +4 K | 0 | +20 K | −41 K | −69 K | −18 K |
+| WLTC (L/100 km) | 9.07 | 9.30 | 9.13 | 9.13 | 9.05 | 9.07 | 9.07 | 9.03 |
+| 0-100 km/h (s) | 8.72 | 8.82 | 8.75 | 8.75 | 9.14 | 8.72 | 8.80 | 9.60 |
+
+On `hot_hatch_turbo`: λ 1 removes 6.9 % of torque (0-100 in 7.15 s instead of 6.86), 10° of retard 2.3 %, and costs 1.9 % fuel on the WLTC (9.07 L/100 km instead of 8.90).
+
+λ 0.80 barely changes the torque, but costs 10 % more fuel at peak power; λ 1 saves 4 %, for 8 % less power. The WLTC rarely reaches full load: the mixture barely changes it there, the advance does.
+
+### The rev limiter
+
+- **Stock (`stock`), the behaviour from before this engine management, unchanged.** At the redline, combustion is cut, fuel and spark (a carburettor keeps metering), for at least 30 ms, and only comes back 2.6 to 5.4 % lower: 4 % × (0.65 + 0.7 u), u drawn from a congruential generator at each restart, so that no two bounces are alike. The throttle stays open: little pumping, no turbo dump. In the sound, the pulse pressure drops by 95 %, and everything that follows the flow drops with it (see "The rev limiter" above).
+- **Soft (`soft`).** Over the last 3 % below the redline, the spark retards up to 15° (5 % torque); beyond, a growing share of the cylinders is cut, all of them at +2 %: an injection cut, firing by firing, in firing order (in the sound, an accumulator that skips the asked share). On a 2.0 L in neutral, flat out, it holds at +1.4 % without a single hard cut, with 40 % of the firings.
+- **Ignition cut (`ignition_cut`).** The same bounce as stock, but only the spark is cut: the fuel is still injected. The cut cylinder's mixture reaches the manifold, where 45 % of it burns if the gas there is above 800 K, all of it at 1100 K: the anti-lag's cylinder-cut figures. On a turbo, that heat goes to the turbine; on a naturally aspirated engine, the gas at the cylinder outlet, tracked with the same wall inertia as the turbine's (0.35 s to heat, 0.9 s to cool), decides whether it ignites. In the sound, each opening of a cut cylinder has 45 % × ignition chance to bang, at the amplitude √(E/90 J) of an ordinary pop, E the energy that burns: about 760 J per cylinder on a 2.0 L at 7200 rpm, twice that of a cylinder cut by the anti-lag. Three blips to the limiter on a 2.0 L: 23 bangs against none, and 47 mL of fuel against 25 in 14 s. **Not done:** the on-screen gas shows this cut like the stock one, pulses that have not burnt, without the manifold flame.
+
+A diesel has no spark: its ignition cut goes back to the stock fuel cut, and the soft limiter only cuts injection. The limiter speed goes through `limiterRpmFor`: the redline, or 2 % below valve float if it comes first (the "pushrods" topic, 0 until wired).
+
+### The launch control
+
+It arms flat out (90 %), car stopped, engine decoupled: clutch pedal down, or an automated gearbox that keeps the clutch open while the foot stays on the brake. It holds the chosen speed with the ignition cut (same bounce), with 25° of retard (assumed: the order of magnitude of tuned engine managements). The retard and the mixture burning in the manifold heat the turbine: at a standstill, boost builds. It lets go as soon as the car rolls (1 m/s) or the clutch has caught the engine: the clutch then closes from that speed, on all the torque. The spec sheet's 0-100 uses it: three seconds of brake and full throttle, timed from the brake release. `--scenario launch_control` makes the same start and prints its figures.
+
+| Spec-sheet 0-100 km/h, timed from the brake release | Without | Launch control |
+|---|---|---|
+| `hot_hatch_turbo` (2.0 L turbo, front drive), at 4500 rpm | 6.86 s | 6.13 s |
+| 7.0 L naturally aspirated V8, rear drive, 1700 kg, at 3500 rpm | 6.18 s | 6.03 s |
+
+At a standstill, `hot_hatch_turbo` at 4500 rpm: 4406 rpm and 1.03 of the target boost at the brake release, the gas before the turbine up to 1129 °C (899 without launch control), 27 bangs in three seconds.
+
+**Limit:** without launch control, the automated gearbox already lets the clutch slip against the brakes (at 2350 rpm on `hot_hatch_turbo`), which also spools the turbo: that forced start, unrealistic for a dry clutch, even gives 5.94 s from the release, against 6.10 with launch control. It is the behaviour from before, kept. Likewise, with the brake held, the driven wheels spin (the brake acts on the body): slip control cuts the engine there.
+
+### The flat shift
+
+On upshifts, foot above 80 %, on a synchro or dog box driven by the robot: the foot is no longer lifted. The engine management cuts the spark, the fuel still flowing, while the engine is above the next gear's speed: it holds it there during the shift. Throttle open, no vacuum: the blow-off valve stays shut, and the mixture burning in the manifold keeps the turbine spinning. On a sequential box, the stock cut also lets the fuel through. A dual-clutch or a torque converter already shift under load: nothing changes there. On `hot_hatch_turbo`, flat out: the lowest boost during the shifts stays at 0.99 to 1.02 of the target instead of dropping to 0.16 to 0.23; 150 km/h in 13.3 s instead of 13.8; 0-100 in 6.54 s instead of 6.86; one to four bangs per shift.
+
+### The slip control
+
+A proportional-integral control of the driven-wheel slip that `DrivingModel` already computes (m/s), towards the share of torque to remove: `u = 0.1 e + ∫ 1.0 e dt`. The integral takes at most 1 m/s of error, and does not grow in the direction where the command saturates (anti-windup): without that, once the wheels gripped again, it held the engine cut down to 550 rpm. Retard first, up to 25° (13.5 % torque), then cut cylinders, at the injectors. On an electric car, the motor torque directly. It only acts with the wheels held by the engine: a slipping clutch only transmits its capacity, and cutting the spark would only stall the engine.
+
+**The target, and what the tyre makes of it.** The model's tyre, `F = μN s/√(1+s²)`, s in m/s, **has no peak**: the more it slips, the more it pushes. The target is therefore read on its curve, as the share of grip the mode keeps in reserve for cornering: 90 % in sport (2.1 m/s), 80 % in full (1.3 m/s), assumed. The mean slip in first, once the clutch is closed, holds these targets within 15 % (tested). A real tyre peaks around 10 % slip and loses grip beyond, and slip control gains time there; here it can only hold the wheelspin back, and pay for it. Changing the tyre would change the defaults: it is not done.
+
+| Spec-sheet 0-100 km/h | Off | Sport | Full |
+|---|---|---|---|
+| 7.0 L V8, rear drive, the model's tyre | 6.18 s | 6.20 s | 6.86 s |
+| The same, tyre with a peak (trial on a copy, not shipped) | 6.38 s | 5.86 s | 6.10 s |
+| `hot_hatch_turbo`, front drive | 6.86 s | 6.86 s | 6.86 s |
+
+The trial's peaked tyre follows the Pacejka shape, `sin(1.4 atan(0.92 s))`: its peak at 2.25 m/s, 81 % when fully sliding. With it, sport slip control gains half a second, and full three tenths: that is what wiring a real tyre would change, to be done for all cars at once. The front-drive 2.0 L turbo never slips up to its targets in an ordinary start.
+
+### The sound, and what is left to listen to
+
+Everything goes through `setEcu`: the pressure at the opening of the fired cylinders (retard, mixture), the skipped firings of the partial cut, and the bangs of a cylinder whose spark only is cut, through the `pops` path. Measured on blips (2.0 L): at the limiter, the 30-120 Hz band gains 2.6 dB with the ignition cut; the soft limiter erases the bounce's stripes on the spectrogram. At launch control, the bursts of cut show as a row of vertical bands, at a standstill. **Nothing has been listened to:** the chance to bang, the energy that burns and the 90 J reference come from the anti-lag, and only listening will tell whether these bangs sound like a real ignition cut. Commands: `revforge-render --out x.wav --cylinders 4 --cc 2000 --bore 86 --redline 7200 --exhaust sport --limiter ignition_cut --scenario blips`, `--preset hot_hatch_turbo --launch 4500 --scenario launch_control`, `--preset hot_hatch_turbo --flat-shift 1 --scenario launch --seconds 16`.
+
+### What it reads, and what it exposes
+
+| Quantity | Function | Value until wired |
+|---|---|---|
+| Read: advance removed by knock (combustion) | parameter `knockRetardDeg` | 0 |
+| Read: valve float speed (pushrods) | `limiterRpmFor(redline, valveFloatRpm)` | 0: the redline |
+| Read: coolant temperature (thermal) | `warmupRichness(coolantC)`, `demandedLambda(…, coolantC)` | 90 °C: no enrichment |
+| Read: ambient air (atmosphere) | gas at the cylinder outlet, `kPortIntakeK` | 293 K |
+| Exposed: requested advance (° BTDC) | `demandedAdvanceDeg(e, rpm, load, knock)`, `mbtAdvanceDeg` | |
+| Exposed: requested mixture | `demandedLambda(e, load, coolantC)`, `fullLoadLambdaOf` | |
+| Exposed: torque and heat by advance and λ | `sparkTorqueShare`, `sparkExhaustGain`, `lambdaTorqueShare`, `lambdaHeatShare`, `ecuFullLoadShare` | |
+| Exposed: what it does at each step | `DrivingModel::ecuAction()`, `ecuAdvanceDeg()`, `ecuLambda()` | |
+
+Telemetry: `rf_ecu_advance`, `rf_ecu_lambda`, `rf_ecu_fired`, `rf_ecu_limiter`, `rf_ecu_launch`, `rf_ecu_flat`, `rf_ecu_traction` (warning lights and the readings table); spec sheet: `rf_ecu_full_share`, `rf_ecu_spark_deg`, `rf_ecu_exhaust_c`. `--trace` writes them as columns.
