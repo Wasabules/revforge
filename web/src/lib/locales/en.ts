@@ -1011,11 +1011,12 @@ export const en = {
   'summary.nitrous': 'nitrous {kw}\u00a0kW',
   // ── Conditions: outside air and altitude ──
   'builder.ambient': 'Outside air',
-  'builder.ambient.help': 'Cold air is denser: more of it in each cylinder.',
+  'builder.ambient.help': 'Cold air is denser: more of it in each cylinder, but more drag too. Sound travels slower in it.',
   'builder.ambient.value': '{c} °C',
   'builder.altitude': 'Altitude',
-  'builder.altitude.help': 'Thinner air higher up: about 11% less pressure every 1000 m.',
+  'builder.altitude.help': 'Standard atmosphere: about 11% less pressure every 1000 m. A turbo keeps its boost above it, but its shaft spins faster to get there.',
   'builder.altitude.value': '{m} m',
+  'builder.ambientAir': 'Air: {p} hPa, {rho} kg/m³ ({share}% of sea level at 20 °C), sound at {c} m/s',
   'summary.ambient': '{c}\u00a0°C',
   'summary.altitude': '{m}\u00a0m',
   // ── Conditions: cold start ──

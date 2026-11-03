@@ -3,6 +3,7 @@
  * Un moteur à 6000 tr/min fait 50 cycles par seconde, trop pour un écran à 60 images : tout est
  * ralenti du même facteur, sans plafond, pour rester proportionnel au vrai régime.
  */
+import { ambientAirOf } from './atmosphere';
 import { activeClutch, advanceRace, bearingTouches, type RaceState } from './clutchMechanism';
 import type { EngineConfig, Exhaust } from './config';
 import type { Telemetry } from './engine';
@@ -177,6 +178,9 @@ export class Motion {
   slow = storedSpeed();
   private gasInputs: GasInputs = { rpm: 0, load: 0, boost: 0, release: 0, burning: false, heat: 0, compressorRatio: 1, compressorOutK: 293, wastegate: 0, antiLag: 0, antiLagHeatW: 0, antiLagAirFlow: 0 };
   private gasConfig: EngineConfig | null = null;
+  /** L'atmosphère du jour (bar), relue quand le réglage change. */
+  private ambientBar = 1.01325;
+  private ambientFor: EngineConfig | null = null;
   // Ce qu'il reste à faire avancer au gaz pour l'image en cours : une jauge sans gaz peut passer la première.
   private gasDue = false;
   private dueSeconds = 0;
@@ -224,7 +228,13 @@ export class Motion {
     this.chargerSpill += (t.chargerSpill - this.chargerSpill) * glide;
     this.wastegate += (t.turboWastegate - this.wastegate) * glide;
     this.blowoff += (t.turboBlowoff - this.blowoff) * glide;
-    this.compressorRatio += ((1.01325 + t.turboOutlet) / Math.max(1.01325 + t.turboInlet, 0.5) - this.compressorRatio) * glide;
+    // Les jauges du turbo se lisent au-dessus de l'atmosphère du jour, comme celles d'une voiture.
+    if (config !== this.ambientFor) {
+      this.ambientFor = config;
+      this.ambientBar = ambientAirOf(config).pressurePa / 1e5;
+    }
+    const atm = this.ambientBar;
+    this.compressorRatio += ((atm + t.turboOutlet) / Math.max(atm + t.turboInlet, 0.5) - this.compressorRatio) * glide;
     this.compressorOutK += (t.turboOutC + 273.15 - this.compressorOutK) * glide;
     this.coolerOutK += (t.turboCoolC + 273.15 - this.coolerOutK) * glide;
     this.antiLag = t.antiLag > 0;

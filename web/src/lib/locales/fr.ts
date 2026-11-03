@@ -1010,11 +1010,12 @@ export const fr: Record<MessageKey, string> = {
   'summary.nitrous': 'protoxyde {kw}\u00a0kW',
   // ── Conditions : air ambiant et altitude ──
   'builder.ambient': 'Air extérieur',
-  'builder.ambient.help': "L'air froid est plus dense : il en entre davantage dans chaque cylindre.",
+  'builder.ambient.help': "L'air froid est plus dense : il en entre davantage dans chaque cylindre, mais il freine aussi davantage. Le son y va moins vite.",
   'builder.ambient.value': '{c} °C',
   'builder.altitude': 'Altitude',
-  'builder.altitude.help': "L'air se raréfie en montant : environ 11 % de pression en moins tous les 1000 m.",
+  'builder.altitude.help': "L'atmosphère type : environ 11 % de pression en moins tous les 1000 m. Un turbo garde sa pression au-dessus d'elle, mais son arbre tourne plus vite pour y arriver.",
   'builder.altitude.value': '{m} m',
+  'builder.ambientAir': 'Air : {p} hPa, {rho} kg/m³ ({share} % du niveau de la mer à 20 °C), son à {c} m/s',
   'summary.ambient': '{c}\u00a0°C',
   'summary.altitude': '{m}\u00a0m',
   // ── Conditions : démarrage à froid ──
