@@ -9,9 +9,11 @@
 #include "dsp.hpp"
 #include "exhaust_line.hpp"
 #include "gearbox_sound.hpp"
+#include "injector_sound.hpp"
 #include "intake_path.hpp"
 #include "kotlin_math.hpp"
 #include "revforge/air_filter.hpp"
+#include "revforge/injection.hpp"
 #include "revforge/valvetrain.hpp"
 #include "starter_sound.hpp"
 #include "supercharger_sound.hpp"
@@ -304,6 +306,14 @@ struct EngineSound::State {
     bool superchargerDriven = false;
     SuperchargerDrive superchargerIn;
     GearboxSound gearbox;
+    // L'injection directe : le tic des injecteurs et de la pompe, à son propre générateur. Rien ne tourne sans elle.
+    InjectorSound injectors;
+    bool direct = false;
+    // La rampe commune et la recirculation changent la voix de la combustion : un écart en dB, selon la charge (lignes) et le
+    // régime rapporté au régime maximal (colonnes), tiré du calcul à chaque changement de moteur.
+    bool combustionTuned = false;
+    std::array<float, 81> combustionDb{};
+    float knockShare = 1.0f;
     GearboxSpec gearboxSpec{};
     bool gearboxKnown = false;
     float crankHush = 1.0f;
@@ -499,6 +509,7 @@ struct EngineSound::State {
           starter(static_cast<float>(sampleRate)),
           supercharger(static_cast<float>(sampleRate)),
           gearbox(static_cast<float>(sampleRate)),
+          injectors(static_cast<float>(sampleRate)),
           controlDt(static_cast<float>(kControlSamples) / static_cast<float>(sampleRate)),
           line(static_cast<float>(sampleRate)),
           intakePath(static_cast<float>(sampleRate)) {
@@ -594,7 +605,7 @@ struct EngineSound::State {
                a.exhaust == b.exhaust && a.exhaustScale == b.exhaustScale && a.diesel == b.diesel && a.turbo == b.turbo &&
                a.electric == b.electric && a.supercharged == b.supercharged && a.routing == b.routing && a.bank == b.bank && a.twoBanks == b.twoBanks && sameShell(a.car, b.car) &&
                a.airFilter == b.airFilter && (a.airFilter == AirFilter::Stock || (a.boreM == b.boreM && a.strokeM == b.strokeM && a.cylinders == b.cylinders && a.stackM == b.stackM)) && a.camshaft == b.camshaft &&
-               a.fuelSystem == b.fuelSystem;
+               a.fuelSystem == b.fuelSystem && a.filterResistance == b.filterResistance;
     }
 
     /** La même caisse aux mêmes endroits : seule l'isolation change, et l'habitacle se recalcule sans couper le moteur. */
@@ -670,6 +681,44 @@ struct EngineSound::State {
             inletTone.set(220.0f, 1.3f, sr);
             carbTuned = false;
         }
+        direct = p.directInjection && !p.electric;
+        if (direct) injectors.setup(p);
+        combustionTuned = (p.commonRail || p.egr) && !p.electric;
+        knockShare = 1.0f;
+        if (combustionTuned) applyCombustionNoise(p);
+    }
+
+    /** La table du bruit de combustion : 81 points, une fois par moteur, jamais pour chaque échantillon. */
+    void applyCombustionNoise(const EngineProfile& p) {
+        CombustionNoiseEngine engine;
+        engine.diesel = p.diesel;
+        engine.commonRail = p.commonRail;
+        engine.egr = p.egr;
+        engine.charged = p.turbo || p.supercharged;
+        engine.cylinderM3 = 0.7854 * static_cast<double>(p.boreM) * p.boreM * p.strokeM;
+        engine.strokeM = static_cast<double>(p.strokeM);
+        engine.redlineRpm = static_cast<double>(p.redlineRpm);
+        engine.boostBar = static_cast<double>(p.boostBar);
+        for (int row = 0; row < 9; ++row) {
+            for (int column = 0; column < 9; ++column) {
+                const double rpm = std::max(column / 8.0 * engine.redlineRpm, static_cast<double>(p.idleRpm));
+                combustionDb[static_cast<std::size_t>(row * 9 + column)] = static_cast<float>(combustionNoiseDb(engine, row / 8.0, rpm));
+            }
+        }
+    }
+
+    /** L'écart du bruit de combustion à cette charge et à ce régime (dB) : la table, interpolée. */
+    float combustionOffsetDb(const EngineProfile& p, float rpmNow) const {
+        const float x = km::coerceIn(load, 0.0f, 1.0f) * 8.0f;
+        const float y = km::coerceIn(rpmNow / km::max(p.redlineRpm, 1.0f), 0.0f, 1.0f) * 8.0f;
+        const int row = km::min(static_cast<int>(x), 7);
+        const int column = km::min(static_cast<int>(y), 7);
+        const float fx = x - static_cast<float>(row);
+        const float fy = y - static_cast<float>(column);
+        const auto at = [this](int r, int c) { return combustionDb[static_cast<std::size_t>(r * 9 + c)]; };
+        const float low = at(row, column) + (at(row, column + 1) - at(row, column)) * fy;
+        const float high = at(row + 1, column) + (at(row + 1, column + 1) - at(row + 1, column)) * fy;
+        return low + (high - low) * fx;
     }
 
     /**
@@ -721,7 +770,7 @@ struct EngineSound::State {
         if (!p.electric) {
             const double displacement = 0.7854 * static_cast<double>(p.boreM) * p.boreM * p.strokeM * p.cylinders;
             // Deux rangées séparées : chacune son tube, de section moitié.
-            const std::vector<float>& impulse = line.compute(p.exhaust, p.exhaustScale, twoPaths ? displacement * 0.5 : displacement, twoPaths ? p.cylinders / 2 : p.cylinders);
+            const std::vector<float>& impulse = line.compute(p.exhaust, p.exhaustScale, twoPaths ? displacement * 0.5 : displacement, twoPaths ? p.cylinders / 2 : p.cylinders, p.filterResistance);
             lineGain = line.gain();
             gas[0].line.setImpulse(impulse.data(), static_cast<int>(impulse.size()));
             if (twoPaths) gas[1].line.setImpulse(impulse.data(), static_cast<int>(impulse.size()));
@@ -1053,7 +1102,14 @@ struct EngineSound::State {
         blockDb -= (a.diesel ? 2.0f : 5.0f) * (1.0f - km::min(load, 1.0f));
         // Au ralenti, accessoires et distribution tiennent un plancher.
         const float floorDb = 65.0f + 15.0f * km::log10(bore / 86.0f) + (a.diesel ? 7.0f : (a.rotary ? kRotaryFloorDb : 0.0f));
+        // La rampe commune et la recirculation : une pente de pression plus douce, un bruit de combustion plus bas.
+        if (combustionTuned) {
+            const float offset = combustionOffsetDb(a, rpmNow);
+            blockDb += offset;
+            knockShare = km::pow(10.0f, offset / 20.0f);
+        }
         blockLevel = kBlockPa * km::sqrt(km::pow(10.0f, blockDb / 10.0f) + km::pow(10.0f, floorDb / 10.0f));
+        if (direct) injectors.control(rpmNow, load, kBlockPa * km::pow(10.0f, floorDb / 20.0f));
         if (sohc) rockerLevel = kBlockPa * km::pow(10.0f, floorDb / 20.0f) * kRockerShare * rpmNow / a.idleRpm;
         // La caisse ne suit pas le bloc : les supports filtrent, et sa part recule quand le régime monte.
         bodyShare = kBodyShare * km::min(km::pow(a.idleRpm / rpmNow, 0.7f), 1.0f);
@@ -1476,7 +1532,9 @@ struct EngineSound::State {
             const float knockNoise = random();
             knockBand.process(knockNoise);
             // Sans combustion, plus de claquement.
-            mechanical += knockBand.bp * knockEnv * kDieselKnock * (1.0f - 0.5f * load) * (1.0f - overrun);
+            float knock = knockBand.bp * knockEnv * kDieselKnock * (1.0f - 0.5f * load) * (1.0f - overrun);
+            if (combustionTuned) knock *= knockShare;
+            mechanical += knock;
             knockEnv *= knockDecay;
         }
         if (p.turbo) turboSample();
@@ -1540,6 +1598,11 @@ struct EngineSound::State {
             engineNoise += rockerTop * rockerLevel * crankHush * gain;
         }
         stem(Source::Bay) += engineNoise;
+        // Les injecteurs et la pompe, sur la culasse : ils rayonnent sous le capot. Rien n'est injecté pendant une coupure.
+        if (direct) {
+            const float fuelGate = cutGate > 0.5f && overrun < 0.5f ? 1.0f : 0.0f;
+            stem(Source::Bay) += injectors.sample(phase, cylinders, p.firing, timing, fuelGate) * gain;
+        }
         // Le moteur fait vibrer toute la caisse : elle en rayonne une part, de partout, mais pas les aigus.
         bodyDamp += (engineNoise - bodyDamp) * bodyDampCoef;
         stem(Source::Underfloor) += bodyDamp * bodyShare;

@@ -35,7 +35,7 @@ enum class Camshaft { Dohc, Sohc, Ohv };
 enum class AirFilter { Stock, Panel, Cone, Stacks };
 /**
  * L'alimentation en essence : injection indirecte, carburateur unique sur une pipe commune, un corps de carburateur par
- * cylindre, injection directe dans la chambre. Socle : `Direct` se comporte comme `Injection` (voir `fuelSystemOf`).
+ * cylindre, injection directe dans la chambre (voir « L'injection » dans docs/modele.md).
  */
 enum class FuelSystem { Injection, Carburetor, MultiCarb, Direct };
 
@@ -232,6 +232,16 @@ struct EngineProfile {
     int rotors = 0;
     /** Durée de la bouffée, pleine charge : le volume de la chambre à l'ouverture, face à la section de la lumière (s). */
     float blowdownS = 0.0f;
+    /** L'injection directe d'essence : le tic des injecteurs et de la pompe haute pression (voir `InjectorSound`). */
+    bool directInjection = false;
+    /**
+     * Diesel à rampe commune, et recirculation des gaz : ils changent la voix de la combustion (voir `combustionNoiseDb`).
+     * Sans eux, rien ne se calcule.
+     */
+    bool commonRail = false;
+    bool egr = false;
+    /** Le filtre à particules dans la ligne : sa résistance, rapportée à ρc/S du tube. 0 : pas de filtre. */
+    float filterResistance = 0.0f;
 
     /**
      * Régime simulé pour un régime réel de la voiture. Au ralenti, les deux ralentis

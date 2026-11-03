@@ -57,6 +57,8 @@ constexpr double kShaftDamping = 60.0;
 constexpr double kAntiLagLiftedPedal = 0.03;
 constexpr double kAntiLagMinShare = 0.27;
 constexpr double kAntiLagHoldShare = 0.95;
+// L'air dans le conduit d'admission au régime de la puissance maximale (m/s, ordre de grandeur), pour le film de carburant.
+constexpr double kPortSpeedAtRatedMs = 70.0;
 
 double approach(double from, double to, double maxStep) {
     const double delta = to - from;
@@ -127,8 +129,18 @@ void DrivingModel::setPowertrain(const Powertrain& powertrain) {
     antiLagLostNm_ = 0.0;
     superchargerEngine_ = !powertrain.electric && powertrain.engine.aspiration == Aspiration::Supercharger;
     if (superchargerEngine_) supercharger_.setSpec(superchargerSpecOf(powertrain));
-    carbEngine_ = !powertrain.electric && fuelSystemOf(powertrain.engine) != FuelSystem::Injection;
+    carbEngine_ = !powertrain.electric && hasCarburetor(powertrain.engine);
     if (carbEngine_) carb_.configure(carburetorSpecOf(powertrain.engine), powertrain.engine.sweptCcPerTwoTurns() * 1e-6);
+    // L'injection : chaque partie ne tourne que si elle est montée. Le filtre garde sa suie tant que le moteur ne change pas.
+    portEngine_ = !powertrain.electric && fuelSystemOf(powertrain.engine) == FuelSystem::Injection && !powertrain.engine.burnsDiesel();
+    portFilm_.prime();
+    directEngine_ = !powertrain.electric && directInjected(powertrain.engine);
+    egrEngine_ = !powertrain.electric && recirculated(powertrain.engine);
+    egrShare_ = 0.0;
+    const bool filterBefore = dpfEngine_;
+    const ParticulateFilterSpec filterSpec = particulateFilterSpecOf(powertrain.engine);
+    dpfEngine_ = !powertrain.electric && powertrain.engine.particulateFilter;
+    if (dpfEngine_ && (!filterBefore || dpf_.spec().volumeL != filterSpec.volumeL || dpf_.spec().diesel != filterSpec.diesel)) dpf_.configure(filterSpec);
     if (gear_ > gearing_.gears) gear_ = gearing_.gears;
     step_ = ShiftStep::None;
     ignitionCut_ = false;
@@ -831,6 +843,8 @@ void DrivingModel::stepSupercharger(double rpmNow) {
 void DrivingModel::updateEngine(double throttle, bool off) {
     const double rpmNow = toRpm(omega_);
     burnt_.burning = false;
+    // La post-injection d'une régénération ne vaut que pour ce pas : le démarreur et le calage n'en ont pas.
+    if (dpfEngine_) burnt_.extraFuelGps = 0.0;
     // Le démarreur et le calage quittent cette fonction sans repasser par l'anti-lag : il s'arrête d'abord.
     if (antiLagEngine_) {
         antiLag_.active = false;
@@ -977,12 +991,51 @@ void DrivingModel::updateEngine(double throttle, bool off) {
         if (catching_) carb_.prime();
         else produced *= carb_.torqueShare();
     }
+    // Une injection indirecte : le calculateur compense son film, exactement à 90 °C. Ailleurs, le mélange s'en écarte.
+    portFilmActive_ = portEngine_ && coolantC_ != kWarmCoolantC;
+    if (portFilmActive_) {
+        PortFilmInput in;
+        in.wantedGps = consumption_.model().airGps(rpmNow, manifold_, indicated) / 14.7;
+        in.manifoldShare = std::max(manifold_, 0.05) * (turboEngine_ || superchargerEngine_ ? 1.0 + boost_ * static_cast<double>(powertrain_.engine.boostBar) : 1.0);
+        // L'air dans le conduit : le cylindre balaie le même volume à chaque tour, quelle que soit la pression.
+        in.portSpeedMs = kPortSpeedAtRatedMs * rpmNow / (0.88 * redline_);
+        in.coolantC = coolantC_;
+        portFilm_.step(in, kStep);
+        if (catching_) portFilm_.prime();
+        else produced *= portFilm_.torqueShare();
+    }
+    // La recirculation : une charge diluée brûle plus lentement et plus froid. Sur un essence, le papillon s'ouvre plus pour
+    // le même air frais : moins de pompage.
+    double fresh = manifold_;
+    if (egrEngine_) {
+        const bool diesel = powertrain_.engine.burnsDiesel();
+        egrShare_ = cut_ ? 0.0 : egrRate(diesel, manifold_, rpmNow, redline_);
+        const double lambda = diesel ? smokeLambdaOf(powertrain_, rpmNow) / std::max(manifold_, 0.05) : 1.0;
+        produced *= egrEfficiencyShare(diesel, egrShare_, lambda);
+        if (!diesel) fresh = std::min(manifold_ / (1.0 - egrShare_), 1.0);
+    }
     // Rupteur : le papillon reste ouvert, donc peu de pompage. Le moteur ne redescend que sur ses frottements.
     // Sur un turbo, s'y ajoute le gaz à pousser contre la turbine.
     // Sur un compresseur, ce que coûte son entraînement : la combustion le paie, et il s'ajoute au frein moteur.
-    const double charger = superchargerEngine_ ? supercharger_.driveNm(rpmNow) : 0.0;
-    const double pumping = pumpingTorqueNm(powertrain_, rpmNow, manifold_) + (turboEngine_ ? turbo_.backPressureNm(manifold_) : 0.0) + charger;
+    double charger = superchargerEngine_ ? supercharger_.driveNm(rpmNow) : 0.0;
+    // La pompe haute pression d'une injection directe : comme le compresseur, la combustion la paie.
+    if (directEngine_ && !cut_) charger += directPumpTorqueNm(powertrain_, rpmNow, manifold_, boost_);
+    const double pumping = pumpingTorqueNm(powertrain_, rpmNow, egrEngine_ ? fresh : manifold_) + (turboEngine_ ? turbo_.backPressureNm(manifold_) : 0.0) + charger;
     torque_ = produced - friction - pumping;
+    // Le filtre à particules : le piston chasse le gaz contre lui. Une perte de plus pour le moteur, pas pour la combustion.
+    if (dpfEngine_) {
+        const ExhaustState gas = exhaustStateOf(powertrain_, rpmNow, manifold_, boost_);
+        FilterInput in;
+        in.exhaustKgS = gas.kgS;
+        in.exhaustK = gas.kelvin;
+        in.fuelGps = cut_ ? 0.0 : gas.fuelGps;
+        in.lambda = gas.lambda;
+        in.smokeLambda = smokeLambdaOf(powertrain_, rpmNow);
+        in.burning = !cut_;
+        in.running = !off;
+        dpf_.step(in, kStep);
+        torque_ -= filterPumpingNm(dpf_.spec(), dpf_.backPressurePa());
+    }
     // Pour la consommation : le couple au frein que demande cette charge d'air. Le calculateur qui retient le moteur
     // pendant un relais retarde l'allumage : il gaspille, il ne dépense pas moins. Le broutement s'annule en moyenne.
     burnt_.burning = !cut_;
@@ -1002,6 +1055,8 @@ void DrivingModel::updateEngine(double throttle, bool off) {
         burnt_.extraFuelGps = carbEngine_ ? 0.0 : turbo_.antiLag().surplusFuel * 1000.0;
         burnt_.extraAirGps = turbo_.antiLag().airFlow * 1000.0;
     }
+    // La post-injection d'une régénération : elle ne fait aucun couple, mais elle se paie.
+    if (dpfEngine_) burnt_.extraFuelGps = (antiLagEngine_ ? burnt_.extraFuelGps : 0.0) + dpf_.extraFuelGps();
     lugging_ = manual_ && gear_ != 0 && meshed_ && locked_ && rpmNow < idle_ * 1.3 && speedMs_ > 0.5;
     // Trop bas en prise : chaque explosion donne un à-coup que rien n'amortit, ça broute.
     if (lugging_) {

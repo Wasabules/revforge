@@ -10,6 +10,7 @@ namespace revforge::portable {
 
 inline constexpr double kPi = 3.141592653589793;
 inline constexpr double kLn2 = 0.6931471805599453;
+inline constexpr double kLn10 = 2.302585092994046;
 
 inline double sin(double x) {
     double r = std::fmod(x, 2.0 * kPi);

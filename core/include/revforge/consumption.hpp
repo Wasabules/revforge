@@ -4,6 +4,7 @@
 
 #include "revforge/carburetor.hpp"
 #include "revforge/engine_config.hpp"
+#include "revforge/injection.hpp"
 
 namespace revforge {
 
@@ -68,6 +69,10 @@ private:
     double idleCircuitGps_ = 0.0;
     double idleRpm_ = 1.0;
     double carbAirShare_ = 1.0;
+    // L'injection : une rampe commune brûle plus vite qu'une pompe mécanique, la recirculation dilue la charge partielle.
+    bool commonRail_ = false;
+    bool egr_ = false;
+    DieselPoint dieselPoint_;
 };
 
 /** L'état du moteur à ce pas, tel que `DrivingModel` le donne. */

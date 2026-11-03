@@ -1,11 +1,14 @@
 #include "revforge/engine_config.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 #include "kotlin_math.hpp"
 #include "revforge/air_filter.hpp"
 #include "revforge/supercharger.hpp"
 #include "revforge/carburetor.hpp"
+#include "revforge/injection.hpp"
+#include "revforge/particulate_filter.hpp"
 #include "portable_math.hpp"
 
 namespace revforge {
@@ -39,6 +42,22 @@ void applyCarburetor(const EngineConfig& engine, EngineProfile& p) {
     const double lean = torqueOfRichness(settled * (1.0 - carb.spread)) / torqueOfRichness(settled);
     const double rich = torqueOfRichness(settled * (1.0 + carb.spread)) / torqueOfRichness(settled);
     for (int i = 0; i < p.firingCount; ++i) p.firingGain[i] *= static_cast<float>(i % 2 == 0 ? lean : rich);
+}
+
+/**
+ * Ce que le son doit savoir de l'injection : le tic d'une injection directe, ce que la rampe commune et la recirculation font
+ * au bruit de combustion, le filtre dans la ligne. Rien de tout cela sur l'injection indirecte et la pompe mécanique d'origine.
+ */
+void applyInjection(const EngineConfig& e, EngineProfile& p) {
+    p.directInjection = directInjected(e);
+    if (e.particulateFilter) {
+        const ParticulateFilterSpec spec = particulateFilterSpecOf(e);
+        ParticulateFilter mean;
+        mean.configure(spec);
+        p.filterResistance = static_cast<float>(filterLineResistance(spec, mean.sootG()));
+    }
+    p.commonRail = commonRailed(e);
+    p.egr = recirculated(e);
 }
 
 // ── Le moteur rotatif : voir « Le moteur rotatif » dans docs/modele.md ──
@@ -327,7 +346,8 @@ EngineProfile EngineConfig::toProfile() const {
     }
     if (layout == Layout::Rotary) applyRotary(*this, p);
     // Après le rotatif : les explosions inégales d'une pipe commune se posent sur les siennes.
-    if (fuelSystemOf(*this) != FuelSystem::Injection) applyCarburetor(*this, p);
+    if (hasCarburetor(*this)) applyCarburetor(*this, p);
+    if (directInjected(*this) || particulateFilter || commonRailed(*this) || recirculated(*this)) applyInjection(*this, p);
     return p;
 }
 

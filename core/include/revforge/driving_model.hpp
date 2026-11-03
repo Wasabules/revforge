@@ -5,6 +5,8 @@
 #include "revforge/carburetor.hpp"
 #include "revforge/consumption.hpp"
 #include "revforge/driver_scenarios.hpp"
+#include "revforge/injection.hpp"
+#include "revforge/particulate_filter.hpp"
 #include "revforge/powertrain.hpp"
 #include "revforge/shift_logic.hpp"
 
@@ -108,7 +110,10 @@ public:
     double cycleSec() const { return cycleSec_; }
 
     /** Remplissage du moteur : 0 pied levé, 1 plein gaz. C'est lui qui fait le son. */
-    double load() const { return carbEngine_ ? std::min(manifold_ * carb_.torqueShare(), 1.0) : manifold_; }
+    double load() const {
+        if (portFilmActive_) return std::min(manifold_ * portFilm_.torqueShare(), 1.0);
+        return carbEngine_ ? std::min(manifold_ * carb_.torqueShare(), 1.0) : manifold_;
+    }
     /** Le carburateur, s'il y en a un : film, mélange dans les cylindres. */
     const Carburetor& carburetor() const { return carb_; }
     bool carbureted() const { return carbEngine_; }
@@ -159,6 +164,23 @@ public:
     double idleRpm() const { return idle_; }
     int powertrainCylinders() const { return powertrain_.engine.cylinders; }
     double redlineRpm() const { return redline_; }
+
+    /**
+     * L'eau du moteur (°C), que lit le film de carburant : 90 °C par défaut, le moteur chaud de toute la calibration. À brancher
+     * sur le modèle thermique. À 90 °C, le calculateur compense exactement le film d'une injection indirecte : rien ne change.
+     */
+    void setCoolantC(double celsius) { coolantC_ = celsius; }
+    double coolantC() const { return coolantC_; }
+    /** Le film d'une injection indirecte : il ne compte que si l'eau n'est pas à 90 °C. */
+    const PortFuelFilm& portFilm() const { return portFilm_; }
+    bool portFilmActive() const { return portFilmActive_; }
+    /** Le filtre à particules, s'il y en a un : suie, contre-pression, régénération. */
+    const ParticulateFilter& particulateFilter() const { return dpf_; }
+    bool filtered() const { return dpfEngine_; }
+    /** Pour les essais : poser la suie du filtre. */
+    void setFilterSootG(double grams) { dpf_.setSootG(grams); }
+    /** La recirculation en ce moment : part des gaz recirculés dans la charge. */
+    double egrShare() const { return egrShare_; }
 
     /** Essence, huile ou énergie : une lecture de ce que fait le moteur. Rien n'en revient vers la physique. */
     const ConsumptionMeter& consumption() const { return consumption_; }
@@ -261,6 +283,17 @@ private:
     bool superchargerEngine_ = false;
     Carburetor carb_;
     bool carbEngine_ = false;
+    // L'injection : le film d'une injection indirecte (seulement hors des 90 °C de la calibration), la pompe haute pression d'une
+    // injection directe, la recirculation, le filtre à particules. Rien de tout cela ne tourne au défaut.
+    PortFuelFilm portFilm_;
+    bool portEngine_ = false;
+    bool portFilmActive_ = false;
+    double coolantC_ = kWarmCoolantC;
+    bool directEngine_ = false;
+    bool egrEngine_ = false;
+    double egrShare_ = 0.0;
+    ParticulateFilter dpf_;
+    bool dpfEngine_ = false;
     double torque_ = 0.0;
     bool cut_ = false;
     bool limiterCut_ = false;

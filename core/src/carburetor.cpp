@@ -84,12 +84,12 @@ double filmTauAt(double speed, double fill) {
 
 }  // namespace
 
-// Socle : l'injection directe se comporte comme l'injection indirecte.
-FuelSystem fuelSystemOf(const EngineConfig& e) { return e.fuel == Fuel::Diesel || e.fuelSystem == FuelSystem::Direct ? FuelSystem::Injection : e.fuelSystem; }
+FuelSystem fuelSystemOf(const EngineConfig& e) { return e.fuel == Fuel::Diesel ? FuelSystem::Injection : e.fuelSystem; }
 
 CarburetorSpec carburetorSpecOf(const EngineConfig& e) {
     CarburetorSpec s;
-    s.kind = fuelSystemOf(e);
+    // Une injection, indirecte ou directe : pas de venturi.
+    s.kind = hasCarburetor(e) ? fuelSystemOf(e) : FuelSystem::Injection;
     if (s.kind == FuelSystem::Injection) return s;
     // Le volume avalé en deux tours d'arbre, et le nombre de bouffées qu'il fait : un rotor en donne deux, chacune d'une chambre.
     const double litres = e.sweptCcPerTwoTurns() / 1000.0;
@@ -198,11 +198,17 @@ void Carburetor::step(const CarburetorInput& in, double dt) {
     // La dépression au col suit la crête des bouffées : la vitesse efficace, pas la moyenne.
     const double density = kAirKgM3 * in.density;
     const double speed = through / 1000.0 / density / spec_.throats / throatArea_ * pulsationRoot_;
-    const double share = wallShareAt(spec_, speed, in.fill);
-    const double tau = filmTauAt(speed, in.fill);
+    double share = wallShareAt(spec_, speed, in.fill);
+    double tau = filmTauAt(speed, in.fill);
+    // À froid, l'essence distille moins sur la paroi : plus de dépôt, qui repart plus lentement. Moteur chaud, rien ne change.
+    if (in.coolantC != kWarmCoolantC) {
+        const FilmParameters cold = coldFilmShare(in.coolantC, in.fill);
+        share = std::min(share * cold.deposit, 0.95);
+        tau *= cold.tauS;
+    }
     if (!primed_) {
         metered_ = wanted;
-        film_ = share * wanted * tau;
+        film_.massG = share * wanted * tau;
         suspended_ = in.airGps > 0.0 ? wanted * std::max(chargeG_ * in.fill, kMinAheadG) / in.airGps : 0.0;
         pumpLeft_ = 0.0;
         pumpRate_ = 0.0;
@@ -222,8 +228,8 @@ void Carburetor::step(const CarburetorInput& in, double dt) {
     pumpLeft_ -= pumpGps_ * dt;
 
     const double toWall = share * metered_ + kPumpWallShare * pumpGps_;
-    const double fromWall = film_ / tau;
-    film_ = std::max(film_ + (toWall - fromWall) * dt, 0.0);
+    const double fromWall = film_.release(tau);
+    film_.advance(toWall, fromWall, dt);
     // Ce qui reste en suspension attend dans le collecteur : ce qu'on y met en le remplissant n'atteint les cylindres qu'avec l'air qui le quitte.
     const double airAhead = std::max(chargeG_ * in.fill, kMinAheadG);
     const double drawn = in.airGps / airAhead;
