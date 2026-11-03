@@ -227,6 +227,17 @@ BoostPlant identifyTwinBoostPlant(TwinTurbo& twin, double rpm, double breathing,
         rpm, gate, settleS);
 }
 
+double boostProtectPa(const TurboSpec& reference, double rpm, double breathing, double boostBar, double noLimitPa) {
+    // Les roues limitent-elles ? Oui si, sans leur limite, le turbo tiendrait plus de pression.
+    TurboSpec probe = reference;
+    probe.targetBar = kProtectProbeShare * boostBar + kProtectProbeBar;
+    TurboSpec free = probe;
+    free.tipLimit = 1e9;
+    const TurboSteady limited = turboSteady(probe, rpm, breathing);
+    const TurboSteady unlimited = turboSteady(free, rpm, breathing);
+    return unlimited.chargePa > limited.chargePa + 100.0 ? limited.chargePa : noLimitPa;
+}
+
 double gearTorqueCapNm(const Powertrain& p, const Gearing& gearing, int gear, double tyreGrip) {
     const BodySpec& body = bodySpec(p.car.body);
     constexpr double kGravity = 9.81;
@@ -264,10 +275,6 @@ BoostControlSpec boostControlSpecFor(const Powertrain& p, const Gearing& gearing
     // ── La cible et la précommande : l'équilibre de l'arbre, plein gaz, à chaque régime de la grille ──
     TurboSpec half = turbo;
     half.targetBar = 0.5 * spec.boostBar;
-    TurboSpec probe = turbo;
-    probe.targetBar = kProtectProbeShare * spec.boostBar + kProtectProbeBar;
-    TurboSpec free = probe;
-    free.tipLimit = 1e9;
     for (int i = 0; i < kBoostGrid; ++i) {
         const double rpm = spec.firstRpm + spec.stepRpm * static_cast<double>(i);
         const double breathing = breathingOf(p, rpm);
@@ -282,10 +289,7 @@ BoostControlSpec boostControlSpecFor(const Powertrain& p, const Gearing& gearing
         }
         spec.gateAtCalibrated[at] = turboSteady(turbo, rpm, breathing).wastegate;
         spec.gateAtHalf[at] = turboSteady(half, rpm, breathing).wastegate;
-        // Les roues limitent-elles ? Oui si, sans leur limite, le turbo tiendrait plus de pression.
-        const TurboSteady limited = turboSteady(probe, rpm, breathing);
-        const TurboSteady unlimited = turboSteady(free, rpm, breathing);
-        spec.protectPa[at] = unlimited.chargePa > limited.chargePa + 100.0 ? limited.chargePa : 10.0 * spec.calibratedPa;
+        spec.protectPa[at] = boostProtectPa(turbo, rpm, breathing, spec.boostBar, 10.0 * spec.calibratedPa);
     }
 
     // ── Le banc : l'arbre et sa pression, là où la wastegate travaille ──

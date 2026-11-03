@@ -136,6 +136,12 @@ BoostPlant identifyBoostPlant(TurboCharger& turbo, double rpm, double breathing,
 /** Le même banc, sur deux turbos (ou des aubes) : l'échelon s'applique aux deux soupapes à la fois, comme le fait l'électrovanne. */
 BoostPlant identifyTwinBoostPlant(TwinTurbo& twin, double rpm, double breathing, double gate, double settleS);
 
+/**
+ * La pression absolue où les roues du compresseur atteindraient leur vitesse limite, plein gaz à ce régime, mesurée sur le turbo
+ * `reference` (dans l'air de référence) : là où la régulation électronique borne sa cible. `noLimitPa` si elles n'y arrivent pas.
+ */
+double boostProtectPa(const TurboSpec& reference, double rpm, double breathing, double boostBar, double noLimitPa);
+
 /** Le plafond de couple du rapport `gear` (1 = première) au vilebrequin : pneus et boîte (Nm). */
 double gearTorqueCapNm(const Powertrain& p, const Gearing& gearing, int gear, double tyreGrip);
 

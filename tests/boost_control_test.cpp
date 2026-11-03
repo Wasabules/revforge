@@ -379,6 +379,32 @@ TEST_CASE("la régulation ne dépend pas de la durée demandée, et le compresse
     CHECK(ignored.boostDuty() == -1.0);
 }
 
+TEST_CASE("la fiche d'une régulation électronique suit l'air du jour, et les roues à leur limite ouvrent la soupape") {
+    Powertrain spring = findPreset("hot_hatch_turbo")->powertrain();
+    Powertrain electronic = controlled("hot_hatch_turbo", BoostControl::Electronic);
+    // Dans l'air de référence, le calculateur tient la pression du ressort : la même fiche, au bit près.
+    for (double rpm = 1500.0; rpm <= 6500.0; rpm += 500.0) CHECK(torqueCurveNm(electronic, rpm) == torqueCurveNm(spring, rpm));
+    spring.engine.altitudeM = 3000;
+    electronic.engine.altitudeM = 3000;
+    // À 3000 m, il vise la même pression absolue qu'au niveau de la mer : plus que le ressort au-dessus de l'air du jour.
+    const double sea = static_cast<double>(spring.engine.boostBar);
+    CHECK(steadyBoost(electronic, 2500.0) > 1.2);
+    CHECK(steadyBoost(spring, 2500.0) <= 1.0);
+    CHECK(fullLoadTurboSteady(electronic, 2500.0).chargePa == doctest::Approx(kAtmosphere + sea * 1e5).epsilon(0.002));
+    CHECK(torqueCurveNm(electronic, 2000.0) > 1.05 * torqueCurveNm(spring, 2000.0));
+    // Plus haut, les roues atteignent leur vitesse limite : la soupape s'ouvre juste assez pour les y tenir (la turbine ne reçoit pas
+    // tout le gaz contre une contre-pression de 5 bar), et la fiche rejoint ce que tient la conduite.
+    for (const double rpm : {4500.0, 5000.0}) {
+        const TurboSteady held = fullLoadTurboSteady(electronic, rpm);
+        CHECK(held.wastegate > 0.1);
+        CHECK(held.turbineInPa < 4e5);
+        CHECK(torqueCurveNm(electronic, rpm) > 0.98 * torqueCurveNm(spring, rpm));
+    }
+    const TurboSteady top = fullLoadTurboSteady(spring, 6000.0);
+    CHECK(top.wastegate > 0.1);
+    CHECK(top.turbineInPa < 4e5);
+}
+
 // ── Deux turbos : une électrovanne pour les deux soupapes, étalonnée sur leur banc. Voir « La régulation de pression ». ──
 
 namespace {

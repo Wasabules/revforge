@@ -431,7 +431,7 @@ double intakeDropPa(const Powertrain& p, double rpm) {
     if (e.aspiration == Aspiration::Turbo) {
         if (usesTwinTurbo(e)) return twinIntakeDropPa(p, rpm);
         const TurboSpec spec = turboSpecOf(p);
-        const double flow = turboSteady(spec, rpm, breathing(e, rpm)).flow;
+        const double flow = fullLoadTurboSteady(p, rpm).flow;
         return spec.filterDrop * flow * flow;
     }
     if (e.aspiration == Aspiration::Supercharger) {
@@ -503,11 +503,25 @@ double superchargerDriveNm(const Powertrain& p, double rpm, double fill) {
     return superchargerSteady(superchargerSpecOf(p), rpm, breathing(p.engine, rpm), fill).driveNm;
 }
 
+TurboSteady fullLoadTurboSteady(const Powertrain& p, double rpm) {
+    TurboSpec spec = turboSpecOf(p);
+    const EngineConfig& e = p.engine;
+    if (e.boostControl == BoostControl::Spring || ambientAirOf(e).reference()) return turboSteady(spec, rpm, breathing(e, rpm));
+    // Le calculateur vise la pression absolue de sa calibration (`BoostControlSpec::calibratedPa`, dans l'air de référence) : en
+    // altitude, autant de plus au-dessus de l'air du jour. Là où les roues atteindraient leur vitesse limite, `turboSteady` ouvre
+    // la soupape juste assez pour les y tenir, comme la protection de la conduite (`protectPa`, et `TurboCharger::step`).
+    const double bar = static_cast<double>(e.boostBar);
+    spec.targetBar = (kReferencePa + bar * 1e5 - spec.ambientPa) / 1e5;
+    TurboSteady steady = turboSteady(spec, rpm, breathing(e, rpm));
+    steady.boost = bar > 0.0 ? (steady.chargePa - spec.ambientPa) / (bar * 1e5) : 0.0;
+    return steady;
+}
+
 double steadyBoost(const Powertrain& p, double rpm) {
     if (p.electric || p.engine.aspiration == Aspiration::Natural) return 0.0;
     if (p.engine.aspiration == Aspiration::Supercharger) return superchargerSteady(superchargerSpecOf(p), rpm, breathing(p.engine, rpm)).boost;
     if (usesTwinTurbo(p.engine)) return twinSteadyBoost(p, rpm);
-    return turboSteady(turboSpecOf(p), rpm, breathing(p.engine, rpm)).boost;
+    return fullLoadTurboSteady(p, rpm).boost;
 }
 
 namespace {
@@ -627,7 +641,7 @@ double plainTorqueCurveNm(const Powertrain& p, double rpm) {
         return injection ? torque - injectionLossNm(p, rpm, steady.boost) : torque;
     }
     const TurboSpec spec = turboSpecOf(p);
-    const TurboSteady steady = turboSteady(spec, rpm, breathing(p.engine, rpm));
+    const TurboSteady steady = fullLoadTurboSteady(p, rpm);
     const double torque = full(steady.boost) - turboBackPressureNm(spec, steady.chargePa, steady.turbineInPa, steady.flow, 1.0);
     return injection ? torque - injectionLossNm(p, rpm, steady.boost) : torque;
 }

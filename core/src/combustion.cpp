@@ -420,7 +420,8 @@ EndGasSetup setupAt(const Powertrain& p, const KnockMap::Inputs& in, double rpm,
     const double breathing = breathingOf(p, rpm);
     fullBoost = 0.0;
     if (e.aspiration == Aspiration::Turbo) {
-        const TurboSteady steady = turboSteady(turboSpecOf(p), rpm, breathing);
+        // La pression que tient la régulation dans l'air du jour : absolue sous calculateur (`fullLoadTurboSteady`).
+        const TurboSteady steady = fullLoadTurboSteady(p, rpm);
         s.manifoldPa = steady.chargePa;
         s.manifoldK = steady.coolK + (in.ambientK - 293.15);
         fullBoost = steady.boost;
