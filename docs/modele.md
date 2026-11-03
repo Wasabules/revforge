@@ -1156,7 +1156,7 @@ Les préréglages, face aux chiffres publiés ; rien n'y est réglé pour coller
 
 ### Seize cylindres
 
-`kMaxCylinders` passe de 12 à 16 ; les rotors restent bornés à six (`kMaxRotors`). Le WASM atteint 1 255 492 octets au lieu de 1 249 204, soit 6 ko de plus sur 4 Mo fixes. Le rendu de seize cylindres n'alloue pas (test) et calcule 4,1 s de son en 0,4 à 0,7 s en natif. Le gaz à l'écran prend 3,9 ms par image sur le W16, 3,7 sur le V16, 3,4 sur un V12, mesurés sous la charge d'autres compilations. La cylindrée du site monte à 8 L : le W16 fait 7993 cm³.
+`kMaxCylinders` passe de 12 à 16 ; les rotors restent bornés à six (`kMaxRotors`). Le WASM atteint 1 255 492 octets au lieu de 1 249 204, soit 6 ko de plus sur 4 Mo fixes. Le rendu de seize cylindres n'alloue pas (test) et calcule 4,1 s de son en 0,4 à 0,7 s en natif. Le gaz à l'écran prend 3,9 ms par image sur le W16, 3,7 sur le V16, 3,4 sur un V12, mesurés sous la charge d'autres compilations ; sur une machine saturée, 6,8, 8,3 et 4,3 ms : au-delà du budget, la qualité du gaz baisse d'elle-même. La cylindrée du site monte à 8 L : le W16 fait 7993 cm³.
 
 ### Limites
 

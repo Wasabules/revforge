@@ -1132,7 +1132,7 @@ The presets, against published figures; nothing is tuned to match:
 
 ### Sixteen cylinders
 
-`kMaxCylinders` goes from 12 to 16; rotors stay capped at six (`kMaxRotors`). The WASM reaches 1,255,492 bytes instead of 1,249,204, 6 kB more out of a fixed 4 MB. Rendering sixteen cylinders does not allocate (test) and computes 4.1 s of sound in 0.4 to 0.7 s natively. The on-screen gas takes 3.9 ms per frame on the W16, 3.7 on the V16, 3.4 on a V12, measured under the load of other builds. The site's displacement goes up to 8 L: the W16 is 7993 cc.
+`kMaxCylinders` goes from 12 to 16; rotors stay capped at six (`kMaxRotors`). The WASM reaches 1,255,492 bytes instead of 1,249,204, 6 kB more out of a fixed 4 MB. Rendering sixteen cylinders does not allocate (test) and computes 4.1 s of sound in 0.4 to 0.7 s natively. The on-screen gas takes 3.9 ms per frame on the W16, 3.7 on the V16, 3.4 on a V12, measured under the load of other builds; on a saturated machine, 6.8, 8.3 and 4.3 ms: beyond its budget, the gas lowers its own quality. The site's displacement goes up to 8 L: the W16 is 7993 cc.
 
 ### Limits
 
