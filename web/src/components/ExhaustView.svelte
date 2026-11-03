@@ -39,6 +39,8 @@
     runnerPoints: Float32Array[];
     runnerWidth: number;
     bankPoints: Float32Array[];
+    /** Le tube déporté jusqu'à la turbine : x, y par cellule ; vide à la référence. */
+    pipePoints: Float32Array;
     /** Où les tubes se rejoignent. */
     joinX: number;
     turbineX: number;
@@ -150,7 +152,14 @@
     // Les roues suivent la taille choisie.
     const turbineR = turboShare ? clamp(height * 0.055, 8, 17) * TURBO_SCALE[config.turboSize ?? 'medium'] : 0;
     const compressorR = turbineR * 1.15;
-    const turbineX = joinX + turbineR + 3;
+    // Un tube déporté prend sa place, à son échelle jusqu'à un quart de ce qu'il y a jusqu'à la sortie : la ligne se resserre d'autant.
+    const pipeSpan = net.pipeCells > 0 ? (exitX - joinX) * 0.25 * Math.min(1, (net.pipeCells * net.cell) / 2.6) : 0;
+    const pipePoints = new Float32Array(net.pipeCells > 0 ? (net.pipeCells + 1) * 2 : 0);
+    for (let k = 0; k <= net.pipeCells && net.pipeCells > 0; k++) {
+      pipePoints[k * 2] = joinX + (pipeSpan * k) / net.pipeCells;
+      pipePoints[k * 2 + 1] = lineY;
+    }
+    const turbineX = joinX + pipeSpan + turbineR + 3;
     const lineStart = turboShare ? turbineX + turbineR + 2 : joinX;
     let weight = 0;
     for (const section of net.sections) weight += section.length * (section.kind === 'tube' || section.kind === 'tail' ? 0.8 : 1.5);
@@ -217,7 +226,7 @@
       engineBottom: lineY + height * 0.17,
       tube, lineY, intakeY, lineX, sectionTall, runnerPoints,
       runnerWidth: Math.max(2, tube * Math.sqrt(net.area[0] / net.area[net.lineFirst])),
-      bankPoints, joinX, turbineX, turbineR, intakeX, intakeYs, traceX, partTall, coolerX0, coolerX1, coolerY, coolerTall, compressorR, plenumLeft, plenumRight,
+      bankPoints, pipePoints, joinX, turbineX, turbineR, intakeX, intakeYs, traceX, partTall, coolerX0, coolerX1, coolerY, coolerTall, compressorR, plenumLeft, plenumRight,
       plenumTall: clamp(height * 0.15, 22, 44),
       throttleX, filterX, lineTraceY, intakeTraceY, traceRange, exitX,
       plumeScale: plumeWidth / (motion.gas.plume.nx - PLUME_PIPE_CELLS),
@@ -306,6 +315,17 @@
       for (let k = 1; k <= n; k++) ctx.lineTo(points[k * 2], points[k * 2 + 1]);
       ctx.stroke();
       strokeSegments(ctx, theme, points, net.bankFirst[b], n, view.tube);
+    }
+    if (net.pipeCells > 0) {
+      const points = view.pipePoints;
+      ctx.strokeStyle = wallStyles[Math.round(clamp(motion.heat * 13, 0, 15))];
+      ctx.lineWidth = view.tube + 1.5;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(points[0], points[1]);
+      ctx.lineTo(points[net.pipeCells * 2], points[net.pipeCells * 2 + 1]);
+      ctx.stroke();
+      strokeSegments(ctx, theme, points, net.pipeFirst, net.pipeCells, view.tube);
     }
   }
 
@@ -852,6 +872,7 @@
     ctx.beginPath();
     // Depuis le collecteur : sa pression, puis cellule après cellule.
     ctx.moveTo(view.joinX, base + traceOffset(net.zP[net.zoneJoin], range));
+    for (let i = 0; i < net.pipeCells; i++) ctx.lineTo(view.pipePoints[i * 2], base + traceOffset(net.p[net.pipeFirst + i], range));
     for (let i = 0; i < net.lineCount; i++) {
       ctx.lineTo(view.lineX[i], base + traceOffset(net.p[net.lineFirst + i], range));
     }

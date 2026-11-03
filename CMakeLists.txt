@@ -35,6 +35,7 @@ add_library(revforge_core STATIC
   core/src/driver_scenarios.cpp
   core/src/powertrain.cpp
   core/src/turbo.cpp
+  core/src/turbo_pipe.cpp
   core/src/consumption.cpp
   core/src/presets.cpp
   ${GENERATED_DIR}/presets_data.inc
@@ -62,7 +63,7 @@ else()
   target_link_libraries(revforge-render PRIVATE revforge_core)
 
   enable_testing()
-  add_executable(revforge_tests tests/main.cpp tests/engine_sound_test.cpp tests/engine_config_test.cpp tests/driving_model_test.cpp tests/powertrain_test.cpp tests/gearbox_test.cpp tests/acoustics_test.cpp tests/starter_test.cpp tests/shift_modes_test.cpp tests/turbo_test.cpp tests/consumption_test.cpp tests/retro_body_test.cpp tests/air_filter_test.cpp)
+  add_executable(revforge_tests tests/main.cpp tests/engine_sound_test.cpp tests/engine_config_test.cpp tests/driving_model_test.cpp tests/powertrain_test.cpp tests/gearbox_test.cpp tests/acoustics_test.cpp tests/starter_test.cpp tests/shift_modes_test.cpp tests/turbo_test.cpp tests/consumption_test.cpp tests/retro_body_test.cpp tests/air_filter_test.cpp tests/turbo_pipe_test.cpp)
   target_include_directories(revforge_tests PRIVATE tests/vendor core/src)
   target_link_libraries(revforge_tests PRIVATE revforge_core)
   # Avertissement d'un en-tête de la bibliothèque standard inclus par doctest.
@@ -100,4 +101,6 @@ else()
   golden(drive_towing_normal f7acef8f --preset inline_six --scenario lap --seconds 40 --drive-scenario towing --shift-mode normal)
   # La carrosserie des années 80, sur un moteur aux réglages neutres : sa ligne, son plan et sa caisse.
   golden(lap_retro fe72a187 --cylinders 6 --cc 2500 --bore 84 --redline 6400 --exhaust stock --body retro --mass 1150 --rim 14 --drive rear --insulation light --scenario lap)
+  golden(turbo_pipe_long a0889b48 --preset hot_hatch_turbo --scenario turbo --turbo-pipe 2500)
+  golden(turbo_pipe_short 7cab0ac1 --preset hot_hatch_turbo --scenario turbo --turbo-pipe 150)
 endif()

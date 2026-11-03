@@ -66,6 +66,11 @@
       <p class="help" data-testid="turbo-size-help">{TURBO_SIZES.find((item) => item.value === config.turboSize)?.help}</p>
     </div>
     <Choices label={t('builder.release')} options={RELEASES} value={config.turboRelease} onchange={(turboRelease) => onapply({ turboRelease })} />
+    <div>
+      <Slider label={t('builder.turboPipe')} value={config.turboPipeMm} {...LIMITS.turboPipeMm} format={(value) => t('builder.turboPipe.value', { m: fixed(value / 1000, 2) })}
+        oninput={(turboPipeMm) => onlive({ turboPipeMm })} onchange={(turboPipeMm) => onapply({ turboPipeMm })} />
+      <p class="help" data-testid="turbo-pipe-help">{t('builder.turboPipe.help')}</p>
+    </div>
   {/if}
   <div>
     <Choices label={t('builder.airFilter')} options={AIR_FILTERS} value={config.airFilter} onchange={(airFilter) => onapply({ airFilter })} />

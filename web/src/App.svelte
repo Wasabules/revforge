@@ -393,7 +393,7 @@
     const hp = Math.round(spec.peakHp);
     const label = <T extends string>(list: { value: T; label: string }[], value: T) => list.find((item) => item.value === value)?.label ?? '';
     return {
-      engine: c.electric ? t('summary.electric', { hp }) : t('summary.engine', { litres: decimal(c.displacementCc / 1000), cylinders: c.cylinders, hp, bore: c.boreMm, stroke: Math.round(strokeMm(c)) }) + (c.airFilter === 'stock' ? '' : ` · ${label(AIR_FILTERS, c.airFilter)}`),
+      engine: c.electric ? t('summary.electric', { hp }) : t('summary.engine', { litres: decimal(c.displacementCc / 1000), cylinders: c.cylinders, hp, bore: c.boreMm, stroke: Math.round(strokeMm(c)) }) + (c.airFilter === 'stock' ? '' : ` · ${label(AIR_FILTERS, c.airFilter)}`) + (c.aspiration === 'turbo' && c.turboPipeMm !== 400 ? t('summary.turboPipe', { m: decimal(c.turboPipeMm / 1000) }) : ''),
       exhaust: c.electric ? t('summary.noExhaust') : t('summary.exhaust', { line: label(EXHAUSTS, c.exhaust), outlets: label(ROUTINGS, c.routing) }),
       gearbox: spec.gears === 1 ? t('spec.gears.one') : t('summary.gearbox', { gears: t('spec.gears.many', { gears: spec.gears }), kind: label(BOX_KINDS, c.boxKind) }),
       car: t('summary.car', { body: label(BODIES, c.body), mass: c.massKg, drive: label(DRIVES, c.drive) }),

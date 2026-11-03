@@ -418,4 +418,11 @@ for (const [name, value] of [['panel', 1], ['cone', 2], ['stacks', 3]]) {
   rf.rf_set_mode(FRESH);
   check('tour, cornets', render(rf, 60, 128), native('--preset', 'city_14', '--scenario', 'lap', '--filter', 'stacks'));
 }
+// Le tube avant la turbine, des deux côtés de la référence : `portable::pow` et `exp` doivent donner le même arbre partout.
+for (const mm of [150, 2500]) {
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1400, 18, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6500, EXHAUST.sport, 1, 0, 0, 0, 0, 1.3, ROUTING.single, TURBO.medium, 0, 0, mm, 0, 0);
+  check(`retard du turbo, tube de ${mm} mm`, turboStab(rf, 24), native(...turboArgs, '--turbo', 'medium', '--release', 'dump_valve', '--turbo-pipe', String(mm)));
+}
 process.exit(failed ? 1 : 0);

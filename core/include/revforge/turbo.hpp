@@ -1,6 +1,7 @@
 #pragma once
 
 #include "revforge/engine_config.hpp"
+#include "revforge/turbo_pipe.hpp"
 
 namespace revforge {
 
@@ -34,6 +35,7 @@ struct TurboSpec {
     double blowOffArea = 4.5e-4;    // m²
     AirFilter inletFilter = AirFilter::Stock;  // ce qui fixe la température à l'entrée du compresseur
     EnginePlacement inletPlacement = EnginePlacement::Front;
+    TurboPipeSpec pipe;             // le tube avant la turbine : inactif à la longueur de référence
 };
 
 /** Ce qui change d'une milliseconde à l'autre, en unités physiques. */
@@ -116,6 +118,7 @@ private:
     TurboState state_;
     double omegaSquared_ = 0.0;
     bool valveHeld_ = false;
+    TurboPipeState pipe_;
 };
 
 /** Ce dont le calcul a besoin pour dimensionner le turbo. */

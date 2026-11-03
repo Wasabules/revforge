@@ -67,7 +67,7 @@ cmake --build build
     --gearbox dog --teeth spur --listener cabin --insulation stripped --scenario launch --out five.wav
 ```
 
-Other useful options: `--turbo small|medium|large`, `--filter stock|panel|cone|stacks`, `--shift-mode`, `--drive-scenario`, and `--fuel 1` with `--out none` for consumption figures. `--help` lists everything.
+Other useful options: `--turbo small|medium|large`, `--turbo-pipe MM`, `--filter stock|panel|cone|stacks`, `--shift-mode`, `--drive-scenario`, and `--fuel 1` with `--out none` for consumption figures. `--help` lists everything.
 
 ## How the sound is made
 
@@ -119,6 +119,7 @@ Known limits:
 - With an automatic, a diesel can occasionally stall at very low speed; the site then offers a restart.
 - Gear rattle has no isolated real recording to compare against, and several gearbox parameters (module, helix angle, backlash, wear rate) are assumed.
 - The gas view follows the driving model without feeding back into it, so its pressures do not exactly match the displayed torque.
+- The turbo's pipe length changes its lag, its gas and its views, but the whine still comes from the engine bay, even on a rear-mounted turbo, and the pipe's own wave reflections are not in the sound.
 - Some regulatory values (UN R51.03 and EU 540/2014) still need checking against the official texts.
 - The 80s coupe body keeps the rolling resistance and grip of recent tyres, and its frontal area and light soundproofing are assumptions.
 

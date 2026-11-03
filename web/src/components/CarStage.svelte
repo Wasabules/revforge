@@ -354,12 +354,17 @@
     const pipe = Math.max(2.5, 0.04 * scale);
     const sizeScale = TURBO_SCALE[config.turboSize ?? 'medium'];
     // Le turbo : à l'arrière du bloc, du côté de l'échappement. La turbine en bas, le compresseur juste au-dessus sur le même arbre.
-    const turboX = left - 0.07;
-    const turbineY = engineY + 0.14;
-    const compressorY = engineY + 0.14 + 0.13 * sizeScale;
+    // Déporté, il part vers l'arrière de la voiture de la longueur réelle du tube, sous le plancher, sans sortir de la caisse.
+    const remote = Math.max(((config.turboPipeMm ?? 400) - 400) / 1000, 0);
+    const turboX = Math.max(left - 0.07 - remote, 0.14);
+    const lowered = Math.min(remote, 0.1);
+    const turbineY = engineY + 0.14 - lowered;
+    const compressorY = turbineY + 0.13 * sizeScale;
     const wheelR = 0.062 * sizeScale;
-    const airX = atRear ? 0.14 : behind ? shape.length * 0.44 : Math.min(left + blockWidth + 0.32, shape.length * 0.93);
-    const airY = behind ? shape.height * 0.66 : engineY + blockHeight * 1.05;
+    // Bien déporté, le filtre part avec lui : l'air n'a pas à traverser l'habitacle pour l'atteindre.
+    const nearTurbo = remote >= 0.5 && !behind;
+    const airX = nearTurbo ? turboX + 0.3 : atRear ? 0.14 : behind ? shape.length * 0.44 : Math.min(left + blockWidth + 0.32, shape.length * 0.93);
+    const airY = nearTurbo ? compressorY + 0.12 : behind ? shape.height * 0.66 : engineY + blockHeight * 1.05;
     const coolerRight = behind ? (atRear ? left + blockWidth + 0.5 : left + blockWidth + 0.45) : shape.length * 0.965;
     const coolerLeft = coolerRight - 0.24;
     const coolerBottom = behind ? engineY + 0.18 : floor + 0.04;
@@ -368,13 +373,16 @@
     const throttleY = engineY + blockHeight * 0.92;
     const way: Record<string, [number, number][]> = {
       filter: [toCar(airX + 0.09, airY), toCar(airX, airY)],
-      inlet: [toCar(airX, airY), toCar(left + blockWidth * 0.5, engineY + blockHeight + 0.06), toCar(turboX, compressorY + 0.05)],
+      inlet: nearTurbo ? [toCar(airX, airY), toCar(turboX, compressorY + 0.05)] : [toCar(airX, airY), toCar(left + blockWidth * 0.5, engineY + blockHeight + 0.06), toCar(turboX, compressorY + 0.05)],
       hot: [toCar(turboX - 0.02, compressorY - 0.05), toCar(turboX - 0.05, floor + 0.01), toCar(coolerLeft - 0.02, floor + 0.01), toCar(coolerLeft, coolerBottom + 0.08)],
       cooler: [toCar(coolerLeft, coolerBottom + 0.13), toCar(coolerRight, coolerBottom + 0.13)],
       cold: [toCar(coolerRight, coolerTop - 0.04), toCar(coolerRight - 0.12, coolerTop + 0.08), toCar(throttleX, throttleY)],
     };
     if (behind) way.hot = [toCar(turboX - 0.02, compressorY - 0.05), toCar(turboX, floor + 0.03), toCar(coolerLeft - 0.03, floor + 0.05), toCar(coolerLeft, coolerBottom + 0.08)];
     const partFor = (kind: string) => way[kind];
+
+    // Le tube d'échappement jusqu'au turbo déporté.
+    if (remote > 0) tube(ctx, [toCar(left, engineY + 0.1), toCar(left - 0.05, turbineY), toCar(turboX, turbineY)], Math.max(3, 0.06 * scale), pipeColor(theme, motion.heat));
 
     // Le fond des tubes, puis l'air calculé, cellule par cellule.
     for (const kind of ['inlet', 'hot', 'cold']) tube(ctx, partFor(kind), pipe + 1.5, theme.lineStrong);

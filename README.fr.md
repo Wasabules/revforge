@@ -67,7 +67,7 @@ cmake --build build
     --gearbox dog --teeth spur --listener cabin --insulation stripped --scenario launch --out cinq.wav
 ```
 
-Autres options utiles : `--turbo small|medium|large`, `--filter stock|panel|cone|stacks`, `--shift-mode`, `--drive-scenario`, et `--fuel 1` avec `--out none` pour la consommation. `--help` donne la liste complète.
+Autres options utiles : `--turbo small|medium|large`, `--turbo-pipe MM`, `--filter stock|panel|cone|stacks`, `--shift-mode`, `--drive-scenario`, et `--fuel 1` avec `--out none` pour la consommation. `--help` donne la liste complète.
 
 ## Comment le son est fabriqué
 
@@ -100,6 +100,7 @@ Limites connues :
 - La voiture ne recule jamais (démarrage en côte avec maintien supposé), toutes les voitures ont la même adhérence, et les trajets sont réglés en durée, pas en distance.
 - En automatique, un diesel peut parfois caler à très faible vitesse ; le site propose alors de le relancer.
 - Le claquement de boîte n'a aucun vrai enregistrement isolé pour comparaison, et plusieurs paramètres de boîte (module, angle d'hélice, jeu, vitesse d'usure) sont supposés.
+- La longueur du tube du turbo change son retard, son gaz et ses vues, mais le sifflement vient toujours du compartiment moteur, même sur un turbo déporté à l'arrière, et les réflexions d'onde dans ce tube ne sont pas dans le son.
 - La vue du gaz suit le modèle de conduite sans agir sur lui : ses pressions ne recoupent donc pas exactement le couple affiché.
 - Certaines valeurs réglementaires (ONU R51.03 et UE 540/2014) restent à contrôler sur les textes officiels.
 - La carrosserie des années 80 garde la résistance au roulement et l'adhérence de pneus récents, et sa surface frontale et sa faible isolation sont supposées.

@@ -6,7 +6,7 @@
   import { Engine2D, type Labels2D } from '../lib/engine2d';
   import { engineLayout, EnginePose, engineState, type EngineLayout, layoutKey } from '../lib/engineLayout';
   import type { ElectricScene, EngineScene } from '../lib/engineScene';
-  import { lang, speedLabel, t, type MessageKey } from '../lib/i18n.svelte';
+  import { fixed, lang, speedLabel, t, type MessageKey } from '../lib/i18n.svelte';
   import { firingOrder, SLOW_MOTION, type Motion } from '../lib/motion';
   import { createStage3D, probeWebGL2, type Stage3D } from '../lib/render3d';
 
@@ -54,6 +54,7 @@
   let pose: EnginePose | null = null;
   let flatView: Engine2D | null = null;
   let labelsCache: Labels2D | null = null;
+  let labelsPipe: number | undefined;
   let labelsLang = '';
   let labelsFuel = '';
   let overlayUsed = false;
@@ -156,8 +157,9 @@
 
   function labels2d(): Labels2D {
     // Relu à chaque image pour suivre la langue, mais refait seulement quand quelque chose change.
-    if (labelsCache && labelsLang === lang() && labelsCache.parts === names && labelsFuel === config.fuel && !!labelsCache.compressor === !!layout?.turbo) return labelsCache;
+    if (labelsCache && labelsLang === lang() && labelsCache.parts === names && labelsFuel === config.fuel && !!labelsCache.compressor === !!layout?.turbo && labelsPipe === layout?.turboPipeMm) return labelsCache;
     labelsLang = lang();
+    labelsPipe = layout?.turboPipeMm;
     labelsFuel = config.fuel;
     labelsCache = {
       front: t('engine.view.front'),
@@ -184,6 +186,7 @@
         airbox: t(layout.airFilter === 'cone' ? 'engine.part.cone' : layout.airFilter === 'stacks' ? 'engine.part.stacks' : 'engine.part.airbox'),
         maf: t('engine.part.maf'),
         chargeHot: t('engine.part.chargeHot'),
+        turboPipeLength: t('engine.turboPipe.length', { m: fixed(layout.turboPipeMm / 1000, 2) }),
         chargeCold: t('engine.part.chargeCold'),
         blowoff: t('engine.part.blowoff'),
         wastegate: t('engine.part.wastegate'),
