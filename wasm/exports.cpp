@@ -245,6 +245,7 @@ static void advance(int frames) {
         g_sound->setDrive(static_cast<float>(g_model->load()), static_cast<float>(g_model->boost()), g_model->cut(), g_model->cranking(), static_cast<float>(g_model->throttle()));
         g_sound->setTurbo(g_model->turboDrive());
         g_sound->setSupercharger(g_model->superchargerDrive());
+        g_sound->setCharge(static_cast<float>(g_model->chargeFill()));
         g_sound->setStarter(g_model->starterPowered(), g_model->starterMeshed(), static_cast<float>(g_model->starterLoad()));
         g_sound->setRoad(static_cast<float>(g_model->speedKmh() / 3.6), static_cast<float>(g_model->wheelSlip()));
         g_sound->setGearbox(g_model->box(), g_model->gearboxDrive());
@@ -476,5 +477,24 @@ int rf_placement() { return static_cast<int>(placementOf(g_powertrain.car)); }
 
 float rf_sheet_level(int item) { return soundSheet(g_powertrain).level(item); }
 float rf_sheet_line_loss(float fromHz, float toHz) { return lineLossDb(g_powertrain, fromHz, toHz); }
+
+// ── L'air de charge : échangeur, eau, protoxyde (charge_air.cpp) ──
+
+/** La charge au collecteur, après l'échangeur, l'eau et le protoxyde (°C) : ce que lira le cliquetis. */
+float rf_charge_c() { return static_cast<float>(g_model->manifoldCharge().temperatureK - 273.15); }
+/** La boucle d'un échangeur air-eau (°C) ; l'air ambiant sans elle. */
+float rf_charge_water_c() { return static_cast<float>(g_model->chargeAir().waterLoopK() - 273.15); }
+/** L'eau injectée (g/s). */
+float rf_water_gps() { return g_model->chargeAirEngine() ? static_cast<float>(g_model->chargeAir().waterGps()) : 0.0f; }
+/** La bouteille de protoxyde : pression relative (bar), ce qu'il en reste (kg), ce qui en sort (g/s). */
+float rf_nitrous_bar() { return g_model->chargeAirEngine() ? static_cast<float>((g_model->chargeAir().bottle().pressurePa - 101325.0) / 1e5) : 0.0f; }
+float rf_nitrous_kg() { return g_model->chargeAirEngine() ? static_cast<float>(g_model->chargeAir().bottle().massKg) : 0.0f; }
+float rf_nitrous_flow() { return g_model->chargeAirEngine() ? static_cast<float>(g_model->chargeAir().nitrousKgS() * 1000.0) : 0.0f; }
+void rf_nitrous_refill() { g_model->refillNitrous(); }
+/** Le régime à partir duquel le kit s'ouvre, pied au plancher : pour la fiche. 0 sans kit. */
+float rf_nitrous_activation_rpm() {
+    const ChargeAirSetup setup = chargeAirSetupOf(g_powertrain);
+    return setup.nitrous.ratedKw > 0.0 ? static_cast<float>(setup.nitrous.activationRpm) : 0.0f;
+}
 
 }  // extern "C"

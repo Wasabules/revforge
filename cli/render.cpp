@@ -24,8 +24,9 @@ constexpr int kTick = 128;
 
 void usage() {
     std::puts(
-        "revforge-render --out file.wav|-|none [--preset ID | settings] [--scenario lap|blips|launch|start|steady|passby|rattle|shifts|turbo|grind|reverse|clutchblips|idle|cruise|wltc|tipin]\n"
+        "revforge-render --out file.wav|-|none [--preset ID | settings] [--scenario lap|blips|launch|start|steady|passby|rattle|shifts|turbo|grind|reverse|clutchblips|idle|cruise|wltc|tipin|soak]\n"
         "  --scenario tipin  held at --rpm in third, then flat out: prints the torque of the first second\n"
+        "  --scenario soak   a minute at a standstill, then three flat-out starts: prints the charge-air temperatures\n"
         "  --out none        drive the model without rendering any sound: for the figures of --fuel\n"
         "  --list            list the presets\n"
         "  --seconds N       duration (lap: 60, or one loop of --drive-scenario; blips: 14, steady: 4)\n"
@@ -65,7 +66,7 @@ void usage() {
         "          --stereo 1: two ears (otherwise one microphone at the centre of the head)\n"
         "          --db 1: also print the estimated A-weighted level\n"
         "          --fuel 1: also print the estimated fuel, oil or energy used, and the best of the engine's fuel map\n"
-        "          --trace FILE: write the turbo, its anti-lag and the fuel as CSV, one line per slice\n"
+        "          --trace FILE: write the turbo, its anti-lag, the fuel and the charge air as CSV, one line per slice\n"
         "          --walk 1: the head walks through the car at 1.2 m/s (with lap)");
 }
 
@@ -138,15 +139,19 @@ struct Output {
 std::FILE* g_trace = nullptr;
 
 void traceHeader() {
-    std::fputs("t,rpm,throttle,gear,boost,shaft_rpm,t3_c,turbine_kw,compressor_kw,air_g_s,heat_kw,fuel_g_s,torque_nm,lost_nm,antilag,kmh,flow_kg_s,blowoff,wastegate,charge_bar,exhaust_bar,trip_l,pops\n", g_trace);
+    std::fputs("t,rpm,throttle,gear,boost,shaft_rpm,t3_c,turbine_kw,compressor_kw,air_g_s,heat_kw,fuel_g_s,torque_nm,lost_nm,antilag,kmh,flow_kg_s,blowoff,wastegate,charge_bar,exhaust_bar,trip_l,pops,charge_c,water_loop_c,water_g_s,nitrous_g_s,bottle_bar,bottle_kg\n", g_trace);
 }
 
 void traceLine(const DrivingModel& model, const EngineSound& sound, double t) {
     const TurboState& s = model.turbo().state();
     const AntiLagState& a = model.turbo().antiLag();
-    std::fprintf(g_trace, "%.4f,%.1f,%.3f,%d,%.4f,%.0f,%.1f,%.3f,%.3f,%.3f,%.3f,%.4f,%.2f,%.2f,%d,%.2f,%.4f,%.3f,%.3f,%.4f,%.4f,%.6f,%u\n", t, model.rpm(), model.throttle(), model.gear(), model.boost(),
+    const ChargeAir& charge = model.chargeAir();
+    const bool charged = model.chargeAirEngine();
+    std::fprintf(g_trace, "%.4f,%.1f,%.3f,%d,%.4f,%.0f,%.1f,%.3f,%.3f,%.3f,%.3f,%.4f,%.2f,%.2f,%d,%.2f,%.4f,%.3f,%.3f,%.4f,%.4f,%.6f,%u,%.2f,%.2f,%.3f,%.3f,%.3f,%.4f\n", t, model.rpm(), model.throttle(), model.gear(), model.boost(),
                  s.shaftOmega * 60.0 / (2.0 * 3.141592653589793), s.turbineInK - 273.15, s.turbinePowerW / 1000.0, s.compressorPowerW / 1000.0, a.airFlow * 1000.0, a.collectorHeatW / 1000.0,
-                 model.consumption().fuelGps(), model.torqueNm(), model.antiLagLostNm(), model.antiLagActive() ? 1 : 0, model.speedKmh(), s.compressorFlow, s.blowOff, s.wastegate, s.chargePa / 1e5 - 1.01325, s.turbineInPa / 1e5 - 1.01325, model.consumption().fuelTripL(), static_cast<unsigned>(sound.pops()));
+                 model.consumption().fuelGps(), model.torqueNm(), model.antiLagLostNm(), model.antiLagActive() ? 1 : 0, model.speedKmh(), s.compressorFlow, s.blowOff, s.wastegate, s.chargePa / 1e5 - 1.01325, s.turbineInPa / 1e5 - 1.01325, model.consumption().fuelTripL(), static_cast<unsigned>(sound.pops()),
+                 model.manifoldCharge().temperatureK - 273.15, charge.waterLoopK() - 273.15, charged ? charge.waterGps() : 0.0, charged ? charge.nitrousKgS() * 1000.0 : 0.0,
+                 charged ? (charge.bottle().pressurePa - 101325.0) / 1e5 : 0.0, charged ? charge.bottle().massKg : 0.0);
 }
 
 /** Le modèle de conduite pilote le son : chaque tranche est une pédale, ou le pilote automatique. */
@@ -163,6 +168,7 @@ void play(EngineSound& sound, DrivingModel& model, Output& out, int rate, Drive 
         sound.setDrive(static_cast<float>(model.load()), static_cast<float>(model.boost()), model.cut(), model.cranking(), static_cast<float>(model.throttle()));
         sound.setTurbo(model.turboDrive());
         sound.setSupercharger(model.superchargerDrive());
+        sound.setCharge(static_cast<float>(model.chargeFill()));
         sound.setStarter(model.starterPowered(), model.starterMeshed(), static_cast<float>(model.starterLoad()));
         sound.setRoad(static_cast<float>(model.speedKmh() / 3.6), static_cast<float>(model.wheelSlip()));
         sound.setGearbox(model.box(), model.gearboxDrive());
@@ -389,6 +395,50 @@ void cruise(EngineSound& sound, DrivingModel& model, Output& out, int rate, doub
     });
 }
 
+/**
+ * La chaleur qui s'accumule dans l'air de charge : une minute à l'arrêt, puis trois départs arrêtés à fond pendant 8 s, un
+ * freinage, et 20 s de ralenti entre eux. Écrit la charge au collecteur et la boucle d'eau au début et à la fin de chaque départ.
+ */
+void soak(EngineSound& sound, DrivingModel& model, Output& out, int rate) {
+    int pull = 0;
+    int phase = 0;
+    double since = 0.0;
+    play(sound, model, out, rate, [&](int step, double dt) {
+        const double t = static_cast<double>(step) * kTick / rate;
+        const auto report = [&](const char* what) {
+            std::printf("%s %d at %.0f s: charge %.1f C, water loop %.1f C, %.0f km/h\n", what, pull, t, model.manifoldCharge().temperatureK - 273.15,
+                        model.chargeAir().waterLoopK() - 273.15, model.speedKmh());
+        };
+        switch (phase) {
+            case 0:
+                model.stepPedal(dt, 0.0, 0.3);
+                if (pull < 3 && t - since >= (pull == 0 ? 60.0 : 20.0)) {
+                    ++pull;
+                    report("Before pull");
+                    phase = 1;
+                    since = t;
+                }
+                break;
+            case 1:
+                model.stepPedal(dt, 1.0, 0.0);
+                if (t - since >= 8.0) {
+                    report("End of pull");
+                    phase = 2;
+                    since = t;
+                }
+                break;
+            default:
+                model.stepPedal(dt, 0.0, 0.6);
+                if (model.speedKmh() < 0.5) {
+                    phase = 0;
+                    since = t;
+                }
+                break;
+        }
+    });
+    std::printf("After %d pulls: charge %.1f C, water loop %.1f C\n", pull, model.manifoldCharge().temperatureK - 273.15, model.chargeAir().waterLoopK() - 273.15);
+}
+
 /** Au point mort, pied levé : le ralenti, une fois retombé le coup de gaz du démarrage. */
 void idling(EngineSound& sound, DrivingModel& model, Output& out, int rate) {
     bool measuring = false;
@@ -472,6 +522,18 @@ void printFuel(const DrivingModel& model, const Powertrain& powertrain, double s
     std::printf("Engine: %.1f Nm at %.0f rpm, %.1f kW at %.0f rpm, 0-100 km/h in %.2f s\n", peak.peakTorqueNm, peak.peakTorqueRpm, peak.peakPowerKw, peak.peakPowerRpm, measurePerformance(powertrain).zeroTo100S);
     // Au bit près, pour tools/check_wasm.mjs.
     std::printf("raw fuel_lph=%.17g fuel_trip_l=%.17g trip_km=%.17g oil_trip_ml=%.17g energy_trip_kwh=%.17g\n", c.fuelLph(), c.fuelTripL(), c.tripKm(), c.oilTripMl(), c.energyTripKwh());
+    if (model.chargeAirEngine()) {
+        // L'air de charge : la fiche à 100 km/h, face au même moteur sans eau, sans protoxyde, avec l'échangeur d'origine.
+        const ManifoldCharge now = steadyManifoldCharge(powertrain, peak.peakPowerRpm);
+        const ManifoldCharge stock = steadyManifoldCharge(chargeAirStock(powertrain), peak.peakPowerRpm);
+        std::printf("Charge air (estimate, at %.0f rpm, full load): %.1f C at the manifold (stock intercooler, dry: %.1f C), %.2f bar, %.0f%% of the air\n", peak.peakPowerRpm,
+                    now.temperatureK - 273.15, stock.temperatureK - 273.15, now.pressurePa / 1e5, now.airShare * 100.0);
+        const ChargeAir& charge = model.chargeAir();
+        if (charge.setup().nitrous.ratedKw > 0.0) {
+            std::printf("Nitrous: from %.0f rpm, %.1f g/s with a full bottle; bottle now %.1f bar, %.0f C, %.2f kg left\n", charge.setup().nitrous.activationRpm, charge.setup().nitrous.nitrousKgS * 1000.0,
+                        (charge.bottle().pressurePa - 101325.0) / 1e5, charge.bottle().kelvin - 273.15, charge.bottle().massKg);
+        }
+    }
 }
 
 /**
@@ -726,6 +788,7 @@ int main(int argc, char** argv) {
         else if (scenario == "cruise") seconds = 180;
         else if (scenario == "wltc") seconds = 1800;
         else if (scenario == "tipin") seconds = 16;
+        else if (scenario == "soak") seconds = 170;
     }
     EngineSound sound(rate);
     sound.setProfile(profile);
@@ -776,6 +839,8 @@ int main(int argc, char** argv) {
         wltc(sound, model, output, rate, driver);
     } else if (scenario == "tipin") {
         tipIn(sound, model, output, rate, rpm);
+    } else if (scenario == "soak") {
+        soak(sound, model, output, rate);
     } else if (scenario == "steady") {
         sound.setTargetRpm(rpm);
         output.render(sound, 0, static_cast<int>(output.frames()));

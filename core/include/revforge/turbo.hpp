@@ -1,6 +1,7 @@
 #pragma once
 
 #include "revforge/anti_lag.hpp"
+#include "revforge/charge_air.hpp"
 #include "revforge/engine_config.hpp"
 #include "revforge/turbo_pipe.hpp"
 
@@ -37,6 +38,7 @@ struct TurboSpec {
     AirFilter inletFilter = AirFilter::Stock;  // ce qui fixe la température à l'entrée du compresseur
     EnginePlacement inletPlacement = EnginePlacement::Front;
     TurboPipeSpec pipe;             // le tube avant la turbine : inactif à la longueur de référence
+    ChargeCoolerSpec cooler;        // l'échangeur : air-air d'origine, sauf réglage (charge_air.cpp)
 };
 
 /** Ce qui change d'une milliseconde à l'autre, en unités physiques. */
@@ -80,6 +82,7 @@ struct TurboInput {
     bool burning = false;
     AntiLagCommand antiLag;
     double carbRichness = 0.0;  // 1/λ imposé par un carburateur, qui ne dose pas sur commande. 0 : un calculateur qui dose.
+    double cooledK = 0.0;       // la sortie de l'échangeur, quand l'air de charge la calcule (air-eau, aucun). 0 : l'air-air d'origine.
 };
 
 /** Le point d'équilibre à pleine charge : ce que donnent les courbes de la fiche. */
@@ -90,6 +93,8 @@ struct TurboSteady {
     double shaftRpm = 0.0;
     double wastegate = 0.0;
     double flow = 0.0;
+    double outK = 293.0;      // sortie du compresseur
+    double coolK = 293.0;     // sortie de l'échangeur
 };
 
 /**

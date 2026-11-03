@@ -178,6 +178,12 @@ double coolerOutlet(double hotK, double flow, double rated) {
     return hotK - effect * (hotK - kAmbientK);
 }
 
+/** L'échangeur à l'équilibre : celui d'origine, ou celui du réglage (charge_air.cpp). */
+double coolerOutletOf(const TurboSpec& spec, double hotK, double flow) {
+    if (spec.cooler.kind == Intercooler::AirToAir) return coolerOutlet(hotK, flow, spec.ratedFlow);
+    return chargeCoolerSteadyK(spec.cooler, hotK, flow);
+}
+
 /**
  * Puissance sur l'arbre (W), pour ce débit, cette détente et cette vitesse. Le gaz n'arrive pas à débit moyen : chaque
  * bouffée pousse plus fort que la moyenne, d'autant plus que le moteur tourne doucement, et c'est ce qui fait tourner
@@ -249,6 +255,11 @@ TurboSpec turboSpecFor(const EngineConfig& e, double breathingAtRated) {
     s.blowOffArea = kBlowOffAreaAtRated * flow;
     s.filterDrop = kRatedFilterPa / (flow * flow);
     s.coolerDrop = kRatedCoolerBar * 1e5 * chargeRho / (flow * flow);
+    // Un autre échangeur, ou aucun : le turbo reste celui de l'air-air d'origine, seuls changent le chemin de l'air et ce qui le refroidit.
+    if (e.intercooler != Intercooler::AirToAir) {
+        applyChargePath(e.intercooler, true, area, s.chargeVolumeM3, s.coolerDrop);
+        s.cooler = chargeCoolerFor(e.intercooler, flow, outK);
+    }
 
     // La turbine : ce qu'il faut de détente pour tenir ce point, trois quarts du gaz passant par elle.
     const double fuel = fuelPerAir(s, 1.0, true);
@@ -299,6 +310,8 @@ struct Balance {
     double omega = 0.0;
     double turbineInPa = kAtmosphere;
     double flow = 0.0;
+    double outK = kAmbientK;
+    double coolK = kAmbientK;
 };
 
 /** La vitesse de bout de pale qu'il faut pour cette hauteur, à ce débit. La hauteur croît avec U : une dichotomie suffit. */
@@ -335,8 +348,10 @@ Balance balanceAt(const TurboSpec& spec, double rpm, double breathing, double ch
         tip = tipSpeedFor(spec, inletK, flow, head);
         compressorHead(spec, inletK, flow, tip, &x);
         const double outK = inletK + (head > 0.0 ? head : 0.0) / compressorEta(x) / kAirCp;
-        coolK = coolerOutlet(outK, flow, spec.ratedFlow);
+        coolK = coolerOutletOf(spec, outK, flow);
+        b.outK = outK;
     }
+    b.coolK = coolK;
     const double fuel = fuelPerAir(spec, 1.0, true);
     const double gas = flow * (1.0 + fuel);
     const double burntK = exhaustTemperature(spec, coolK, rpm, 1.0, fuel);
@@ -407,6 +422,8 @@ TurboSteady turboSteady(const TurboSpec& spec, double rpm, double breathing) {
     out.shaftRpm = found.omega * 60.0 / (2.0 * kPi);
     out.wastegate = gate;
     out.flow = found.flow;
+    out.outK = found.outK;
+    out.coolK = found.coolK;
     return out;
 }
 
@@ -544,7 +561,10 @@ void TurboCharger::step(double dt, const TurboInput& input) {
     const double outTarget = flowNext > 0.0 ? inletK + (headNew > 0.0 ? headNew : 0.0) / eta / kAirCp : s.compressorOutK;
     s.compressorOutK += (outTarget - s.compressorOutK) * dt / kOutletS;
     const double outK = s.compressorOutK;
-    if (flowNext > 0.02 * spec.ratedFlow) {
+    if (input.cooledK > 0.0) {
+        // L'air de charge tient la boucle d'eau, ou il n'y a pas d'échangeur : il rend la température.
+        s.coolerOutK = input.cooledK;
+    } else if (flowNext > 0.02 * spec.ratedFlow) {
         s.coolerOutK += (coolerOutlet(outK, flowNext, spec.ratedFlow) - s.coolerOutK) * dt / kCoolerMassS;
     } else {
         s.coolerOutK += (kAmbientK - s.coolerOutK) * dt / kCoolerRestS;

@@ -5,6 +5,7 @@
 
 #include "revforge/air_filter.hpp"
 #include "revforge/carburetor.hpp"
+#include "revforge/charge_air.hpp"
 #include "revforge/driving_model.hpp"
 #include "revforge/valvetrain.hpp"
 
@@ -326,6 +327,38 @@ double intakeDropPa(const Powertrain& p, double rpm) {
 
 double breathingOf(const Powertrain& p, double rpm) { return breathing(p.engine, rpm); }
 
+namespace {
+
+/**
+ * Un autre échangeur sur un compresseur mécanique, ou aucun : le compresseur reste celui de l'échangeur d'origine, seuls changent
+ * le chemin de l'air et ce qui le refroidit (charge_air.cpp). La sortie du compresseur au nominal demande son équilibre : trop lent
+ * pour chaque pas de `fullLoadTorqueNm`, on garde la dernière.
+ */
+struct ChargerHotMemo {
+    bool valid = false;
+    EngineConfig engine;
+    EnginePlacement placement = EnginePlacement::Front;
+    double hotK = 293.0;
+};
+ChargerHotMemo g_chargerHot;
+
+void withChargeCooler(const Powertrain& p, SuperchargerSpec& spec) {
+    const double ratedRpm = kSuperchargerRatedShare * static_cast<double>(p.engine.redlineRpm);
+    const EnginePlacement placement = placementOf(p.car);
+    if (!g_chargerHot.valid || !(g_chargerHot.engine == p.engine) || g_chargerHot.placement != placement) {
+        g_chargerHot.hotK = superchargerSteady(spec, ratedRpm, breathing(p.engine, ratedRpm)).outK;
+        g_chargerHot.engine = p.engine;
+        g_chargerHot.placement = placement;
+        g_chargerHot.valid = true;
+    }
+    // Le conduit d'un 2 L fait 55 mm, comme celui du turbo.
+    const double area = 0.7854 * 0.055 * 0.055 * spec.displacementM3 / 0.002;
+    applyChargePath(p.engine.intercooler, false, area, spec.chargeVolumeM3, spec.coolerDrop);
+    spec.cooler = chargeCoolerFor(p.engine.intercooler, spec.ratedFlow, g_chargerHot.hotK);
+}
+
+}  // namespace
+
 SuperchargerSpec superchargerSpecOf(const Powertrain& p) {
     const double redline = static_cast<double>(p.engine.redlineRpm);
     SuperchargerSpec spec = superchargerSpecFor(p.engine, breathing(p.engine, kVolumetricSizingShare * redline), breathing(p.engine, kSuperchargerRatedShare * redline));
@@ -335,6 +368,7 @@ SuperchargerSpec superchargerSpecOf(const Powertrain& p) {
         spec.inletFilter = p.engine.airFilter;
         spec.inletPlacement = placementOf(p.car);
     }
+    if (p.engine.intercooler != Intercooler::AirToAir) withChargeCooler(p, spec);
     return spec;
 }
 
@@ -373,7 +407,9 @@ double fullLoadTorqueNm(const Powertrain& p, double rpm, double boost) {
     return e.airFilter == AirFilter::Stock ? charged : withAirFilter(p, rpm, boost, charged);
 }
 
-double torqueCurveNm(const Powertrain& p, double rpm) {
+namespace {
+
+double plainTorqueCurveNm(const Powertrain& p, double rpm) {
     if (p.electric || p.engine.aspiration == Aspiration::Natural) return fullLoadTorqueNm(p, rpm, 0.0);
     // Pas d'arbre à lancer : la pression d'équilibre, moins ce que coûte l'entraînement.
     if (p.engine.aspiration == Aspiration::Supercharger) {
@@ -384,6 +420,14 @@ double torqueCurveNm(const Powertrain& p, double rpm) {
     const TurboSpec spec = turboSpecOf(p);
     const TurboSteady steady = turboSteady(spec, rpm, breathing(p.engine, rpm));
     return fullLoadTorqueNm(p, rpm, steady.boost) - turboBackPressureNm(spec, steady.chargePa, steady.turbineInPa, steady.flow, 1.0);
+}
+
+}  // namespace
+
+double torqueCurveNm(const Powertrain& p, double rpm) {
+    const double plain = plainTorqueCurveNm(p, rpm);
+    // L'échangeur, l'eau, le protoxyde : rien de cela ne s'exécute au défaut (charge_air.cpp).
+    return chargeAirActive(p) ? chargeAirTorqueNm(p, rpm, plain) : plain;
 }
 
 double frictionTorqueNm(const Powertrain& p, double rpm) {
@@ -451,7 +495,10 @@ Gearing gearingOf(const Powertrain& p) {
         stock = p;
         stock.engine.airFilter = AirFilter::Stock;
     }
-    const PowerSummary peak = powerSummary(otherFilter ? stock : p);
+    // Ni l'échangeur, ni l'eau, ni le protoxyde non plus.
+    const bool otherCharge = chargeAirActive(p);
+    if (otherCharge) stock = chargeAirStock(otherFilter ? stock : p);
+    const PowerSummary peak = powerSummary(otherFilter || otherCharge ? stock : p);
     const bool rearOrAll = p.car.drive != Drive::Front;
     const bool allWheels = p.car.drive == Drive::All;
     const GearboxKind kind = p.electric ? GearboxKind::Reducer : p.gearbox.kind;

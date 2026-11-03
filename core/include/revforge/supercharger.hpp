@@ -1,5 +1,6 @@
 #pragma once
 
+#include "revforge/charge_air.hpp"
 #include "revforge/engine_config.hpp"
 
 namespace revforge {
@@ -39,6 +40,7 @@ struct SuperchargerSpec {
     double bypassArea = 2e-3;        // soupape de dérivation grande ouverte (m²)
     AirFilter inletFilter = AirFilter::Stock;  // ce qui fixe la température et la perte à l'entrée du compresseur
     EnginePlacement inletPlacement = EnginePlacement::Front;
+    ChargeCoolerSpec cooler;         // l'échangeur : celui d'origine, sauf réglage (charge_air.cpp)
 };
 
 /** Ce qui change d'une milliseconde à l'autre, en unités physiques. */
@@ -83,6 +85,7 @@ struct SuperchargerInput {
     double rpm = 0.0;
     double fill = 0.0;       // remplissage 0-1 : le papillon, ou le carburant d'un diesel
     double breathing = 1.0;  // respiration du moteur à ce régime, 1 au pic de couple
+    double cooledK = 0.0;    // la sortie de l'échangeur, quand l'air de charge la calcule (air-eau, aucun). 0 : celui d'origine.
 };
 
 /**

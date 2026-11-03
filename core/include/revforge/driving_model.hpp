@@ -164,6 +164,16 @@ public:
     const ConsumptionMeter& consumption() const { return consumption_; }
     void resetTrip() { consumption_.resetTrip(); }
 
+    /** L'air de charge : échangeur, eau, protoxyde. Rien ne s'y exécute au défaut (`chargeAirActive`). */
+    bool chargeAirEngine() const { return chargeAirEngine_; }
+    const ChargeAir& chargeAir() const { return chargeAir_; }
+    /** La charge au collecteur à ce pas : ce que lira le cliquetis. Au défaut, celle de l'échangeur d'origine, sans eau ni protoxyde. */
+    ManifoldCharge manifoldCharge() const;
+    /** Ce que la charge ajoute à la pression d'ouverture de l'échappement, pour le son : 0 au défaut. */
+    double chargeFill() const { return chargeFill_; }
+    /** Remplir la bouteille de protoxyde. */
+    void refillNitrous() { chargeAir_.refill(); }
+
 private:
     enum class Driver { Pilot, Pedal, Neutral, Off };
     enum class ShiftStep { None, Declutch, PullOut, Flight, Sync, Engage, Reclutch, Handover };
@@ -208,6 +218,7 @@ private:
     void stepTurbo(double rpmNow, bool burning);
     void updateAntiLag(double throttle, double rpmNow, bool off);
     void stepSupercharger(double rpmNow);
+    double stepChargeAir(double rpmNow, double throttle, double indicated);
     double bmepPumping(double rpm) const;
     double wheelSpeedMs() const { return wheelOmega_ * radius_; }
     void meterConsumption();
@@ -261,6 +272,9 @@ private:
     bool superchargerEngine_ = false;
     Carburetor carb_;
     bool carbEngine_ = false;
+    ChargeAir chargeAir_;
+    bool chargeAirEngine_ = false;
+    double chargeFill_ = 0.0;
     double torque_ = 0.0;
     bool cut_ = false;
     bool limiterCut_ = false;

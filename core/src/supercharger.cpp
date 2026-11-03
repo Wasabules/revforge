@@ -148,6 +148,12 @@ double coolerOutlet(double hotK, double flow, double rated) {
     return hotK - effect * (hotK - kAmbientK);
 }
 
+/** L'échangeur à l'équilibre : celui d'origine, ou celui du réglage (charge_air.cpp). */
+double coolerOutletOf(const SuperchargerSpec& spec, double hotK, double flow) {
+    if (spec.cooler.kind == Intercooler::AirToAir) return coolerOutlet(hotK, flow, spec.ratedFlow);
+    return chargeCoolerSteadyK(spec.cooler, hotK, flow);
+}
+
 /** Le vide du collecteur ouvre la soupape : pas de pression inutile pédale relâchée. */
 double bypassWanted(double fill) { return clamp((kBypassClosedFill - fill) / (kBypassClosedFill - kBypassFullOpenFill), 0.0, 1.0); }
 
@@ -207,7 +213,7 @@ Point pointAt(const SuperchargerSpec& spec, double rpm, double breathing, double
         ends = endsFor(spec, chargePa, p.engineFlow, coolK, rpm);
         p.compressorFlow = compressorFlowAt(spec, omega, ends.inletPa, ends.inletK, ends.outletPa);
         p.shaftW = shaftPower(spec, omega, ends.inletPa, ends.inletK, ends.outletPa, p.compressorFlow, &p.outK);
-        coolK = coolerOutlet(p.outK, p.engineFlow, spec.ratedFlow);
+        coolK = coolerOutletOf(spec, p.outK, p.engineFlow);
     }
     p.coolK = coolK;
     p.surplus = p.compressorFlow - p.engineFlow - bypassFlowAt(spec, bypassWanted(fill), ends.outletPa, ends.inletPa);
@@ -401,7 +407,9 @@ void Supercharger::step(double dt, const SuperchargerInput& input) {
     double outK = kAmbientK;
     s.shaftW = shaftPower(spec, omega, ends.inletPa, ends.inletK, ends.outletPa, s.compressorFlow, &outK) / spec.driveEfficiency;
     s.compressorOutK = outK;
-    s.coolerOutK += (coolerOutlet(outK, engine, spec.ratedFlow) - s.coolerOutK) * dt / kCoolerMassS;
+    // L'air de charge tient la boucle d'eau, ou il n'y a pas d'échangeur : il rend la température.
+    if (input.cooledK > 0.0) s.coolerOutK = input.cooledK;
+    else s.coolerOutK += (coolerOutlet(outK, engine, spec.ratedFlow) - s.coolerOutK) * dt / kCoolerMassS;
 }
 
 }  // namespace revforge
