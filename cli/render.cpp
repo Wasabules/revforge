@@ -65,7 +65,7 @@ void usage() {
         "          --stereo 1: two ears (otherwise one microphone at the centre of the head)\n"
         "          --db 1: also print the estimated A-weighted level\n"
         "          --fuel 1: also print the estimated fuel, oil or energy used, and the best of the engine's fuel map\n"
-        "          --trace FILE: write the turbo, its anti-lag and the fuel as CSV, one line per slice\n"
+        "          --trace FILE: write the turbo, its boost control, its anti-lag and the fuel as CSV, one line per slice\n"
         "          --walk 1: the head walks through the car at 1.2 m/s (with lap)");
 }
 

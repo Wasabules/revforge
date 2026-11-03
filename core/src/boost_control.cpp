@@ -332,9 +332,17 @@ double BoostController::step(const BoostControlSpec& spec, double dt, const Boos
         lastPa_ = input.chargePa;
         const double unsaturated = feedForward + pid.kc * error + integral_ + derivative_;
         command_ = clamp(unsaturated, 0.0, 1.0);
-        const double band = 0.1 * (target_ - input.ambientPa);
+        // Anti-emballement par intégration conditionnelle (Åström et Hägglund) : l'intégrale s'arrête quand l'électrovanne est en
+        // butée et que l'écart l'y pousse encore, et quand la pression rejoint d'elle-même la cible avant τI. Elle ne corrige que
+        // ce qui resterait : le turbo qui se lance ne la gonfle pas.
         const bool pinned = (unsaturated > 1.0 && error > 0.0) || (unsaturated < 0.0 && error < 0.0);
-        if (!spec.antiWindup || (!pinned && error < band && error > -band)) integral_ += pid.kc * ts / pid.tauI * error;
+        const double rate = pid.kc * pid.tauD > 0.0 ? -derivative_ / (pid.kc * pid.tauD) : 0.0;
+        const bool closing = (error > 0.0 && rate > 0.0) || (error < 0.0 && rate < 0.0);
+        const bool soon = closing && (rate > 0.0 ? rate : -rate) * pid.tauI > (error > 0.0 ? error : -error);
+        if (!spec.antiWindup || (!pinned && !soon)) integral_ += pid.kc * ts / pid.tauI * error;
+        // Bien sous la cible, électrovanne en butée, la boucle est ouverte : ce que l'intégrale avait appris ne vaut plus pour la
+        // prochaine montée, comme quand un calculateur sort de la régulation. Elle repart de zéro, la précommande tient le reste.
+        if (spec.antiWindup && pinned && unsaturated - integral_ > 1.0) integral_ = 0.0;
     }
     --taskTicks_;
     // L'électrovanne prend le nouveau rapport cyclique au début de chaque période de découpage.

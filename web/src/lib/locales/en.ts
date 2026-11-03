@@ -987,12 +987,14 @@ export const en = {
   // ── Boost control ──
   'builder.boostControl': 'Boost control',
   'boostControl.spring': 'Spring',
-  'boostControl.spring.help': 'The wastegate opens against a spring: the pressure creeps up at high revs and overshoots.',
+  'boostControl.spring.help': 'A diaphragm opens the wastegate against its spring: it holds boost above the outside air, and creeps 2 to 3% higher at high revs.',
   'boostControl.electronic': 'Electronic',
-  'boostControl.electronic.help': 'A solenoid valve and a closed loop hold a target boost.',
+  'boostControl.electronic.help': 'A solenoid valve pulsed at 25 Hz and a PID hold an absolute pressure: no creep, a short overshoot as the turbo spools, more boost needed at altitude.',
   'boostControl.by_gear': 'By gear',
-  'boostControl.by_gear.help': 'The same, with a lower target in the first gears.',
+  'boostControl.by_gear.help': 'The same, with each gear capped at the torque its tyres and gearbox can take: less boost in the first gears.',
   'summary.boostControl': 'boost control: {kind}',
+  'charts.boost.target': 'Target',
+  'gauge.boostDuty': ' · valve {duty}%',
   // ── Charge air: intercooler, water injection, nitrous oxide ──
   'builder.intercooler': 'Intercooler',
   'intercooler.air_to_air': 'Air to air',

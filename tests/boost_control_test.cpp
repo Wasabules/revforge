@@ -184,6 +184,46 @@ TEST_CASE("sans anti-emballement, l'intégrale grossit pendant que le turbo se l
     }
 }
 
+TEST_CASE("en quatrième, après des montées et des levers de pied, la reprise ne garde pas l'intégrale d'avant") {
+    // Le scénario `turbo` de la CLI : les rapports à mi-pédale, une conduite tranquille vers 1800 tr/min, puis plein gaz.
+    for (const char* id : {"three_cyl_turbo", "hot_hatch_turbo"}) {
+        DrivingModel model(controlled(id, BoostControl::Electronic));
+        model.setManual(true);
+        model.requestShift(1);
+        int phase = 0;
+        double since = 0.0, crest = 0.0, last = 0.0, target = 0.0;
+        const double dt = 128.0 / 44100.0;
+        for (int step = 0; step < static_cast<int>(28.0 / dt) && phase < 3; ++step) {
+            const double t = step * dt;
+            const double rpm = model.rpm();
+            double pedal = 0.0, brake = 0.0;
+            if (phase == 0) {
+                pedal = t > 0.3 ? 0.625 : 0.0;
+                if (model.gear() < 4 && !model.shifting() && rpm > 3000.0) model.requestShift(1);
+                if (model.gear() == 4 && !model.shifting()) phase = 1, since = t;
+            } else if (phase == 1) {
+                pedal = rpm < 1800.0 ? 0.25 : 0.0;
+                brake = rpm > 2000.0 ? 0.125 : 0.0;
+                if (t - since > 5.0) phase = 2;
+            } else {
+                pedal = 1.0;
+                if (rpm > 3600.0) phase = 3;
+            }
+            model.stepPedal(dt, pedal, brake);
+            if (phase == 2) {
+                crest = std::max(crest, model.turbo().state().chargePa);
+                last = model.turbo().state().chargePa;
+                target = model.boostTargetPa();
+            }
+        }
+        REQUIRE(phase == 3);
+        const double over = (crest - target) / gauge(target);
+        MESSAGE(std::string(id) << " : crête " << over * 100 << " % au-dessus de la cible, " << (last - target) / gauge(target) * 100 << " % à 3600 tr/min");
+        CHECK(over < 0.12);
+        CHECK(std::fabs(last - target) < 0.01 * gauge(target));
+    }
+}
+
 TEST_CASE("les gains SIMC laissent au moins 45° de marge de phase sur le modèle mesuré") {
     for (const char* id : {"hot_hatch_turbo", "three_cyl_turbo", "five_cyl_turbo", "boxer_four_turbo", "diesel_four"}) {
         const BoostControlSpec spec = specOf(controlled(id, BoostControl::Electronic));

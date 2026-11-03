@@ -595,4 +595,23 @@ for (const [name, system] of [['single', 1], ['multi', 2]]) {
   rf.rf_set_mode(3);
   check('socle moteur, électrique', render(rf, 20, 128), native('--preset', 'electric', '--ambient', '40', '--altitude', '1500', '--traction', 'full', '--scenario', 'lap', '--seconds', '20'));
 }
+// La régulation de pression : le banc, les gains et le PID, au bit près, sur le coup de gaz et au départ d'une traction.
+for (const [name, code] of [['electronic', BOOST_CONTROL.electronic], ['by_gear', BOOST_CONTROL.by_gear]]) {
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1400, 18, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  tune(rf, { boostControl: code });
+  rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6500, EXHAUST.sport, 1, 0, 0, 0, 0, 1.3, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+  check(`régulation ${name}, retard du turbo`, turboStab(rf, 24), native(...turboArgs, '--turbo', 'medium', '--release', 'dump_valve', '--boost-control', name));
+}
+{
+  const rf = load();
+  rf.rf_set_car(BODY.city, 1150, 16, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  tune(rf, { boostControl: BOOST_CONTROL.by_gear });
+  rf.rf_set_config(3, LAYOUT.inline, 1200, 75, 6000, EXHAUST.stock, 1, 0, 0, 0, 0, 1.2, ROUTING.single, TURBO.small, 0, 0, 400, 0, 0);
+  rf.rf_set_mode(FRESH);
+  rf.rf_set_mode(2);
+  const hash = render(rf, 12, 128, (step) => rf.rf_set_controls(step * TICK_S >= 1 ? 1 : 0, 0, 0));
+  check('selon le rapport, plein gaz', hash, native('--cylinders', '3', '--cc', '1200', '--bore', '75', '--redline', '6000', '--aspiration', 'turbo', '--boost', '1.2', '--turbo', 'small',
+    '--exhaust', 'stock', '--body', 'city', '--mass', '1150', '--rim', '16', '--drive', 'front', '--boost-control', 'by_gear', '--scenario', 'launch', '--seconds', '12'));
+}
 process.exit(failed ? 1 : 0);

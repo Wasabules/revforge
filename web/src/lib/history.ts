@@ -7,12 +7,14 @@ import type { Telemetry } from './engine';
 import type { Motion } from './motion';
 
 export const HISTORY_HZ = 30;
+/** L'atmosphère d'où partent les pressions relatives de la télémétrie (`rf_turbo_charge` en C++). */
+const ATMOSPHERE_BAR = 1.01325;
 const CAPACITY = HISTORY_HZ * 180;
 
 export type ChannelKey =
-  | 'rpm' | 'inputRpm' | 'speed' | 'gear' | 'torque' | 'clutchTorque' | 'power' | 'load' | 'boost' | 'clutchSlipRpm' | 'clutchSlipKw' | 'clutchTemp' | 'tyreSlip' | 'levelDbA';
+  | 'rpm' | 'inputRpm' | 'speed' | 'gear' | 'torque' | 'clutchTorque' | 'power' | 'load' | 'boost' | 'clutchSlipRpm' | 'clutchSlipKw' | 'clutchTemp' | 'tyreSlip' | 'levelDbA' | 'boostTarget';
 
-const CHANNELS: ChannelKey[] = ['rpm', 'inputRpm', 'speed', 'gear', 'torque', 'clutchTorque', 'power', 'load', 'boost', 'clutchSlipRpm', 'clutchSlipKw', 'clutchTemp', 'tyreSlip', 'levelDbA'];
+const CHANNELS: ChannelKey[] = ['rpm', 'inputRpm', 'speed', 'gear', 'torque', 'clutchTorque', 'power', 'load', 'boost', 'clutchSlipRpm', 'clutchSlipKw', 'clutchTemp', 'tyreSlip', 'levelDbA', 'boostTarget'];
 
 export class TelemetryHistory {
   readonly capacity = CAPACITY;
@@ -53,6 +55,8 @@ export class TelemetryHistory {
       this.hasLevel = true;
       d.levelDbA[at] = level;
     }
+    // La pression demandée, relative à l'atmosphère de référence comme `boost` : la simulation la donne en bar absolus.
+    d.boostTarget[at] = t.boostTargetBar > 0 ? t.boostTargetBar - ATMOSPHERE_BAR : 0;
     this.written++;
   }
 

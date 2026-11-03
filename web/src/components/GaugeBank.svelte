@@ -25,11 +25,14 @@
   let turbineNode = $state<HTMLElement>();
   let tailpipeNode = $state<HTMLElement>();
   let intakeNode = $state<HTMLElement>();
+  let dutyNode = $state<HTMLElement>();
 
   const turbo = $derived(config.aspiration === 'turbo' && !config.electric);
   // L'air d'admission n'a d'intérêt que s'il n'est plus celui du dehors : un filtre sous le capot.
   const hotAir = $derived(!config.electric && (config.airFilter === 'cone' || config.airFilter === 'stacks'));
   const charged = $derived(config.aspiration === 'supercharger' && !config.electric);
+  // Une électrovanne n'existe que sur une régulation électronique : la wastegate à ressort n'a rien à afficher là.
+  const solenoid = $derived(turbo && config.boostControl !== 'spring');
   const boosted = $derived(turbo || charged);
   /** Une échelle qui finit sur une graduation : tout ce que la simulation peut atteindre y tient. */
   const roundedUp = (value: number, step: number) => Math.ceil(value / step - 1e-9) * step;
@@ -60,6 +63,8 @@
     let lastTailLang = lang();
     let lastIntake = NaN;
     let lastIntakeLang = lang();
+    let lastDuty = NaN;
+    let lastDutyLang = lang();
     const stops = [
       clock.add((text) => {
         if (!text) return;
@@ -88,6 +93,16 @@
         lastIntakeLang = lang();
         intakeNode.textContent = t('gauge.intakeAir', { c: whole(c) });
       }),
+      clock.add((text) => {
+        if (!text) return;
+        if (!dutyNode) return;
+        // Le rapport cyclique que commande le calculateur ; moteur arrêté, l'électrovanne n'est pas alimentée.
+        const duty = running() ? Math.round(Math.max(telemetry().boostDuty, 0) * 100) : 0;
+        if (duty === lastDuty && lang() === lastDutyLang) return;
+        lastDuty = duty;
+        lastDutyLang = lang();
+        dutyNode.textContent = t('gauge.boostDuty', { duty: whole(duty) });
+      }),
     ];
     return () => {
       stop();
@@ -109,6 +124,7 @@
       digits={2} signed tickDigits={1} {clock} read={() => readings.manifoldBar}>
       {#if boosted}<span data-testid="gauge-turbine" bind:this={turbineNode}></span>{:else}{t('gauge.manifold.natural')}{/if}
       {#if hotAir}<span data-testid="gauge-intake-air" bind:this={intakeNode}></span>{/if}
+      {#if solenoid}<span data-testid="gauge-boost-duty" bind:this={dutyNode}></span>{/if}
     </Gauge>
     <Gauge id="collector" label={t('gauge.collector')} note={t('gauge.collector.note')} unit="°C" min={0} max={1000} step={200} minor={100} warm {clock} read={() => readings.collectorC}>
       <span data-testid="gauge-tailpipe" bind:this={tailpipeNode}></span>
