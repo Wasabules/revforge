@@ -39,7 +39,7 @@
   <SettingsValvetrain {config} {shown} {onapply} {onlive} />
   <SettingsFueling {config} {spec} {onapply} />
   <SettingsCharging {config} {shown} {onapply} {onlive} />
-  <SettingsEcu {config} {shown} {onapply} {onlive} />
+  <SettingsEcu {config} {shown} {spec} {onapply} {onlive} />
 {/if}
 
 <style>

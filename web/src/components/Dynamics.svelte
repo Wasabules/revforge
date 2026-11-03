@@ -88,6 +88,13 @@
       { label: t('gauge.chargerName'), value: () => `${whole(telemetry().chargerRpm)} ${t('unit.rpm')}`, source: sim },
       { label: t('gauge.chargerKw'), value: () => `${fixed(telemetry().chargerKw, 1)} kW`, source: sim },
     ] : []),
+    // Le calculateur : ce qu'il demande et ce qu'il coupe, lu de la simulation. Avance et richesse sur un moteur à étincelle.
+    ...(!config.electric && config.fuel !== 'diesel' ? [
+      { label: t('gauge.ecuAdvance'), value: () => `${telemetry().ecuAdvance > 0 ? '+' : ''}${fixed(telemetry().ecuAdvance, 1)}°`, source: sim },
+      { label: t('gauge.ecuLambda'), value: () => (telemetry().ecuLambda > 0 ? fixed(telemetry().ecuLambda, 2) : '—'), source: sim },
+    ] : []),
+    ...(config.electric ? [] : [{ label: t('gauge.ecuFired'), value: () => percent(telemetry().ecuFired * 100), source: sim }]),
+    ...(config.tractionControl !== 'off' ? [{ label: t('gauge.ecuTraction'), value: () => percent(telemetry().ecuTraction * 100), source: sim }] : []),
     { label: t('meter.accel'), value: () => `${fixed(readings.accelG, 2)} g`, source: calculated },
     { label: t('meter.slip'), value: () => `${fixed(telemetry().slip, 1)} m/s`, source: sim },
     { label: t('meter.clutchKw'), value: () => `${fixed(telemetry().clutchSlipKw, 1)} kW`, source: sim },

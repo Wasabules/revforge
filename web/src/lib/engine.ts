@@ -113,10 +113,23 @@ export interface Telemetry {
   energyKwhPer100km: number;
   energyAvgKwhPer100km: number;
   energyTripKwh: number;
+  /**
+   * Le calculateur, lu de la simulation : l'avance face à la carte d'origine (°, positif plus tôt), le λ demandé (0 sans
+   * objet), la part des explosions qui ont lieu (0 à 1), le rupteur, le launch control, le passage à fond (0 ou 1), et la
+   * part du couple que retire l'antipatinage (0 à 1).
+   */
+  ecuAdvance: number;
+  ecuLambda: number;
+  ecuFired: number;
+  ecuLimiter: number;
+  ecuLaunch: number;
+  ecuFlat: number;
+  ecuTraction: number;
 }
 
 export const IDLE_TELEMETRY: Telemetry = {
   rpm: 0, speed: 0, gear: 0, throttle: 0, load: 0, boost: 0, turbine: 0, turboRelease: 0, turboRpm: 0, turboCharge: 0, turboPlenum: 0, turboOutlet: 0, turboInlet: 0, turboExhaust: 0, turboWastegate: 0, turboBlowoff: 0, turboFlow: 0, turboOutC: 20, turboCoolC: 20, intakeAirC: 20, turboGasC: 20, antiLag: 0, antiLagHeatKw: 0, antiLagAirFlow: 0, antiLagLostNm: 0, chargerRpm: 0, chargerKw: 0, chargerSpill: 0, torque: 0, power: 0, clutch: 0, clutchInputRpm: 0, clutchSlipKw: 0, clutchTorque: 0, wheelRpm: 0, slip: 0, pops: 0, cut: 0, shifting: 0, cranking: 0, stalled: 0, lugging: 0, legKind: 0, legTarget: 0, gradePct: 0, underpowered: 0, levelDbA: 0, listenerX: 0, listenerY: 0, listenerZ: 0, peak: 0, outputRpm: 0, meshed: 0, shiftStep: 0, grinding: 0, overload: 0, boxWear: 0, boxBroken: 0, boxPending: 0, boxConeSlip: 0, boxRattle: 0, boxLoose0: 0, boxLoose1: 0, boxLoose2: 0, boxLoose3: 0, fuelLph: 0, fuelLper100km: 0, fuelTripL: 0, fuelAvgLper100km: 0, tripKm: 0, co2GPerKm: 0, oilGph: 0, oilTripMl: 0, oilMlPer1000km: 0, energyKwhPer100km: 0, energyAvgKwhPer100km: 0, energyTripKwh: 0,
+  ecuAdvance: 0, ecuLambda: 0, ecuFired: 1, ecuLimiter: 0, ecuLaunch: 0, ecuFlat: 0, ecuTraction: 0,
 };
 
 export interface CurvePoint {
@@ -197,6 +210,11 @@ export interface Spec {
   starter: { direct: boolean; kw: number; ring: number; pinion: number; helix: number };
   /** Le carburateur, s'il y en a un : corps, col du venturi, perte de charge à la puissance maximale. */
   carb: { throats: number; throatMm: number; dropKpa: number };
+  /**
+   * La carte du calculateur, à pleine charge et au régime de la puissance maximale : l'avance demandée (° avant le point
+   * mort haut), le couple face à la carte d'origine, et le gaz à la sortie des cylindres, réglé et d'origine (°C).
+   */
+  ecu: { rpm: number; sparkDeg: number; fullShare: number; exhaustC: number; stockExhaustC: number };
   curve: CurvePoint[];
   box: BoxSpec;
 }
@@ -224,7 +242,7 @@ export interface SoundSheet {
   lineLoss: { hz: number; db: number }[];
 }
 
-export const EMPTY_SPEC: Spec = { idle: 0, redline: 7000, peakTorque: 0, peakTorqueRpm: 0, peakHp: 0, peakHpRpm: 0, gears: 0, ratios: [], turboWheelMm: 0, turboInertia: 0, intakeDropKpa: 0, intakeAirC: 20, chargerRatio: 0, chargerVolume: 0, chargerWheelMm: 0, zeroTo100: 0, topSpeed: 0, starter: { direct: false, kw: 0, ring: 0, pinion: 0, helix: 0 }, carb: { throats: 0, throatMm: 0, dropKpa: 0 }, curve: [], box: EMPTY_BOX };
+export const EMPTY_SPEC: Spec = { idle: 0, redline: 7000, peakTorque: 0, peakTorqueRpm: 0, peakHp: 0, peakHpRpm: 0, gears: 0, ratios: [], turboWheelMm: 0, turboInertia: 0, intakeDropKpa: 0, intakeAirC: 20, chargerRatio: 0, chargerVolume: 0, chargerWheelMm: 0, zeroTo100: 0, topSpeed: 0, starter: { direct: false, kw: 0, ring: 0, pinion: 0, helix: 0 }, carb: { throats: 0, throatMm: 0, dropKpa: 0 }, ecu: { rpm: 0, sparkDeg: 0, fullShare: 1, exhaustC: 0, stockExhaustC: 0 }, curve: [], box: EMPTY_BOX };
 
 interface RfExports {
   memory: WebAssembly.Memory;
@@ -338,6 +356,17 @@ interface RfExports {
   rf_energy_avg_kwh_per_100km(): number;
   rf_energy_trip_kwh(): number;
   rf_reset_trip(): void;
+  /** Le calculateur : ce qu'il fait en ce moment, et sa carte pour la fiche. */
+  rf_ecu_advance(): number;
+  rf_ecu_lambda(): number;
+  rf_ecu_fired(): number;
+  rf_ecu_limiter(): number;
+  rf_ecu_launch(): number;
+  rf_ecu_flat(): number;
+  rf_ecu_traction(): number;
+  rf_ecu_full_share(): number;
+  rf_ecu_spark_deg(rpm: number, load: number): number;
+  rf_ecu_exhaust_c(rpm: number, stockMap: number): number;
 }
 
 /** Le moteur finit de tourner sur son élan avant qu'on suspende l'audio. */
@@ -565,6 +594,12 @@ export class Engine {
   }
 
   /** Puissance, couple et performances de ce réglage : les mêmes calculs que ceux qui font rouler la voiture. */
+  /** La carte du calculateur, au régime de la puissance maximale et à pleine charge : tout vient du C++. */
+  private ecuSpec(rf: RfExports): Spec['ecu'] {
+    const rpm = rf.rf_peak_power_rpm();
+    return { rpm, sparkDeg: rf.rf_ecu_spark_deg(rpm, 1), fullShare: rf.rf_ecu_full_share(), exhaustC: rf.rf_ecu_exhaust_c(rpm, 0), stockExhaustC: rf.rf_ecu_exhaust_c(rpm, 1) };
+  }
+
   spec(config: EngineConfig): Spec {
     const rf = this.applyLocal(config);
     if (!rf) return EMPTY_SPEC;
@@ -596,6 +631,7 @@ export class Engine {
       topSpeed: rf.rf_top_speed(),
       starter: { direct: rf.rf_starter_direct() === 1, kw: rf.rf_starter_kw(), ring: rf.rf_starter_ring(), pinion: rf.rf_starter_pinion(), helix: rf.rf_starter_helix() },
       carb: { throats: rf.rf_carb_throats(), throatMm: rf.rf_carb_throat_mm(), dropKpa: rf.rf_carb_drop_kpa() },
+      ecu: this.ecuSpec(rf),
       curve,
       box: this.boxSpec(rf, gears, redline),
     };
