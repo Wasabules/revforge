@@ -517,6 +517,14 @@ struct EngineSound::State {
     float dumpDecay;
     float flutterDecay;
     Svf whistleBand, airBand, wastegateBand, releaseBand;
+    // Le second arbre d'un biturbo : ses filtres et son tirage à lui. Rien ne s'exécute sans `setTurboB`.
+    bool turboDrivenB = false;
+    TurboDrive turboInB;
+    std::uint32_t turboRngB = 0x7F4A7C15;
+    float turbineB = 0.0f;
+    float whistleFlowB = 0.0f;
+    float wastegateB = 0.0f;
+    Svf whistleBandB, whistleLowB, wastegateBandB;
 
     // ── Détonations ──
     float popEnv = 0.0f;
@@ -624,6 +632,9 @@ struct EngineSound::State {
         antiLagFlameBand.set(kAntiLagFlameHz, 0.7f, sr);
         whistleBand.set(1900.0f, 16.0f, sr);
         whistleLow.set(1000.0f, 16.0f, sr);
+        whistleBandB.set(1900.0f, 16.0f, sr);
+        whistleLowB.set(1000.0f, 16.0f, sr);
+        wastegateBandB.set(5200.0f, 1.0f, sr);
         releaseCoef = 1.0f - km::exp(-1.0f / (kReleaseFollowS * sr));
         airBand.set(3200.0f, 0.7f, sr);
         wastegateBand.set(5200.0f, 1.0f, sr);
@@ -1042,6 +1053,15 @@ struct EngineSound::State {
         return static_cast<float>(static_cast<std::int32_t>(x)) * 4.656613e-10f;
     }
 
+    float turboRandomB() {
+        std::uint32_t x = turboRngB;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        turboRngB = x;
+        return static_cast<float>(static_cast<std::int32_t>(x)) * 4.656613e-10f;
+    }
+
     /** Le culbuteur qui rattrape son jeu : un tic sourd comme celui du siège, plus grave, à son propre tirage. */
     float rockerSample(bool hit) {
         std::uint32_t x = rockerRng;
@@ -1417,6 +1437,16 @@ struct EngineSound::State {
         const bool flutter = active.turboRelease == TurboRelease::Flutter || antiLagOn;
         releaseGoal = km::min(flutter ? kBackflowLevel * turboIn.backflowShare : turboIn.blowOffShare, 1.5f);
         releaseBand.set(flutter ? 1250.0f : 1800.0f + 2000.0f * km::min(releaseEnv, 1.0f), 0.8f, sr);
+        if (turboDrivenB) updateTurboB(top);
+    }
+
+    /** Le second arbre : même loi, sa vitesse à lui. Deux turbos qui ne tournent pas tout à fait ensemble battent. */
+    void updateTurboB(float top) {
+        turbineB = km::min(turboInB.shaftShare, 1.3f);
+        whistleBandB.set(km::coerceIn(2.0f * turboInB.shaftHz, 200.0f, top), 16.0f, sr);
+        whistleLowB.set(km::coerceIn(turboInB.shaftHz, 100.0f, top), 16.0f, sr);
+        whistleFlowB += (km::min(turboInB.flowShare, 1.0f) - whistleFlowB) * smoothing(0.05f);
+        wastegateB += (km::min(2.0f * turboInB.wastegateFlowShare, 1.0f) - wastegateB) * smoothing(0.05f);
     }
 
     /** Le compresseur : le modèle dit son état ; sans modèle, la charge le laisse deviner. */
@@ -1542,7 +1572,7 @@ struct EngineSound::State {
         whistleLow.process(whistleNoise);
         const float airNoise = turboRandom();
         airBand.process(airNoise);
-        const float shaft = turbine * turbine * kTurboWhistle * boostLevel * (0.35f + 0.65f * whistleFlow);
+        const float shaft = turbine * turbine * kTurboWhistle * boostLevel * (0.35f + 0.65f * whistleFlow) * turboIn.levelShare;
         float out = (whistleBand.bp + kWhistleLowShare * whistleLow.bp) * shaft;
         out += airBand.bp * boost * boost * kTurboAir;
         if (wastegate > 1e-3f) {
@@ -1559,7 +1589,23 @@ struct EngineSound::State {
             releaseBand.process(releaseNoise);
             out += releaseBand.bp * releaseEnv * kTurboRelease;
         }
+        if (turboDrivenB) out += turboSampleB();
         turboBus += out;
+    }
+
+    /** Le sifflement et la soupape du second arbre, à son propre tirage : le premier n'en est pas décalé. */
+    float turboSampleB() {
+        const float whistleNoise = turboRandomB();
+        whistleBandB.process(whistleNoise);
+        whistleLowB.process(whistleNoise);
+        const float shaft = turbineB * turbineB * kTurboWhistle * boostLevel * (0.35f + 0.65f * whistleFlowB) * turboInB.levelShare;
+        float out = (whistleBandB.bp + kWhistleLowShare * whistleLowB.bp) * shaft;
+        if (wastegateB > 1e-3f) {
+            const float gateNoise = turboRandomB();
+            wastegateBandB.process(gateNoise);
+            out += wastegateBandB.bp * wastegateB * kTurboWastegate * (0.72f + 0.28f * sinFast(flutterPhase));
+        }
+        return out;
     }
 
     void turboSample() {
@@ -2116,6 +2162,11 @@ void EngineSound::setDrive(float load, float boost, bool cut, bool cranking, flo
 void EngineSound::setTurbo(const TurboDrive& drive) {
     s_->turboDriven = true;
     s_->turboIn = drive;
+}
+
+void EngineSound::setTurboB(const TurboDrive& drive) {
+    s_->turboDrivenB = true;
+    s_->turboInB = drive;
 }
 
 void EngineSound::setSupercharger(const SuperchargerDrive& drive) {

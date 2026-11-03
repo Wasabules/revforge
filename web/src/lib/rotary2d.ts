@@ -334,6 +334,21 @@ export class Rotary2D {
       ctx.arc(tx, ty, r * 0.11, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
+      // Le second turbo d'un 13B-REW, juste à côté du premier, sur le même collecteur.
+      if (layout.turbos === 2) {
+        const sx = tx + this.outletDir[1] * r * 0.44;
+        const sy = ty - this.outletDir[0] * r * 0.44;
+        ctx.fillStyle = theme.danger;
+        ctx.beginPath();
+        ctx.arc(sx, sy, r * 0.2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = theme.cool;
+        ctx.beginPath();
+        ctx.arc(sx, sy, r * 0.11, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
     }
     if (layout.charger) {
       // Le compresseur sur l'admission, et son filtre au bout.

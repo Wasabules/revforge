@@ -249,6 +249,7 @@ static void advance(int frames) {
         target = static_cast<float>(g_model->rpm());
         g_sound->setDrive(static_cast<float>(g_model->load()), static_cast<float>(g_model->boost()), g_model->cut(), g_model->cranking(), static_cast<float>(g_model->throttle()));
         g_sound->setTurbo(g_model->turboDrive());
+        if (g_model->twinTurbo() && g_model->twin().spec().units == 2) g_sound->setTurboB(g_model->turboDriveB());
         g_sound->setSupercharger(g_model->superchargerDrive());
         g_sound->setEcu(g_model->ecuDrive());
         g_sound->setStarter(g_model->starterPowered(), g_model->starterMeshed(), static_cast<float>(g_model->starterLoad()));
@@ -286,21 +287,21 @@ float rf_boost() { return static_cast<float>(g_model->boost()); }
 float rf_turbine() { return g_sound->turbine(); }
 float rf_turbo_release() { return g_sound->turboRelease(); }
 /** L'arbre et les pressions, en unités physiques : tr/min, bar au-dessus de l'atmosphère, °C, kg/s. */
-float rf_turbo_rpm() { return static_cast<float>(g_model->turbo().state().shaftOmega * 60.0 / (2.0 * 3.141592653589793)); }
+float rf_turbo_rpm() { return static_cast<float>(g_model->turboState().shaftOmega * 60.0 / (2.0 * 3.141592653589793)); }
 // Comme un manomètre de suralimentation : au-dessus de l'atmosphère du jour (101 325 Pa à 0 m, voir atmosphere.hpp).
 static float gaugeBar(double pascals) { return static_cast<float>((pascals - ambientAirOf(g_powertrain.engine).pressurePa) / 1e5); }
 // Le chemin de l'air est le même avec un compresseur : mêmes jauges, lues là où il est.
-float rf_turbo_charge() { return gaugeBar(g_model->supercharged() ? g_model->supercharger().state().chargePa : g_model->turbo().state().chargePa); }
-float rf_turbo_plenum() { return gaugeBar(g_model->supercharged() ? g_model->supercharger().state().plenumPa : g_model->turbo().state().plenumPa); }
-float rf_turbo_outlet() { return gaugeBar(g_model->supercharged() ? g_model->supercharger().state().outletPa : g_model->turbo().state().outletPa); }
-float rf_turbo_inlet() { return gaugeBar(g_model->supercharged() ? g_model->supercharger().state().inletPa : g_model->turbo().state().inletPa); }
-float rf_turbo_exhaust() { return gaugeBar(g_model->turbo().state().turbineInPa); }
-float rf_turbo_wastegate() { return static_cast<float>(g_model->turbo().state().wastegate); }
-float rf_turbo_blowoff() { return static_cast<float>(g_model->turbo().state().blowOff); }
-float rf_turbo_flow() { return static_cast<float>(g_model->supercharged() ? g_model->supercharger().state().engineFlow : g_model->turbo().state().compressorFlow); }
-float rf_turbo_out_c() { return static_cast<float>((g_model->supercharged() ? g_model->supercharger().state().compressorOutK : g_model->turbo().state().compressorOutK) - 273.15); }
-float rf_turbo_cool_c() { return static_cast<float>((g_model->supercharged() ? g_model->supercharger().state().coolerOutK : g_model->turbo().state().coolerOutK) - 273.15); }
-float rf_turbo_gas_c() { return static_cast<float>(g_model->turbo().state().turbineInK - 273.15); }
+float rf_turbo_charge() { return gaugeBar(g_model->supercharged() ? g_model->supercharger().state().chargePa : g_model->turboState().chargePa); }
+float rf_turbo_plenum() { return gaugeBar(g_model->supercharged() ? g_model->supercharger().state().plenumPa : g_model->turboState().plenumPa); }
+float rf_turbo_outlet() { return gaugeBar(g_model->supercharged() ? g_model->supercharger().state().outletPa : g_model->turboState().outletPa); }
+float rf_turbo_inlet() { return gaugeBar(g_model->supercharged() ? g_model->supercharger().state().inletPa : g_model->turboState().inletPa); }
+float rf_turbo_exhaust() { return gaugeBar(g_model->turboState().turbineInPa); }
+float rf_turbo_wastegate() { return static_cast<float>(g_model->turboState().wastegate); }
+float rf_turbo_blowoff() { return static_cast<float>(g_model->turboState().blowOff); }
+float rf_turbo_flow() { return static_cast<float>(g_model->supercharged() ? g_model->supercharger().state().engineFlow : g_model->turboState().compressorFlow); }
+float rf_turbo_out_c() { return static_cast<float>((g_model->supercharged() ? g_model->supercharger().state().compressorOutK : g_model->turboState().compressorOutK) - 273.15); }
+float rf_turbo_cool_c() { return static_cast<float>((g_model->supercharged() ? g_model->supercharger().state().coolerOutK : g_model->turboState().coolerOutK) - 273.15); }
+float rf_turbo_gas_c() { return static_cast<float>(g_model->turboState().turbineInK - 273.15); }
 int rf_antilag_active() { return g_model->antiLagActive() ? 1 : 0; }
 float rf_antilag_heat_kw() { return static_cast<float>(g_model->turbo().antiLag().collectorHeatW / 1000.0); }
 float rf_antilag_air_flow() { return static_cast<float>(g_model->turbo().antiLag().airFlow); }
@@ -315,16 +316,51 @@ float rf_boost_duty() { return static_cast<float>(g_model->boostDuty()); }
 /** Ce que le moteur a choisi : diamètre de la roue (mm), inertie de l'arbre (kg·m²). */
 float rf_intake_air_c(float rpm) { return static_cast<float>(intakeAirK(g_powertrain, static_cast<double>(rpm)) - 273.15); }
 float rf_intake_drop_kpa(float rpm) { return static_cast<float>(intakeDropPa(g_powertrain, static_cast<double>(rpm)) / 1000.0); }
-float rf_turbo_wheel_mm() { return static_cast<float>(turboSpecOf(g_powertrain).wheelDiameterM * 1000.0); }
-float rf_turbo_inertia() { return static_cast<float>(turboSpecOf(g_powertrain).inertia); }
+static TurboSpec turboNow() { return usesTwinTurbo(g_powertrain.engine) && !g_powertrain.electric ? twinTurboSpecOf(g_powertrain).unit[0] : turboSpecOf(g_powertrain); }
+float rf_turbo_wheel_mm() { return static_cast<float>(turboNow().wheelDiameterM * 1000.0); }
+float rf_turbo_inertia() { return static_cast<float>(turboNow().inertia); }
 /** Le compresseur mécanique : tr/min de l'arbre, kW pris au vilebrequin, part du débit rendue à l'entrée. */
-float rf_supercharger_rpm() { return static_cast<float>(g_model->supercharger().state().rotorOmega * 60.0 / (2.0 * 3.141592653589793)); }
-float rf_supercharger_kw() { return static_cast<float>(g_model->supercharger().state().shaftW / 1000.0); }
-float rf_supercharger_spill() { return static_cast<float>(g_model->supercharger().state().spillShare); }
+static bool twincharged() { return g_model->twinTurbo() && g_model->twin().hasCharger(); }
+float rf_supercharger_rpm() { return static_cast<float>((twincharged() ? g_model->twin().state().rotorOmega : g_model->supercharger().state().rotorOmega) * 60.0 / (2.0 * 3.141592653589793)); }
+float rf_supercharger_kw() { return static_cast<float>(twincharged() ? g_model->twin().state().chargerNm * g_model->rpm() * 2.0 * 3.141592653589793 / 60.0 / 1000.0 : g_model->supercharger().state().shaftW / 1000.0); }
+float rf_supercharger_spill() {
+    if (!twincharged()) return static_cast<float>(g_model->supercharger().state().spillShare);
+    const TwinTurboState& w = g_model->twin().state();
+    return static_cast<float>(w.chargerFlow > 1e-6 && w.flapFlow > 0.0 ? std::min(w.flapFlow / w.chargerFlow, 1.0) : 0.0);
+}
 /** Ce que le moteur a choisi : rapport d'entraînement, volume engendré (L par tour), diamètre de la roue (mm). */
-float rf_supercharger_ratio() { return static_cast<float>(superchargerSpecOf(g_powertrain).driveRatio); }
-float rf_supercharger_volume() { const SuperchargerSpec spec = superchargerSpecOf(g_powertrain); return spec.kind == SuperchargerKind::Centrifugal ? 0.0f : static_cast<float>(spec.rotorVolumeM3 * 1000.0); }
-float rf_supercharger_wheel_mm() { const SuperchargerSpec spec = superchargerSpecOf(g_powertrain); return spec.kind == SuperchargerKind::Centrifugal ? static_cast<float>(spec.wheelDiameterM * 1000.0) : 0.0f; }
+static SuperchargerSpec chargerNow() {
+    const EngineConfig& e = g_powertrain.engine;
+    return !g_powertrain.electric && usesTwinTurbo(e) && e.turboLayout == TurboLayout::Twincharger ? twinTurboSpecOf(g_powertrain).charger : superchargerSpecOf(g_powertrain);
+}
+float rf_supercharger_ratio() { return static_cast<float>(chargerNow().driveRatio); }
+float rf_supercharger_volume() { const SuperchargerSpec spec = chargerNow(); return spec.kind == SuperchargerKind::Centrifugal ? 0.0f : static_cast<float>(spec.rotorVolumeM3 * 1000.0); }
+float rf_supercharger_wheel_mm() { const SuperchargerSpec spec = chargerNow(); return spec.kind == SuperchargerKind::Centrifugal ? static_cast<float>(spec.wheelDiameterM * 1000.0) : 0.0f; }
+/**
+ * Deux turbos, twincharger, aubes (twin_turbo.cpp) : le second arbre, l'étape du séquentiel et ses vannes, l'embrayage et le
+ * volet du compresseur, l'ouverture des aubes (0 fermées, 1 grandes ouvertes). Tout à zéro sur un turbo simple.
+ */
+static bool twinNow() { return g_model->twinTurbo(); }
+int rf_turbo_units() { return twinNow() ? g_model->twin().spec().units : (!g_powertrain.electric && g_powertrain.engine.aspiration == Aspiration::Turbo ? 1 : 0); }
+float rf_turbo2_rpm() { return twinNow() ? static_cast<float>(g_model->turboStateB().shaftOmega * 60.0 / (2.0 * 3.141592653589793)) : 0.0f; }
+float rf_turbo2_exhaust() { return twinNow() && g_model->twin().spec().units == 2 ? gaugeBar(g_model->turboStateB().turbineInPa) : 0.0f; }
+float rf_turbo2_wastegate() { return twinNow() ? static_cast<float>(g_model->turboStateB().wastegate) : 0.0f; }
+float rf_turbo2_flow() { return twinNow() ? static_cast<float>(g_model->turboStateB().compressorFlow) : 0.0f; }
+float rf_turbo2_gas_c() { return twinNow() && g_model->twin().spec().units == 2 ? static_cast<float>(g_model->turboStateB().turbineInK - 273.15) : 20.0f; }
+static float vaneOpening(int unit) {
+    if (!twinNow() || !g_model->twin().spec().variableGeometry) return 0.0f;
+    const TwinTurboSpec& spec = g_model->twin().spec();
+    return static_cast<float>((g_model->twin().state().vane[static_cast<std::size_t>(unit)] - spec.vaneMin) / (spec.vaneMax - spec.vaneMin));
+}
+float rf_turbo_vane() { return vaneOpening(0); }
+float rf_turbo2_vane() { return vaneOpening(1); }
+int rf_twin_stage() { return twinNow() ? g_model->twin().state().stage : 0; }
+float rf_twin_valve() { return twinNow() ? static_cast<float>(g_model->twin().state().exhaustValve) : 0.0f; }
+int rf_twin_online() { return twinNow() && g_model->twin().state().secondaryOnline ? 1 : 0; }
+int rf_charger_clutch() { return twincharged() && g_model->twin().state().clutch ? 1 : 0; }
+float rf_charger_flap() { return twincharged() ? static_cast<float>(g_model->twin().state().flap) : 0.0f; }
+float rf_charger_interstage() { return twincharged() ? gaugeBar(g_model->twin().state().interstagePa) : 0.0f; }
+float rf_charger_off_rpm() { const EngineConfig& e = g_powertrain.engine; return !g_powertrain.electric && usesTwinTurbo(e) && e.turboLayout == TurboLayout::Twincharger ? static_cast<float>(twinTurboSpecOf(g_powertrain).clutchOffRpm) : 0.0f; }
 float rf_torque() { return static_cast<float>(g_model->torqueNm()); }
 float rf_power() { return static_cast<float>(g_model->powerKw()); }
 float rf_clutch() { return static_cast<float>(g_model->clutch()); }

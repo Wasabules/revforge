@@ -45,6 +45,7 @@ struct TurboSpec {
     double ambientPa = 101325.0;
     double ambientK = 293.0;
     EcuExhaust ecu;                 // la carte du calculateur, si elle s'écarte de l'origine : avance et richesse
+    double turbineEtaShare = 1.0;   // rendement de la turbine, en part du nominal : moins d'1 aubes d'une géométrie variable fermées (twin_turbo.cpp)
 };
 
 /** Ce qui change d'une milliseconde à l'autre, en unités physiques. */
@@ -78,6 +79,7 @@ struct TurboDrive {
     float wastegate = 0.0f;
     float wastegateFlowShare = 0.0f;  // ce qui contourne la turbine, rapporté au débit nominal
     AntiLagDrive antiLag;
+    float levelShare = 1.0f;      // niveau du sifflement d'un turbo parmi deux, plus petit : exactement 1 pour un turbo simple
 };
 
 /** Ce qu'il faut savoir du moteur à chaque pas. */

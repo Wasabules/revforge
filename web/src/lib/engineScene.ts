@@ -495,10 +495,14 @@ export class EngineScene {
   private readonly secondary: T.Mesh | null;
   private readonly cams: T.Object3D[] = [];
   private readonly turboWheels: T.Object3D[] = [];
+  /** L'arbre de chaque roue de `turboWheels` : 0 le premier, 1 le second d'un biturbo (`turbine2Angle`). */
+  private readonly turboShafts: number[] = [];
+  /** Les aubes d'une turbine à géométrie variable : chacune pivote sur son axe, selon l'ouverture réelle de son arbre. */
+  private readonly vanes: { mesh: T.Object3D; base: number; shaft: number }[] = [];
   /** Ce qui tourne avec l'arbre du compresseur mécanique, et à quelle part de sa vitesse. */
   private readonly chargerParts: { mesh: T.Object3D; ratio: number }[] = [];
   /** Ce qui bouge selon l'état réel des soupapes, à sa position de repos. */
-  private readonly wastegateRods: { mesh: T.Object3D; rest: number; travel: number }[] = [];
+  private readonly wastegateRods: { mesh: T.Object3D; rest: number; travel: number; shaft: number }[] = [];
   private readonly blowoffPistons: { mesh: T.Object3D; rest: number; travel: number }[] = [];
   private readonly labelSpots: { maf?: P3; blowoff?: P3; coldPipe?: P3; carb?: P3 } = {};
   private coolerGeometry: T.BufferGeometry | null = null;
@@ -1090,6 +1094,8 @@ export class EngineScene {
     }
 
     // ── L'échappement : un conduit par cylindre, un collecteur par rangée, puis la turbine ──
+    // Un turbo par rangée, et tout le chemin de l'air : voir `turboChain`. Deux turbos sur une rangée : deux collecteurs.
+    const airChain = layout.turbo ? turboChain(layout) : null;
     for (let bank = 0; bank < layout.banks; bank++) {
       const cylinders = layout.byBank[bank];
       const beta = layout.banks === 1 ? 0 : bank === 0 ? -halfDeg : halfDeg;
@@ -1104,18 +1110,28 @@ export class EngineScene {
         const to: P3 = [collectorPoint[0], collectorPoint[1], cylinder.z - bore * 0.3];
         headers.transform(null).tube(bendPath(from, dir, to, [0, -0.3, -1]), bore * 0.13, 10);
       }
-      headers.transform(onZ(collectorPoint[0], collectorPoint[1], (zFront + zRear) / 2)).lathe([[0, -(zFront - zRear) / 2], [bore * 0.17, -(zFront - zRear) / 2], [bore * 0.17, (zFront - zRear) / 2], [0, (zFront - zRear) / 2]], 12);
+      if (airChain && airChain.split) {
+        for (const unit of airChain.units) {
+          const half = (unit.collectorFront - unit.collectorRear) / 2;
+          headers.transform(onZ(collectorPoint[0], collectorPoint[1], (unit.collectorFront + unit.collectorRear) / 2)).lathe([[0, -half], [bore * 0.17, -half], [bore * 0.17, half], [0, half]], 12);
+        }
+      } else {
+        headers.transform(onZ(collectorPoint[0], collectorPoint[1], (zFront + zRear) / 2)).lathe([[0, -(zFront - zRear) / 2], [bore * 0.17, -(zFront - zRear) / 2], [bore * 0.17, (zFront - zRear) / 2], [0, (zFront - zRear) / 2]], 12);
+      }
       extent(collectorPoint);
       if (!layout.turbo) headers.transform(null).tube(bendPath([collectorPoint[0], collectorPoint[1], zRear + bore * 0.05], [0, 0, -1], [collectorPoint[0] * 0.95, Math.min(collectorPoint[1], 0) - bore * 1.2, zRear - bore * 1.2], [0, -0.1, -1]), bore * 0.17, 10);
     }
 
-    // Un turbo par rangée, et tout le chemin de l'air : voir `turboChain`. Volute et carter de compresseur en verre,
-    // l'arbre et ses deux roues qui tournent, l'échangeur devant le moteur, le tube froid jusqu'au papillon.
-    const airChain = layout.turbo ? turboChain(layout) : null;
+    // Volute et carter de compresseur en verre, l'arbre et ses deux roues qui tournent, l'échangeur devant le moteur, le tube
+    // froid jusqu'au papillon.
     const hotPipes = new MeshBuilder();
     const coldPipes = new MeshBuilder();
     if (airChain) {
       const s = layout.turboScale;
+      // Twincharger : le compresseur mécanique prend l'air à la boîte, et le souffle dans l'œil du turbo.
+      const feeder = airChain.charged && layout.charger ? chargerUnit(layout, layout.charger) : null;
+      // Une aube : une plaque qui part de son axe, couchée le long de la volute fermée, dressée ouverte.
+      const vaneGeometry = airChain.vanes ? geo(new MeshBuilder().transform(tr(bore * 0.11, 0, 0)).box(bore * 0.22, bore * 0.035, bore * 0.3)) : null;
       for (const unit of airChain.units) {
         const R = unit.turbineHousing;
         const Rc = unit.compressorHousing;
@@ -1127,12 +1143,37 @@ export class EngineScene {
         // Sortie de la turbine, vers l'arrière de la voiture.
         headers.transform(null).tube(bendPath([unit.x, unit.y, unit.z - bore * 0.2], [0, 0, -1], [unit.x, unit.y - bore * 0.9, unit.z - bore * 1.5], [0, -0.1, -1]), bore * 0.17, 10);
         extent([unit.x + R, unit.y, 0]);
+        // Le turbo de la moitié avant d'un collecteur coupé : un peu plus bas, il reçoit son gaz par un court tube.
+        if (airChain.split && unit.shaft === 1) {
+          const collector = collectorPosition(layout, unit.bank);
+          headers.transform(null).tube(bendPath([collector.x, collector.y - bore * 0.1, unit.collectorRear + bore * 0.15], [0, -1, 0], [unit.x, unit.y + R * 0.75, unit.z], [0, -1, 0], 10), bore * 0.15, 10);
+        }
+        // Les aubes d'une géométrie variable : une couronne autour de la volute, chacune sur son axe.
+        if (vaneGeometry) {
+          const count = 10;
+          for (let k = 0; k < count; k++) {
+            const a = (k / count) * Math.PI * 2;
+            const vane = new THREE.Mesh(vaneGeometry, materials.steel);
+            vane.position.set(unit.x + Math.cos(a) * R * 1.02, unit.y + Math.sin(a) * R * 1.02, unit.z);
+            vane.rotation.z = a;
+            this.root.add(vane);
+            this.vanes.push({ mesh: vane, base: a, shaft: unit.shaft });
+          }
+        }
 
-        // La boîte à air : un bloc à arêtes, sa cartouche, et le conduit souple jusqu'à l'œil du compresseur.
+        // La boîte à air : un bloc à arêtes, sa cartouche, et le conduit souple jusqu'à l'œil du compresseur. Sur un
+        // twincharger, c'est le compresseur mécanique qui a la boîte : le turbo reçoit son air par un tube.
+        if (feeder) {
+          const toward = Math.sign(unit.x - feeder.x) || 1;
+          const from: P3 = feeder.volumetric ? [feeder.x + toward * feeder.halfX, feeder.y, feeder.z] : feeder.outFrom;
+          alloys.transform(null).tube(bendPath(from, feeder.volumetric ? [toward, 0, 0] : [0, 1, 0], [unit.x, unit.y, unit.compressorZ + bore * 0.3], [0, 0, -1], 16), bore * 0.13, 10);
+        }
         const [ax, ay, az] = unit.airbox;
         const [ahx, ahy, ahz] = unit.airboxSize;
         // Selon le filtre : la boîte, le cône à l'air libre, ou une simple bouche arrondie sur le conduit du compresseur.
-        if (layout.airFilter === 'cone') {
+        if (feeder) {
+          // Rien de plus : la boîte, le cône ou les cornets sont sur le compresseur mécanique.
+        } else if (layout.airFilter === 'cone') {
           elements.transform(tr(ax, ay - ahy, az - ahz * 0.3)).lathe(coneProfile(bore * 0.1, bore * 0.46, 2 * ahy + bore * 0.7, bore * 0.13), 26, 50);
         } else if (layout.airFilter === 'stacks') {
           alloys.transform(tr(ax, ay - ahy, az - ahz * 0.3)).lathe([[bore * 0.13, -bore * 0.05], [bore * 0.15, bore * 0.2], [bore * 0.22, bore * 0.34], [bore * 0.36, bore * 0.42]], 22, 60);
@@ -1140,14 +1181,16 @@ export class EngineScene {
           blacks.transform(tr(ax, ay, az)).box(2 * ahx, 2 * ahy, 2 * ahz);
           (layout.airFilter === 'panel' ? elements : blacks).transform(tr(ax, ay + ahy + bore * 0.03, az)).box(2 * ahx * 1.05, bore * 0.05, 2 * ahz * 1.05);
         }
-        const eye: P3 = [unit.x, unit.y, unit.compressorZ + bore * 0.3];
-        const duct = bendPath([ax, ay - ahy, az - ahz * 0.3], [0, -1, 0], eye, [0, 0, -1], 14);
-        blacks.transform(null).tube(duct, bore * 0.13, 10);
-        // Le débitmètre, à la sortie de la boîte : un boîtier sur le conduit. Une bouche nue n'en a pas.
-        const at = duct[Math.floor(duct.length * 0.2)];
-        if (layout.airFilter !== 'stacks') {
-          steels.transform(tr(at[0], at[1], at[2])).box(bore * 0.34, bore * 0.2, bore * 0.26);
-          this.labelSpots.maf ??= at;
+        if (!feeder) {
+          const eye: P3 = [unit.x, unit.y, unit.compressorZ + bore * 0.3];
+          const duct = bendPath([ax, ay - ahy, az - ahz * 0.3], [0, -1, 0], eye, [0, 0, -1], 14);
+          blacks.transform(null).tube(duct, bore * 0.13, 10);
+          // Le débitmètre, à la sortie de la boîte : un boîtier sur le conduit. Une bouche nue n'en a pas.
+          const at = duct[Math.floor(duct.length * 0.2)];
+          if (layout.airFilter !== 'stacks') {
+            steels.transform(tr(at[0], at[1], at[2])).box(bore * 0.34, bore * 0.2, bore * 0.26);
+            this.labelSpots.maf ??= at;
+          }
         }
 
         // Le tube chaud : de la volute à l'échangeur, teinté par l'air qui y passe.
@@ -1155,17 +1198,20 @@ export class EngineScene {
         // Déporté, le tube d'échappement jusqu'à la volute : il rougit avec le reste du collecteur.
         if (unit.feedRun.length > 0) headers.transform(null).tube(unit.feedRun, bore * 0.17, 10);
 
-        // La wastegate : l'actionneur en dehors du carter, sa tige qui pousse un levier selon l'ouverture réelle.
-        const [wx, wy, wz] = unit.actuator;
-        castings.transform(onZ(wx, wy, wz)).lathe([[0, -bore * 0.12], [bore * 0.15, -bore * 0.12], [bore * 0.15, bore * 0.1], [0, bore * 0.1]], 14);
-        const rod = new MeshBuilder();
-        rod.transform(onZ(0, 0, 0)).cylinder(bore * 0.018, bore * 0.5, 6);
-        rod.transform(tr(0, 0, -bore * 0.28)).box(bore * 0.1, bore * 0.04, bore * 0.05);
-        const rodMesh = new THREE.Mesh(geo(rod), materials.steel);
-        rodMesh.position.set(wx, wy, wz - bore * 0.32);
-        rodMesh.matrixAutoUpdate = true;
-        this.root.add(rodMesh);
-        this.wastegateRods.push({ mesh: rodMesh, rest: wz - bore * 0.32, travel: bore * 0.14 });
+        // La wastegate : l'actionneur en dehors du carter, sa tige qui pousse un levier selon l'ouverture réelle. Des aubes
+        // n'en ont pas besoin : ce sont elles qui règlent la pression.
+        if (!airChain.vanes) {
+          const [wx, wy, wz] = unit.actuator;
+          castings.transform(onZ(wx, wy, wz)).lathe([[0, -bore * 0.12], [bore * 0.15, -bore * 0.12], [bore * 0.15, bore * 0.1], [0, bore * 0.1]], 14);
+          const rod = new MeshBuilder();
+          rod.transform(onZ(0, 0, 0)).cylinder(bore * 0.018, bore * 0.5, 6);
+          rod.transform(tr(0, 0, -bore * 0.28)).box(bore * 0.1, bore * 0.04, bore * 0.05);
+          const rodMesh = new THREE.Mesh(geo(rod), materials.steel);
+          rodMesh.position.set(wx, wy, wz - bore * 0.32);
+          rodMesh.matrixAutoUpdate = true;
+          this.root.add(rodMesh);
+          this.wastegateRods.push({ mesh: rodMesh, rest: wz - bore * 0.32, travel: bore * 0.14, shaft: unit.shaft });
+        }
 
         // L'arbre et ses deux roues, un seul bloc qui tourne.
         const shaft = new MeshBuilder();
@@ -1185,6 +1231,7 @@ export class EngineScene {
         mesh.position.set(unit.x, unit.y, unit.z);
         this.root.add(mesh);
         this.turboWheels.push(mesh);
+        this.turboShafts.push(unit.shaft);
       }
 
       // L'échangeur : boîtes d'extrémité, faisceau et ailettes, devant le moteur.
@@ -1302,8 +1349,8 @@ export class EngineScene {
         const shaft = new MeshBuilder();
         shaft.transform(onZ(0, 0, (charger.beltZ - charger.z - charger.halfZ) / 2)).cylinder(bore * 0.05, charger.beltZ - charger.z - charger.halfZ, 10);
         addSpinning(shaft, charger.pulleyX, charger.pulleyY, charger.z + charger.halfZ, 1);
-        // L'air comprimé descend directement dans le collecteur.
-        alloys.transform(tr(charger.x, (charger.y - charger.halfY + plenumY) / 2, charger.z)).box(2 * charger.halfX * 0.6, Math.max(charger.y - charger.halfY - plenumY, bore * 0.1), 2 * charger.halfZ * 0.7);
+        // L'air comprimé descend directement dans le collecteur. Sur un twincharger, il va au turbo : voir le chemin de l'air.
+        if (!layout.turbo) alloys.transform(tr(charger.x, (charger.y - charger.halfY + plenumY) / 2, charger.z)).box(2 * charger.halfX * 0.6, Math.max(charger.y - charger.halfY - plenumY, bore * 0.1), 2 * charger.halfZ * 0.7);
       } else {
         // La volute en verre, et la roue qui suit l'arbre.
         const R = charger.halfX;
@@ -1317,8 +1364,8 @@ export class EngineScene {
         }
         wheel.transform(onZ(0, 0, (charger.beltZ - charger.z) / 2)).cylinder(bore * 0.045, charger.beltZ - charger.z, 8);
         addSpinning(wheel, charger.x, charger.y, charger.z, 1);
-        // De la volute au papillon : l'air chauffé.
-        alloys.transform(null).tube(bendPath(charger.outFrom, [0, 1, 0], charger.outTo, [0, 0, -1], 16), bore * 0.13, 10);
+        // De la volute au papillon : l'air chauffé. Sur un twincharger, il va au turbo.
+        if (!layout.turbo) alloys.transform(null).tube(bendPath(charger.outFrom, [0, 1, 0], charger.outTo, [0, 0, -1], 16), bore * 0.13, 10);
       }
       // La boîte à air, et son conduit jusqu'à l'œil du compresseur.
       const [ax, ay, az] = charger.airbox;
@@ -1340,6 +1387,8 @@ export class EngineScene {
       pulley.transform(onZ(0, 0, 0)).lathe([[0, -bore * 0.1], [pr * 0.75, -bore * 0.1], [pr * 0.75, -bore * 0.09], [pr, -bore * 0.095], [pr, bore * 0.095], [pr * 0.75, bore * 0.09], [0, bore * 0.09]], 22, 40);
       for (let k = 0; k < 3; k++) pulley.transform(chainM(rz((k / 3) * Math.PI * 2), tr(pr * 0.42, 0, bore * 0.095))).box(pr * 0.6, pr * 0.18, bore * 0.02);
       addSpinning(pulley, charger.pulleyX, charger.pulleyY, charger.beltZ, 1);
+      // L'embrayage électromagnétique d'un twincharger : la bobine, fixe, derrière la poulie.
+      if (layout.twincharger) castings.transform(onZ(charger.pulleyX, charger.pulleyY, charger.beltZ - bore * 0.17)).lathe([[pr * 0.3, -bore * 0.07], [pr * 0.9, -bore * 0.07], [pr * 0.9, bore * 0.07], [pr * 0.3, bore * 0.07]], 22);
       const chargerBelt = chainPath([[0, 0, charger.crankPulley], [charger.pulleyX, charger.pulleyY, pr]], bore * 0.2);
       const chargerOuter: P2[] = [];
       const chargerInner: P2[] = [];
@@ -1507,19 +1556,25 @@ export class EngineScene {
       labelAt('engine.part.turbine', [unit.x, unit.y + unit.turbineHousing, unit.z]);
       labelAt('engine.part.compressor', [unit.x, unit.y + unit.compressorHousing, unit.compressorZ]);
       labelAt('engine.part.shaft', [unit.x, unit.y, (unit.z + unit.compressorZ) / 2]);
-      labelAt(layout.airFilter === 'cone' ? 'engine.part.cone' : layout.airFilter === 'stacks' ? 'engine.part.stacks' : 'engine.part.airbox', [unit.airbox[0], unit.airbox[1] + unit.airboxSize[1], unit.airbox[2]]);
+      if (!airChain.charged) labelAt(layout.airFilter === 'cone' ? 'engine.part.cone' : layout.airFilter === 'stacks' ? 'engine.part.stacks' : 'engine.part.airbox', [unit.airbox[0], unit.airbox[1] + unit.airboxSize[1], unit.airbox[2]]);
       if (this.labelSpots.maf) labelAt('engine.part.maf', this.labelSpots.maf);
       labelAt('engine.part.chargeHot', unit.hotRun.length > 0 ? unit.hotRun[Math.floor(unit.hotRun.length / 2)] : [(unit.hotFrom[0] + unit.hotTo[0]) / 2, (unit.hotFrom[1] + unit.hotTo[1]) / 2, (unit.hotFrom[2] + unit.hotTo[2]) / 2]);
       if (unit.feedRun.length > 0) labelAt('engine.part.turboPipe', unit.feedRun[Math.floor(unit.feedRun.length / 2)]);
       labelAt('engine.part.intercooler', [airChain.cooler[0], airChain.cooler[1], airChain.cooler[2] + airChain.coolerSize[2]]);
       if (this.labelSpots.coldPipe) labelAt('engine.part.chargeCold', this.labelSpots.coldPipe);
       if (layout.releaseValve && this.labelSpots.blowoff) labelAt('engine.part.blowoff', this.labelSpots.blowoff);
-      labelAt('engine.part.wastegate', unit.actuator);
+      if (airChain.vanes) labelAt('engine.part.vanes', [unit.x, unit.y - unit.turbineHousing * 1.1, unit.z]);
+      else labelAt('engine.part.wastegate', unit.actuator);
+      if (airChain.units.length > 1 && (layout.twinTurbo || airChain.split)) {
+        const second = airChain.units[1];
+        labelAt('engine.part.turbine2', [second.x, second.y + second.turbineHousing, second.z]);
+      }
     }
     if (layout.charger) {
       const unit = chargerUnit(layout, layout.charger);
       labelAt('engine.part.compressor', [unit.x, unit.y + unit.halfY, unit.z]);
       labelAt('engine.part.belt', [unit.pulleyX / 2, unit.pulleyY / 2, unit.beltZ]);
+      if (layout.twincharger) labelAt('engine.part.clutch', [unit.pulleyX, unit.pulleyY + unit.pulleyRadius, unit.beltZ - bore * 0.17]);
       labelAt('engine.part.airbox', [unit.airbox[0], unit.airbox[1] + unit.airboxSize[1], unit.airbox[2]]);
     }
   }
@@ -1834,11 +1889,17 @@ export class EngineScene {
     }
     d.accessory.instanceMatrix.needsUpdate = true;
 
-    for (let t = 0; t < this.turboWheels.length; t++) this.turboWheels[t].rotation.z = motion.turbineAngle;
+    for (let t = 0; t < this.turboWheels.length; t++) this.turboWheels[t].rotation.z = this.turboShafts[t] === 1 ? motion.turbine2Angle : motion.turbineAngle;
+    // Fermées, les aubes se couchent le long de la volute ; grandes ouvertes, elles se dressent.
+    for (let t = 0; t < this.vanes.length; t++) {
+      const vane = this.vanes[t];
+      const open = vane.shaft === 1 ? motion.vane2 : motion.vane;
+      vane.mesh.rotation.z = vane.base + (1 - Math.min(Math.max(open, 0), 1)) * 1.35;
+    }
     for (let t = 0; t < this.chargerParts.length; t++) this.chargerParts[t].mesh.rotation.z = motion.chargerAngle * this.chargerParts[t].ratio;
     for (let t = 0; t < this.wastegateRods.length; t++) {
       const rod = this.wastegateRods[t];
-      rod.mesh.position.z = rod.rest - rod.travel * pose.wastegate;
+      rod.mesh.position.z = rod.rest - rod.travel * (rod.shaft === 1 ? pose.wastegate2 : pose.wastegate);
     }
     for (let t = 0; t < this.blowoffPistons.length; t++) {
       const piston = this.blowoffPistons[t];

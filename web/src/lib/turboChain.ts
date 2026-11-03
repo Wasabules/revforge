@@ -4,8 +4,12 @@
  *
  * Un turbo par rangée sur un V ou un boxer, comme le collecteur : chacun a son arbre, sa boîte à air et son tube chaud.
  * Ils partagent un seul échangeur, à l'avant et en bas, et le tube froid remonte de là au papillon.
+ *
+ * Deux turbos sur un moteur en ligne (parallèle ou séquentiel) : le collecteur est coupé en deux, la moitié avant des
+ * cylindres nourrit un turbo, la moitié arrière l'autre, comme sur un six en ligne biturbo. Le turbo de l'avant est un peu
+ * plus bas et plus dehors, pour qu'on le voie aussi de face.
  */
-import { collectorPosition, plenumPosition, type EngineLayout } from './engineLayout';
+import { collectorPosition, plenumPosition, type Cylinder, type EngineLayout } from './engineLayout';
 
 export type P3T = [number, number, number];
 
@@ -37,6 +41,11 @@ export interface TurboUnit {
   /** Le turbo vu de côté : `z` et `compressorZ` avec le long du tube replié, pour que le moteur reste lisible. */
   sideZ: number;
   sideCompressorZ: number;
+  /** L'arbre de ce turbo : 0 suit `turbineAngle`, 1 le second arbre d'un biturbo (`turbine2Angle`). */
+  shaft: number;
+  /** Son collecteur, le long du vilebrequin (mm) : de l'avant à l'arrière. Toute la rangée, sauf collecteur coupé. */
+  collectorFront: number;
+  collectorRear: number;
 }
 
 export interface TurboChain {
@@ -58,6 +67,12 @@ export interface TurboChain {
   /** Le tube, en plus de la référence de 400 mm (mm), réel ; et vrai s'il est replié dans la coupe de côté. */
   extraMm: number;
   sideFolded: boolean;
+  /** Deux turbos sur une seule rangée : le collecteur est coupé en deux, avant et arrière. */
+  split: boolean;
+  /** Une turbine à aubes : leur couronne sur la volute, et pas de soupape de décharge. */
+  vanes: boolean;
+  /** Twincharger : le compresseur mécanique souffle dans le turbo, qui n'a plus sa propre boîte à air. */
+  charged: boolean;
 }
 
 /** Une courbe de Catmull-Rom par ces points : un tube qui ne dépend pas de la distance entre ses deux bouts. */
@@ -102,13 +117,13 @@ export function turboChain(layout: EngineLayout): TurboChain {
   const extra = (layout.turboPipeMm ?? 400) - 400;
   // Dans la coupe de côté, trois mètres écraseraient les cylindres : au-delà de deux alésages et demi, le tube se replie, et le dit.
   const sideRoom = bore * 2.5;
-  for (let bank = 0; bank < layout.banks; bank++) {
-    const cylinders = layout.byBank[bank];
+  /** Un turbo et ce qui l'entoure, pour ces cylindres. `drop`, `out` : de combien il descend et s'écarte (mm), 0 sauf le second d'un collecteur coupé. */
+  const place = (bank: number, cylinders: Cylinder[], shaft: number, drop: number, out: number) => {
     const collector = collectorPosition(layout, bank);
     const side = Math.sign(collector.x || 1);
     const zRear = cylinders[cylinders.length - 1].z - bore * 0.45;
-    const x = collector.x + side * bore * 0.2;
-    const y0 = collector.y - bore * 0.55;
+    const x = collector.x + side * bore * 0.2 + side * out;
+    const y0 = collector.y - bore * 0.55 - drop;
     const z0 = zRear + bore * 0.5;
     // Assez loin pour que la boîte à air, le plus en avant de l'ensemble, ait passé le volant.
     const clear = z0 + bore * 2.57 - (layout.ring.z - bore * 0.35);
@@ -178,7 +193,20 @@ export function turboChain(layout: EngineLayout): TurboChain {
       hotRun,
       sideZ,
       sideCompressorZ: sideZ + bore * 0.9,
+      shaft,
+      collectorFront: cylinders[0].z + bore * 0.2,
+      collectorRear: zRear,
     });
+  };
+  // Un moteur en ligne à deux turbos : la moitié avant, puis la moitié arrière, chacune avec le sien.
+  const split = layout.twinTurbo && layout.banks === 1 && layout.byBank[0].length >= 2;
+  if (split) {
+    const row = layout.byBank[0];
+    const front = Math.floor(row.length / 2);
+    place(0, row.slice(front), 0, 0, 0);
+    place(0, row.slice(0, front), 1, bore * 0.55, bore * 0.3);
+  } else {
+    for (let bank = 0; bank < layout.banks; bank++) place(bank, layout.byBank[bank], layout.twinTurbo ? bank : 0, 0, 0);
   }
   // Sans turbo d'un côté, le tube froid part de ce côté libre. Sur deux rangées, il part du milieu et monte devant le moteur.
   const oneBank = layout.banks === 1;
@@ -199,5 +227,8 @@ export function turboChain(layout: EngineLayout): TurboChain {
     sideZMin,
     extraMm: extra,
     sideFolded: extra > sideRoom,
+    split,
+    vanes: layout.turboVanes,
+    charged: layout.twincharger,
   };
 }

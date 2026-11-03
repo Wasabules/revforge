@@ -1951,3 +1951,105 @@ Le rapport engagé se lit dans `DrivingModel` ; au point mort, la première. Sur
 **Télémétrie.** `rf_boost_target` et `rf_boost_charge` (bar absolus), `rf_boost_duty` (−1 sur un ressort). Le graphique de la pression du turbo montre la cible à côté de la pression réelle, et la jauge du collecteur le rapport cyclique de l'électrovanne. `--trace` écrit `target_abs_bar`, `charge_abs_bar` et `duty`.
 
 **Ce qui est supposé, et ce qui manque.** Les temps de l'électrovanne et du tuyau sont des ordres de grandeur, pas des mesures. Le découpage est moyenné : l'ondulation à 25 Hz de la membrane n'est pas calculée, ni le claquement de l'électrovanne. Pas de cible à charge partielle : le papillon garde son rôle, et la pression monte avant lui comme avec le ressort. Pas de marge au pompage dans la cible. Un diesel garde ici une wastegate ; la géométrie variable est un autre réglage. Écoute à faire : `--scenario turbo` et `--scenario launch`, avec et sans `--boost-control electronic`.
+
+## Deux turbos, twincharger et géométrie variable
+
+`turboLayout` (`single`, `twin_parallel`, `twin_sequential`, `twincharger`) et `variableGeometry` choisissent le montage. Le turbo simple à soupape reste `TurboCharger`, au bit près : `TwinTurbo` (`core/src/twin_turbo.cpp`) ne s'exécute que pour les autres montages, et pour un turbo simple à aubes (`usesTwinTurbo`). Il reprend les lois de `turbo.cpp` (compresseur de Moore et Greitzer, turbine de Stodola, paliers, ventilation, échangeur, soupape de décharge) par un renvoi, `turbo_laws.hpp`, et celles du compresseur mécanique par `supercharger_laws.hpp` : rien n'est recopié.
+
+### Chaque arbre, un volume commun
+
+Chaque arbre intègre son propre bilan de puissance, comme le turbo simple :
+
+    J_i · ω_i · dω_i/dt = P_turbine,i − P_compresseur,i − P_paliers,i
+
+Chaque compresseur souffle par son conduit, avec l'inertie de sa colonne d'air (`ductInertance`), dans un même volume avant le papillon :
+
+    dp_charge/dt = R·T / V_charge · (Σ ṁ_compresseur,i − ṁ_moteur − ṁ_décharge)
+
+C'est ce volume commun qui couple les deux arbres : le plus lent débite moins, et peut pomper. Le filtre et l'échangeur sont communs, leurs pertes suivent le débit total ; la soupape de décharge aussi.
+
+### En parallèle
+
+Chaque turbo est celui d'une moitié de moteur (`turboSpecFor` sur la moitié de la cylindrée) : la moitié du débit nominal. À même pression et même vitesse de bout de pale, le débit suit D², donc la roue est √2 plus petite, et l'arbre tourne √2 plus vite.
+
+**L'inertie en D⁵.** À géométrie semblable, la masse va comme D³ et le carré du rayon de giration comme D² : J ∝ D⁵, la loi qu'utilisent déjà les tailles de `turbo.cpp`. Chaque arbre a donc 2^(−5/2) = 0,177 de l'inertie du turbo simple. Le temps de lancement va comme J·ω²/P, soit D^(n−4) pour J ∝ Dⁿ : avec n = 5, deux petits turbos se lancent en 0,71 fois le temps d'un grand ; avec n = 3, ils seraient 1,41 fois plus lents, ce que contredit toute l'expérience des biturbos. Il faut n > 4 ; un petit rotor réel est un peu plus lourd que la similitude ne le dit (arbre, écrou, paliers), donc entre 4 et 5. On garde 5.
+
+Deux chemins d'air, chacun avec son compresseur et son tube chaud : le volume avant le papillon est celui de deux moitiés, 3 L + 2,5·V au lieu de 1,5 L + 2,5·V. C'est 1,5 L de plus à remplir, qui reprend une part du gain.
+
+**Deux vitesses d'arbre.** Chaque turbine reçoit sa rangée ; un moteur en ligne est coupé en avant et arrière. Le gaz perd de sa chaleur le long du collecteur, en exp(−k·L) de son écart à l'air, avec k = 0,27 /m (de l'ordre de 15 % sur 0,6 m entre la soupape et la turbine, supposé). Une rangée aux collecteurs plus longs envoie donc un gaz un peu moins chaud à sa turbine : sur un V6, 110 495 et 110 090 tr/min une seconde après le coup de gaz à 2500 tr/min. Ces 0,4 % suffisent à faire battre les deux sifflements.
+
+Six en ligne de 3 L, 1 bar :
+
+| | turbo simple | deux en parallèle |
+|---|---|---|
+| roue | 60,7 mm | 42,9 mm chacune |
+| inertie | 8,39·10⁻⁵ kg·m² | 1,48·10⁻⁵ kg·m² chacune |
+| 90 % de la pression, `--scenario turbo` | 2,55 s | 2,07 s (−19 %) |
+| 90 % de la pression à 2500 tr/min tenus | 1,62 s | 1,19 s (−27 %) |
+| pression établie, couple | — | à 3 % près |
+
+Sur un petit moteur, deux demi-turbos butent sur la plus petite roue fabriquée (`kSmallestWheel`, 34 mm) : sur le diesel de 2 L, ils perdent l'avantage de l'inertie et gardent le volume des deux chemins, et la pression arrive plus tard (3,9 s contre 2,6 s). C'est bien pourquoi les petits diesels ont choisi le séquentiel ou la géométrie variable.
+
+### En séquence
+
+Deux turbos identiques, comme sur le Toyota 2JZ-GTE, la Porsche 959 (deux KKK) et le Mazda 13B-REW (deux Hitachi). Trois étapes :
+
+- **0, le primaire seul.** Les deux collecteurs sont reliés ; la vanne d'échappement du secondaire, en aval de sa turbine, est fermée : tout le gaz passe par le primaire, petit turbo sur un gros moteur, qui se lance très vite.
+- **1, le pré-lancement.** Une petite vanne laisse passer un peu de gaz vers la turbine du secondaire (16 % de la section, le rapport d'une vanne de 20 mm à une de 50 mm, supposé), sa soupape fermée. Son compresseur souffle dans un petit volume (0,3 L pour 2 L, supposé), rendu à son entrée par une vanne de retour.
+- **2, les deux.** La vanne d'échappement s'ouvre en 0,12 s (actionneur à dépression, supposé) : le gaz se partage entre les deux turbines selon leur section, par la loi de l'ellipse à pression commune. La vanne de retour se ferme, et le clapet d'admission s'ouvre de lui-même quand le secondaire pousse plus fort que la charge.
+
+La bascule suit le débit d'air du moteur, en part du débit nominal d'un turbo : pré-lancement à 1,25, ouverture à 1,42, retour au primaire sous 1,10, quand le primaire approche de son blocage. Le seuil est calé sur le 2JZ-GTE (vanne d'échappement du second turbo vers 3800 tr/min, d'après les relevés publiés de l'Aristo), puis vérifié sans retouche sur les deux autres :
+
+| | publié | modèle, plein gaz en deuxième |
+|---|---|---|
+| 2JZ-GTE (2997 cm³, 0,8 bar) | vers 3800 tr/min | 3670 tr/min, pré-lancement à 3230 |
+| Porsche 959 (2849 cm³, 1 bar) | vers 4000 tr/min | 4030 tr/min |
+| Mazda 13B-REW (2 × 654 cm³, 0,7 bar) | 4000 à 4500 tr/min | 4340 tr/min |
+
+Le creux de pression n'est pas écrit : il découle de la bascule. Le primaire perd la moitié de son gaz d'un coup, alors que le secondaire n'est qu'aux trois quarts de sa vitesse : sur le 2JZ, la pression passe de 1,02 à 0,91 de la pression demandée. À 2500 tr/min tenus, 90 % de la pression arrivent en 0,51 s, contre 1,19 s en parallèle.
+
+### Le twincharger
+
+Comme sur le 1.4 TSI de VW (1390 cm³, 125 kW, 240 Nm dès 1750 tr/min ; programme d'autoformation 359) : un Roots Eaton en amont du turbo, entraîné par la courroie à travers un embrayage électromagnétique, et un volet qui le court-circuite. Air → filtre → compresseur ou volet → volume entre les étages → turbo → échangeur → papillon. Ce volume, relié à l'entrée par le volet grand ouvert, est avancé implicitement : explicite, le pas de 1 ms oscillait.
+
+- **L'embrayage.** VW le tient fermé sous charge jusqu'à 2400 tr/min, seulement au besoin jusqu'à 3500 tr/min, et ouvert au-delà. Ici, `turboAloneRpm` est le régime où le turbo seul tient la pression demandée à l'équilibre ; en dessous, l'embrayage se ferme dès qu'on la demande ; au-dessus, seulement s'il manque plus de 10 % de pression ; il s'ouvre quand le volet n'a plus rien retenu depuis 0,5 s, et toujours au-delà de `clutchOffRpm`, dans le même rapport que chez VW (3500/2400). Hystérésis de 10 %.
+- **Le compresseur** est dimensionné pour tenir seul la pression demandée à 40 % du régime de coupure, comme `superchargerSpecFor`, et son rapport amène ses rotors à 16 000 tr/min (un Roots Eaton) au régime de coupure. L'inertie des rotors va comme V^(5/3) (4·10⁻⁴ kg·m² pour 0,5 L par tour, supposé) ; l'embrayage transmet 1,5 fois leur couple au point de dimensionnement (supposé). Pendant qu'il glisse, le vilebrequin paie ce couple multiplié par le rapport.
+- **Le volet** rend à l'entrée ce qui dépasse la pression demandée ; tant que le compresseur est embrayé, la soupape du turbo reste fermée (sauf 10 % de trop) pour le lancer.
+
+Sur le 1.4 : le turbo tient seul dès 2000 tr/min, coupure à 2920 tr/min, rapport 5,5, 0,51 L par tour (VW : coupure vers 3500 tr/min selon Autozine, 3000 selon Top Gear ; le turbo du modèle, dimensionné par `turboSpecFor`, est un peu plus prompt que celui de VW). À 1600 tr/min tenus, 90 % de la pression en 0,41 s ; le turbo seul ne les atteint jamais. L'équilibre de la fiche multiplie les rapports des deux étages, en gardant au turbo celui qu'il aurait seul : une approximation, l'air plus dense lui donnant en vrai un peu plus de gaz.
+
+### La géométrie variable
+
+Des aubes devant la turbine changent sa section : K_eff = K·v, sans soupape de décharge. La plus grande ouverture est celle qui tient la pression demandée au régime maximal, plus 15 % (supposé) ; la course va de 1 à 4 en section (ordre de grandeur des turbines à aubes récentes, supposé). Le rendement est meilleur vers 60 % de la course :
+
+    η(v) = η₀ · (1 − 0,4 · (x − 0,6)²),   x = (v − v_min) / (v_max − v_min)
+
+soit 14 % de moins aubes fermées, 6 % grandes ouvertes (supposé, sur la forme des cartes publiées). Les aubes suivent la même loi que la soupape du turbo simple, avec son anticipation, et un actionneur de 0,08 s.
+
+| | aubes fermées, en part de la turbine fixe | 90 % de la pression |
+|---|---|---|
+| diesel de 2 L, 2000 tr/min | 0,53 | 1,21 s contre 2,10 s (−42 %) |
+| six en ligne essence, 2500 tr/min | 0,95 | 2,21 s contre 1,62 s |
+
+Sur le diesel, la pression d'équilibre à 1500 tr/min passe de 0,36 à 0,80. Sur l'essence, les gaz plus chauds et le débit plus étendu demandent une ouverture maximale bien plus grande : fermées, les aubes ne sont pas plus petites que la petite turbine fixe à soupape, et moins efficaces. Elles ne gagnent qu'en haut, par une contre-pression plus faible. C'est ce que dit leur rareté sur l'essence : la Porsche 911 Turbo (997, 2006) a été la première essence de série à turbines à aubes (BorgWarner), avec des matériaux tenant des gaz de l'ordre de 1000 °C. La géométrie variable ne se voit pas dans le gaz à l'écran, dont la turbine reste fixe.
+
+### Le son
+
+Le second arbre a son sifflement, à 2 et 1 fois sa vitesse, avec ses filtres et son propre générateur (`setTurboB`) : le premier n'en est pas décalé, et rien ne s'exécute sans lui. Deux petits compresseurs font ensemble le bruit d'un grand : chaque sifflement est multiplié par √(ṁ_turbo / ṁ_turbo simple) (`TurboDrive::levelShare`, exactement 1 pour un turbo simple). Le compresseur d'un twincharger passe par `SuperchargerSound`, à la vitesse réelle de ses rotors, muet débrayé. **L'écoute reste à faire** : `revforge-render --out biturbo.wav --cylinders 6 --layout v --cc 3000 --bore 86 --redline 6800 --aspiration turbo --boost 1 --exhaust sport --turbo-layout twin_parallel --scenario turbo`, puis `twin_sequential`, `--preset hot_hatch_turbo --turbo-layout twincharger --scenario launch`, `--preset diesel_four --vgt 1 --scenario turbo`.
+
+### Le gaz à l'écran
+
+Avec deux turbos, `GasNetwork` a deux collecteurs (un moteur en ligne coupé en avant et arrière), une turbine au bout de chacun, des tubes qui se rejoignent avant la ligne, et deux chemins d'air de la boîte à air au plénum, chacun avec son compresseur et son papillon. Leur volume total est celui du C++. Le rapport du second compresseur suit le carré du rapport des vitesses d'arbre (même roue, hauteur en U²). En séquentiel, un tube relie les deux collecteurs, la turbine du secondaire est réglée par sa vanne, et son chemin d'air reste clos tant que son clapet l'est. Le turbo simple garde son chemin de calcul.
+
+### Ce qui n'est pas modélisé
+
+- L'anti-lag et le tube déporté, seulement sur un turbo simple : le volet les cache sur les autres montages.
+- L'énergie des bouffées est la même par turbine (`kPulsePa`) : l'avantage des collecteurs séparés aux bouffées mieux espacées n'est pas compté.
+- Un turbo simple sur un V reste dessiné un par rangée dans les vues (choix antérieur).
+
+### Ce qui vient d'ailleurs
+
+- La pression demandée et l'ouverture de la soupape sont des paramètres (`TwinTurboInput::targetBar`, `wastegate`) : négatifs, ce sont ceux d'aujourd'hui (le ressort). La régulation les donnera.
+- L'air ambiant passe par `turbo_laws::constants()` (`atmosphere`, `ambientK`), les mêmes que `turbo.cpp`.
+- Les rangées et la longueur des collecteurs viennent de `EngineConfig::toProfile` (`bank`, `headerM`).
+- `DrivingModel::turboState()` et `turboStateB()` exposent chaque arbre, avec la pression et la température de charge communes ; `twinTurboSteady` l'équilibre.

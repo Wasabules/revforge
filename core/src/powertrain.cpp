@@ -13,6 +13,7 @@
 #include "revforge/injection.hpp"
 #include "revforge/particulate_filter.hpp"
 #include "revforge/valve_float.hpp"
+#include "revforge/twin_turbo.hpp"
 #include "revforge/valvetrain.hpp"
 
 namespace revforge {
@@ -288,6 +289,8 @@ CarAcoustics carAcousticsOf(const CarConfig& car, const EngineProfile& profile) 
 
 EngineProfile Powertrain::profile() const {
     EngineProfile p = electric ? electricProfile() : engine.toProfile();
+    // Un twincharger a aussi un compresseur, avec ses poches : son son en dépend (twin_turbo.cpp).
+    if (!electric && usesTwinTurbo(engine) && engine.turboLayout == TurboLayout::Twincharger) twinchargerProfile(*this, p);
     p.exhaustScale = exhaustScaleOf(car);
     p.car = carAcousticsOf(car, p);
     p.car.air = airAcousticsOf(ambientAirOf(engine));
@@ -403,6 +406,7 @@ double intakeDropPa(const Powertrain& p, double rpm) {
     if (p.electric) return 0.0;
     const EngineConfig& e = p.engine;
     if (e.aspiration == Aspiration::Turbo) {
+        if (usesTwinTurbo(e)) return twinIntakeDropPa(p, rpm);
         const TurboSpec spec = turboSpecOf(p);
         const double flow = turboSteady(spec, rpm, breathing(e, rpm)).flow;
         return spec.filterDrop * flow * flow;
@@ -446,6 +450,7 @@ double superchargerDriveNm(const Powertrain& p, double rpm, double fill) {
 double steadyBoost(const Powertrain& p, double rpm) {
     if (p.electric || p.engine.aspiration == Aspiration::Natural) return 0.0;
     if (p.engine.aspiration == Aspiration::Supercharger) return superchargerSteady(superchargerSpecOf(p), rpm, breathing(p.engine, rpm)).boost;
+    if (usesTwinTurbo(p.engine)) return twinSteadyBoost(p, rpm);
     return turboSteady(turboSpecOf(p), rpm, breathing(p.engine, rpm)).boost;
 }
 
@@ -552,6 +557,12 @@ double torqueCurveNm(const Powertrain& p, double rpm) {
         return injection ? torque - injectionLossNm(p, rpm, steady.boost) : torque;
     }
     // L'arbre stabilisé : la courbe de la fiche ne dit rien du retard. La contre-pression, elle, se paie toujours.
+    // Deux arbres (twin_turbo.cpp) : leur équilibre, le même cliquetis et les mêmes pertes de l'injection qu'un turbo simple.
+    if (usesTwinTurbo(p.engine)) {
+        const TwinTurboSteady steady = twinTurboSteady(twinTurboSpecOf(p), rpm, breathingOf(p, rpm));
+        const double torque = full(steady.boost) - steady.backPressureNm - steady.chargerNm;
+        return injection ? torque - injectionLossNm(p, rpm, steady.boost) : torque;
+    }
     const TurboSpec spec = turboSpecOf(p);
     const TurboSteady steady = turboSteady(spec, rpm, breathing(p.engine, rpm));
     const double torque = full(steady.boost) - turboBackPressureNm(spec, steady.chargePa, steady.turbineInPa, steady.flow, 1.0);

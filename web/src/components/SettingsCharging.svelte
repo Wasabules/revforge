@@ -17,6 +17,8 @@
   const rotary = $derived(isRotary(config));
   /** Allumé par une étincelle : l'eau et le protoxyde reculent le cliquetis, qui ne concerne pas un diesel. */
   const spark = $derived(rotary || config.fuel !== 'diesel');
+  /** Deux turbos ou un twincharger : l'anti-lag et le tube déporté ne sont modélisés que sur un turbo simple. */
+  const single = $derived(config.turboLayout === 'single');
 </script>
 
 <SettingsSection id="charging" title={t('builder.section.charging')}>
@@ -32,12 +34,14 @@
       <p class="help" data-testid="turbo-size-help">{TURBO_SIZES.find((item) => item.value === config.turboSize)?.help}</p>
     </div>
     <Choices label={t('builder.release')} options={RELEASES} value={config.turboRelease} onchange={(turboRelease) => onapply({ turboRelease })} />
+    {#if single}
     <div>
       <Slider label={t('builder.turboPipe')} value={config.turboPipeMm} {...LIMITS.turboPipeMm} format={(value) => t('builder.turboPipe.value', { m: fixed(value / 1000, 2) })}
         oninput={(turboPipeMm) => onlive({ turboPipeMm })} onchange={(turboPipeMm) => onapply({ turboPipeMm })} />
       <p class="help" data-testid="turbo-pipe-help">{t('builder.turboPipe.help')}</p>
     </div>
-    {#if rotary || config.fuel === 'petrol'}
+    {/if}
+    {#if single && (rotary || config.fuel === 'petrol')}
       <div>
         <Choices label={t('builder.antiLag')} options={ANTI_LAGS} value={config.antiLag} onchange={(antiLag) => onapply({ antiLag })} />
         <p class="help" data-testid="antilag-help">{ANTI_LAGS.find((item) => item.value === config.antiLag)?.help}</p>
@@ -47,7 +51,14 @@
     <div data-testid="turbo-layout">
       <Choices label={t('builder.turboLayout')} options={TURBO_LAYOUTS} value={config.turboLayout} onchange={(turboLayout) => onapply({ turboLayout })} />
       <p class="help">{TURBO_LAYOUTS.find((item) => item.value === config.turboLayout)?.help}</p>
+      {#if !single}<p class="help" data-testid="twin-only-single">{t('builder.twinOnlySingle')}</p>{/if}
     </div>
+    {#if config.turboLayout === 'twincharger'}
+      <div data-testid="twincharger-kind">
+        <Choices label={t('builder.chargerKind')} options={SUPERCHARGER_KINDS} value={config.superchargerKind} onchange={(superchargerKind) => onapply({ superchargerKind })} />
+        <p class="help">{SUPERCHARGER_KINDS.find((item) => item.value === config.superchargerKind)?.help}</p>
+      </div>
+    {/if}
     <div data-testid="vgt">
       <Choices label={t('builder.vgt')} options={ON_OFF} value={config.variableGeometry ? 'on' : 'off'} onchange={(value) => onapply({ variableGeometry: value === 'on' })} />
       <p class="help">{t('builder.vgt.help')}</p>

@@ -130,7 +130,7 @@ class Lfsr {
 
 /** Ce qui impose de reconstruire le réseau : les réglages qui changent ses pièces, et l'air du jour dans lequel il s'ouvre. */
 export const gasKey = (config: EngineConfig): string =>
-  `${config.cylinders}|${config.layout}|${config.displacementCc}|${config.boreMm}|${config.exhaust}|${config.aspiration}|${config.fuel}|${config.body}|${config.boostBar}|${config.turboRelease}|${config.turboSize}|${config.redlineRpm}|${config.turboPipeMm}|${config.camshaft}|${config.fuelSystem}|${config.airFilter}|${config.placement}|${config.superchargerKind}|${config.antiLag}|${config.ambientC}|${config.altitudeM}|${config.compressionRatio}|${camKey(config)}`;
+  `${config.cylinders}|${config.layout}|${config.displacementCc}|${config.boreMm}|${config.exhaust}|${config.aspiration}|${config.fuel}|${config.body}|${config.boostBar}|${config.turboRelease}|${config.turboSize}|${config.redlineRpm}|${config.turboPipeMm}|${config.camshaft}|${config.fuelSystem}|${config.airFilter}|${config.placement}|${config.superchargerKind}|${config.antiLag}|${config.turboLayout}|${config.ambientC}|${config.altitudeM}|${config.compressionRatio}|${camKey(config)}`;
 
 export class GasFlow {
   readonly net = new GasNetwork();

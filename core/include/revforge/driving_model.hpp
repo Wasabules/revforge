@@ -14,6 +14,7 @@
 #include "revforge/powertrain.hpp"
 #include "revforge/shift_logic.hpp"
 #include "revforge/thermal.hpp"
+#include "revforge/twin_turbo.hpp"
 
 namespace revforge {
 
@@ -135,7 +136,16 @@ public:
     double boost() const { return boost_; }
     /** L'arbre, les pressions, les soupapes : tout est dans `TurboState`. Rien de neuf sur un moteur sans turbo. */
     const TurboCharger& turbo() const { return turbo_; }
-    TurboDrive turboDrive() const { return turbo_.drive(); }
+    TurboDrive turboDrive() const { return twinEngine_ ? twin_.drive(0) : turbo_.drive(); }
+    /**
+     * Deux turbos, un twincharger ou des aubes : `TwinTurbo` tient les arbres, et `turbo()` ne tourne pas. `turboState()` est
+     * l'arbre qui siffle d'abord (le primaire), `turboStateB()` le second, avec les grandeurs communes recopiées.
+     */
+    bool twinTurbo() const { return twinEngine_; }
+    const TwinTurbo& twin() const { return twin_; }
+    const TurboState& turboState() const { return twinEngine_ ? twin_.state().unit[0] : turbo_.state(); }
+    const TurboState& turboStateB() const { return twin_.state().unit[1]; }
+    TurboDrive turboDriveB() const { return twin_.drive(1); }
     /** L'anti-lag travaille en ce moment : pied levé, moteur lancé, sur un turbo à essence. */
     bool antiLagActive() const { return antiLag_.active; }
     /** Le couple que le retard et les cylindres coupés retirent à ce que donnerait cette charge d'air (Nm). */
@@ -143,7 +153,7 @@ public:
     /** Le compresseur mécanique : mêmes pressions, en unités physiques. Rien de neuf sur un moteur sans compresseur. */
     bool supercharged() const { return superchargerEngine_; }
     const Supercharger& supercharger() const { return supercharger_; }
-    SuperchargerDrive superchargerDrive() const { return supercharger_.drive(); }
+    SuperchargerDrive superchargerDrive() const { return twinEngine_ && twin_.hasCharger() ? twin_.chargerDrive() : supercharger_.drive(); }
     /** Couple au vilebrequin, négatif en frein moteur (Nm). */
     double torqueNm() const { return torque_; }
     double powerKw() const;
@@ -285,6 +295,7 @@ private:
     void stepTurbo(double rpmNow, bool burning);
     void updateAntiLag(double throttle, double rpmNow, bool off);
     void stepSupercharger(double rpmNow);
+    void stepTwin(double rpmNow, bool burning);
     double bmepPumping(double rpm) const;
     double wheelSpeedMs() const { return wheelOmega_ * radius_; }
     void meterConsumption();
@@ -345,6 +356,8 @@ private:
     BoostControlSpec boostSpec_;
     BoostController boostController_;
     bool boostControlled_ = false;
+    TwinTurbo twin_;
+    bool twinEngine_ = false;
     Carburetor carb_;
     bool carbEngine_ = false;
     // L'injection : le film d'une injection indirecte (seulement hors des 90 °C de la calibration), la pompe haute pression d'une

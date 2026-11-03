@@ -135,6 +135,8 @@ export interface RotaryLayout {
   ring: { z: number; width: number; teeth: number; radius: number };
   pinion: { teeth: number; radius: number; angle: number; x: number; y: number };
   turbo: boolean;
+  /** Turbos : 2 en parallèle ou en séquence (le 13B-REW), 1 sinon, 0 sans turbo. */
+  turbos: number;
   charger: boolean;
   /** Le carburateur, s'il y en a un : un col commun, ou un par rotor. */
   carb: 'single' | 'multi' | null;
@@ -154,7 +156,7 @@ function starterTeeth(rotors: number, displacementCc: number): { ring: number; p
 
 /** Ce qui fait changer les pièces : à clé égale, les mêmes maillages. */
 export function rotaryKey(config: EngineConfig): string {
-  return `rotary|${config.cylinders}|${config.displacementCc}|${config.aspiration}|${config.boxFlywheel}|${config.superchargerKind}|${config.airFilter}|${config.fuelSystem}|${config.turboPipeMm}|${config.turboSize}`;
+  return `rotary|${config.cylinders}|${config.displacementCc}|${config.aspiration}|${config.boxFlywheel}|${config.superchargerKind}|${config.airFilter}|${config.fuelSystem}|${config.turboPipeMm}|${config.turboSize}${config.aspiration === 'turbo' && (config.turboLayout ?? 'single') !== 'single' ? `|${config.turboLayout}` : ''}`;
 }
 
 export function rotaryLayout(config: EngineConfig): RotaryLayout {
@@ -214,6 +216,7 @@ export function rotaryLayout(config: EngineConfig): RotaryLayout {
     ring: { z: rearZ - width * 0.32, width: width * 0.16, teeth: teeth.ring, radius: ringRadius },
     pinion: { teeth: teeth.pinion, radius: pinionRadius, angle: pinionAngle, x: Math.cos(pinionAngle) * (ringRadius + pinionRadius), y: Math.sin(pinionAngle) * (ringRadius + pinionRadius) },
     turbo: config.aspiration === 'turbo',
+    turbos: config.aspiration !== 'turbo' ? 0 : config.turboLayout === 'twin_parallel' || config.turboLayout === 'twin_sequential' ? 2 : 1,
     charger: config.aspiration === 'supercharger',
     carb: config.fuelSystem === 'single' || config.fuelSystem === 'multi' ? config.fuelSystem : null,
     airFilter: config.airFilter ?? 'stock',

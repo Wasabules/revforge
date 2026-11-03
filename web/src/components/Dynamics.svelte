@@ -62,6 +62,8 @@
     const value = (telemetry() as unknown as Record<string, unknown>)[key];
     return typeof value === 'number' ? value : null;
   };
+  /** L'étape d'un séquentiel, dans l'ordre de `TwinTurboState::stage`. */
+  const STAGE_KEYS = ['twinStage.0', 'twinStage.1', 'twinStage.2'] as const;
   const rows = $derived<Row[]>([
     { label: t('tacho.label'), value: () => `${whole(telemetry().rpm)} ${t('unit.rpm')}`, source: sim },
     { label: t('common.speed'), value: () => `${whole(telemetry().speed)} km/h`, source: sim },
@@ -80,6 +82,20 @@
       { label: t('live.turbo'), value: () => `${fixed(telemetry().boost * config.boostBar, 2)} bar`, source: sim },
       { label: t('gauge.turbineName'), value: () => `${whole((telemetry() as Telemetry & { turbineRpm?: number }).turbineRpm ?? motion.turbineRpm(config))} ${t('unit.rpm')}`, source: calculated },
       { label: t('gauge.turbineInlet'), value: () => `${whole(telemetry().turboGasC)} °C`, source: sim },
+      // Deux turbos, twincharger, aubes : ce que `twin_turbo.cpp` calcule.
+      ...(config.turboLayout === 'twin_parallel' || config.turboLayout === 'twin_sequential' ? [
+        { label: t('live.turbo2'), value: () => `${whole(telemetry().turbo2Rpm)} ${t('unit.rpm')}`, source: sim },
+      ] : []),
+      ...(config.turboLayout === 'twin_sequential' ? [
+        { label: t('live.twinStage'), value: () => t(STAGE_KEYS[Math.min(Math.max(Math.round(telemetry().twinStage), 0), 2)]), source: sim },
+      ] : []),
+      ...(config.turboLayout === 'twincharger' ? [
+        { label: t('live.chargerClutch'), value: () => t(telemetry().chargerClutch > 0 ? 'live.clutchEngaged' : 'live.clutchOpen'), source: sim },
+        { label: t('gauge.chargerName'), value: () => `${whole(telemetry().chargerRpm)} ${t('unit.rpm')}`, source: sim },
+      ] : []),
+      ...(config.variableGeometry ? [
+        { label: t('live.vanes'), value: () => t('live.vanesValue', { open: whole(telemetry().turboVane * 100) }), source: sim },
+      ] : []),
       ...(config.fuel === 'petrol' && config.antiLag !== 'off' ? [
         { label: t('gauge.antiLagHeat'), value: () => `${fixed(telemetry().antiLagHeatKw, 1)} kW`, source: sim },
         { label: t('gauge.antiLagLost'), value: () => `${whole(telemetry().antiLagLostNm)} Nm`, source: sim },
