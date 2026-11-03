@@ -43,6 +43,7 @@ add_library(revforge_core STATIC
   core/src/consumption.cpp
   core/src/presets.cpp
   core/src/carburetor.cpp
+  core/src/boost_control.cpp
   ${GENERATED_DIR}/presets_data.inc
 )
 target_include_directories(revforge_core PUBLIC core/include PRIVATE core/src ${GENERATED_DIR})
@@ -68,7 +69,7 @@ else()
   target_link_libraries(revforge-render PRIVATE revforge_core)
 
   enable_testing()
-  add_executable(revforge_tests tests/main.cpp tests/engine_sound_test.cpp tests/engine_config_test.cpp tests/driving_model_test.cpp tests/powertrain_test.cpp tests/gearbox_test.cpp tests/acoustics_test.cpp tests/starter_test.cpp tests/shift_modes_test.cpp tests/turbo_test.cpp tests/consumption_test.cpp tests/retro_body_test.cpp tests/air_filter_test.cpp tests/turbo_pipe_test.cpp tests/anti_lag_test.cpp tests/valvetrain_test.cpp tests/supercharger_test.cpp tests/carburetor_test.cpp tests/rotary_test.cpp tests/jonctions_test.cpp)
+  add_executable(revforge_tests tests/main.cpp tests/engine_sound_test.cpp tests/engine_config_test.cpp tests/driving_model_test.cpp tests/powertrain_test.cpp tests/gearbox_test.cpp tests/acoustics_test.cpp tests/starter_test.cpp tests/shift_modes_test.cpp tests/turbo_test.cpp tests/consumption_test.cpp tests/retro_body_test.cpp tests/air_filter_test.cpp tests/turbo_pipe_test.cpp tests/anti_lag_test.cpp tests/valvetrain_test.cpp tests/supercharger_test.cpp tests/carburetor_test.cpp tests/rotary_test.cpp tests/jonctions_test.cpp tests/boost_control_test.cpp)
   target_include_directories(revforge_tests PRIVATE tests/vendor core/src)
   target_link_libraries(revforge_tests PRIVATE revforge_core)
   # Avertissement d'un en-tête de la bibliothèque standard inclus par doctest.
@@ -116,4 +117,7 @@ else()
   golden(turbo_pipe_short 3898802e --preset hot_hatch_turbo --scenario turbo --turbo-pipe 150)
   golden(carb_multi 463a064f --preset carb_twin_cam --scenario blips)
   golden(carb_single 4d1f365e --preset hot_hatch_na --carb single --scenario launch --seconds 10)
+  # La régulation de pression : l'électrovanne et son PID sur le coup de gaz en quatrième ; selon le rapport, une traction qui part.
+  golden(boost_electronic 49d8a62d --preset hot_hatch_turbo --scenario turbo --boost-control electronic)
+  golden(boost_by_gear 62121e3d --preset three_cyl_turbo --scenario launch --seconds 10 --boost-control by_gear)
 endif()

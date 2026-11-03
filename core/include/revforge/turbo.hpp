@@ -80,6 +80,11 @@ struct TurboInput {
     bool burning = false;
     AntiLagCommand antiLag;
     double carbRichness = 0.0;  // 1/λ imposé par un carburateur, qui ne dose pas sur commande. 0 : un calculateur qui dose.
+    /**
+     * L'ouverture que demande une régulation électronique à la membrane, 0 fermée à 1 ouverte (voir `boost_control.hpp`).
+     * Négative : la wastegate à ressort, qui s'ouvre seule contre la pression de charge. La protection des roues garde le dernier mot.
+     */
+    double gateDemand = -1.0;
 };
 
 /** Le point d'équilibre à pleine charge : ce que donnent les courbes de la fiche. */

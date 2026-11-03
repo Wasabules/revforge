@@ -138,15 +138,16 @@ struct Output {
 std::FILE* g_trace = nullptr;
 
 void traceHeader() {
-    std::fputs("t,rpm,throttle,gear,boost,shaft_rpm,t3_c,turbine_kw,compressor_kw,air_g_s,heat_kw,fuel_g_s,torque_nm,lost_nm,antilag,kmh,flow_kg_s,blowoff,wastegate,charge_bar,exhaust_bar,trip_l,pops\n", g_trace);
+    std::fputs("t,rpm,throttle,gear,boost,shaft_rpm,t3_c,turbine_kw,compressor_kw,air_g_s,heat_kw,fuel_g_s,torque_nm,lost_nm,antilag,kmh,flow_kg_s,blowoff,wastegate,charge_bar,exhaust_bar,trip_l,pops,target_abs_bar,charge_abs_bar,duty\n", g_trace);
 }
 
 void traceLine(const DrivingModel& model, const EngineSound& sound, double t) {
     const TurboState& s = model.turbo().state();
     const AntiLagState& a = model.turbo().antiLag();
-    std::fprintf(g_trace, "%.4f,%.1f,%.3f,%d,%.4f,%.0f,%.1f,%.3f,%.3f,%.3f,%.3f,%.4f,%.2f,%.2f,%d,%.2f,%.4f,%.3f,%.3f,%.4f,%.4f,%.6f,%u\n", t, model.rpm(), model.throttle(), model.gear(), model.boost(),
+    std::fprintf(g_trace, "%.4f,%.1f,%.3f,%d,%.4f,%.0f,%.1f,%.3f,%.3f,%.3f,%.3f,%.4f,%.2f,%.2f,%d,%.2f,%.4f,%.3f,%.3f,%.4f,%.4f,%.6f,%u,%.4f,%.4f,%.3f\n", t, model.rpm(), model.throttle(), model.gear(), model.boost(),
                  s.shaftOmega * 60.0 / (2.0 * 3.141592653589793), s.turbineInK - 273.15, s.turbinePowerW / 1000.0, s.compressorPowerW / 1000.0, a.airFlow * 1000.0, a.collectorHeatW / 1000.0,
-                 model.consumption().fuelGps(), model.torqueNm(), model.antiLagLostNm(), model.antiLagActive() ? 1 : 0, model.speedKmh(), s.compressorFlow, s.blowOff, s.wastegate, s.chargePa / 1e5 - 1.01325, s.turbineInPa / 1e5 - 1.01325, model.consumption().fuelTripL(), static_cast<unsigned>(sound.pops()));
+                 model.consumption().fuelGps(), model.torqueNm(), model.antiLagLostNm(), model.antiLagActive() ? 1 : 0, model.speedKmh(), s.compressorFlow, s.blowOff, s.wastegate, s.chargePa / 1e5 - 1.01325, s.turbineInPa / 1e5 - 1.01325, model.consumption().fuelTripL(), static_cast<unsigned>(sound.pops()),
+                 model.boostTargetPa() / 1e5, s.chargePa / 1e5, model.boostDuty());
 }
 
 /** Le modèle de conduite pilote le son : chaque tranche est une pédale, ou le pilote automatique. */
