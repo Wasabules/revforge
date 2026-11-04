@@ -1,5 +1,7 @@
 #include "revforge/valvetrain.hpp"
 
+#include "revforge/architecture.hpp"
+
 #include <array>
 #include <cmath>
 
@@ -26,8 +28,7 @@ constexpr double kMeanLift = 2.0 / kPi;
 constexpr double kThroatPerHead = 0.636;
 constexpr double kDischarge = 0.7;
 
-// L'air froid, et le gaz à l'ouverture de l'échappement (1250 K).
-constexpr double kSoundColdMs = 343.0;
+// Le gaz à l'ouverture de l'échappement (1250 K). L'air admis, lui, est celui du jour : `intakeSoundMs`, 343 m/s à 20 °C.
 constexpr double kSoundExhaustMs = 691.0;
 // fill(Z) = (1 + (Z / 0,8)^4)^(-1/4) : l'ajustement de l'intégration, à 1,8 % près de Z = 0,2 à 2.
 constexpr double kFillingKnee = 0.8;
@@ -57,7 +58,8 @@ double quarterValveMm(double boreMm, double reach) {
 ValveTrainGeometry valveTrainOf(Camshaft camshaft, double boreMm) {
     ValveTrainGeometry v;
     const double lift = kLiftPerBore * boreMm;
-    if (camshaft == Camshaft::Sohc) {
+    // Deux soupapes : en travers sous un simple arbre, en ligne sous des culbuteurs. Le même bord et le même pont les bornent.
+    if (camshaft != Camshaft::Dohc) {
         v.perCylinder = 2;
         v.intakeMm = (boreMm - 2.0 * kEdgeMm - kBridgeTwoValvesMm) / (1.0 + kExhaustShare);
         v.exhaustMm = kExhaustShare * v.intakeMm;
@@ -95,20 +97,20 @@ double exhaustLossBar(double z) {
     return a + (b - a) * (position - static_cast<double>(index));
 }
 
-double sohcFillingRatio(double boreMm, double strokeMm, double rpm) {
+double sohcFillingRatio(double boreMm, double strokeMm, double rpm, double intakeSoundMs) {
     const ValveTrainGeometry two = valveTrainOf(Camshaft::Sohc, boreMm);
     const ValveTrainGeometry four = valveTrainOf(Camshaft::Dohc, boreMm);
-    return valveFilling(machIndex(two.intakeAreaMm2, boreMm, strokeMm, rpm, kSoundColdMs)) /
-           valveFilling(machIndex(four.intakeAreaMm2, boreMm, strokeMm, rpm, kSoundColdMs));
+    return valveFilling(machIndex(two.intakeAreaMm2, boreMm, strokeMm, rpm, intakeSoundMs)) /
+           valveFilling(machIndex(four.intakeAreaMm2, boreMm, strokeMm, rpm, intakeSoundMs));
 }
 
-double sohcBreathingRatio(double boreMm, double strokeMm, double rpm) {
+double sohcBreathingRatio(double boreMm, double strokeMm, double rpm, double intakeSoundMs) {
     const ValveTrainGeometry two = valveTrainOf(Camshaft::Sohc, boreMm);
     const ValveTrainGeometry four = valveTrainOf(Camshaft::Dohc, boreMm);
     const double lossTwo = exhaustLossBar(machIndex(two.exhaustAreaMm2, boreMm, strokeMm, rpm, kSoundExhaustMs));
     const double lossFour = exhaustLossBar(machIndex(four.exhaustAreaMm2, boreMm, strokeMm, rpm, kSoundExhaustMs));
     const double lost = lossTwo + sohcFrictionDeltaBar(strokeMm, rpm);
-    return sohcFillingRatio(boreMm, strokeMm, rpm) * (1.0 - lost / kExhaustLossReferenceBar) / (1.0 - lossFour / kExhaustLossReferenceBar);
+    return sohcFillingRatio(boreMm, strokeMm, rpm, intakeSoundMs) * (1.0 - lost / kExhaustLossReferenceBar) / (1.0 - lossFour / kExhaustLossReferenceBar);
 }
 
 double sohcTuningRatio(double boreMm) {
@@ -133,7 +135,8 @@ double sohcFrictionDeltaBar(double strokeMm, double rpm) {
 
 double sohcInertiaDelta(const EngineConfig& e) {
     // Une roue d'acier de deux fois le rayon du pignon de vilebrequin, de 8 mm d'épaisseur, qui tourne à demi-vitesse.
-    const double banks = e.layout == Layout::Inline ? 1.0 : 2.0;
+    // Un arbre par culasse : une seule sur un VR, qui couvre ses deux rangées (voir architecture.hpp).
+    const double banks = e.layout == Layout::Inline ? 1.0 : (e.layout == Layout::Vr ? static_cast<double>(architectureOf(e).heads) : 2.0);
     const double radius = 0.56 * static_cast<double>(e.boreMm) / 1000.0;
     const double r2 = radius * radius;
     const double wheel = 0.5 * 7800.0 * kPi * r2 * r2 * 0.008;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "revforge/engine_config.hpp"
+#include "revforge/injection.hpp"
 
 namespace revforge {
 
@@ -31,10 +32,21 @@ struct CarburetorSpec {
     /** Ce que la pompe de reprise injecte sur une course complète du papillon (g). */
     double pumpG = 0.0;
     double redlineRpm = 6000.0;
+    /**
+     * L'air du jour, rapporté à l'air de référence où les gicleurs ont été choisis : σ = ρ/ρ₀ et θ = T/T₀. Le carburant passe
+     * en √(ρ_carburant·Δp) et l'air en √(ρ_air·Δp) : le mélange s'enrichit en 1/√σ en altitude (voir atmosphere.hpp).
+     */
+    double airDensityShare = 1.0;
+    double airTemperatureShare = 1.0;
 };
 
-/** Pas de carburateur sur un diesel : le réglage y est sans effet. */
+/** L'alimentation réelle : pas de carburateur sur un diesel, le réglage y est sans effet. */
 FuelSystem fuelSystemOf(const EngineConfig& engine);
+/** Un carburateur, unique ou par cylindre : ni l'injection indirecte, ni la directe. */
+inline bool hasCarburetor(const EngineConfig& engine) {
+    const FuelSystem system = fuelSystemOf(engine);
+    return system == FuelSystem::Carburetor || system == FuelSystem::MultiCarb;
+}
 CarburetorSpec carburetorSpecOf(const EngineConfig& engine);
 
 /** Ce que le débit perd à traverser le venturi et la pipe (Pa), à ce régime et à ce remplissage. */
@@ -57,6 +69,8 @@ struct CarburetorInput {
     double fillRate = 0.0;  // sa dérivée (1/s) : ce qu'on remplit passe aussi par le venturi
     double throttle = 0.0;
     double density = 1.0;   // masse volumique au col, en part de l'atmosphère : plus de 1 sur un montage soufflé
+    /** L'eau (°C) : à froid, l'essence distille moins sur la paroi, et le film grossit (voir `coldFilmShare`). */
+    double coolantC = kWarmCoolantC;
 };
 
 /**
@@ -67,7 +81,7 @@ struct CarburetorInput {
 class Carburetor {
 public:
     void configure(const CarburetorSpec& spec, double displacementM3);
-    /** Remplit le film à l'équilibre au prochain pas : le moteur est chaud, rien ne simule le démarrage à froid. */
+    /** Remplit le film à l'équilibre au prochain pas, à la température d'eau du pas suivant. */
     void prime() { primed_ = false; }
     void step(const CarburetorInput& in, double dt);
 
@@ -75,7 +89,7 @@ public:
     double torqueShare() const { return torqueShare_; }
     /** λ dans les cylindres (0 sans débit), film (g), débit de la pompe (g/s). */
     double lambda() const { return lambda_; }
-    double filmG() const { return film_; }
+    double filmG() const { return film_.massG; }
     double pumpGps() const { return pumpGps_; }
     const CarburetorSpec& spec() const { return spec_; }
 
@@ -86,7 +100,7 @@ private:
     double chargeG_ = 0.0;
     bool primed_ = false;
     double metered_ = 0.0;
-    double film_ = 0.0;
+    WallFilm film_;
     double suspended_ = 0.0;
     double pumpLeft_ = 0.0;
     double pumpGps_ = 0.0;

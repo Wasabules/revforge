@@ -2,11 +2,20 @@
 
 #include <algorithm>
 
+#include "revforge/cam.hpp"
+#include "revforge/boost_control.hpp"
 #include "revforge/carburetor.hpp"
+#include "revforge/combustion.hpp"
 #include "revforge/consumption.hpp"
 #include "revforge/driver_scenarios.hpp"
+#include "revforge/ecu.hpp"
+#include "revforge/injection.hpp"
+#include "revforge/particulate_filter.hpp"
 #include "revforge/powertrain.hpp"
 #include "revforge/shift_logic.hpp"
+#include "revforge/thermal.hpp"
+#include "revforge/twin_turbo.hpp"
+#include "revforge/tyre.hpp"
 
 namespace revforge {
 
@@ -108,7 +117,10 @@ public:
     double cycleSec() const { return cycleSec_; }
 
     /** Remplissage du moteur : 0 pied levé, 1 plein gaz. C'est lui qui fait le son. */
-    double load() const { return carbEngine_ ? std::min(manifold_ * carb_.torqueShare(), 1.0) : manifold_; }
+    double load() const {
+        if (portFilmActive_) return std::min(manifold_ * portFilm_.torqueShare(), 1.0);
+        return carbEngine_ ? std::min(manifold_ * carb_.torqueShare(), 1.0) : manifold_;
+    }
     /** Le carburateur, s'il y en a un : film, mélange dans les cylindres. */
     const Carburetor& carburetor() const { return carb_; }
     bool carbureted() const { return carbEngine_; }
@@ -125,7 +137,16 @@ public:
     double boost() const { return boost_; }
     /** L'arbre, les pressions, les soupapes : tout est dans `TurboState`. Rien de neuf sur un moteur sans turbo. */
     const TurboCharger& turbo() const { return turbo_; }
-    TurboDrive turboDrive() const { return turbo_.drive(); }
+    TurboDrive turboDrive() const { return twinEngine_ ? twin_.drive(0) : turbo_.drive(); }
+    /**
+     * Deux turbos, un twincharger ou des aubes : `TwinTurbo` tient les arbres, et `turbo()` ne tourne pas. `turboState()` est
+     * l'arbre qui siffle d'abord (le primaire), `turboStateB()` le second, avec les grandeurs communes recopiées.
+     */
+    bool twinTurbo() const { return twinEngine_; }
+    const TwinTurbo& twin() const { return twin_; }
+    const TurboState& turboState() const { return twinEngine_ ? twin_.state().unit[0] : turbo_.state(); }
+    const TurboState& turboStateB() const { return twin_.state().unit[1]; }
+    TurboDrive turboDriveB() const { return twin_.drive(1); }
     /** L'anti-lag travaille en ce moment : pied levé, moteur lancé, sur un turbo à essence. */
     bool antiLagActive() const { return antiLag_.active; }
     /** Le couple que le retard et les cylindres coupés retirent à ce que donnerait cette charge d'air (Nm). */
@@ -133,7 +154,7 @@ public:
     /** Le compresseur mécanique : mêmes pressions, en unités physiques. Rien de neuf sur un moteur sans compresseur. */
     bool supercharged() const { return superchargerEngine_; }
     const Supercharger& supercharger() const { return supercharger_; }
-    SuperchargerDrive superchargerDrive() const { return supercharger_.drive(); }
+    SuperchargerDrive superchargerDrive() const { return twinEngine_ && twin_.hasCharger() ? twin_.chargerDrive() : supercharger_.drive(); }
     /** Couple au vilebrequin, négatif en frein moteur (Nm). */
     double torqueNm() const { return torque_; }
     double powerKw() const;
@@ -151,6 +172,15 @@ public:
     double wheelRpm() const;
     /** Glissement des pneus moteurs (m/s). */
     double wheelSlip() const { return wheelSpeedMs() - speedMs_; }
+    /** Le même, en glissement longitudinal κ (tyre.hpp) : ce que le pneu en fait, et ce que vise l'antipatinage. */
+    double wheelSlipRatio() const { return tyreSlipRatio(wheelSpeedMs(), speedMs_); }
+    /** La force des roues motrices au sol au dernier pas (N). */
+    double tyreForceN() const { return tyreUsed_; }
+    /**
+     * Ce que tout le couple maximal du moteur ferait au glissement des roues sur le rapport engagé (m/s²) : r·T·g·η sur l'inertie
+     * vue de la roue. Le gain de la boucle que ferment l'antipatinage, et l'essayeur de la fiche (`measurePerformance`).
+     */
+    double slipPlantGain() const;
     /** Combustion coupée : rupteur, ou contact coupé. */
     bool cut() const { return cut_; }
     bool shifting() const { return step_ != ShiftStep::None; }
@@ -160,9 +190,94 @@ public:
     int powertrainCylinders() const { return powertrain_.engine.cylinders; }
     double redlineRpm() const { return redline_; }
 
+    /**
+     * L'eau du moteur (°C), que lit le film de carburant : 90 °C par défaut, le moteur chaud de toute la calibration. À brancher
+     * sur le modèle thermique. À 90 °C, le calculateur compense exactement le film d'une injection indirecte : rien ne change.
+     */
+    void setCoolantC(double celsius) { coolantC_ = celsius; }
+    double coolantC() const { return coolantC_; }
+    /** Le film d'une injection indirecte : il ne compte que si l'eau n'est pas à 90 °C. */
+    const PortFuelFilm& portFilm() const { return portFilm_; }
+    bool portFilmActive() const { return portFilmActive_; }
+    /** Le filtre à particules, s'il y en a un : suie, contre-pression, régénération. */
+    const ParticulateFilter& particulateFilter() const { return dpf_; }
+    bool filtered() const { return dpfEngine_; }
+    /** Pour les essais : poser la suie du filtre. */
+    void setFilterSootG(double grams) { dpf_.setSootG(grams); }
+    /** La recirculation en ce moment : part des gaz recirculés dans la charge. */
+    double egrShare() const { return egrShare_; }
+    /**
+     * La régulation de pression (boost_control.hpp) : la pression absolue demandée (Pa), l'air ambiant sur un moteur sans
+     * turbo ; et le rapport cyclique de l'électrovanne, −1 sur une wastegate à ressort, qui n'en a pas.
+     */
+    double boostTargetPa() const;
+    double boostDuty() const { return boostControlled_ ? boostController_.duty() : -1.0; }
+    const BoostControlSpec& boostControl() const { return boostSpec_; }
+    const BoostController& boostController() const { return boostController_; }
+
     /** Essence, huile ou énergie : une lecture de ce que fait le moteur. Rien n'en revient vers la physique. */
     const ConsumptionMeter& consumption() const { return consumption_; }
     void resetTrip() { consumption_.resetTrip(); }
+
+    /**
+     * Les températures du moteur : le réseau tourne toujours, et agit toujours, parti chaud ou froid, par l'écart de l'eau et de
+     * l'huile à la référence chaude (90 et 100 °C) : frottements, enrichissement, film de carburant, air piégé, cliquetis. Rien
+     * sur l'électrique.
+     */
+    const ThermalNetwork& thermal() const { return thermal_; }
+    bool thermalCoupled() const { return coldCoupled_; }
+    /** Pour les essais : tenir le moteur à la référence chaude, comme avant que le réseau n'agisse moteur chaud. */
+    void holdThermalReference(bool held);
+    /**
+     * Ce que l'écart à la référence change en ce moment : frottements en plus (Nm, négatifs quand l'huile dépasse 100 °C), ralenti
+     * visé en plus (tr/min), carburant en plus (part).
+     */
+    double coldFrictionNm() const { return coldCoupled_ ? coldFrictionNm_ : 0.0; }
+    double coldIdleRpm() const { return coldCoupled_ ? idle_ * coldIdleRise_ : 0.0; }
+    double coldEnrichment() const { return coldCoupled_ ? coldEnrichment_ : 0.0; }
+    /**
+     * Le cliquetis, quand la combustion n'est plus celle d'origine : l'avance que le capteur retire (degrés), la part des cycles qui
+     * cliquettent, et ce que le son en reçoit. Tout à zéro sur un moteur d'origine, un diesel ou un électrique.
+     */
+    double knockRetardDeg() const { return knockRetard_; }
+    double knockShare() const { return knockDrive_.share; }
+    /** L'avance appliquée, et la limite de cliquetis à cet instant (degrés avant le point mort haut). 0 sans modèle de cliquetis. */
+    double sparkAdvanceDeg() const { return knockAdvance_; }
+    double knockLimitDeg() const { return knockLimit_; }
+    KnockDrive knockDrive() const { return knockDrive_; }
+    /** Le calculateur : ce qu'il fait à ce pas, au-delà de sa carte (ecu.hpp). Tout au neutre sans réglage. */
+    const EcuAction& ecuAction() const { return ecu_; }
+    /** Ce que le son doit savoir du calculateur : à donner à `EngineSound::setEcu`. Inactif au défaut. */
+    EcuDrive ecuDrive() const;
+    /** L'avance, en écart à la carte d'origine (°, positif : plus tôt) : son décalage, moins ce que le pas retarde. */
+    double ecuAdvanceDeg() const;
+    /** Le λ demandé à ce remplissage. 0 sans objet : diesel, voiture électrique. */
+    double ecuLambda() const;
+    /** Part des explosions qui ont lieu : 0 pendant une coupure, 1 sans rien de coupé. */
+    double ecuFiredShare() const { return cut_ ? 0.0 : ecu_.firedShare; }
+    /** Le rupteur agit, quel qu'il soit. Le launch control, lui, se lit à part. */
+    bool limiterActive() const { return !launchHold_ && (limiterCut_ || ecu_.limiter); }
+    bool launchHolding() const { return launchHold_; }
+    /** Le passage à fond coupe l'allumage en ce moment. */
+    bool flatShifting() const { return ecu_.flat; }
+    /** La distribution variable : le profil en prise, le calage du déphaseur. À donner à `EngineSound::setCam`. */
+    CamDrive camDrive() const { return camDrive_; }
+    /** Le régime où la came à deux profils bascule (0 : sans). */
+    double camSwitchRpm() const { return camSwitchRpm_; }
+    /** L'air de charge : échangeur, eau, protoxyde. Rien ne s'y exécute au défaut (`chargeAirActive`). */
+    bool chargeAirEngine() const { return chargeAirEngine_; }
+    const ChargeAir& chargeAir() const { return chargeAir_; }
+    /** La charge au collecteur à ce pas : ce que lira le cliquetis. Au défaut, celle de l'échangeur d'origine, sans eau ni protoxyde. */
+    ManifoldCharge manifoldCharge() const;
+    /** Ce que la charge ajoute à la pression d'ouverture de l'échappement, pour le son : 0 au défaut. */
+    double chargeFill() const { return chargeFill_; }
+    /**
+     * L'air-air ε-NTU (finitions) : la densité de la charge réelle face à celle que suppose le couple de base, l'échangeur au banc ;
+     * le couple indiqué en est multiplié. 1 sans suralimentation, ou avec un autre échangeur (l'air de charge en tient compte).
+     */
+    double airCoolerShare() const;
+    /** Remplir la bouteille de protoxyde. */
+    void refillNitrous() { chargeAir_.refill(); }
 
 private:
     enum class Driver { Pilot, Pedal, Neutral, Off };
@@ -188,10 +303,16 @@ private:
     void trackOverload(double torque);
     void updateClutch(bool wantsToMove);
     void updateEngine(double pedal, bool off);
+    double stepEcu(double throttle, double rpmNow, bool off);
+    void finishEcu(double rpmNow, double indicated, bool off);
+    /** Le robot fait partir la voiture : première, embrayage qui patine encore (la branche du démarrage de `updateClutch`). */
+    bool robotLaunching() const;
+    /** Les gains de l'antipatinage sur le rapport engagé. */
+    void tractionGains(double& kp, double& ki) const;
     void integrate(double brakePedal);
-    void drivenStep(double tyre, double wheelInertia);
-    void freeStep(double tyre, double wheelInertia);
-    void converterStep(double tyre, double wheelInertia);
+    void drivenStep(const TyreContact& tyre, double wheelInertia);
+    void freeStep(const TyreContact& tyre, double wheelInertia);
+    void converterStep(const TyreContact& tyre, double wheelInertia);
     void converterTorque(double& pump, double& turbine) const;
     bool settled() const;
     bool assisted() const { return !manual_ || clutchAssist_; }
@@ -205,12 +326,21 @@ private:
     double ratio(int gear) const;
     double compressionLoadNm() const;
     double rotaryCompressionLoadNm() const;
+    double twoStrokeCompressionLoadNm() const;
     void stepTurbo(double rpmNow, bool burning);
     void updateAntiLag(double throttle, double rpmNow, bool off);
     void stepSupercharger(double rpmNow);
+    void stepTwin(double rpmNow, bool burning);
+    double stepChargeAir(double rpmNow, double throttle, double indicated);
     double bmepPumping(double rpm) const;
     double wheelSpeedMs() const { return wheelOmega_ * radius_; }
     void meterConsumption();
+    void stepThermal();
+    void updateColdEffects();
+    // Le radiateur se dimensionne sur `sized` (le montage dans l'air de référence) ; le départ suit l'air du jour de `powertrain`.
+    void configureThermal(const Powertrain& powertrain, const Powertrain& sized, double peakPowerRpm, double peakPowerKw);
+    /** Le capteur de cliquetis à ce pas : renvoie la part du couple indiqué que laisse l'avance appliquée. */
+    double stepKnock(double rpmNow);
 
     Powertrain powertrain_;
     Gearing gearing_;
@@ -255,12 +385,36 @@ private:
     TurboCharger turbo_;
     bool turboEngine_ = false;
     bool antiLagEngine_ = false;
+    /** La limite de pression de l'anti-lag : suspendu tant que la pression n'est pas retombée au bas de la bande de la soupape. */
+    bool antiLagLimited_ = false;
     AntiLagCommand antiLag_;
     double antiLagLostNm_ = 0.0;
     Supercharger supercharger_;
     bool superchargerEngine_ = false;
+    BoostControlSpec boostSpec_;
+    BoostController boostController_;
+    bool boostControlled_ = false;
+    TwinTurbo twin_;
+    bool twinEngine_ = false;
     Carburetor carb_;
     bool carbEngine_ = false;
+    // L'injection : le film d'une injection indirecte (seulement hors des 90 °C de la calibration), la pompe haute pression d'une
+    // injection directe, la recirculation, le filtre à particules. Rien de tout cela ne tourne au défaut.
+    PortFuelFilm portFilm_;
+    bool portEngine_ = false;
+    bool portFilmActive_ = false;
+    double coolantC_ = kWarmCoolantC;
+    bool directEngine_ = false;
+    bool egrEngine_ = false;
+    double egrShare_ = 0.0;
+    ParticulateFilter dpf_;
+    bool dpfEngine_ = false;
+    ChargeAir chargeAir_;
+    bool chargeAirEngine_ = false;
+    bool airCoolerEngine_ = false;
+    double chargeFill_ = 0.0;
+    /** Un deux-temps : à charge partielle, son balayage et ses ratés changent le couple (`twoStrokePartLoad`). */
+    bool twoStrokeEngine_ = false;
     double torque_ = 0.0;
     bool cut_ = false;
     bool limiterCut_ = false;
@@ -316,11 +470,71 @@ private:
     ConsumptionMeter consumption_;
     ConsumptionInput burnt_;
 
+    // Thermique : le réseau, ce qu'il reçoit entre deux de ses pas, et ce que le moteur froid change (départ à froid seulement).
+    ThermalNetwork thermal_;
+    bool thermalEngine_ = false;
+    bool thermalReady_ = false;
+    // Le réseau agit sur le moteur : toujours, sauf sur l'électrique et pendant un essai qui le tient à la référence.
+    bool coldCoupled_ = false;
+    bool thermalHeld_ = false;
+    StartTemp startTemp_ = StartTemp::Warm;
+    float ambientC_ = 20.0f;
+    double hydroNmPerRpm_ = 0.0;
+    double heatFuelW_ = 0.0;
+    double heatFrictionW_ = 0.0;
+    double frictionHeatNm_ = 0.0;
+    int heatSteps_ = 0;
+    double viscosityExcess_ = 0.0;
+    double coldFrictionNm_ = 0.0;
+    double coldIdleRise_ = 0.0;
+    double coldEnrichment_ = 0.0;
+    // Le cliquetis : la carte de ce moteur, gardée tant qu'il ne change pas, et ce que le capteur a retiré.
+    KnockMap knockMap_;
+    bool knockEngine_ = false;
+    double knockRetard_ = 0.0;
+    double knockAdvance_ = 0.0;
+    double knockLimit_ = 0.0;
+    double knockPerCylinder_ = 1.0;
+    KnockDrive knockDrive_;
+    // Le calculateur (ecu.hpp) : la carte s'écarte de l'origine, ou il agit à chaque pas. Rien de cela ne s'exécute au défaut.
+    bool ecuMap_ = false;
+    bool ecuEngine_ = false;
+    double limiterRpm_ = 6200.0;
+    bool sparkEngine_ = false;
+    double mapRetard_ = 0.0;
+    double lambdaRatio_ = 1.0;
+    EcuAction ecu_;
+    double ecuShare_ = 1.0;
+    bool fuelOnCut_ = false;
+    RevLimiter limiterKind_ = RevLimiter::Stock;
+    double launchRpm_ = 0.0;
+    bool launchHold_ = false;
+    bool flatShift_ = false;
+    bool flatUpshift_ = false;
+    bool flatCut_ = false;
+    double tractionTarget_ = 0.0;
+    double tractionIntegral_ = 0.0;
+    double tractionTorqueNm_ = 300.0;
+    double portK_ = 293.0;
+    double ignition_ = 0.0;
+    double unburntJoules_ = 0.0;
+    double exhaustShare_ = 0.0;
+
     // Voiture
     double speedMs_ = 0.0;
     double wheelOmega_ = 0.0;
     double brake_ = 0.0;
     double acceleration_ = 0.0;
+    // Le pneu : la force au sol de ce pas, celle que reçoivent la roue et la caisse (tyre.hpp).
+    double tyreUsed_ = 0.0;
+
+    // La came : deux profils, un déphaseur. Voir cam.hpp.
+    void stepCam(double rpmNow);
+    bool camVariable_ = false;
+    bool camTwoStep_ = false;
+    bool camPhased_ = false;
+    double camSwitchRpm_ = 0.0;
+    CamDrive camDrive_;
 };
 
 }  // namespace revforge

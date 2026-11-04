@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { TURBO_SCALE, isRotary, type EngineConfig } from '../lib/config';
+  import { architectureOf } from '../lib/architecture';
   import { animate, fit, heatedPart, mix, pipeColor, readTheme, type Theme } from '../lib/canvas';
   import type { Telemetry } from '../lib/engine';
   import { fixed, speedLabel, t, whole } from '../lib/i18n.svelte';
@@ -69,6 +70,17 @@
     traceRange: number;
     exitX: number;
     plumeScale: number;
+    /**
+     * Deux turbos : une turbine au bout de chaque collecteur, côte à côte, chacune sous son compresseur ; le second chemin d'air,
+     * dessiné comme le premier mais décalé. `turbineXs`, `turbineYs` : le centre de chaque turbine ; `intakeX2`, `intakeYs2` :
+     * les cellules du second chemin d'air.
+     */
+    twin: boolean;
+    turbineXs: Float32Array;
+    turbineYs: Float32Array;
+    intakeX2: Float32Array;
+    intakeYs2: Float32Array;
+    partTall2: Float32Array;
   }
 
   let layout: Layout | null = null;
@@ -109,16 +121,19 @@
 
     // Collecteurs : un tube par cylindre, qui se rejoignent ; en V, un par rangée, puis la jonction.
     // Sur un turbo, le collecteur s'allonge : il faut de la place entre le papillon et le compresseur.
-    const span = (exitX - engineRight) * (turboShare ? (net.banks === 2 ? (narrow ? 0.3 : 0.27) : narrow ? 0.5 : 0.45) : narrow ? 0.12 : 0.1);
+    // Deux turbos : ils sont au bout des collecteurs, et l'échangeur a besoin de place avant eux ; leurs tubes se rejoignent vite.
+    const twinShare = narrow ? 0.46 : 0.42;
+    const span = (exitX - engineRight) * (turboShare ? (net.hasTwin ? twinShare : net.banks === 2 ? (narrow ? 0.3 : 0.27) : narrow ? 0.5 : 0.45) : narrow ? 0.12 : 0.1);
     const collectorX = engineRight + span;
     const bankGap = net.banks === 2 ? height * 0.085 : 0;
-    const joinX = net.banks === 2 ? collectorX + span * 0.75 : collectorX;
+    const joinX = net.banks === 2 ? collectorX + span * (net.hasTwin ? (narrow ? 0.55 : 0.42) : 0.75) : collectorX;
     const runnerPoints: Float32Array[] = [];
     const perBank = Math.ceil(net.runners / net.banks);
     const spreadBank = net.banks === 2 ? height * 0.06 : height * 0.1;
     for (let c = 0; c < net.runners; c++) {
       const bank = net.bank[c];
-      const row = net.banks === 2 ? Math.floor(c / 2) : c;
+      // Un moteur en ligne à deux turbos est coupé en avant et arrière : la rangée se lit dans l'ordre des cylindres.
+      const row = net.banks === 2 ? (net.frontRear ? c % perBank : Math.floor(c / 2)) : c;
       const place = perBank > 1 ? row / (perBank - 1) - 0.5 : 0;
       const centre = lineY + (net.banks === 2 ? (bank === 0 ? -bankGap : bankGap) : 0);
       const y0 = centre + place * 2 * spreadBank;
@@ -159,8 +174,16 @@
       pipePoints[k * 2] = joinX + (pipeSpan * k) / net.pipeCells;
       pipePoints[k * 2 + 1] = lineY;
     }
-    const turbineX = joinX + pipeSpan + turbineR + 3;
-    const lineStart = turboShare && net.hasTurbine ? turbineX + turbineR + 2 : joinX;
+    // Deux turbos : chacun au bout de son collecteur, côte à côte, et la ligne part de la jonction.
+    const twin = net.hasTwin;
+    const turbineXs = new Float32Array(2);
+    const turbineYs = new Float32Array(2);
+    turbineXs[0] = collectorX + turbineR + 3;
+    turbineXs[1] = turbineXs[0] + compressorR * (narrow ? 2.1 : 2.6);
+    turbineYs[0] = lineY - bankGap;
+    turbineYs[1] = lineY + bankGap;
+    const turbineX = twin ? turbineXs[0] : joinX + pipeSpan + turbineR + 3;
+    const lineStart = turboShare && net.hasTurbine && !twin ? turbineX + turbineR + 2 : joinX;
     let weight = 0;
     for (const section of net.sections) weight += section.length * (section.kind === 'tube' || section.kind === 'tail' ? 0.8 : 1.5);
     const lineX = new Float32Array(net.lineCount + 1);
@@ -180,7 +203,7 @@
     const plenumLeft = engineRight + 6;
     const plenumRight = plenumLeft + clamp(width * 0.05, 18, 40);
     const throttleX = plenumRight + 5;
-    const filterX = turboShare ? Math.min(turbineX + width * 0.17, exitX - 14) : Math.min(throttleX + width * 0.28, exitX - 14);
+    const filterX = turboShare ? Math.min((twin ? turbineXs[1] : turbineX) + width * 0.17, exitX - 14) : Math.min(throttleX + width * 0.28, exitX - 14);
     const intakeX = new Float32Array(net.intakeCount + 1);
     const intakeYs = new Float32Array(net.intakeCount + 1).fill(intakeY);
     const traceX = new Float32Array(net.intakeCount + 1);
@@ -190,34 +213,50 @@
     const coolerTall = clamp(height * 0.11, 14, 36);
     const coolerY = (intakeY + lineY) / 2 - (net.banks === 2 ? height * 0.045 : height * 0.02);
     for (let i = 0; i <= net.intakeCount; i++) traceX[i] = filterX + (throttleX - filterX) * (i / net.intakeCount);
+    const intakeX2 = new Float32Array(net.intake2Count + 1);
+    const intakeYs2 = new Float32Array(net.intake2Count + 1).fill(intakeY);
+    const partTall2 = new Float32Array(net.intakeParts2.length);
     if (turboShare) {
       // Le chemin de l'air : la boîte à air à droite, le compresseur, puis un détour par l'échangeur, entre les deux rangées, avant le papillon.
       const filterRight = Math.min(filterX + clamp(width * 0.045, 12, 40), exitX - 3);
-      const way: Record<string, [number, number][]> = {
-        filter: [[filterRight, intakeY], [filterX, intakeY]],
-        inlet: [[filterX, intakeY], [turbineX + compressorR, intakeY]],
-        hot: [[turbineX - compressorR * 0.9, intakeY + compressorR * 0.4], [coolerX1 + 2, intakeY + compressorR * 0.9], [coolerX1 + 2, coolerY - coolerTall * 0.25], [coolerX1, coolerY]],
-        cooler: [[coolerX1, coolerY], [coolerX0, coolerY]],
-        cold: [[coolerX0, coolerY], [throttleX + 1, coolerY], [throttleX + 1, intakeY + tube * 0.9], [throttleX, intakeY]],
-        // Monté soufflé : le carburateur attend juste avant le papillon.
-        venturi: [[throttleX, intakeY], [throttleX, intakeY]],
-        duct: [[throttleX, intakeY], [throttleX, intakeY]],
+      // Deux turbos : le premier chemin arrive d'un peu plus haut et passe au-dessus du second compresseur ; chacun traverse sa moitié de l'échangeur.
+      const placeChain = (parts: typeof net.intakeParts, first: number, xs: Float32Array, ys: Float32Array, talls: Float32Array, compressorX: number, rowY: number, coolerAt: number) => {
+        const lift = rowY === intakeY ? [] : ([[compressorX + compressorR * 1.6, rowY], [compressorX + compressorR * 0.3, intakeY - compressorR * 0.9]] as [number, number][]);
+        const way: Record<string, [number, number][]> = {
+          filter: [[filterRight, rowY], [filterX, rowY]],
+          inlet: lift.length > 0 ? [[filterX, rowY], ...lift] : [[filterX, rowY], [compressorX + compressorR, rowY]],
+          hot: [[compressorX - compressorR * 0.9, intakeY + compressorR * 0.4], [coolerX1 + 2, intakeY + compressorR * 0.9], [coolerX1 + 2, coolerAt - coolerTall * 0.25], [coolerX1, coolerAt]],
+          cooler: [[coolerX1, coolerAt], [coolerX0, coolerAt]],
+          // Sans échangeur, le tube froid reprend sa place : le même chemin, sans faisceau.
+          cold: net.coolerCount > 0
+            ? [[coolerX0, coolerAt], [throttleX + 1, coolerAt], [throttleX + 1, intakeY + tube * 0.9], [throttleX, intakeY]]
+            : [[coolerX1, coolerAt], [coolerX0, coolerAt], [throttleX + 1, coolerAt], [throttleX + 1, intakeY + tube * 0.9], [throttleX, intakeY]],
+          // Monté soufflé : le carburateur attend juste avant le papillon.
+          venturi: [[throttleX, intakeY], [throttleX, intakeY]],
+          duct: [[throttleX, intakeY], [throttleX, intakeY]],
+        };
+        parts.forEach((part, p) => {
+          const points = way[part.kind];
+          const lengths = points.slice(1).map((point, k) => Math.hypot(point[0] - points[k][0], point[1] - points[k][1]));
+          const total = lengths.reduce((a, b) => a + b, 0);
+          for (let i = 0; i <= part.count; i++) {
+            let left = (total * i) / part.count;
+            let k = 0;
+            while (k < lengths.length - 1 && left > lengths[k]) left -= lengths[k++];
+            const f = lengths[k] > 0 ? Math.min(left / lengths[k], 1) : 0;
+            const cell = part.first - first + i;
+            xs[cell] = points[k][0] + (points[k + 1][0] - points[k][0]) * f;
+            ys[cell] = points[k][1] + (points[k + 1][1] - points[k][1]) * f;
+          }
+          talls[p] = part.kind === 'filter' ? tube * (twin ? 1.9 : 2.6) : part.kind === 'cooler' ? coolerTall * (twin ? 0.45 : 1) : tube * 0.95;
+        });
       };
-      net.intakeParts.forEach((part, p) => {
-        const points = way[part.kind];
-        const lengths = points.slice(1).map((point, k) => Math.hypot(point[0] - points[k][0], point[1] - points[k][1]));
-        const total = lengths.reduce((a, b) => a + b, 0);
-        for (let i = 0; i <= part.count; i++) {
-          let left = (total * i) / part.count;
-          let k = 0;
-          while (k < lengths.length - 1 && left > lengths[k]) left -= lengths[k++];
-          const f = lengths[k] > 0 ? Math.min(left / lengths[k], 1) : 0;
-          const cell = part.first - net.intakeFirst + i;
-          intakeX[cell] = points[k][0] + (points[k + 1][0] - points[k][0]) * f;
-          intakeYs[cell] = points[k][1] + (points[k + 1][1] - points[k][1]) * f;
-        }
-        partTall[p] = part.kind === 'filter' ? tube * 2.6 : part.kind === 'cooler' ? coolerTall : tube * 0.95;
-      });
+      if (twin) {
+        placeChain(net.intakeParts, net.intakeFirst, intakeX, intakeYs, partTall, turbineXs[0], intakeY - compressorR * 1.7, coolerY - coolerTall * 0.25);
+        placeChain(net.intakeParts2, net.intake2First, intakeX2, intakeYs2, partTall2, turbineXs[1], intakeY, coolerY + coolerTall * 0.25);
+      } else {
+        placeChain(net.intakeParts, net.intakeFirst, intakeX, intakeYs, partTall, turbineX, intakeY, coolerY);
+      }
     } else {
       for (let i = 0; i <= net.intakeCount; i++) intakeX[i] = traceX[i];
       partTall[0] = tube * 1.1;
@@ -237,6 +276,7 @@
       plenumTall: clamp(height * 0.15, 22, 44),
       throttleX, filterX, lineTraceY, intakeTraceY, traceRange, exitX,
       plumeScale: plumeWidth / (motion.gas.plume.nx - PLUME_PIPE_CELLS),
+      twin, turbineXs, turbineYs, intakeX2, intakeYs2, partTall2,
     };
   }
 
@@ -405,13 +445,19 @@
         }
         chamberIndex++;
       } else {
-        // Un tube : une température par cellule, c'est le calcul à une dimension tel quel.
+        // Un tube : une température par cellule, c'est le calcul à une dimension tel quel. Les marches d'un cône de chambre de détente se
+        // dessinent en pente, d'une marche à l'autre : le calcul les voit en marches, la chambre réelle est un cône.
+        const cone = section.part === 'diffuser' || section.part === 'baffle';
+        const tallIn = cone && s > 0 ? 0.5 * (view.sectionTall[s - 1] + tall) : tall;
+        const tallOut = cone && s + 1 < net.sections.length ? 0.5 * (tall + view.sectionTall[s + 1]) : tall;
         for (let k = 0; k < section.count; k++) {
           const cell = section.first + k;
           const cellX = view.lineX[offset + k];
           const cellW = view.lineX[offset + k + 1] - cellX + 0.5;
+          const cellTall = tallIn + ((tallOut - tallIn) * (k + 0.5)) / section.count;
+          const cellTop = y - cellTall / 2;
           ctx.fillStyle = painter.gasStyle(theme, net.temp[cell], net.y[cell]);
-          ctx.fillRect(cellX, top, cellW, tall);
+          ctx.fillRect(cellX, cellTop, cellW, cellTall);
           // Par-dessus, l'onde : plus clair en surpression, plus sombre en dépression.
           const wave = (net.p[cell] - meanPressure[offset + k]) / 1e5;
           const size = wave < 0 ? -wave : wave;
@@ -419,18 +465,20 @@
             const alpha = Math.sqrt(size) * 0.75;
             ctx.globalAlpha = alpha > 0.6 ? 0.6 : alpha;
             ctx.fillStyle = wave > 0 ? '#ffffff' : '#000000';
-            ctx.fillRect(cellX, top, cellW, tall);
+            ctx.fillRect(cellX, cellTop, cellW, cellTall);
             ctx.globalAlpha = 1;
           }
         }
         ctx.strokeStyle = wallStyles[Math.round(clamp(motion.heat * 15 * Math.exp(-section.from / 2.6), 0, 15))];
         ctx.lineWidth = 1.25;
         ctx.beginPath();
-        ctx.moveTo(x0, top);
-        ctx.lineTo(x1, top);
-        ctx.moveTo(x0, top + tall);
-        ctx.lineTo(x1, top + tall);
+        ctx.moveTo(x0, y - tallIn / 2);
+        ctx.lineTo(x1, y - tallOut / 2);
+        ctx.moveTo(x0, y + tallIn / 2);
+        ctx.lineTo(x1, y + tallOut / 2);
         ctx.stroke();
+        // Le ventre d'une chambre de détente porte son nom : les marches de part et d'autre sont ses deux cônes.
+        if (section.part === 'belly') label(ctx, theme, t('part.chamber'), (x0 + x1) / 2, top - 4);
       }
     }
     // La sortie : un petit bord, et rien après.
@@ -580,6 +628,55 @@
     ctx.stroke();
   }
 
+  /** Deux turbos : chacun son arbre, sa soupape, sa turbine au bout de son collecteur, son compresseur sur son chemin d'air. */
+  function drawTwinTurbos(ctx: CanvasRenderingContext2D, theme: Theme, view: Layout) {
+    const net = motion.gas.net;
+    const r = view.turbineR;
+    const compressorR = view.compressorR;
+    for (let b = 0; b < 2; b++) {
+      const x = view.turbineXs[b];
+      const ty = view.turbineYs[b];
+      const angle = b === 0 ? motion.turbineAngle : motion.turbine2Angle;
+      ctx.strokeStyle = theme.metal;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(x, ty - r);
+      ctx.lineTo(x, view.intakeY + compressorR);
+      ctx.stroke();
+      // La soupape : un contournement sous la volute, son clapet levé selon l'ouverture réelle. Des aubes n'en ont pas.
+      if (!config.variableGeometry) {
+        const gate = clamp(b === 0 ? motion.wastegate : motion.wastegate2, 0, 1);
+        const wgY = ty + r * 1.7;
+        ctx.strokeStyle = gate > 0.02 ? mix(theme.metal, theme.accent, gate) : theme.metal;
+        ctx.lineWidth = 1.5 + 2 * gate;
+        ctx.beginPath();
+        ctx.moveTo(x - r - 2, ty + 2);
+        ctx.bezierCurveTo(x - r, wgY, x + r, wgY, x + r + 2, ty + 2);
+        ctx.stroke();
+      }
+      ctx.fillStyle = heatedPart(theme.raised, motion.heat);
+      ctx.strokeStyle = theme.text;
+      ctx.lineWidth = 1.5;
+      voluteOutline(ctx, x, ty, r, 2.2);
+      ctx.fill();
+      ctx.stroke();
+      drawWheel(ctx, theme, x, ty, r, angle, 9, 0.5);
+      const outCell = b === 0 ? net.compressorCell : net.compressor2Cell;
+      ctx.fillStyle = motion.painter.airStyle(theme, net.temp[outCell], net.rho[outCell]);
+      ctx.strokeStyle = theme.text;
+      ctx.lineWidth = 1.5;
+      voluteOutline(ctx, x, view.intakeY, compressorR, -0.6);
+      ctx.fill();
+      ctx.stroke();
+      drawWheel(ctx, theme, x, view.intakeY, compressorR, -angle, 11, -0.55);
+    }
+    if (view.width > 420) {
+      ctx.font = '11px "Inter Tight", system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      label(ctx, theme, t('gas.twinTurbines'), (view.turbineXs[0] + view.turbineXs[1]) / 2, view.turbineYs[1] + r * 2.4 + 10);
+    }
+  }
+
   function drawTurbo(ctx: CanvasRenderingContext2D, theme: Theme, view: Layout) {
     const net = motion.gas.net;
     if (net.compressorCell < 0) return;
@@ -588,6 +685,10 @@
     const compressorR = view.compressorR;
     if (!net.hasTurbine) {
       drawCharger(ctx, theme, view);
+      return;
+    }
+    if (view.twin) {
+      drawTwinTurbos(ctx, theme, view);
       return;
     }
     // L'arbre : turbine et compresseur tournent ensemble, dans leur palier.
@@ -697,6 +798,19 @@
           ctx.beginPath();
           ctx.moveTo(view.intakeX[i], view.intakeYs[i]);
           ctx.lineTo(view.intakeX[i + 1], view.intakeYs[i + 1]);
+          ctx.stroke();
+        }
+      }
+      for (let p = 0; p < net.intakeParts2.length; p++) {
+        const part = net.intakeParts2[p];
+        ctx.lineWidth = view.partTall2[p];
+        for (let k = 0; k < part.count; k++) {
+          const cell = part.first + k;
+          const i = cell - net.intake2First;
+          ctx.strokeStyle = painter.airStyle(theme, net.temp[cell], net.rho[cell]);
+          ctx.beginPath();
+          ctx.moveTo(view.intakeX2[i], view.intakeYs2[i]);
+          ctx.lineTo(view.intakeX2[i + 1], view.intakeYs2[i + 1]);
           ctx.stroke();
         }
       }
@@ -878,7 +992,19 @@
   /** Les pièces de la chaîne du turbo, par-dessus l'air qu'elles contiennent. */
   function drawIntakeWalls(ctx: CanvasRenderingContext2D, theme: Theme, view: Layout) {
     const net = motion.gas.net;
-    const y = view.intakeY;
+    // Deux turbos : la boîte à air du premier chemin est un peu plus haut, celle du second à sa place.
+    const y = view.intakeYs[0];
+    if (view.twin && net.intakeParts2.length > 0) {
+      const second = net.intakeParts2[0];
+      const right2 = view.intakeX2[0];
+      const left2 = view.intakeX2[second.count];
+      const tall2 = view.partTall2[0];
+      ctx.strokeStyle = theme.metal;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.roundRect(left2, view.intakeYs2[0] - tall2 / 2, right2 - left2, tall2, 3);
+      ctx.stroke();
+    }
     // Boîte à air, avec sa cartouche plissée.
     const filter = net.intakeParts[0];
     const boxRight = view.intakeX[0];
@@ -912,44 +1038,46 @@
     ctx.fill();
     ctx.stroke();
 
-    // L'échangeur : son corps et ses ailettes. La température de l'air s'y lit de droite à gauche.
+    // L'échangeur : son corps et ses ailettes. La température de l'air s'y lit de droite à gauche. Sans lui, le tube seul.
+    const hasCooler = net.coolerCount > 0;
     const fins = Math.max(4, Math.floor((view.coolerX1 - view.coolerX0) / 5));
     const coolerTop = view.coolerY - view.coolerTall / 2;
-    ctx.strokeStyle = theme.metal;
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.roundRect(view.coolerX0, coolerTop, view.coolerX1 - view.coolerX0, view.coolerTall, 2);
-    ctx.stroke();
-    ctx.globalAlpha = 0.45;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (let i = 1; i < fins; i++) {
-      const fx = view.coolerX0 + ((view.coolerX1 - view.coolerX0) * i) / fins;
-      ctx.moveTo(fx, coolerTop + 1);
-      ctx.lineTo(fx, coolerTop + view.coolerTall - 1);
+    if (hasCooler) {
+      ctx.strokeStyle = theme.metal;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.roundRect(view.coolerX0, coolerTop, view.coolerX1 - view.coolerX0, view.coolerTall, 2);
+      ctx.stroke();
+      ctx.globalAlpha = 0.45;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let i = 1; i < fins; i++) {
+        const fx = view.coolerX0 + ((view.coolerX1 - view.coolerX0) * i) / fins;
+        ctx.moveTo(fx, coolerTop + 1);
+        ctx.lineTo(fx, coolerTop + view.coolerTall - 1);
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
     }
-    ctx.stroke();
-    ctx.globalAlpha = 1;
 
     if (view.width > 420) {
       ctx.font = '11px "Inter Tight", system-ui, sans-serif';
       ctx.textAlign = 'center';
       const coolerBelow = coolerTop + view.coolerTall + 11;
-      label(ctx, theme, t('gas.intercooler'), (view.coolerX0 + view.coolerX1) / 2, coolerBelow);
+      if (hasCooler) label(ctx, theme, t('gas.intercooler'), (view.coolerX0 + view.coolerX1) / 2, coolerBelow);
       label(ctx, theme, t('gas.airbox'), (boxLeft + boxRight) / 2, y + boxTall / 2 + 12);
       if (view.width > 620) {
         label(ctx, theme, t('gas.maf'), mafX, y - view.tube * 0.95 - 4);
-        // Les températures, de part et d'autre de l'échangeur, et les tubes qui les portent.
-        const hot = Math.round(net.temp[net.coolerInCell] - 273.15);
-        const cold = Math.round(net.temp[net.coolerOutCell] - 273.15);
+        // Les températures, de part et d'autre de l'échangeur, et les tubes qui les portent. Sans échangeur, une seule : celle de la charge.
+        const coldCell = net.intakeParts.find((part) => part.kind === 'cold') ?? net.intakeParts[net.intakeParts.length - 1];
+        const hot = Math.round(net.temp[hasCooler ? net.coolerInCell : coldCell.first] - 273.15);
         ctx.textAlign = 'right';
         label(ctx, theme, t('gas.tempOut', { deg: hot }), view.coolerX1 - 3, coolerTop - 3);
         label(ctx, theme, t('gas.chargeHot'), view.coolerX1 - 3, coolerTop - 15);
         ctx.textAlign = 'left';
-        label(ctx, theme, t('gas.tempOut', { deg: cold }), view.coolerX0 + 2, coolerTop - 3);
-        const coldCell = net.intakeParts[4];
+        if (hasCooler) label(ctx, theme, t('gas.tempOut', { deg: Math.round(net.temp[net.coolerOutCell] - 273.15) }), view.coolerX0 + 2, coolerTop - 3);
         const coldAt = coldCell.first - net.intakeFirst + (coldCell.count >> 2);
-        label(ctx, theme, t('gas.chargeCold'), view.intakeX[coldAt] - view.tube * 0.5 - 2 > view.plenumRight ? view.plenumRight + 2 : view.plenumRight + 2, coolerBelow);
+        if (hasCooler) label(ctx, theme, t('gas.chargeCold'), view.intakeX[coldAt] - view.tube * 0.5 - 2 > view.plenumRight ? view.plenumRight + 2 : view.plenumRight + 2, coolerBelow);
         if (net.releaseCell >= 0 && config.turboRelease !== 'flutter') {
           const i = net.releaseCell - net.intakeFirst;
           label(ctx, theme, t('gas.blowoff'), view.intakeX[i] + view.tube * 2.2, view.intakeYs[i] - 8);
@@ -1001,7 +1129,7 @@
       ctx.strokeStyle = theme.lineStrong;
       ctx.lineWidth = 1;
       ctx.beginPath();
-      for (const cell of [net.compressorCell, net.coolerFirst, net.coolerOutCell, net.intakeFirst + net.intakeCount - 1]) {
+      for (const cell of net.coolerCount > 0 ? [net.compressorCell, net.coolerFirst, net.coolerOutCell, net.intakeFirst + net.intakeCount - 1] : [net.compressorCell, net.intakeFirst + net.intakeCount - 1]) {
         const tx = view.traceX[cell - net.intakeFirst];
         ctx.moveTo(tx, view.intakeTraceY - 3);
         ctx.lineTo(tx, view.intakeTraceY + 3);
@@ -1013,7 +1141,7 @@
     const now = performance.now();
     if (now - readoutAt > 200) {
       readoutAt = now;
-      readoutLine = t('gas.manifold', { bar: fixed(net.zP[net.zoneJoin] / 1e5, 2) });
+      readoutLine = t('gas.manifold', { bar: fixed(net.zP[net.hasTwin ? 0 : net.zoneJoin] / 1e5, 2) });
       readoutPlenum = t('gas.plenum', { bar: fixed(net.zP[net.zonePlenum] / 1e5, 2) });
       if (net.compressorCell >= 0) readoutCharge = t('gas.charge', { bar: fixed(net.p[net.intakeFirst + net.intakeCount - 1] / 1e5, 2) });
     }
@@ -1101,9 +1229,10 @@
 
   onMount(() => animate(canvas, draw));
 
-  const dual = $derived(config.layout !== 'inline' && !isRotary(config) && config.cylinders >= 4);
+  // Deux collecteurs sur deux culasses : un VR n'en a qu'une (`architecture.ts`).
+  const dual = $derived(!isRotary(config) && architectureOf(config).heads === 2 && config.cylinders >= 4);
   const caption = $derived(
-    config.electric ? '' : [t(`gas.line.${config.exhaust}`), ...(dual ? [t('gas.banks')] : []), ...(config.aspiration === 'turbo' ? [t('gas.turboPulses')] : []), ...(config.aspiration === 'supercharger' ? [t('gas.chargerNote')] : []), ...(config.aspiration === 'turbo' && config.fuel === 'petrol' && config.antiLag === 'air' ? [t('gas.antiLagAir')] : []), t('gas.legend', { speed: speedLabel(slow) })].join(' '),
+    config.electric ? '' : [t(`gas.line.${config.exhaust}`), ...(dual ? [t('gas.banks')] : []), ...(config.aspiration === 'turbo' ? [t(config.intercooler === 'none' ? 'gas.turboPulses.noCooler' : 'gas.turboPulses')] : []), ...(config.aspiration === 'supercharger' ? [t('gas.chargerNote')] : []), ...(config.aspiration === 'turbo' && config.fuel === 'petrol' && config.antiLag === 'air' ? [t('gas.antiLagAir')] : []), t('gas.legend', { speed: speedLabel(slow) })].join(' '),
   );
 </script>
 

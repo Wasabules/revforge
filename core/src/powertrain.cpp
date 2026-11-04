@@ -4,8 +4,19 @@
 #include <cmath>
 
 #include "revforge/air_filter.hpp"
+#include "revforge/atmosphere.hpp"
+#include "revforge/cam.hpp"
 #include "revforge/carburetor.hpp"
+#include "revforge/combustion.hpp"
+#include "revforge/charge_air.hpp"
 #include "revforge/driving_model.hpp"
+#include "revforge/ecu.hpp"
+#include "revforge/injection.hpp"
+#include "revforge/particulate_filter.hpp"
+#include "revforge/valve_float.hpp"
+#include "revforge/twin_turbo.hpp"
+#include "revforge/two_stroke.hpp"
+#include "revforge/tyre.hpp"
 #include "revforge/valvetrain.hpp"
 
 namespace revforge {
@@ -34,6 +45,12 @@ constexpr double kRatedShare = 0.88;
 constexpr double kCarburetorVolumetric = 0.9;  // remplissage au pic de couple : c'est lui qui fixe le débit au col
 // Sur un rotatif : ni distribution ni bielles, mais des segments d'apex. Ramené au volume balayé, un quart de frottements en moins (supposé).
 constexpr double kRotaryFrictionShare = 0.75;
+// Sur un deux-temps, les frottements d'un tour sont ceux d'un quatre-temps de même cylindrée, sans distribution ni pompage par le
+// cylindre : un quart de moins (supposé, la distribution compte pour 20 à 30 % chez Heywood). Ramenés à son volume balayé, double,
+// ce sont 0,75/2. Le frein moteur ne vient que du carter qui pompe contre le papillon, le cylindre restant ouvert sur ses lumières :
+// la moitié de celui d'un quatre-temps de même cylindrée (supposé), soit 0,5/2.
+constexpr double kTwoStrokeFrictionShare = 0.375;
+constexpr double kTwoStrokePumpingShare = 0.25;
 
 constexpr double kElectricTorqueNm = 350.0;
 constexpr double kElectricPowerW = 190000.0;
@@ -66,20 +83,47 @@ double naturalBmep(const EngineConfig& e) {
 double carburetorBrakeShare(const EngineConfig& e, double rpm, double shape) {
     const CarburetorSpec carb = carburetorSpecOf(e);
     constexpr double kAtmosphereBar = 1e5;
-    const double drop = carburetorDropPa(carb, liters(e) * 1e-3, rpm, kCarburetorVolumetric * shape) / kAtmosphereBar;
+    // La perte, en part de l'atmosphère du jour, d'où part l'air.
+    const double drop = carburetorDropPa(carb, liters(e) * 1e-3, rpm, kCarburetorVolumetric * shape) / (kAtmosphereBar * ambientAirOf(e).pressureRatio);
     const double k = rpm / 1000.0;
     const double friction = (0.9 + 0.12 * k + 0.03 * k * k) * (isRotary(e) ? kRotaryFrictionShare : 1.0);
     const double brake = naturalBmep(e) * shape;
     return std::max(((brake + friction) * (1.0 - drop) - friction - drop) / brake, 0.3);
 }
 
+/**
+ * La came change la pression moyenne indiquée (voir cam.hpp) ; les frottements restent. Le même calcul que pour le
+ * carburateur, sur l'indiqué : ce que le cycle gagne ou perd, moins ce qui frotte toujours.
+ */
+double camBrakeShare(const EngineConfig& e, double rpm, double shape) {
+    const double ratio = camTorqueRatio(e, rpm);
+    const double k = rpm / 1000.0;
+    const double friction = (0.9 + 0.12 * k + 0.03 * k * k + (e.burnsDiesel() ? 0.3 : 0.0)) * (isRotary(e) ? kRotaryFrictionShare : 1.0);
+    const double brake = naturalBmep(e) * shape;
+    return std::max(((brake + friction) * ratio - friction) / brake, 0.1);
+}
+
+/**
+ * Le couple indiqué d'un deux-temps à pleine charge (bar de son volume balayé en deux tours) : l'air frais que son cycle enferme
+ * (`twoStrokeIndicatedBar`). Le carburateur retire de la densité à l'air qui entre dans le carter, et son travail de pompage.
+ */
+double twoStrokeIndicated(const EngineConfig& e, double rpm) {
+    const double indicated = twoStrokeIndicatedBar(e, rpm);
+    if (fuelSystemOf(e) == FuelSystem::Injection) return indicated;
+    const CarburetorSpec carb = carburetorSpecOf(e);
+    const double drop = carburetorDropPa(carb, liters(e) * 1e-3, rpm, twoStrokeFullLoad(e, rpm).delivery) / 1e5;
+    return indicated * (1.0 - drop) - drop;
+}
+
 /** La respiration selon le régime : 1 au pic de couple. */
 double breathing(const EngineConfig& e, double rpm) {
+    // Un deux-temps : ce que son carter fait entrer, ramené au remplissage du quatre-temps de référence pour les débits.
+    if (e.twoStroke()) return twoStrokeFullLoad(e, rpm).delivery / kVolumetric;
     const double redline = static_cast<double>(e.redlineRpm);
     // Un moteur suralimenté, turbo ou compresseur, a des cames plus sages : son couple culmine un peu plus tôt.
     double peakAt = (e.aspiration == Aspiration::Natural ? 0.62 : 0.6) * redline;
-    // Moins de section, un gaz plus rapide : l'admission s'accorde plus bas (voir « Le simple arbre »).
-    if (e.valvetrain() == Camshaft::Sohc) peakAt *= sohcTuningRatio(static_cast<double>(e.boreMm));
+    // Moins de section, un gaz plus rapide : l'admission s'accorde plus bas (voir « Le simple arbre »). Les culbuteurs aussi ont deux soupapes.
+    if (twoValves(e.valvetrain())) peakAt *= sohcTuningRatio(static_cast<double>(e.boreMm));
     double shape;
     if (rpm <= peakAt) {
         const double below = 1.0 - rpm / peakAt;
@@ -94,7 +138,14 @@ double breathing(const EngineConfig& e, double rpm) {
         const double excess = std::max(pistonSpeed - kPistonSpeedLimit, 0.0);
         shape *= std::max(1.0 - 0.012 * excess * excess, 0.55);
         // Deux soupapes au lieu de quatre : le gaz qui passe mal, calculé depuis la section et la vitesse du piston.
-        if (e.valvetrain() == Camshaft::Sohc) shape *= sohcBreathingRatio(static_cast<double>(e.boreMm), static_cast<double>(e.strokeMm()), rpm);
+        // L'indice de Mach se compte dans l'air du jour : 343 m/s à 20 °C.
+        if (twoValves(e.valvetrain())) shape *= sohcBreathingRatio(static_cast<double>(e.boreMm), static_cast<double>(e.strokeMm()), rpm, ambientAirOf(e).soundSpeedMs);
+        // Les culbuteurs et des ressorts raides frottent plus sur la came : c'est autant de couple au frein en moins.
+        const double cam = valvetrainBrakeShare(e, rpm);
+        if (cam < 1.0) shape *= cam;
+        // Au-delà de l'affolement, l'admission ferme en retard et le piston repousse la charge : exactement 1 en dessous.
+        const double kept = valveFloatShare(e, rpm);
+        if (kept < 1.0) shape *= kept;
     }
     // Une ligne libre gagne en haut, mais perd la contre-pression qui aide en bas.
     const double fraction = clamp(rpm / redline, 0.0, 1.0);
@@ -102,12 +153,33 @@ double breathing(const EngineConfig& e, double rpm) {
         case Exhaust::Stock: shape *= 0.96 - 0.04 * fraction; break;
         case Exhaust::Sport: break;
         case Exhaust::Straight: shape *= 1.0 + 0.04 * fraction - 0.08 * (1.0 - fraction) * (1.0 - fraction); break;
+        // Une chambre sur un quatre-temps (la CLI seule le permet) : les soupapes ferment le cylindre avant que l'onde de retour n'y
+        // repousse quoi que ce soit. Reste un tube libre jusqu'à la pointe et un silencieux garni : la respiration d'une ligne sport.
+        case Exhaust::Expansion: break;
         case Exhaust::MufflerDelete: shape *= 1.0 + 0.02 * fraction - 0.04 * (1.0 - fraction) * (1.0 - fraction); break;
         case Exhaust::ResonatorDelete: shape *= 0.97 - 0.03 * fraction; break;
         case Exhaust::Quiet: shape *= 0.95 - 0.05 * fraction; break;
     }
-    if (fuelSystemOf(e) != FuelSystem::Injection) shape *= carburetorBrakeShare(e, rpm, shape);
+    if (hasCarburetor(e)) shape *= carburetorBrakeShare(e, rpm, shape);
+    if (!camIsStock(e)) shape *= camBrakeShare(e, rpm, shape);
     return shape;
+}
+
+/** Le même moteur avec sa came d'origine : le turbo, le compresseur et la boîte restent ceux qu'il avait. */
+EngineConfig withStockCam(const EngineConfig& e) {
+    EngineConfig stock = e;
+    stock.camDurationDeg = 0;
+    stock.camLiftMm = 0.0f;
+    stock.lobeSeparationDeg = 0;
+    stock.valveTiming = ValveTiming::Fixed;
+    return stock;
+}
+
+/** La came d'origine, ou celle-ci : à ne calculer qu'une fois s'il n'y a rien à changer. */
+const EngineConfig& sizedEngine(const EngineConfig& e, EngineConfig& scratch) {
+    if (camIsStock(e)) return e;
+    scratch = withStockCam(e);
+    return scratch;
 }
 
 }  // namespace
@@ -241,8 +313,11 @@ CarAcoustics carAcousticsOf(const CarConfig& car, const EngineProfile& profile) 
 
 EngineProfile Powertrain::profile() const {
     EngineProfile p = electric ? electricProfile() : engine.toProfile();
+    // Un twincharger a aussi un compresseur, avec ses poches : son son en dépend (twin_turbo.cpp).
+    if (!electric && usesTwinTurbo(engine) && engine.turboLayout == TurboLayout::Twincharger) twinchargerProfile(*this, p);
     p.exhaustScale = exhaustScaleOf(car);
     p.car = carAcousticsOf(car, p);
+    p.car.air = airAcousticsOf(ambientAirOf(engine));
     return p;
 }
 
@@ -257,13 +332,23 @@ Powertrain referencePowertrain() {
 }
 
 TurboSpec turboSpecOf(const Powertrain& p) {
-    TurboSpec spec = turboSpecFor(p.engine, breathing(p.engine, 0.88 * static_cast<double>(p.engine.redlineRpm)));
+    // Dimensionné dans l'air de référence et sur la came d'origine : en altitude, par grand froid ou avec une autre came, c'est
+    // le même turbo (turboSpecFor ne lit pas la came).
+    EngineConfig scratch;
+    const EngineConfig sized = withReferenceAir(sizedEngine(p.engine, scratch));
+    TurboSpec spec = turboSpecFor(sized, breathing(sized, 0.88 * static_cast<double>(p.engine.redlineRpm)));
     // Le turbo reste le même, dimensionné sur la voiture d'origine : seul change l'air qu'il reçoit.
     if (p.engine.airFilter != AirFilter::Stock) {
         spec.filterDrop *= airFilterDropShare(p.engine.airFilter);
         spec.inletFilter = p.engine.airFilter;
         spec.inletPlacement = placementOf(p.car);
     }
+    const AmbientAir air = ambientAirOf(p.engine);
+    spec.ambientPa = air.pressurePa;
+    spec.ambientK = air.temperatureK;
+    spec.pipe.ambientK = air.temperatureK;
+    // De même pour la carte du calculateur : elle ne change que le gaz qu'il reçoit.
+    spec.ecu = ecuMapExhaust(p.engine);
     return spec;
 }
 
@@ -298,19 +383,56 @@ double withAirFilter(const Powertrain& p, double rpm, double boost, double brake
     return (brakeNm + friction) * fill - friction + (stockDrop - drop) * liters(e) * 1e-3 / (4.0 * kPi);
 }
 
+/**
+ * L'air du jour : l'air piégé change, les frottements restent. Dans l'air de référence, rien ne s'exécute : le couple de
+ * référence est celui que calibrent tous les moteurs réels de la doc.
+ */
+double withAmbientAir(const Powertrain& p, double rpm, double brakeNm, double boost) {
+    const double share = ambientChargeShare(p, rpm, boost);
+    if (share == 1.0) return brakeNm;
+    const double friction = frictionTorqueNm(p, rpm);
+    return (brakeNm + friction) * share - friction;
+}
+
 }  // namespace
 
+Powertrain withReferenceAir(const Powertrain& p) {
+    Powertrain out = p;
+    out.engine = withReferenceAir(p.engine);
+    return out;
+}
+
+double ambientChargeShare(const Powertrain& p, double rpm, double boost) {
+    if (p.electric) return 1.0;
+    const EngineConfig& e = p.engine;
+    const AmbientAir air = ambientAirOf(e);
+    if (air.reference()) return 1.0;
+    // Le compartiment moteur réchauffe d'autant l'air de n'importe quel jour.
+    const double rise = airFilterRiseK(e.airFilter, placementOf(p.car), ratedRegime(e, rpm));
+    switch (e.aspiration) {
+        case Aspiration::Turbo:
+            return turboAmbientChargeShare(static_cast<double>(e.boostBar), boost, rise, clamp(ratedRegime(e, rpm), 0.0, 1.5), air.pressurePa, air.temperatureK);
+        case Aspiration::Supercharger:
+            return superchargerAmbientChargeShare(superchargerSpecOf(p), rpm, breathing(e, rpm), boost);
+        case Aspiration::Natural: break;
+    }
+    return trappedAirShare(air.pressureRatio, kInletK + rise, air.temperatureK + rise);
+}
+
 double intakeAirK(const Powertrain& p, double rpm) {
-    if (p.electric) return kInletK;
-    return kInletK + airFilterRiseK(p.engine.airFilter, placementOf(p.car), ratedRegime(p.engine, rpm));
+    // L'air du jour : 293 K à 20 °C, comme l'air de référence.
+    const double ambientK = ambientAirOf(p.engine).temperatureK;
+    if (p.electric) return ambientK;
+    return ambientK + airFilterRiseK(p.engine.airFilter, placementOf(p.car), ratedRegime(p.engine, rpm));
 }
 
 double intakeDropPa(const Powertrain& p, double rpm) {
     if (p.electric) return 0.0;
     const EngineConfig& e = p.engine;
     if (e.aspiration == Aspiration::Turbo) {
+        if (usesTwinTurbo(e)) return twinIntakeDropPa(p, rpm);
         const TurboSpec spec = turboSpecOf(p);
-        const double flow = turboSteady(spec, rpm, breathing(e, rpm)).flow;
+        const double flow = fullLoadTurboSteady(p, rpm).flow;
         return spec.filterDrop * flow * flow;
     }
     if (e.aspiration == Aspiration::Supercharger) {
@@ -318,21 +440,64 @@ double intakeDropPa(const Powertrain& p, double rpm) {
         const double flow = superchargerSteady(spec, rpm, breathing(e, rpm)).flow;
         return spec.filterDrop * flow * flow;
     }
-    const double flow = naturalFlowKgS(e, rpm) * kInletK / intakeAirK(p, rpm);
+    // Le débit de l'air de référence, puis ce qu'en laisse l'air du jour.
+    double flow = naturalFlowKgS(e, rpm) * kInletK / (kInletK + airFilterRiseK(e.airFilter, placementOf(p.car), ratedRegime(e, rpm)));
+    if (!referenceAirOf(e)) flow *= ambientChargeShare(p, rpm, 0.0);
     return naturalFilterCoefficient(liters(e) * 1e-3, naturalFlowKgS(e, kRatedShare * static_cast<double>(e.redlineRpm))) * flow * flow * airFilterDropShare(e.airFilter);
 }
 
 double breathingOf(const Powertrain& p, double rpm) { return breathing(p.engine, rpm); }
 
+namespace {
+
+/**
+ * Un autre échangeur sur un compresseur mécanique, ou aucun : le compresseur reste celui de l'échangeur d'origine, seuls changent
+ * le chemin de l'air et ce qui le refroidit (charge_air.cpp). La sortie du compresseur au nominal demande son équilibre : trop lent
+ * pour chaque pas de `fullLoadTorqueNm`, on garde la dernière.
+ */
+struct ChargerHotMemo {
+    bool valid = false;
+    EngineConfig engine;
+    EnginePlacement placement = EnginePlacement::Front;
+    double hotK = 293.0;
+};
+ChargerHotMemo g_chargerHot;
+
+void withChargeCooler(const Powertrain& p, SuperchargerSpec& spec) {
+    const double ratedRpm = kSuperchargerRatedShare * static_cast<double>(p.engine.redlineRpm);
+    const EnginePlacement placement = placementOf(p.car);
+    if (!g_chargerHot.valid || !(g_chargerHot.engine == p.engine) || g_chargerHot.placement != placement) {
+        g_chargerHot.hotK = superchargerSteady(spec, ratedRpm, breathing(p.engine, ratedRpm)).outK;
+        g_chargerHot.engine = p.engine;
+        g_chargerHot.placement = placement;
+        g_chargerHot.valid = true;
+    }
+    // Le conduit d'un 2 L fait 55 mm, comme celui du turbo.
+    const double area = 0.7854 * 0.055 * 0.055 * spec.displacementM3 / 0.002;
+    applyChargePath(p.engine.intercooler, false, area, spec.chargeVolumeM3, spec.coolerDrop);
+    spec.cooler = chargeCoolerFor(p.engine.intercooler, spec.ratedFlow, g_chargerHot.hotK);
+}
+
+}  // namespace
+
 SuperchargerSpec superchargerSpecOf(const Powertrain& p) {
     const double redline = static_cast<double>(p.engine.redlineRpm);
-    SuperchargerSpec spec = superchargerSpecFor(p.engine, breathing(p.engine, kVolumetricSizingShare * redline), breathing(p.engine, kSuperchargerRatedShare * redline));
+    // Comme le turbo : dimensionné dans l'air de référence, sur la came d'origine.
+    EngineConfig scratch;
+    const EngineConfig sized = withReferenceAir(sizedEngine(p.engine, scratch));
+    SuperchargerSpec spec = superchargerSpecFor(sized, breathing(sized, kVolumetricSizingShare * redline), breathing(sized, kSuperchargerRatedShare * redline));
     // Comme le turbo : le compresseur reste celui du papier d'origine, seul change l'air qu'il reçoit.
     if (p.engine.airFilter != AirFilter::Stock) {
         spec.filterDrop *= airFilterDropShare(p.engine.airFilter);
         spec.inletFilter = p.engine.airFilter;
         spec.inletPlacement = placementOf(p.car);
     }
+    const AmbientAir air = ambientAirOf(p.engine);
+    spec.ambientPa = air.pressurePa;
+    spec.ambientK = air.temperatureK;
+    if (p.engine.intercooler != Intercooler::AirToAir) withChargeCooler(p, spec);
+    // Finitions : l'air-air est un faisceau ε-NTU, dimensionné sur le débit nominal. Sa température d'entrée n'y entre pas.
+    else spec.cooler = chargeCoolerFor(Intercooler::AirToAir, spec.ratedFlow, 0.0);
     return spec;
 }
 
@@ -341,10 +506,84 @@ double superchargerDriveNm(const Powertrain& p, double rpm, double fill) {
     return superchargerSteady(superchargerSpecOf(p), rpm, breathing(p.engine, rpm), fill).driveNm;
 }
 
+TurboSteady fullLoadTurboSteady(const Powertrain& p, double rpm) {
+    TurboSpec spec = turboSpecOf(p);
+    const EngineConfig& e = p.engine;
+    if (e.boostControl == BoostControl::Spring || ambientAirOf(e).reference()) return turboSteady(spec, rpm, breathing(e, rpm));
+    // Le calculateur vise la pression absolue de sa calibration (`BoostControlSpec::calibratedPa`, dans l'air de référence) : en
+    // altitude, autant de plus au-dessus de l'air du jour. Là où les roues atteindraient leur vitesse limite, `turboSteady` ouvre
+    // la soupape juste assez pour les y tenir, comme la protection de la conduite (`protectPa`, et `TurboCharger::step`).
+    const double bar = static_cast<double>(e.boostBar);
+    spec.targetBar = (kReferencePa + bar * 1e5 - spec.ambientPa) / 1e5;
+    TurboSteady steady = turboSteady(spec, rpm, breathing(e, rpm));
+    steady.boost = bar > 0.0 ? (steady.chargePa - spec.ambientPa) / (bar * 1e5) : 0.0;
+    return steady;
+}
+
 double steadyBoost(const Powertrain& p, double rpm) {
     if (p.electric || p.engine.aspiration == Aspiration::Natural) return 0.0;
     if (p.engine.aspiration == Aspiration::Supercharger) return superchargerSteady(superchargerSpecOf(p), rpm, breathing(p.engine, rpm)).boost;
-    return turboSteady(turboSpecOf(p), rpm, breathing(p.engine, rpm)).boost;
+    if (usesTwinTurbo(p.engine)) return twinSteadyBoost(p, rpm);
+    return fullLoadTurboSteady(p, rpm).boost;
+}
+
+namespace {
+
+/**
+ * Le couple que donne l'air admis, brûlé comme le moteur d'origine : taux de compression d'origine, essence de référence,
+ * carte d'origine du calculateur, et l'injection d'origine (indirecte, ou pompe mécanique sur un diesel).
+ */
+double airTorqueNm(const Powertrain& p, double rpm, double boost) {
+    const EngineConfig& e = p.engine;
+    // Sous le ralenti, la combustion devient instable : le couple s'effondre.
+    const double idle = idleRpmOf(p);
+    const double under = rpm < idle ? (rpm / idle) * (rpm / idle) : 1.0;
+    // Tout ce qui suit est calibré dans l'air de référence ; l'air du jour passe ensuite par `withAmbientAir`.
+    // Un deux-temps : le cycle intégré donne l'air frais enfermé, donc le couple indiqué ; les frottements se retranchent.
+    if (e.twoStroke()) {
+        const double natural = (bmepToNm(e, twoStrokeIndicated(e, rpm)) - frictionTorqueNm(p, rpm)) * under;
+        return withAmbientAir(p, rpm, e.airFilter == AirFilter::Stock ? natural : withAirFilter(p, rpm, boost, natural), boost);
+    }
+    if (e.aspiration == Aspiration::Natural) {
+        const double natural = bmepToNm(e, naturalBmep(e)) * breathing(e, rpm) * under;
+        return withAmbientAir(p, rpm, e.airFilter == AirFilter::Stock ? natural : withAirFilter(p, rpm, boost, natural), boost);
+    }
+    const double base = bmepToNm(e, naturalBmep(e) * kTurboCompressionLoss);
+    // Le compresseur : l'air admis, tel qu'il sort de son calcul. Ce qu'il prend au vilebrequin se compte à part, comme le pompage.
+    if (e.aspiration == Aspiration::Supercharger) {
+        const double shape = breathing(e, rpm);
+        return withAmbientAir(p, rpm, base * shape * superchargerAirShare(superchargerSpecOf(p), rpm, shape, boost) * under, boost);
+    }
+    const double gain = kBoostEfficiency * static_cast<double>(e.boostBar);
+    const double charged = std::min(base * breathing(e, rpm) * (1.0 + gain * boost), base * (1.0 + gain) * kPlateauShare) * under;
+    return withAmbientAir(p, rpm, e.airFilter == AirFilter::Stock ? charged : withAirFilter(p, rpm, boost, charged), boost);
+}
+
+/** La pompe haute pression et le filtre à particules : ils ne changent rien sans injection directe ni filtre. */
+bool injectionChanges(const Powertrain& p) { return !p.electric && (directInjected(p.engine) || particulateFiltered(p.engine)); }
+
+/** Ce que coûtent à pleine charge la pompe haute pression et le filtre, à sa suie moyenne (Nm). */
+double injectionLossNm(const Powertrain& p, double rpm, double boost) {
+    return directPumpTorqueNm(p, rpm, 1.0, boost) + filterPumpingTorqueNm(p, rpm, 1.0, boost, meanSootG(p));
+}
+
+}  // namespace
+
+/** La charge d'un cylindre à pleine charge (mg de gazole par cycle), à la limite de fumée de la pompe mécanique. */
+DieselPoint dieselPointOf(const Powertrain& p, double rpm, double load, double boost) {
+    const EngineConfig& e = p.engine;
+    DieselPoint point;
+    point.rpm = rpm;
+    point.load = load;
+    point.redlineRpm = static_cast<double>(e.redlineRpm);
+    point.cylinderM3 = static_cast<double>(e.displacementCc) * 1e-6 / std::max(e.cylinders, 1);
+    point.strokeM = static_cast<double>(e.strokeMm()) / 1000.0;
+    point.intakeK = intakeAirK(p, rpm);
+    point.intakeBar = e.aspiration == Aspiration::Natural ? 1.0 : 1.0 + static_cast<double>(e.boostBar) * boost;
+    const double airMg = kInletDensity * point.intakeBar * point.cylinderM3 * kVolumetric * 1e6;
+    point.fullFuelMg = airMg / (14.5 * smokeLimitLambda(dieselInjectionBar(false, rpm, point.redlineRpm, 1.0)));
+    point.commonRail = commonRailed(e);
+    return point;
 }
 
 double fullLoadTorqueNm(const Powertrain& p, double rpm, double boost) {
@@ -353,35 +592,73 @@ double fullLoadTorqueNm(const Powertrain& p, double rpm, double boost) {
         return std::min(kElectricTorqueNm, kElectricPowerW / omega);
     }
     const EngineConfig& e = p.engine;
-    // Sous le ralenti, la combustion devient instable : le couple s'effondre.
-    const double idle = idleRpmOf(p);
-    const double under = rpm < idle ? (rpm / idle) * (rpm / idle) : 1.0;
-    if (e.aspiration == Aspiration::Natural) {
-        const double natural = bmepToNm(e, naturalBmep(e)) * breathing(e, rpm) * under;
-        return e.airFilter == AirFilter::Stock ? natural : withAirFilter(p, rpm, boost, natural);
-    }
-    const double base = bmepToNm(e, naturalBmep(e) * kTurboCompressionLoss);
-    // Le compresseur : l'air admis, tel qu'il sort de son calcul. Ce qu'il prend au vilebrequin se compte à part, comme le pompage.
-    if (e.aspiration == Aspiration::Supercharger) {
-        const double shape = breathing(e, rpm);
-        return base * shape * superchargerAirShare(superchargerSpecOf(p), rpm, shape, boost) * under;
-    }
-    const double gain = kBoostEfficiency * static_cast<double>(e.boostBar);
-    const double charged = std::min(base * breathing(e, rpm) * (1.0 + gain * boost), base * (1.0 + gain) * kPlateauShare) * under;
-    return e.airFilter == AirFilter::Stock ? charged : withAirFilter(p, rpm, boost, charged);
+    const bool stockBurn = combustionStock(e);
+    const bool stockMap = !ecuMapTuned(e);
+    const bool direct = directInjected(e);
+    const bool rail = commonRailed(e);
+    if (stockBurn && stockMap && !direct && !rail) return airTorqueNm(p, rpm, boost);
+    // Le même air, brûlé autrement. Seul le travail des gaz en dépend : les frottements restent. Chaque part est indépendante et
+    // vaut exactement la sienne quand les autres sont d'origine :
+    // - la combustion : le taux de compression change le rendement, le carburant l'énergie par kilogramme d'air (« La combustion ») ;
+    // - la carte du calculateur : l'écart d'avance et de richesse à ce carburant (ecu.cpp) ;
+    // - l'injection directe : la charge refroidie par le carburant est plus dense (injection.cpp) ;
+    // - la rampe commune : elle brûle plus de gazole avant de fumer, et le brûle plus vite.
+    const double friction = frictionTorqueNm(p, rpm);
+    double share = 1.0;
+    if (!stockBurn) share *= combustionTorqueShare(e);
+    if (!stockMap) share *= ecuFullLoadShare(e);
+    if (direct) share *= 1.0 + directFillGain(rpm, static_cast<double>(e.redlineRpm), intakeAirK(p, rpm), injectedFuelOf(e));
+    if (rail) share *= commonRailTorqueShare(dieselPointOf(p, rpm, 1.0, boost));
+    return (airTorqueNm(p, rpm, boost) + friction) * share - friction;
 }
 
-double torqueCurveNm(const Powertrain& p, double rpm) {
-    if (p.electric || p.engine.aspiration == Aspiration::Natural) return fullLoadTorqueNm(p, rpm, 0.0);
+namespace {
+
+double plainTorqueCurveNm(const Powertrain& p, double rpm) {
+    // Le cliquetis : à pleine charge stabilisée, l'avance que laisse le capteur retire sa part du travail des gaz. Sans réglage de la
+    // combustion, la carte d'origine reste sous sa limite : rien ne change.
+    const KnockMap* knock = p.electric ? nullptr : knockMapOf(p);
+    const auto full = [&](double boost) {
+        const double torque = fullLoadTorqueNm(p, rpm, boost);
+        if (knock == nullptr) return torque;
+        const double friction = frictionTorqueNm(p, rpm);
+        return (torque + friction) * knock->steadyTorqueShare(rpm) - friction;
+    };
+    // La pompe haute pression et le filtre à particules se paient au vilebrequin, comme l'entraînement d'un compresseur.
+    const bool injection = injectionChanges(p);
+    if (p.electric || p.engine.aspiration == Aspiration::Natural) {
+        const double torque = full(0.0);
+        return injection ? torque - injectionLossNm(p, rpm, 0.0) : torque;
+    }
     // Pas d'arbre à lancer : la pression d'équilibre, moins ce que coûte l'entraînement.
     if (p.engine.aspiration == Aspiration::Supercharger) {
         const SuperchargerSteady steady = superchargerSteady(superchargerSpecOf(p), rpm, breathing(p.engine, rpm));
-        return fullLoadTorqueNm(p, rpm, steady.boost) - steady.driveNm;
+        const double torque = full(steady.boost) - steady.driveNm;
+        return injection ? torque - injectionLossNm(p, rpm, steady.boost) : torque;
     }
     // L'arbre stabilisé : la courbe de la fiche ne dit rien du retard. La contre-pression, elle, se paie toujours.
+    // Deux arbres (twin_turbo.cpp) : leur équilibre, le même cliquetis et les mêmes pertes de l'injection qu'un turbo simple.
+    if (usesTwinTurbo(p.engine)) {
+        const TwinTurboSteady steady = twinTurboSteady(twinTurboSpecOf(p), rpm, breathingOf(p, rpm));
+        const double torque = full(steady.boost) - steady.backPressureNm - steady.chargerNm;
+        return injection ? torque - injectionLossNm(p, rpm, steady.boost) : torque;
+    }
     const TurboSpec spec = turboSpecOf(p);
-    const TurboSteady steady = turboSteady(spec, rpm, breathing(p.engine, rpm));
-    return fullLoadTorqueNm(p, rpm, steady.boost) - turboBackPressureNm(spec, steady.chargePa, steady.turbineInPa, steady.flow, 1.0);
+    const TurboSteady steady = fullLoadTurboSteady(p, rpm);
+    // Finitions : l'air-air ε-NTU, au banc, devant la soufflerie (`kChargeReferenceSpeedMs`). Le couple de base suppose la loi d'origine.
+    const double cooled = turboCoolerTorqueShare(spec, steady.outK, steady.flow, steady.coolK);
+    const double gross = full(steady.boost);
+    const double torque = (cooled == 1.0 ? gross : (gross + frictionTorqueNm(p, rpm)) * cooled - frictionTorqueNm(p, rpm)) -
+                          turboBackPressureNm(spec, steady.chargePa, steady.turbineInPa, steady.flow, 1.0);
+    return injection ? torque - injectionLossNm(p, rpm, steady.boost) : torque;
+}
+
+}  // namespace
+
+double torqueCurveNm(const Powertrain& p, double rpm) {
+    const double plain = plainTorqueCurveNm(p, rpm);
+    // L'échangeur, l'eau, le protoxyde : rien de cela ne s'exécute au défaut (charge_air.cpp).
+    return chargeAirActive(p) ? chargeAirTorqueNm(p, rpm, plain) : plain;
 }
 
 double frictionTorqueNm(const Powertrain& p, double rpm) {
@@ -390,24 +667,76 @@ double frictionTorqueNm(const Powertrain& p, double rpm) {
     const double k = rpm / 1000.0;
     double bar = 0.9 + 0.12 * k + 0.03 * k * k + (p.engine.burnsDiesel() ? 0.3 : 0.0);
     if (p.engine.valvetrain() == Camshaft::Sohc) bar += sohcFrictionDeltaBar(static_cast<double>(p.engine.strokeMm()), rpm);
-    return bmepToNm(p.engine, isRotary(p.engine) ? bar * kRotaryFrictionShare : bar);
+    // Les culbuteurs chargent la came plus fort, et des ressorts raides aussi : voir « Les culbuteurs et l'affolement ».
+    if (p.engine.valvetrain() == Camshaft::Ohv) bar += ohvFrictionDeltaBar(p.engine, rpm);
+    if (p.engine.valveSprings == ValveSprings::Stiff) bar += springFrictionDeltaBar(p.engine, rpm);
+    return bmepToNm(p.engine, isRotary(p.engine) ? bar * kRotaryFrictionShare : (p.engine.twoStroke() ? bar * kTwoStrokeFrictionShare : bar));
 }
 
 double pumpingTorqueNm(const Powertrain& p, double rpm, double manifold) {
     if (p.electric) return 0.0;
     const double idle = idleRpmOf(p);
     const double above = clamp((rpm - idle) / 1500.0, 0.0, 1.0);
-    return bmepToNm(p.engine, 3.2) * above * (1.0 - clamp(manifold, 0.0, 1.0));
+    const double pumping = bmepToNm(p.engine, p.engine.twoStroke() ? 3.2 * kTwoStrokePumpingShare : 3.2) * above * (1.0 - clamp(manifold, 0.0, 1.0));
+    // Le collecteur se vide sous l'atmosphère du jour, et le moteur refoule contre elle : (p_atm − p_coll) = p_atm·(1 − remplissage).
+    const AmbientAir air = ambientAirOf(p.engine);
+    return air.reference() ? pumping : pumping * air.pressureRatio;
 }
 
 double engineInertia(const Powertrain& p) {
     if (p.electric) return 0.05;
     const double light = clamp(6500.0 / static_cast<double>(p.engine.redlineRpm), 0.6, 1.2);
-    const double inertia = (0.03 + 0.055 * liters(p.engine)) * light;
+    // Un deux-temps allume deux fois plus souvent, de moitié moins fort : il lui faut le volant de sa cylindrée, pas de son volume balayé.
+    const double inertia = (0.03 + 0.055 * (p.engine.twoStroke() ? static_cast<double>(p.engine.displacementCc) / 1000.0 : liters(p.engine))) * light;
+    if (p.engine.valvetrain() == Camshaft::Ohv) return inertia + ohvInertiaDelta(p.engine);
     return p.engine.valvetrain() == Camshaft::Sohc ? inertia + sohcInertiaDelta(p.engine) : inertia;
 }
 
 double idleRpmOf(const Powertrain& p) { return static_cast<double>(p.profile().idleRpm); }
+
+ExhaustState exhaustStateOf(const Powertrain& p, double rpm, double fill, double boost) {
+    ExhaustState out;
+    if (p.electric) return out;
+    const EngineConfig& e = p.engine;
+    const bool diesel = e.burnsDiesel();
+    const double charged = e.aspiration == Aspiration::Natural ? 1.0 : 1.0 + static_cast<double>(e.boostBar) * boost;
+    const double share = clamp(fill, 0.0, 1.0);
+    // Un diesel n'a pas de papillon : il avale tout, et dose son gazole. Un essence dose l'air, à richesse 1, plus riche à fond.
+    const double air = naturalFlowKgS(e, rpm) * charged * (diesel ? 1.0 : std::max(share, 0.08));
+    if (diesel) {
+        out.lambda = smokeLambdaOf(p, rpm) / std::max(share, 0.05);
+    } else {
+        out.lambda = share > 0.85 ? 0.88 : 1.0;
+    }
+    const double fuelPerAir = 1.0 / ((diesel ? 14.5 : 14.7) * out.lambda);
+    out.fuelGps = air * fuelPerAir * 1000.0;
+    out.kgS = air * (1.0 + fuelPerAir);
+    out.kelvin = exhaustGasK(diesel, intakeAirK(p, rpm), fuelPerAir);
+    return out;
+}
+
+double directPumpTorqueNm(const Powertrain& p, double rpm, double fill, double boost) {
+    if (p.electric || !directInjected(p.engine)) return 0.0;
+    const ExhaustState gas = exhaustStateOf(p, rpm, fill, boost);
+    return directPumpNm(gas.fuelGps, directRailBar(fill, rpm, static_cast<double>(p.engine.redlineRpm)), rpm, injectedFuelOf(p.engine));
+}
+
+double filterPumpingTorqueNm(const Powertrain& p, double rpm, double fill, double boost, double sootG) {
+    if (p.electric || !particulateFiltered(p.engine)) return 0.0;
+    const ParticulateFilterSpec spec = particulateFilterSpecOf(p.engine);
+    const ExhaustState gas = exhaustStateOf(p, rpm, fill, boost);
+    return filterPumpingNm(spec, filterBackPressurePa(spec, sootG, gas.kgS, gas.kelvin));
+}
+
+double meanSootG(const Powertrain& p) {
+    ParticulateFilter filter;
+    filter.configure(particulateFilterSpecOf(p.engine));
+    return filter.sootG();
+}
+
+double smokeLambdaOf(const Powertrain& p, double rpm) {
+    return smokeLimitLambda(dieselInjectionBar(commonRailed(p.engine), rpm, static_cast<double>(p.engine.redlineRpm), 1.0));
+}
 
 double redlineRpmOf(const Powertrain& p) { return p.electric ? kElectricMaxRpm : static_cast<double>(p.engine.redlineRpm); }
 
@@ -437,19 +766,33 @@ double wheelRadiusM(const CarConfig& car) {
 double roadLoadN(const Powertrain& p, double speedMs) {
     const BodySpec& body = bodySpec(p.car.body);
     const double rolling = speedMs > 0.1 ? kRollingResistance * static_cast<double>(p.car.massKg) * kGravity : 0.0;
-    return 0.5 * kAirDensity * body.dragArea * speedMs * speedMs + rolling;
+    // La traînée suit la masse volumique de l'air du jour : exactement 1,2 kg/m³ à 20 °C au niveau de la mer.
+    const double density = kAirDensity * airDensityRatioOf(p.engine);
+    return 0.5 * density * body.dragArea * speedMs * speedMs + rolling;
 }
 
 Gearing gearingOf(const Powertrain& p) {
     const BodySpec& body = bodySpec(p.car.body);
-    // Changer de filtre ne change pas la boîte : elle reste celle du moteur d'origine.
+    // Changer de filtre, de taux de compression, de carburant ou de came ne change pas la boîte : elle reste celle du moteur
+    // d'origine. Ni monter en altitude : elle est choisie dans l'air de référence, pour la puissance et pour la traînée.
     Powertrain stock;
     const bool otherFilter = !p.electric && p.engine.airFilter != AirFilter::Stock;
-    if (otherFilter) {
-        stock = p;
+    const bool otherAir = !referenceAirOf(p.engine);
+    const bool otherCombustion = !p.electric && !combustionStock(p.engine);
+    const bool otherCam = !p.electric && !camIsStock(p.engine);
+    const bool otherEngine = otherFilter || otherAir || otherCombustion || otherCam;
+    if (otherEngine) {
+        stock = withReferenceAir(p);
         stock.engine.airFilter = AirFilter::Stock;
+        stock.engine.compressionRatio = 0.0f;
+        stock.engine.fuelGrade = FuelGrade::Ron95;
+        if (otherCam) stock.engine = withStockCam(stock.engine);
     }
-    const PowerSummary peak = powerSummary(otherFilter ? stock : p);
+    // Ni l'échangeur, ni l'eau, ni le protoxyde non plus.
+    const bool otherCharge = chargeAirActive(p);
+    if (otherCharge) stock = chargeAirStock(otherEngine ? stock : p);
+    const Powertrain& sized = otherEngine || otherCharge ? stock : p;
+    const PowerSummary peak = powerSummary(sized);
     const bool rearOrAll = p.car.drive != Drive::Front;
     const bool allWheels = p.car.drive == Drive::All;
     const GearboxKind kind = p.electric ? GearboxKind::Reducer : p.gearbox.kind;
@@ -459,7 +802,7 @@ Gearing gearingOf(const Powertrain& p) {
     double low = 5.0, high = 150.0;
     for (int i = 0; i < 40; ++i) {
         const double middle = 0.5 * (low + high);
-        (roadLoadN(p, middle) * middle > available ? high : low) = middle;
+        (roadLoadN(sized, middle) * middle > available ? high : low) = middle;
     }
     const double radius = wheelRadiusM(p.car);
     GearboxContext context;
@@ -479,19 +822,117 @@ Gearing gearingOf(const Powertrain& p) {
     return g;
 }
 
+namespace {
+
+constexpr double kPerformanceStep = 0.01;
+// L'essayeur sans antipatinage (voir « Le pneu, l'antipatinage et le départ », docs/modele.md). Il passe lui-même les rapports
+// au régime où la boîte les passerait pied au plancher, et fait plusieurs départs, dont il garde le meilleur, comme un essai
+// de presse. Il part pied tenu à une part de sa course, ce qui fixe le régime auquel le robot fait patiner l'embrayage ; une
+// fois l'embrayage serré :
+// - soit il passe au plancher ;
+// - soit il dose la pédale sur le patinage qu'il sent : une régulation proportionnelle et intégrale du glissement vers le
+//   sommet du pneu, comme l'antipatinage, mais à la bande passante d'un pilote humain. Selon le modèle de McRuer, l'ensemble
+//   pilote et véhicule se comporte près de la coupure comme un intégrateur de pulsation ω_c, retardé de τ (McRuer et Jex,
+//   1967 : ω_c de 2 à 5 rad/s, τ de 0,1 à 0,3 s, cités de mémoire) : pôles à ω_c = 3 rad/s, amortis à 0,7, ce qu'il sent
+//   datant de 0,2 s (valeurs retenues supposées).
+constexpr double kTesterLaunchPedals[] = {0.4, 0.6, 0.8, 1.0};
+constexpr double kTesterReactionS = 0.2;
+constexpr double kTesterCrossover = 3.0;
+constexpr double kTesterDamping = 0.7;
+
+/**
+ * Un départ de l'essayeur, pied à `launch` jusqu'à l'embrayage serré, puis au plancher, ou dosé. 0 s'il n'atteint pas
+ * 100 km/h avant `bestS`, son meilleur temps jusque-là : il n'a pas besoin de finir un départ déjà perdu.
+ */
+double testerZeroTo100(const Powertrain& warm, double launch, bool dosing, double bestS) {
+    constexpr int kDelay = static_cast<int>(kTesterReactionS / kPerformanceStep + 0.5);
+    const int steps = bestS > 0.0 ? std::min(40 * 100, static_cast<int>(bestS / kPerformanceStep + 0.5)) : 40 * 100;
+    DrivingModel model(warm);
+    const ShiftMap map = buildShiftMap(withReferenceAir(warm), model.gearing());
+    model.setManual(true);
+    model.requestShift(1);
+    const double peak = tyrePeakSlip();
+    double slipFelt[kDelay] = {};
+    double speedFelt[kDelay] = {};
+    int at = 0;
+    // L'intégrale part de ce que fait déjà son pied : il ne le relève pas d'un coup en commençant à doser.
+    double integral = 1.0 - launch;
+    double foot = launch;
+    bool launched = false;
+    for (int i = 0; i < 100 && !model.meshed(); ++i) model.stepPedal(kPerformanceStep, foot, 0.0);
+    for (int i = 0; i < steps; ++i) {
+        const int gear = model.gear();
+        if (!model.shifting() && gear >= 1 && gear < model.gears() && model.rpm() >= upshiftPoint(map, ShiftMode::Normal, gear, 1.0)) model.requestShift(1);
+        model.stepPedal(kPerformanceStep, foot, 0.0);
+        if (model.speedKmh() >= 100.0) return static_cast<double>(i) * kPerformanceStep;
+        // Ce qu'il sent maintenant s'est passé il y a τ : le patinage (m/s), face à ce que le pneu tient à son sommet.
+        const double error = slipFelt[at] - peak * std::max(speedFelt[at], kTyreLowSpeedMs);
+        slipFelt[at] = model.wheelSlip();
+        speedFelt[at] = model.speedKmh() / 3.6;
+        at = (at + 1) % kDelay;
+        if (!launched) {
+            launched = model.clutch() >= 0.99;
+            continue;
+        }
+        if (!dosing) {
+            foot = 1.0;
+            continue;
+        }
+        const double gain = model.slipPlantGain();
+        const double proportional = 2.0 * kTesterDamping * kTesterCrossover / gain * error;
+        const bool saturated = (proportional + integral >= 1.0 && error > 0.0) || (proportional + integral <= 0.0 && error < 0.0);
+        if (!saturated) integral = std::clamp(integral + kTesterCrossover * kTesterCrossover / gain * error * kPerformanceStep, 0.0, 1.0);
+        foot = 1.0 - std::clamp(proportional + integral, 0.0, 1.0);
+    }
+    return 0.0;
+}
+
+/** Pied au plancher, la boîte laissée à elle-même. 0 si jamais 100 km/h. `spun` : les roues ont dépassé le sommet du pneu. */
+double flatOutZeroTo100(const Powertrain& warm, bool& spun) {
+    DrivingModel model(warm);
+    spun = false;
+    // Avec le launch control, on part comme sur une piste : pied sur le frein et au plancher, le temps que le régime et la
+    // pression montent ; le chronomètre part au lâcher du frein.
+    if (!warm.electric && warm.engine.launchRpm > 0) {
+        for (int i = 0; i < static_cast<int>(kLaunchStageS / kPerformanceStep); ++i) model.stepPedal(kPerformanceStep, 1.0, 1.0);
+    }
+    // Le chronomètre part une fois la première engagée, embrayage au point de patinage.
+    for (int i = 0; i < 100 && !model.meshed(); ++i) model.stepPedal(kPerformanceStep, 1.0, 0.0);
+    for (int i = 0; i < 40 * 100; ++i) {
+        model.stepPedal(kPerformanceStep, 1.0, 0.0);
+        spun = spun || model.wheelSlipRatio() > tyrePeakSlip();
+        if (model.speedKmh() >= 100.0) return static_cast<double>(i) * kPerformanceStep;
+    }
+    return 0.0;
+}
+
+}  // namespace
+
 Performance measurePerformance(const Powertrain& p) {
     Performance out;
-    constexpr double kStep = 0.01;
-    DrivingModel model(p);
-    // Le chronomètre part une fois la première engagée, embrayage au point de patinage.
-    for (int i = 0; i < 100 && !model.meshed(); ++i) model.stepPedal(kStep, 1.0, 0.0);
-    for (int i = 0; i < 40 * 100; ++i) {
-        model.stepPedal(kStep, 1.0, 0.0);
-        if (model.speedKmh() >= 100.0) {
-            out.zeroTo100S = static_cast<double>(i) * kStep;
-            break;
+    // La fiche se mesure moteur chaud, comme une homologation : un départ à froid ne change pas la voiture.
+    Powertrain warm = p;
+    warm.engine.startTemp = StartTemp::Warm;
+    // La fiche est le meilleur départ d'un essayeur. Il pose d'abord le pied au plancher et laisse faire la boîte. Si les roues
+    // ont patiné au-delà du sommet, sans antipatinage ni launch control, il essaie aussi de choisir son régime de départ, puis
+    // de doser lui-même la pédale ; avec eux, il les laisse faire. Une voiture électrique a déjà son couple dosé par son
+    // onduleur : pied au plancher. En conduite, rien de cela.
+    bool spun = false;
+    out.zeroTo100S = flatOutZeroTo100(warm, spun);
+    if (spun && !p.electric && p.engine.launchRpm == 0 && p.engine.tractionControl == TractionControl::Off) {
+        for (const double launch : kTesterLaunchPedals) {
+            for (const bool dosing : {false, true}) {
+                const double t = testerZeroTo100(warm, launch, dosing, out.zeroTo100S);
+                if (t > 0.0 && (out.zeroTo100S == 0.0 || t < out.zeroTo100S)) out.zeroTo100S = t;
+            }
         }
     }
+    out.topSpeedKmh = topSpeedKmh(p);
+    return out;
+}
+
+double topSpeedKmh(const Powertrain& p) {
+    double top = 0.0;
     const Gearing gearing = gearingOf(p);
     const double radius = wheelRadiusM(p.car);
     const double redline = redlineRpmOf(p);
@@ -502,11 +943,11 @@ Performance measurePerformance(const Powertrain& p) {
             const double rpm = speed * ratio * 60.0 / (2.0 * kPi * radius);
             if (rpm > redline) break;
             if (torqueCurveNm(p, rpm) * ratio * gearing.box.meshEfficiency / radius >= roadLoadN(p, speed)) {
-                out.topSpeedKmh = std::max(out.topSpeedKmh, kmh);
+                top = std::max(top, kmh);
             }
         }
     }
-    return out;
+    return top;
 }
 
 }  // namespace revforge

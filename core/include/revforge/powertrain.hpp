@@ -4,6 +4,7 @@
 
 #include "revforge/engine_config.hpp"
 #include "revforge/gearbox.hpp"
+#include "revforge/injection.hpp"
 #include "revforge/supercharger.hpp"
 #include "revforge/turbo.hpp"
 
@@ -69,6 +70,13 @@ Powertrain referencePowertrain();
 double steadyBoost(const Powertrain& p, double rpm);
 /** Le turbo que ce moteur monte. */
 TurboSpec turboSpecOf(const Powertrain& p);
+/**
+ * L'équilibre d'un turbo simple à pleine charge, à la pression que tient sa régulation dans l'air du jour : un ressort tient sa
+ * pression au-dessus de l'atmosphère ; un calculateur (`electronic`, `by_gear`) la pression absolue de sa calibration, que les roues
+ * bornent d'elles-mêmes. `boost` y est rapporté à la pression du réglage : plus de 1 en altitude, sous calculateur. Dans l'air de
+ * référence, ou sur un ressort, c'est `turboSteady(turboSpecOf(p), …)` au bit près. La fiche, comme la conduite.
+ */
+TurboSteady fullLoadTurboSteady(const Powertrain& p, double rpm);
 /** L'air à l'entrée du moteur ou du compresseur à pleine charge, derrière le filtre : sa température (K). */
 double intakeAirK(const Powertrain& p, double rpm);
 /** La perte de pression de ce filtre à pleine charge et à ce régime (Pa), boîte et prise d'air comprises. */
@@ -91,6 +99,27 @@ double pumpingTorqueNm(const Powertrain& p, double rpm, double manifold);
 double engineInertia(const Powertrain& p);
 double idleRpmOf(const Powertrain& p);
 double redlineRpmOf(const Powertrain& p);
+
+// ── L'injection, la recirculation et le filtre à particules : voir « L'injection » dans docs/modele.md ──
+
+/** Ce qui sort du moteur à ce régime et à ce remplissage (0 à 1), pression de turbo donnée : débit, température, richesse. */
+struct ExhaustState {
+    double kgS = 0.0;
+    double kelvin = 300.0;
+    double fuelGps = 0.0;
+    double lambda = 1.0;
+};
+ExhaustState exhaustStateOf(const Powertrain& p, double rpm, double fill, double boost);
+/** Ce que prend la pompe haute pression d'une injection directe à ce remplissage (Nm). 0 sans injection directe. */
+double directPumpTorqueNm(const Powertrain& p, double rpm, double fill, double boost);
+/** Le pompage contre le filtre à particules, à cette charge de suie (Nm). 0 sans filtre. */
+double filterPumpingTorqueNm(const Powertrain& p, double rpm, double fill, double boost, double sootG);
+/** La suie d'un filtre en service, en moyenne : à mi-chemin entre deux régénérations (g). */
+double meanSootG(const Powertrain& p);
+/** Excès d'air sous lequel ce diesel fume, à pleine charge et à ce régime. */
+double smokeLambdaOf(const Powertrain& p, double rpm);
+/** Le point de fonctionnement d'un diesel, pour sa combustion : cylindre, régime, part de la pleine charge, pression du turbo. */
+DieselPoint dieselPointOf(const Powertrain& p, double rpm, double load, double boost);
 
 struct PowerSummary {
     double peakTorqueNm = 0.0;
@@ -127,7 +156,22 @@ struct Performance {
     double topSpeedKmh = 0.0;
 };
 
-/** Mesuré en conduisant le modèle, pied au plancher, comme sur une piste. */
+/**
+ * Mesuré en conduisant le modèle, comme sur une piste : le 0 à 100 km/h est le meilleur départ d'un essayeur, qui dose
+ * lui-même la pédale sans antipatinage ni launch control ; la vitesse de pointe est `topSpeedKmh`.
+ */
 Performance measurePerformance(const Powertrain& p);
+/** La vitesse de pointe, sans conduire : la plus haute où, sur un rapport et sous le régime maximal, le couple vainc l'air et le roulement. */
+double topSpeedKmh(const Powertrain& p);
+
+// ── L'air ambiant (atmosphere.hpp) ──
+
+/** Ce montage dans l'air de référence : pour ce qui se dimensionne une fois pour toutes (boîte, embrayage, carte de passage). */
+Powertrain withReferenceAir(const Powertrain& p);
+/**
+ * L'air piégé dans l'air du jour, rapporté à celui de l'air de référence, à pleine charge, à ce régime et à cette part de la
+ * pression demandée. Exactement 1 dans l'air de référence et sur un moteur électrique. C'est ce qui change le couple indiqué.
+ */
+double ambientChargeShare(const Powertrain& p, double rpm, double boost);
 
 }  // namespace revforge

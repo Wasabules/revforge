@@ -2,11 +2,14 @@ import presetData from '../../../presets/presets.json';
 import { presetText, t } from './i18n.svelte';
 import { DISPLACEMENT_LIMITS, STROKE_LIMITS, engineStroke } from './stroke';
 import { isRotary, ROTOR_COUNTS } from './rotary';
+import { builtLayout, VR_CYLINDERS, W_CYLINDERS } from './architecture';
+import { isTwoStroke, TWO_STROKE_MAX_CYLINDERS } from './twoStroke';
 
 export { isRotary } from './rotary';
+export { isTwoStroke } from './twoStroke';
 
-export type Layout = 'inline' | 'v' | 'cross_plane' | 'boxer' | 'rotary';
-export type Exhaust = 'stock' | 'sport' | 'straight' | 'no_muffler' | 'no_resonator' | 'quiet';
+export type Layout = 'inline' | 'v' | 'cross_plane' | 'boxer' | 'rotary' | 'vr' | 'w';
+export type Exhaust = 'stock' | 'sport' | 'straight' | 'no_muffler' | 'no_resonator' | 'quiet' | 'expansion';
 export type Routing = 'single' | 'dual' | 'h' | 'x';
 export type Placement = 'front' | 'mid' | 'rear';
 export type Insulation = 'stripped' | 'light' | 'standard' | 'comfort' | 'luxury';
@@ -17,9 +20,21 @@ export type Release = 'dump_valve' | 'flutter';
 export type TurboSize = 'small' | 'medium' | 'large';
 export type SuperchargerKind = 'roots' | 'twin_screw' | 'centrifugal';
 export type AntiLag = 'off' | 'retard' | 'air' | 'cut';
-export type Camshaft = 'dohc' | 'sohc';
+export type Camshaft = 'dohc' | 'sohc' | 'ohv';
 export type AirFilter = 'stock' | 'panel' | 'cone' | 'stacks';
-export type FuelSystem = 'injection' | 'single' | 'multi';
+export type FuelSystem = 'injection' | 'single' | 'multi' | 'direct';
+// Les réglages du socle moteur : mêmes valeurs que les énumérations C++, dans le même ordre.
+export type StartTemp = 'warm' | 'cold';
+export type FuelGrade = 'ron95' | 'ron98' | 'race102' | 'e85' | 'methanol';
+export type RevLimiter = 'stock' | 'soft' | 'ignition_cut';
+export type TractionControl = 'off' | 'sport' | 'full';
+export type DieselInjection = 'mechanical' | 'common_rail';
+export type ValveTiming = 'fixed' | 'phased' | 'two_step' | 'phased_two_step';
+export type ValveSprings = 'stock' | 'stiff';
+export type TurboLayout = 'single' | 'twin_parallel' | 'twin_sequential' | 'twincharger';
+export type BoostControl = 'spring' | 'electronic' | 'by_gear';
+export type Intercooler = 'air_to_air' | 'air_to_water' | 'none';
+export type EngineCycle = 'four_stroke' | 'two_stroke';
 export type Body = 'city' | 'compact' | 'coupe' | 'supercar' | 'van' | 'retro';
 export type Drive = 'front' | 'rear' | 'all';
 export type BoxKind = 'synchro' | 'dog' | 'sequential' | 'dual_clutch' | 'converter';
@@ -52,8 +67,45 @@ export interface EngineConfig {
   turboPipeMm: number;
   camshaft: Camshaft;
   airFilter: AirFilter;
-  /** L'alimentation : injection, un carburateur sur une pipe commune, un corps par cylindre. Sans effet sur un diesel. */
+  /** L'alimentation : injection, un carburateur sur une pipe commune, un corps par cylindre, injection directe. Sans effet sur un diesel. */
   fuelSystem: FuelSystem;
+  // ── Les réglages du socle moteur, dans l'ordre de `TUNING_FIELDS` et de `rf_set_tuning`. 0 marqué « d'origine » : le moteur garde ce qu'il a. ──
+  /** Air ambiant (°C). */
+  ambientC: number;
+  /** Altitude (m). */
+  altitudeM: number;
+  startTemp: StartTemp;
+  /** Taux de compression géométrique ; 0 : d'origine. */
+  compressionRatio: number;
+  fuelGrade: FuelGrade;
+  /** Décalage de la carte d'avance (°). */
+  ignitionOffsetDeg: number;
+  /** Richesse à pleine charge ; 0 : carte d'origine. */
+  fullLoadLambda: number;
+  revLimiter: RevLimiter;
+  /** Régime tenu par le launch control (tr/min) ; 0 : sans. */
+  launchRpm: number;
+  flatShift: boolean;
+  tractionControl: TractionControl;
+  dieselInjection: DieselInjection;
+  egr: boolean;
+  particulateFilter: boolean;
+  /** Durée de came (°) ; 0 : d'origine. */
+  camDurationDeg: number;
+  /** Levée de came (mm) ; 0 : d'origine. */
+  camLiftMm: number;
+  /** Angle entre cames (°) ; 0 : d'origine. */
+  lobeSeparationDeg: number;
+  valveTiming: ValveTiming;
+  valveSprings: ValveSprings;
+  turboLayout: TurboLayout;
+  variableGeometry: boolean;
+  boostControl: BoostControl;
+  intercooler: Intercooler;
+  waterInjection: boolean;
+  /** Puissance du kit de protoxyde d'azote (kW) ; 0 : sans. */
+  nitrousKw: number;
+  cycle: EngineCycle;
   electric: boolean;
   body: Body;
   massKg: number;
@@ -94,6 +146,8 @@ export const LAYOUTS: { value: Layout; label: string }[] = [
   { value: 'cross_plane', get label() { return t('layout.cross_plane'); } },
   { value: 'boxer', get label() { return t('layout.boxer'); } },
   { value: 'rotary', get label() { return t('layout.rotary'); } },
+  { value: 'vr', get label() { return t('layout.vr'); } },
+  { value: 'w', get label() { return t('layout.w'); } },
 ];
 export const EXHAUSTS: { value: Exhaust; label: string; pops: string }[] = [
   { value: 'stock', get label() { return t('exhaust.stock'); }, get pops() { return t('exhaust.stock.pops'); } },
@@ -102,6 +156,7 @@ export const EXHAUSTS: { value: Exhaust; label: string; pops: string }[] = [
   { value: 'no_muffler', get label() { return t('exhaust.no_muffler'); }, get pops() { return t('exhaust.no_muffler.pops'); } },
   { value: 'no_resonator', get label() { return t('exhaust.no_resonator'); }, get pops() { return t('exhaust.no_resonator.pops'); } },
   { value: 'quiet', get label() { return t('exhaust.quiet'); }, get pops() { return t('exhaust.quiet.pops'); } },
+  { value: 'expansion', get label() { return t('exhaust.expansion'); }, get pops() { return t('exhaust.expansion.pops'); } },
 ];
 export { EXHAUST_LINES, type LinePart } from './exhaustLines';
 export const ROUTINGS: { value: Routing; label: string }[] = [
@@ -164,6 +219,7 @@ export const ANTI_LAGS: { value: AntiLag; label: string; help: string }[] = [
 export const CAMSHAFTS: { value: Camshaft; label: string; help: string }[] = [
   { value: 'dohc', get label() { return t('camshaft.dohc'); }, get help() { return t('camshaft.dohc.help'); } },
   { value: 'sohc', get label() { return t('camshaft.sohc'); }, get help() { return t('camshaft.sohc.help'); } },
+  { value: 'ohv', get label() { return t('camshaft.ohv'); }, get help() { return t('camshaft.ohv.help'); } },
 ];
 /** La position donne la valeur envoyée au C++ : `AirFilter`. */
 export const AIR_FILTERS: { value: AirFilter; label: string; help: string }[] = [
@@ -177,6 +233,68 @@ export const FUEL_SYSTEMS: { value: FuelSystem; label: string; help: string }[] 
   { value: 'injection', get label() { return t('fuelSystem.injection'); }, get help() { return t('fuelSystem.injection.help'); } },
   { value: 'single', get label() { return t('fuelSystem.single'); }, get help() { return t('fuelSystem.single.help'); } },
   { value: 'multi', get label() { return t('fuelSystem.multi'); }, get help() { return t('fuelSystem.multi.help'); } },
+  { value: 'direct', get label() { return t('fuelSystem.direct'); }, get help() { return t('fuelSystem.direct.help'); } },
+];
+// ── Les réglages du socle moteur. La position dans chaque tableau donne la valeur envoyée au C++. ──
+export const START_TEMPS: { value: StartTemp; label: string; help: string }[] = [
+  { value: 'warm', get label() { return t('startTemp.warm'); }, get help() { return t('startTemp.warm.help'); } },
+  { value: 'cold', get label() { return t('startTemp.cold'); }, get help() { return t('startTemp.cold.help'); } },
+];
+export const FUEL_GRADES: { value: FuelGrade; label: string; help: string }[] = [
+  { value: 'ron95', get label() { return t('fuelGrade.ron95'); }, get help() { return t('fuelGrade.ron95.help'); } },
+  { value: 'ron98', get label() { return t('fuelGrade.ron98'); }, get help() { return t('fuelGrade.ron98.help'); } },
+  { value: 'race102', get label() { return t('fuelGrade.race102'); }, get help() { return t('fuelGrade.race102.help'); } },
+  { value: 'e85', get label() { return t('fuelGrade.e85'); }, get help() { return t('fuelGrade.e85.help'); } },
+  { value: 'methanol', get label() { return t('fuelGrade.methanol'); }, get help() { return t('fuelGrade.methanol.help'); } },
+];
+export const REV_LIMITERS: { value: RevLimiter; label: string; help: string }[] = [
+  { value: 'stock', get label() { return t('revLimiter.stock'); }, get help() { return t('revLimiter.stock.help'); } },
+  { value: 'soft', get label() { return t('revLimiter.soft'); }, get help() { return t('revLimiter.soft.help'); } },
+  { value: 'ignition_cut', get label() { return t('revLimiter.ignition_cut'); }, get help() { return t('revLimiter.ignition_cut.help'); } },
+];
+export const TRACTION_CONTROLS: { value: TractionControl; label: string; help: string }[] = [
+  { value: 'off', get label() { return t('tractionControl.off'); }, get help() { return t('tractionControl.off.help'); } },
+  { value: 'sport', get label() { return t('tractionControl.sport'); }, get help() { return t('tractionControl.sport.help'); } },
+  { value: 'full', get label() { return t('tractionControl.full'); }, get help() { return t('tractionControl.full.help'); } },
+];
+export const DIESEL_INJECTIONS: { value: DieselInjection; label: string; help: string }[] = [
+  { value: 'mechanical', get label() { return t('dieselInjection.mechanical'); }, get help() { return t('dieselInjection.mechanical.help'); } },
+  { value: 'common_rail', get label() { return t('dieselInjection.common_rail'); }, get help() { return t('dieselInjection.common_rail.help'); } },
+];
+export const VALVE_TIMINGS: { value: ValveTiming; label: string; help: string }[] = [
+  { value: 'fixed', get label() { return t('valveTiming.fixed'); }, get help() { return t('valveTiming.fixed.help'); } },
+  { value: 'phased', get label() { return t('valveTiming.phased'); }, get help() { return t('valveTiming.phased.help'); } },
+  { value: 'two_step', get label() { return t('valveTiming.two_step'); }, get help() { return t('valveTiming.two_step.help'); } },
+  { value: 'phased_two_step', get label() { return t('valveTiming.phased_two_step'); }, get help() { return t('valveTiming.phased_two_step.help'); } },
+];
+export const VALVE_SPRINGS: { value: ValveSprings; label: string; help: string }[] = [
+  { value: 'stock', get label() { return t('valveSprings.stock'); }, get help() { return t('valveSprings.stock.help'); } },
+  { value: 'stiff', get label() { return t('valveSprings.stiff'); }, get help() { return t('valveSprings.stiff.help'); } },
+];
+export const TURBO_LAYOUTS: { value: TurboLayout; label: string; help: string }[] = [
+  { value: 'single', get label() { return t('turboLayout.single'); }, get help() { return t('turboLayout.single.help'); } },
+  { value: 'twin_parallel', get label() { return t('turboLayout.twin_parallel'); }, get help() { return t('turboLayout.twin_parallel.help'); } },
+  { value: 'twin_sequential', get label() { return t('turboLayout.twin_sequential'); }, get help() { return t('turboLayout.twin_sequential.help'); } },
+  { value: 'twincharger', get label() { return t('turboLayout.twincharger'); }, get help() { return t('turboLayout.twincharger.help'); } },
+];
+export const BOOST_CONTROLS: { value: BoostControl; label: string; help: string }[] = [
+  { value: 'spring', get label() { return t('boostControl.spring'); }, get help() { return t('boostControl.spring.help'); } },
+  { value: 'electronic', get label() { return t('boostControl.electronic'); }, get help() { return t('boostControl.electronic.help'); } },
+  { value: 'by_gear', get label() { return t('boostControl.by_gear'); }, get help() { return t('boostControl.by_gear.help'); } },
+];
+export const INTERCOOLERS: { value: Intercooler; label: string; help: string }[] = [
+  { value: 'air_to_air', get label() { return t('intercooler.air_to_air'); }, get help() { return t('intercooler.air_to_air.help'); } },
+  { value: 'air_to_water', get label() { return t('intercooler.air_to_water'); }, get help() { return t('intercooler.air_to_water.help'); } },
+  { value: 'none', get label() { return t('intercooler.none'); }, get help() { return t('intercooler.none.help'); } },
+];
+export const ENGINE_CYCLES: { value: EngineCycle; label: string; help: string }[] = [
+  { value: 'four_stroke', get label() { return t('cycle.four_stroke'); }, get help() { return t('cycle.four_stroke.help'); } },
+  { value: 'two_stroke', get label() { return t('cycle.two_stroke'); }, get help() { return t('cycle.two_stroke.help'); } },
+];
+/** Un réglage tout ou rien, dans une rangée de boutons : `Choices` ne prend pas de booléen. */
+export const ON_OFF: { value: 'off' | 'on'; label: string }[] = [
+  { value: 'off', get label() { return t('toggle.off'); } },
+  { value: 'on', get label() { return t('toggle.on'); } },
 ];
 /** Choisir une carrosserie règle aussi une masse, des jantes et une transmission plausibles, et parfois une isolation. */
 export const BODIES: { value: Body; label: string; massKg: number; rimInch: number; drive: Drive; placement: Placement; insulation?: Insulation }[] = [
@@ -254,7 +372,8 @@ export const BOX_MODELS: { id: string; label: string; note: string; settings: Pa
   { id: 'hewland_ftr', get label() { return t('boxModel.hewland_ftr'); }, get note() { return t('boxModel.hewland_ftr.note'); },
     settings: { boxKind: 'sequential', boxGears: 6, boxFamily: 'custom', boxRatios: '2.75,2,1.625,1.333,1.13,1', boxFinal: 3.444, boxTeeth: 'spur', boxHelix: 0, boxModule: 0, boxLimit: 325, boxFlywheel: 'single' } },
 ];
-export const CYLINDERS = [2, 3, 4, 5, 6, 8, 10, 12];
+/** 14 et 16 : seulement en V et en W (`coherentConfig`). */
+export const CYLINDERS = [2, 3, 4, 5, 6, 8, 10, 12, 14, 16];
 export { ROTOR_COUNTS } from './rotary';
 export const LIMITS = {
   displacementCc: DISPLACEMENT_LIMITS,
@@ -272,6 +391,17 @@ export const LIMITS = {
   boxHelix: { min: 5, max: 40, step: 1 },
   boxModule: { min: 1.25, max: 5, step: 0.05 },
   boxLimit: { min: 100, max: 1200, step: 10 },
+  // Les réglages du socle moteur. Ceux qui acceptent 0 (« d'origine » ou « sans ») le disent dans `TUNING_FIELDS`.
+  ambientC: { min: -30, max: 50, step: 1 },
+  altitudeM: { min: 0, max: 4500, step: 100 },
+  compressionRatio: { min: 4, max: 24, step: 0.1 },
+  ignitionOffsetDeg: { min: -10, max: 10, step: 1 },
+  fullLoadLambda: { min: 0.7, max: 1.1, step: 0.01 },
+  launchRpm: { min: 2000, max: 7000, step: 100 },
+  camDurationDeg: { min: 180, max: 320, step: 2 },
+  camLiftMm: { min: 5, max: 16, step: 0.1 },
+  lobeSeparationDeg: { min: 100, max: 120, step: 1 },
+  nitrousKw: { min: 0, max: 150, step: 5 },
 };
 
 const DEFAULTS: EngineConfig = {
@@ -294,6 +424,32 @@ const DEFAULTS: EngineConfig = {
   camshaft: 'dohc',
   airFilter: 'stock',
   fuelSystem: 'injection',
+  ambientC: 20,
+  altitudeM: 0,
+  startTemp: 'warm',
+  compressionRatio: 0,
+  fuelGrade: 'ron95',
+  ignitionOffsetDeg: 0,
+  fullLoadLambda: 0,
+  revLimiter: 'stock',
+  launchRpm: 0,
+  flatShift: false,
+  tractionControl: 'off',
+  dieselInjection: 'mechanical',
+  egr: false,
+  particulateFilter: false,
+  camDurationDeg: 0,
+  camLiftMm: 0,
+  lobeSeparationDeg: 0,
+  valveTiming: 'fixed',
+  valveSprings: 'stock',
+  turboLayout: 'single',
+  variableGeometry: false,
+  boostControl: 'spring',
+  intercooler: 'air_to_air',
+  waterInjection: false,
+  nitrousKw: 0,
+  cycle: 'four_stroke',
   electric: false,
   body: 'city',
   massKg: 1100,
@@ -346,12 +502,49 @@ export function strokeMm(c: EngineConfig): number {
   return engineStroke(c);
 }
 
-/** Un rotatif n'a que 2, 3 ou 4 rotors et ne brûle que de l'essence : tout ce qui change d'architecture ou lit un lien passe par ici. */
+/** Le nombre le plus proche dans une liste, le plus grand à égalité. */
+const nearest = (list: number[], value: number) => list.reduce((best, item) => (Math.abs(item - value) <= Math.abs(best - value) ? item : best), list[0]);
+
+/**
+ * Un rotatif n'a que 2, 3 ou 4 rotors et ne brûle que de l'essence ; un VR a 5 ou 6 cylindres, un W 8, 12 ou 16, et au-delà de
+ * 12 seuls un V et un W existent. Un deux-temps balayé par son carter n'a ni diesel ni suralimentation, ni vilebrequin à plat
+ * croisé, ni VR, ni W, et au plus 6 cylindres (`coherentTwoStroke` en C++). Tout ce qui change d'architecture ou lit un lien passe
+ * par ici. La disposition choisie reste quand elle existe, le nombre de cylindres va au plus proche qui existe.
+ */
 export function coherentConfig(c: EngineConfig): EngineConfig {
-  if (!isRotary(c) || c.electric) return c;
+  if (c.electric) return c;
+  const engine = coherentEngine(c);
+  // Deux turbos, un twincharger ou des aubes : l'anti-lag et le tube déporté ne sont modélisés que sur un turbo simple (C++ : `antiLagEngine_`).
+  if (!usesTwinTurbo(engine) || (engine.antiLag === DEFAULTS.antiLag && engine.turboPipeMm === DEFAULTS.turboPipeMm)) return engine;
+  return { ...engine, antiLag: DEFAULTS.antiLag, turboPipeMm: DEFAULTS.turboPipeMm };
+}
+
+/** Deux turbos, un twincharger ou des aubes : un autre modèle tient les arbres (recopie d'`usesTwinTurbo`, twin_turbo.hpp). */
+export function usesTwinTurbo(c: Pick<EngineConfig, 'aspiration' | 'turboLayout' | 'variableGeometry'>): boolean {
+  return c.aspiration === 'turbo' && (c.turboLayout !== 'single' || c.variableGeometry);
+}
+
+function coherentEngine(c: EngineConfig): EngineConfig {
+  if (isTwoStroke(c)) {
+    const cylinders = Math.min(c.cylinders, TWO_STROKE_MAX_CYLINDERS);
+    const layout = c.layout === 'cross_plane' || c.layout === 'vr' || c.layout === 'w' ? 'v' : c.layout;
+    if (cylinders === c.cylinders && layout === c.layout && c.fuel === 'petrol' && c.aspiration === 'natural') return c;
+    return { ...c, cylinders, layout, fuel: 'petrol', aspiration: 'natural' };
+  }
+  if (!isRotary(c)) {
+    const counts = c.layout === 'vr' ? VR_CYLINDERS : c.layout === 'w' ? W_CYLINDERS : c.layout === 'v' ? CYLINDERS : CYLINDERS.filter((n) => n <= 12);
+    const cylinders = counts.includes(c.cylinders) ? c.cylinders : nearest(counts, c.cylinders);
+    return cylinders === c.cylinders ? c : { ...c, cylinders };
+  }
   const cylinders = ROTOR_COUNTS.includes(c.cylinders) ? c.cylinders : 2;
   if (cylinders === c.cylinders && c.fuel === 'petrol') return c;
   return { ...c, cylinders, fuel: 'petrol' };
+}
+
+/** Les dispositions qui existent à ce nombre de cylindres : quand on le choisit, une disposition qui n'y existe pas devient un V. */
+export function layoutForCylinders(layout: Layout, cylinders: number): Layout {
+  if (layout === 'rotary') return layout;
+  return builtLayout(layout, cylinders);
 }
 
 const index = (list: { value: string }[], value: string) => list.findIndex((item) => item.value === value);
@@ -380,6 +573,61 @@ export function configArgs(c: EngineConfig): number[] {
     index(AIR_FILTERS, c.airFilter),
     index(FUEL_SYSTEMS, c.fuelSystem),
   ];
+}
+
+// ── Les réglages du socle moteur : une seule table pour `rf_set_tuning` et le lien de partage ──
+
+type TuningKey = 'ambientC' | 'altitudeM' | 'startTemp' | 'compressionRatio' | 'fuelGrade' | 'ignitionOffsetDeg' | 'fullLoadLambda' | 'revLimiter' | 'launchRpm' | 'flatShift' | 'tractionControl' | 'dieselInjection' | 'egr' | 'particulateFilter' | 'camDurationDeg' | 'camLiftMm' | 'lobeSeparationDeg' | 'valveTiming' | 'valveSprings' | 'turboLayout' | 'variableGeometry' | 'boostControl' | 'intercooler' | 'waterInjection' | 'nitrousKw' | 'cycle';
+interface TuningField {
+  key: TuningKey;
+  /** Son nom dans le lien de partage. Ne change jamais : les liens déjà partagés en dépendent. */
+  code: string;
+  /** Une énumération : la position dans le tableau est la valeur envoyée au C++. */
+  list?: { value: string }[];
+  /** Un nombre : bornes du curseur, et du lien qui le relit. */
+  limits?: { min: number; max: number; step: number };
+  /** 0 veut dire « d'origine » ou « sans », même hors des bornes. */
+  zero?: boolean;
+}
+
+/** Dans l'ordre des arguments de `rf_set_tuning` (wasm/exports.cpp) et des champs ajoutés à la fin d'`EngineConfig`. */
+export const TUNING_FIELDS: readonly TuningField[] = [
+  { key: 'ambientC', code: 'amb', limits: LIMITS.ambientC },
+  { key: 'altitudeM', code: 'alt', limits: LIMITS.altitudeM },
+  { key: 'startTemp', code: 'start', list: START_TEMPS },
+  { key: 'compressionRatio', code: 'cr', limits: LIMITS.compressionRatio, zero: true },
+  { key: 'fuelGrade', code: 'grade', list: FUEL_GRADES },
+  { key: 'ignitionOffsetDeg', code: 'adv', limits: LIMITS.ignitionOffsetDeg },
+  { key: 'fullLoadLambda', code: 'lambda', limits: LIMITS.fullLoadLambda, zero: true },
+  { key: 'revLimiter', code: 'lim', list: REV_LIMITERS },
+  { key: 'launchRpm', code: 'launch', limits: LIMITS.launchRpm, zero: true },
+  { key: 'flatShift', code: 'flat' },
+  { key: 'tractionControl', code: 'tc', list: TRACTION_CONTROLS },
+  { key: 'dieselInjection', code: 'dinj', list: DIESEL_INJECTIONS },
+  { key: 'egr', code: 'egr' },
+  { key: 'particulateFilter', code: 'dpf' },
+  { key: 'camDurationDeg', code: 'dur', limits: LIMITS.camDurationDeg, zero: true },
+  { key: 'camLiftMm', code: 'lift', limits: LIMITS.camLiftMm, zero: true },
+  { key: 'lobeSeparationDeg', code: 'lsa', limits: LIMITS.lobeSeparationDeg, zero: true },
+  { key: 'valveTiming', code: 'vvt', list: VALVE_TIMINGS },
+  { key: 'valveSprings', code: 'springs', list: VALVE_SPRINGS },
+  { key: 'turboLayout', code: 'turbos', list: TURBO_LAYOUTS },
+  { key: 'variableGeometry', code: 'vgt' },
+  { key: 'boostControl', code: 'bc', list: BOOST_CONTROLS },
+  { key: 'intercooler', code: 'ic', list: INTERCOOLERS },
+  { key: 'waterInjection', code: 'water' },
+  { key: 'nitrousKw', code: 'nos', limits: LIMITS.nitrousKw },
+  { key: 'cycle', code: 'cycle', list: ENGINE_CYCLES },
+];
+
+/** Arguments de rf_set_tuning, dans l'ordre du C : à envoyer juste avant rf_set_config ou rf_set_electric, qui les appliquent. */
+export function tuningArgs(c: EngineConfig): number[] {
+  return TUNING_FIELDS.map((field) => {
+    const value = c[field.key];
+    if (field.list) return index(field.list, value as string);
+    if (typeof value === 'boolean') return value ? 1 : 0;
+    return value as number;
+  });
 }
 
 /** Arguments de rf_set_car, dans l'ordre du C. */
@@ -417,8 +665,45 @@ function encodeCar(c: EngineConfig): string {
 }
 
 export function encodeConfig(c: EngineConfig): string {
-  if (c.electric) return `electric~${encodeCar(c)}`;
-  return [c.cylinders, c.layout, c.displacementCc, c.boreMm, c.redlineRpm, c.exhaust, c.aspiration, c.fuel, c.multiplier, c.pops, c.turboRelease].join('.') + `~${encodeCar(c)}${encodeBox(c)}`;
+  // Les réglages du socle, s'il y en a, viennent après la boîte : un groupe vide la remplace si elle est celle par défaut.
+  const tuning = encodeTuning(c);
+  if (c.electric) return `electric~${encodeCar(c)}${tuning ? `~~${tuning}` : ''}`;
+  const box = encodeBox(c);
+  return [c.cylinders, c.layout, c.displacementCc, c.boreMm, c.redlineRpm, c.exhaust, c.aspiration, c.fuel, c.multiplier, c.pops, c.turboRelease].join('.') + `~${encodeCar(c)}${tuning ? `${box || '~'}~${tuning}` : box}`;
+}
+
+/**
+ * Les réglages du socle, après un troisième `~` : seulement ceux qui diffèrent du défaut, en `code=valeur` séparés par des
+ * virgules (`amb=35,grade=e85,flat=1`). Rien du tout si tous sont au défaut : le lien d'un moteur d'avant ne change pas.
+ * Un code inconnu ou une valeur hors liste est ignoré : le lien reste lisible si un réglage s'ajoute ou disparaît.
+ */
+function encodeTuning(c: EngineConfig): string {
+  return TUNING_FIELDS.filter((field) => c[field.key] !== DEFAULTS[field.key])
+    .map((field) => {
+      const value = c[field.key];
+      return `${field.code}=${typeof value === 'boolean' ? (value ? 1 : 0) : value}`;
+    })
+    .join(',');
+}
+
+function decodeTuning(text: string | undefined): Partial<EngineConfig> {
+  if (!text) return {};
+  const read: Partial<Record<TuningKey, string | number | boolean>> = {};
+  for (const pair of text.split(',')) {
+    const [code, value = ''] = pair.split('=');
+    const field = TUNING_FIELDS.find((item) => item.code === code);
+    if (!field) continue;
+    if (field.list) {
+      if (field.list.some((item) => item.value === value)) read[field.key] = value;
+    } else if (typeof DEFAULTS[field.key] === 'boolean') {
+      if (value === '0' || value === '1') read[field.key] = value === '1';
+    } else {
+      const n = Number(value);
+      if (value === '' || !Number.isFinite(n)) continue;
+      read[field.key] = field.zero && n === 0 ? 0 : clamp(n, field.limits!.min, field.limits!.max);
+    }
+  }
+  return read as Partial<EngineConfig>;
 }
 
 /** La boîte, après un second `~` : rien si elle est celle par défaut, et les anciens liens n'en ont pas. */
@@ -489,8 +774,8 @@ function decodeCar(text: string | undefined): Partial<EngineConfig> {
 }
 
 export function decodeConfig(link: string): EngineConfig | null {
-  const [text, carText, boxText] = link.split('~');
-  const car = { ...decodeCar(carText), ...decodeBox(boxText) };
+  const [text, carText, boxText, tuningText] = link.split('~');
+  const car = { ...decodeCar(carText), ...decodeBox(boxText), ...decodeTuning(tuningText) };
   if (text === 'electric') return { ...DEFAULTS, electric: true, ...car };
   // Le multiplicateur peut contenir un point : on lit depuis les deux bouts.
   const parts = text.split('.');

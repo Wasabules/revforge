@@ -3,13 +3,12 @@
 #include <cmath>
 
 #include "portable_math.hpp"
+#include "revforge/atmosphere.hpp"
 
 namespace revforge {
 
 namespace {
 
-constexpr double kAtmosphere = 101325.0;
-constexpr double kAmbientK = 293.0;
 constexpr double kRatedDropPa = 3000.0;
 
 // Le papier et sa boîte : environ 3 kPa au nominal. Sur un banc, le meilleur filtre dans une boîte d'origine perd 2,56 kPa
@@ -70,11 +69,11 @@ double airFilterRiseK(AirFilter filter, EnginePlacement placement, double regime
     return share * bay * r / (kFanShare + (1.0 - kFanShare) * r);
 }
 
-AirInlet airInletBehind(AirFilter filter, EnginePlacement placement, double flowKgS, double ratedFlowKgS, double regime) {
+AirInlet airInletBehind(AirFilter filter, EnginePlacement placement, double flowKgS, double ratedFlowKgS, double regime, double ambientPa, double ambientK) {
     AirInlet in;
     const double share = flowKgS / ratedFlowKgS;
-    in.pressurePa = kAtmosphere - kRatedDropPa * airFilterDropShare(filter) * share * share;
-    in.temperatureK = kAmbientK + airFilterRiseK(filter, placement, regime);
+    in.pressurePa = ambientPa - kRatedDropPa * airFilterDropShare(filter) * share * share;
+    in.temperatureK = ambientK + airFilterRiseK(filter, placement, regime);
     return in;
 }
 
@@ -93,7 +92,11 @@ double stackLengthM(const EngineConfig& engine) {
     return clampTo(kSoundSpeed / (4.0 * tuned) - 0.61 * stackRadiusM(engine), 0.12, 0.5);
 }
 
-double stackResonanceHz(const EngineConfig& engine) { return kSoundSpeed / (4.0 * (stackLengthM(engine) + 0.61 * stackRadiusM(engine))); }
+double stackResonanceHz(const EngineConfig& engine) {
+    // Coupé dans l'air de référence, il résonne dans l'air du jour : exactement 343 m/s à 20 °C.
+    const double sound = kSoundSpeed * ambientAirOf(engine).soundSpeedRatio;
+    return sound / (4.0 * (stackLengthM(engine) + 0.61 * stackRadiusM(engine)));
+}
 
 double stackRamGain(const EngineConfig& engine, double rpm) {
     if (rpm < 200.0) return 0.0;

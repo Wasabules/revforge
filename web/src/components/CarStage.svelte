@@ -1,11 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { BODIES, EXHAUST_LINES, TURBO_SCALE, isRotary, type Body, type EngineConfig } from '../lib/config';
+  import { BODIES, EXHAUST_LINES, TURBO_SCALE, isRotary, isTwoStroke, type Body, type EngineConfig } from '../lib/config';
+  import { expansionChamber } from '../lib/twoStroke';
   import { animate, fit, gasColor, heatedPart, mix, pipeColor, readTheme, type Theme } from '../lib/canvas';
   import type { Telemetry } from '../lib/engine';
   import { fixed, t } from '../lib/i18n.svelte';
   import { PLUME_CELL_M, PLUME_EXIT_ROW, PLUME_PIPE_CELLS } from '../lib/fluid';
-  import { firingOrder, type Motion } from '../lib/motion';
+  import { type Motion } from '../lib/motion';
+  import { architectureOf, firingOrderOf } from '../lib/architecture';
 
   interface Props {
     config: EngineConfig;
@@ -365,18 +367,24 @@
     const nearTurbo = remote >= 0.5 && !behind;
     const airX = nearTurbo ? turboX + 0.3 : atRear ? 0.14 : behind ? shape.length * 0.44 : Math.min(left + blockWidth + 0.32, shape.length * 0.93);
     const airY = nearTurbo ? compressorY + 0.12 : behind ? shape.height * 0.66 : engineY + blockHeight * 1.05;
-    const coolerRight = behind ? (atRear ? left + blockWidth + 0.5 : left + blockWidth + 0.45) : shape.length * 0.965;
-    const coolerLeft = coolerRight - 0.24;
-    const coolerBottom = behind ? engineY + 0.18 : floor + 0.04;
-    const coolerTop = coolerBottom + 0.26;
     const throttleX = left + blockWidth * 0.86;
     const throttleY = engineY + blockHeight * 0.92;
+    // L'échangeur d'origine, tout à l'avant ; une brique air-eau, juste devant le moteur et sous le papillon ; aucun : le tube chaud
+    // remonte de là droit au papillon (voir `ChargePath`, core/src/charge_air.cpp).
+    const cooling = config.intercooler ?? 'air_to_air';
+    const nearEngine = cooling !== 'air_to_air';
+    const coolerRight = nearEngine ? left + blockWidth + 0.03 + (cooling === 'none' ? 0 : 0.12) : behind ? (atRear ? left + blockWidth + 0.5 : left + blockWidth + 0.45) : shape.length * 0.965;
+    const coolerLeft = nearEngine ? left + blockWidth + 0.03 : coolerRight - 0.24;
+    const coolerBottom = nearEngine ? throttleY - 0.24 : behind ? engineY + 0.18 : floor + 0.04;
+    const coolerTop = coolerBottom + (nearEngine ? 0.14 : 0.26);
     const way: Record<string, [number, number][]> = {
       filter: [toCar(airX + 0.09, airY), toCar(airX, airY)],
       inlet: nearTurbo ? [toCar(airX, airY), toCar(turboX, compressorY + 0.05)] : [toCar(airX, airY), toCar(left + blockWidth * 0.5, engineY + blockHeight + 0.06), toCar(turboX, compressorY + 0.05)],
       hot: [toCar(turboX - 0.02, compressorY - 0.05), toCar(turboX - 0.05, floor + 0.01), toCar(coolerLeft - 0.02, floor + 0.01), toCar(coolerLeft, coolerBottom + 0.08)],
-      cooler: [toCar(coolerLeft, coolerBottom + 0.13), toCar(coolerRight, coolerBottom + 0.13)],
-      cold: [toCar(coolerRight, coolerTop - 0.04), toCar(coolerRight - 0.12, coolerTop + 0.08), toCar(throttleX, throttleY)],
+      cooler: [toCar(coolerLeft, (coolerBottom + coolerTop) / 2), toCar(coolerRight, (coolerBottom + coolerTop) / 2)],
+      cold: cooling === 'none'
+        ? [toCar(coolerLeft, coolerBottom + 0.08), toCar(throttleX, throttleY)]
+        : [toCar(coolerRight, coolerTop - 0.04), toCar(coolerRight - 0.12, coolerTop + 0.08), toCar(throttleX, throttleY)],
     };
     if (behind) way.hot = [toCar(turboX - 0.02, compressorY - 0.05), toCar(turboX, floor + 0.03), toCar(coolerLeft - 0.03, floor + 0.05), toCar(coolerLeft, coolerBottom + 0.08)];
     const partFor = (kind: string) => way[kind];
@@ -419,34 +427,36 @@
     ctx.stroke();
     labels.push({ x: airX + 0.09, text: t('gas.airbox') });
 
-    // L'échangeur : des tranches à la température de l'air, du chaud (côté tube chaud) au froid.
-    const [cx0, cy0] = toCar(coolerLeft, coolerTop);
-    const coolerW = (coolerRight - coolerLeft) * scale;
-    const coolerH = (coolerTop - coolerBottom) * scale;
-    if (ready && !motion.reduced) {
-      const steps = Math.min(8, net.coolerCount);
-      for (let k = 0; k < steps; k++) {
-        const cell = net.coolerFirst + Math.floor((k * net.coolerCount) / steps);
-        ctx.fillStyle = painter.airStyle(theme, net.temp[cell], net.rho[cell]);
-        ctx.fillRect(cx0 + (coolerW * k) / steps, cy0, coolerW / steps + 0.5, coolerH);
+    // L'échangeur : des tranches à la température de l'air, du chaud (côté tube chaud) au froid. Sans échangeur, rien.
+    if (cooling !== 'none') {
+      const [cx0, cy0] = toCar(coolerLeft, coolerTop);
+      const coolerW = (coolerRight - coolerLeft) * scale;
+      const coolerH = (coolerTop - coolerBottom) * scale;
+      if (ready && !motion.reduced && net.coolerCount > 0) {
+        const steps = Math.min(8, net.coolerCount);
+        for (let k = 0; k < steps; k++) {
+          const cell = net.coolerFirst + Math.floor((k * net.coolerCount) / steps);
+          ctx.fillStyle = painter.airStyle(theme, net.temp[cell], net.rho[cell]);
+          ctx.fillRect(cx0 + (coolerW * k) / steps, cy0, coolerW / steps + 0.5, coolerH);
+        }
+      } else {
+        ctx.fillStyle = theme.raised;
+        ctx.fillRect(cx0, cy0, coolerW, coolerH);
       }
-    } else {
-      ctx.fillStyle = theme.raised;
-      ctx.fillRect(cx0, cy0, coolerW, coolerH);
+      ctx.strokeStyle = theme.metal;
+      ctx.lineWidth = 1;
+      ctx.globalAlpha = 0.5;
+      ctx.beginPath();
+      for (let k = 1; k < 7; k++) {
+        ctx.moveTo(cx0 + (coolerW * k) / 7, cy0 + 1);
+        ctx.lineTo(cx0 + (coolerW * k) / 7, cy0 + coolerH - 1);
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(cx0, cy0, coolerW, coolerH);
+      labels.push({ x: nearEngine ? (coolerLeft + coolerRight) / 2 : coolerRight - 0.12, text: t('gas.intercooler') });
     }
-    ctx.strokeStyle = theme.metal;
-    ctx.lineWidth = 1;
-    ctx.globalAlpha = 0.5;
-    ctx.beginPath();
-    for (let k = 1; k < 7; k++) {
-      ctx.moveTo(cx0 + (coolerW * k) / 7, cy0 + 1);
-      ctx.lineTo(cx0 + (coolerW * k) / 7, cy0 + coolerH - 1);
-    }
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(cx0, cy0, coolerW, coolerH);
-    labels.push({ x: coolerRight - 0.12, text: t('gas.intercooler') });
 
     // La soupape de décharge, sur le tube froid, qui souffle quand elle s'ouvre.
     if (config.turboRelease !== 'flutter') {
@@ -676,7 +686,9 @@
       labels.push({ x: midX, text: t('car.battery') }, { x: motorX, text: t('car.motor') });
     } else {
       // Moteur : sa taille suit la cylindrée, ses cylindres se comptent.
-      const blockWidth = Math.min((0.42 + 0.075 * config.cylinders * (config.layout === 'inline' ? 1 : 0.62) + 0.035 * litres) * 0.85, shape.wheelbase * 0.42);
+      // La longueur du bloc : un VR est plus court qu'un six en ligne, un W qu'un V de même nombre (`engineLayout`, pas des rangées).
+      const perCylinder = config.layout === 'inline' ? 1 : config.layout === 'vr' ? 0.68 : config.layout === 'w' ? 0.51 : 0.62;
+      const blockWidth = Math.min((0.42 + 0.075 * config.cylinders * perCylinder + 0.035 * litres) * 0.85, shape.wheelbase * 0.42);
       // Il reste sous le capot, même à 7 litres.
       const blockHeight = Math.min(config.layout === 'boxer' ? 0.26 + 0.015 * litres : 0.36 + 0.022 * litres, shape.height * (behind ? 0.42 : 0.3));
       // Devant, il sort juste derrière la roue pour rester visible ; au centre, derrière les sièges ; à l'arrière, en porte-à-faux.
@@ -701,14 +713,19 @@
       ctx.stroke();
       // Chaque case s'allume quand c'est le tour de son cylindre, à la même horloge que les autres vues.
       const rotary = isRotary(config);
-      // Un rotor s'allume à chaque tour d'arbre : son horloge va deux fois plus vite, et chacun a sa case.
-      const row = config.layout === 'inline' || rotary ? config.cylinders : Math.ceil(config.cylinders / 2);
+      // Un rotor, comme un cylindre de deux-temps, s'allume à chaque tour d'arbre : son horloge va deux fois plus vite, et chacun a sa case.
+      // Une culasse (en ligne, VR) : une case par cylindre. Deux : une par paire.
+      const everyTurn = rotary || isTwoStroke(config);
+      const architecture = rotary ? null : architectureOf(config);
+      const row = rotary || architecture?.heads === 1 ? config.cylinders : Math.ceil(config.cylinders / 2);
       const perCell = config.cylinders / row;
-      const order = firingOrder(config.cylinders);
+      const order = firingOrderOf(config);
       const cellWidth = (blockWidth * scale - 6) / row;
       for (let i = 0; i < config.cylinders; i++) {
         const cell = Math.floor(i / perCell);
-        const phase = ((motion.cycle * (rotary ? 2 : 1)) + 1 - order.indexOf(i + 1) / config.cylinders) % 1;
+        // Le rang de ce cylindre dans le cycle : à son angle d'allumage, inégal sur un V14.
+        const firing = architecture ? architecture.firingDeg[order.indexOf(i + 1)] / 720 : order.indexOf(i + 1) / config.cylinders;
+        const phase = ((motion.cycle * (everyTurn ? 2 : 1)) + 1 - firing) % 1;
         if (i % perCell !== 0 && !(motion.burning && phase < 0.25)) continue;
         ctx.fillStyle = motion.burning && phase < 0.25 ? gasColor(0.4 + 0.6 * motion.load) : theme.bg;
         ctx.fillRect(X(left) + 3 + cell * cellWidth, Y(engineY + blockHeight) + 3, Math.max(cellWidth - 2, 1), blockHeight * scale * 0.42);
@@ -779,6 +796,44 @@
       if (parts.includes('resonator')) box(startX + span * 0.32, Math.min(0.32, span * 0.3), 0.11, t('part.res'), 'res');
       if (parts.includes('muffler') && !behind) box(0.28, 0.42, quietLine ? 0.2 : 0.15, t('part.muffler'), 'muffler');
       if (parts.includes('muffler') && behind) box(0.2, 0.3, 0.14, t('part.muffler'), 'muffler');
+      // La chambre de détente, à ses vraies dimensions (celle d'un cylindre, les autres derrière elle) : du collecteur, le long du
+      // plancher vers l'arrière, diffuseur, ventre et cône de retour, puis la pointe.
+      if (config.exhaust === 'expansion') {
+        const c = expansionChamber(config);
+        const room = behind ? Math.max(left - 0.2, 0.4) : Math.max(left - rearX, 0.4);
+        const fit = Math.min(1, room / (c.header + c.diffuser + c.belly + c.baffle + c.stinger));
+        const from = (behind ? Math.max(left - 0.12, 0.3) : left - 0.1) - c.header * fit;
+        const xs = [from, from - c.diffuser * fit, from - (c.diffuser + c.belly) * fit, from - (c.diffuser + c.belly + c.baffle) * fit];
+        const rs = [c.headerDiameter / 2, c.bellyDiameter / 2, c.bellyDiameter / 2, c.stingerDiameter / 2];
+        const middle = floor + c.bellyDiameter / 2 + 0.01;
+        ctx.beginPath();
+        for (let k = 0; k < 4; k++) {
+          const [x, y] = toCar(xs[k], middle + rs[k]);
+          if (k === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        for (let k = 3; k >= 0; k--) {
+          const [x, y] = toCar(xs[k], middle - rs[k]);
+          ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+        let style = theme.raised;
+        if (gasReady()) {
+          // Le gaz du ventre, tel que le calcule le réseau.
+          const net = motion.gas.net;
+          for (const section of net.sections) {
+            if (section.part !== 'belly') continue;
+            const at = section.first + (section.count >> 1);
+            style = motion.painter.gasStyle(theme, net.temp[at], net.y[at]);
+          }
+        }
+        ctx.fillStyle = style;
+        ctx.strokeStyle = theme.metal;
+        ctx.lineWidth = 1.5;
+        ctx.fill();
+        ctx.stroke();
+        labels.push({ x: (xs[0] + xs[3]) / 2, text: t('part.chamber') });
+      }
 
     }
     ctx.restore();

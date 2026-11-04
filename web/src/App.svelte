@@ -25,12 +25,16 @@
   import Tachometer from './components/Tachometer.svelte';
   import Trends from './components/Trends.svelte';
   import { AIR_FILTERS, BODIES, BOX_KINDS, CUSTOM_ID, DRIVES, EXHAUSTS, PRESETS, ROUTINGS, decodeConfig, encodeConfig, findPreset, strokeMm, type EngineConfig, type ShiftModeId, ANTI_LAGS, CAMSHAFTS, SUPERCHARGER_KINDS, FUEL_SYSTEMS, isRotary } from './lib/config';
+  import { BOOST_CONTROLS, DIESEL_INJECTIONS, FUEL_GRADES, INTERCOOLERS, REV_LIMITERS, TRACTION_CONTROLS, TUNING_FIELDS, TURBO_LAYOUTS, VALVE_TIMINGS, tuningArgs } from './lib/config';
   import { heated, updateHeat, wallCelsius } from './lib/heat';
   import { TelemetryHistory } from './lib/history';
   import { Readings } from './lib/instruments';
   import { Motion, rememberAnimations, rememberSpeed, SPEEDS, systemReducesMotion } from './lib/motion';
-  import { EMPTY_SPEC, Engine, IDLE_TELEMETRY, KW_TO_HP, Listener, Mode, type ModeValue, type Telemetry } from './lib/engine';
-  import { fixed, lang, setLang, t, type MessageKey } from './lib/i18n.svelte';
+  import { EMPTY_SPEC, Engine, IDLE_TELEMETRY, KW_TO_HP, Listener, Mode, type ModeValue, type Spec, type Telemetry } from './lib/engine';
+  import { fixed, lang, setLang, t, whole, type MessageKey } from './lib/i18n.svelte';
+
+  /** Pendant un glissé, ce qui coûte attend que le curseur reste immobile ce temps-là : la fiche, le son, les pièces de la vue du moteur. */
+  const PAUSE_MS = 150;
 
   type DriveMode = 'neutral' | 'drive' | 'lap';
   const DRIVE_MODES: { value: DriveMode; label: string; help: string; mode: ModeValue }[] = [
@@ -80,7 +84,8 @@
       telemetry = next;
       const now = performance.now();
       telemetryLog.push(next, now);
-      if (next.cut && !next.cranking) limiterUntil = now + 400;
+      // Le rupteur progressif ne coupe pas tout : il se lit à part. Le launch control et le passage à fond ont leur voyant.
+      if ((next.cut || next.ecuLimiter) && !next.cranking && !next.ecuLaunch && !next.ecuFlat) limiterUntil = now + 400;
       limiter = now < limiterUntil;
     },
     (message) => (failure = () => message),
@@ -102,13 +107,52 @@
   // Assisté : le levier actionne aussi l'embrayage. Au pied : passer sans débrayer gratte.
   let footClutch = $state(false);
   let gamepad = $state<string | null>(null);
-  // Pendant le glissé d'un curseur : l'aperçu et le son suivent, le lien attend le relâchement.
+  // Pendant le glissé d'un curseur : l'aperçu suit chaque mouvement, le son et la fiche l'arrêt du curseur, le lien le relâchement.
   let draft = $state<Partial<EngineConfig>>({});
 
   const shown = $derived({ ...config, ...draft });
   const preset = $derived(findPreset(config));
   const current = $derived(DRIVE_MODES.find((mode) => mode.value === driveMode)!);
-  const spec = $derived(loaded ? engine.spec(shown) : EMPTY_SPEC);
+  // La fiche se calcule sur ce thread, de 20 à 120 ms par réglage : posé, tout de suite ; pendant le glissé d'un curseur, une fois
+  // qu'il s'arrête, sans quoi chaque mouvement figeait la page autant. Le 0 à 100, jusqu'à 0,6 s, se calcule dans un worker, une
+  // fois le réglage posé : « … » en attendant.
+  const settledSpec = $derived(loaded ? engine.spec(config) : EMPTY_SPEC);
+  let draftSpec = $state<Spec | null>(null);
+  // Le réglage glissé, une fois le curseur immobile : le son le reçoit alors, et la vue du moteur en refait ses pièces.
+  let paused = $state<EngineConfig | null>(null);
+  let draftTimer: ReturnType<typeof setTimeout> | undefined;
+  $effect(() => {
+    const next = shown;
+    const dragging = Object.keys(draft).length > 0;
+    clearTimeout(draftTimer);
+    if (!dragging) {
+      draftSpec = null;
+      paused = null;
+      return;
+    }
+    draftTimer = setTimeout(() => {
+      paused = next;
+      // Le son d'abord. Le worklet y reconstruit le modèle de conduite (jusqu'à 28 ms sur son thread, pour 2,7 ms par bloc) : à
+      // chaque mouvement, le son décrochait.
+      engine.setConfig(next);
+      if (loaded) draftSpec = engine.spec(next);
+    }, PAUSE_MS);
+  });
+  /** Ce que montrent les pièces de la vue du moteur : refaire sa 3D coûte de 50 à 180 ms, une fois le curseur arrêté seulement. */
+  const posed = $derived(Object.keys(draft).length > 0 ? (paused ?? config) : config);
+  let sprint = $state<{ config: EngineConfig; seconds: number } | null>(null);
+  $effect(() => {
+    const next = config;
+    if (!loaded) return;
+    void engine.sprint(next).then((seconds) => {
+      if (seconds !== null) sprint = { config: next, seconds };
+    });
+  });
+  const spec = $derived.by<Spec>(() => {
+    const dragging = Object.keys(draft).length > 0;
+    const base = dragging && draftSpec ? draftSpec : settledSpec;
+    return { ...base, zeroTo100: !dragging && sprint?.config === config ? sprint.seconds : Number.NaN };
+  });
   const manual = $derived(driveMode === 'drive' && gearbox === 'manual' && !config.electric);
   // Aux palettes, c'est aussi le conducteur qui passe les rapports, sans pédale d'embrayage.
   const paddles = $derived(driveMode === 'drive' && gearbox === 'auto' && shiftMode === 'paddles' && !config.electric);
@@ -131,7 +175,7 @@
   onMount(() => {
     engine.load().then(() => (loaded = true)).catch((error) => (failure = () => t('error.load', { error })));
     if (import.meta.env.DEV || location.search.includes('test')) {
-      (window as unknown as Record<string, unknown>).__revforge = { engine, telemetry: () => telemetry, spec: () => spec, motion, telemetryLog, readings, encodeConfig, decodeConfig, config: () => config };
+      (window as unknown as Record<string, unknown>).__revforge = { engine, telemetry: () => telemetry, spec: () => spec, motion, telemetryLog, readings, encodeConfig, decodeConfig, config: () => config, tuningFields: TUNING_FIELDS, tuningArgs };
     }
     const stopGamepad = pollGamepad();
     const stopHeat = followHeat();
@@ -148,10 +192,9 @@
     history.replaceState(null, '', `#m=${encodeConfig(config)}`);
   }
 
-  /** Au glissé : le son change en direct, sans couper, tant que le moteur garde ses pièces. */
+  /** Au glissé : l'aperçu suit chaque mouvement ; le son et la fiche, l'arrêt du curseur (`paused`) ; le lien, le relâchement (`apply`). */
   function live(next: Partial<EngineConfig>) {
     draft = next;
-    engine.setConfig({ ...config, ...next });
   }
 
   function choosePreset(id: string) {
@@ -394,11 +437,56 @@
     const c = shown;
     const hp = Math.round(spec.peakHp);
     const label = <T extends string>(list: { value: T; label: string }[], value: T) => list.find((item) => item.value === value)?.label ?? '';
+    /** Un morceau du résumé, précédé de son séparateur ; rien quand le réglage est au défaut ou n'a pas de sens ici. */
+    const part = (text: string | false) => (text ? ` · ${text}` : '');
+    const rotary = isRotary(c);
+    const diesel = c.fuel === 'diesel' && !rotary;
+    const valves = !rotary && c.cycle !== 'two_stroke';
+    const turbo = c.aspiration === 'turbo';
     return {
-      engine: c.electric ? t('summary.electric', { hp }) : (isRotary(c) ? t('summary.rotary', { litres: decimal(c.displacementCc / 1000), cylinders: c.cylinders, hp }) : t('summary.engine', { litres: decimal(c.displacementCc / 1000), cylinders: c.cylinders, hp, bore: c.boreMm, stroke: Math.round(strokeMm(c)) })) + (c.aspiration === 'supercharger' ? ` · ${label(SUPERCHARGER_KINDS, c.superchargerKind)}` : '') + (c.airFilter === 'stock' ? '' : ` · ${label(AIR_FILTERS, c.airFilter)}`) + (c.aspiration === 'turbo' && c.turboPipeMm !== 400 ? t('summary.turboPipe', { m: decimal(c.turboPipeMm / 1000) }) : '') + (c.camshaft === 'sohc' && !isRotary(c) ? ` · ${label(CAMSHAFTS, c.camshaft)}` : '') + (c.fuel !== 'diesel' && c.fuelSystem !== 'injection' ? ` · ${c.fuelSystem === 'multi' && isRotary(c) ? t('fuelSystem.multi.rotary') : label(FUEL_SYSTEMS, c.fuelSystem)}` : '') + (antiLagFitted ? ` · ${label(ANTI_LAGS, c.antiLag)}` : ''),
+      // Une ligne par réglage, comme les sections du volet : chaque sujet ajoute la sienne sans toucher aux autres.
+      engine: c.electric ? t('summary.electric', { hp }) : [
+        rotary ? t('summary.rotary', { litres: decimal(c.displacementCc / 1000), cylinders: c.cylinders, hp }) : t('summary.engine', { litres: decimal(c.displacementCc / 1000), cylinders: c.cylinders, hp, bore: c.boreMm, stroke: Math.round(strokeMm(c)) }),
+        part(c.aspiration === 'supercharger' && label(SUPERCHARGER_KINDS, c.superchargerKind)),
+        part(c.airFilter !== 'stock' && label(AIR_FILTERS, c.airFilter)),
+        turbo && c.turboPipeMm !== 400 ? t('summary.turboPipe', { m: decimal(c.turboPipeMm / 1000) }) : '',
+        part(valves && c.camshaft !== 'dohc' && label(CAMSHAFTS, c.camshaft)),
+        part(c.fuel !== 'diesel' && c.fuelSystem !== 'injection' && (c.fuelSystem === 'multi' && rotary ? t('fuelSystem.multi.rotary') : label(FUEL_SYSTEMS, c.fuelSystem))),
+        part(antiLagFitted && label(ANTI_LAGS, c.antiLag)),
+        // Le socle moteur : architecture et cycle, combustion, distribution, alimentation, suralimentation, calculateur.
+        part(!rotary && c.cycle !== 'four_stroke' && t('summary.twoStroke')),
+        part(c.compressionRatio !== 0 && t('summary.compression', { ratio: decimal(c.compressionRatio) })),
+        part(!diesel && c.fuelGrade !== 'ron95' && label(FUEL_GRADES, c.fuelGrade)),
+        part(valves && c.camDurationDeg !== 0 && t('summary.camDuration', { deg: c.camDurationDeg })),
+        part(valves && c.camLiftMm !== 0 && t('summary.camLift', { mm: decimal(c.camLiftMm) })),
+        part(valves && c.lobeSeparationDeg !== 0 && t('summary.lsa', { deg: c.lobeSeparationDeg })),
+        part(valves && c.valveTiming !== 'fixed' && label(VALVE_TIMINGS, c.valveTiming)),
+        part(valves && c.valveSprings !== 'stock' && t('summary.stiffSprings')),
+        part(diesel && c.dieselInjection !== 'mechanical' && label(DIESEL_INJECTIONS, c.dieselInjection)),
+        part(!rotary && c.egr && t('summary.egr')),
+        part((diesel || c.fuelSystem === 'direct') && c.particulateFilter && t('summary.dpf')),
+        part(turbo && c.turboLayout !== 'single' && label(TURBO_LAYOUTS, c.turboLayout)),
+        part(turbo && c.variableGeometry && t('summary.vgt')),
+        part(turbo && c.boostControl !== 'spring' && t('summary.boostControl', { kind: label(BOOST_CONTROLS, c.boostControl) })),
+        part(c.aspiration !== 'natural' && c.intercooler !== 'air_to_air' && t('summary.intercooler', { kind: label(INTERCOOLERS, c.intercooler) })),
+        part(!diesel && c.waterInjection && t('summary.water')),
+        part(!diesel && c.nitrousKw !== 0 && t('summary.nitrous', { kw: c.nitrousKw })),
+        part(!diesel && c.ignitionOffsetDeg !== 0 && t('summary.advance', { deg: c.ignitionOffsetDeg > 0 ? `+${c.ignitionOffsetDeg}` : c.ignitionOffsetDeg })),
+        part(!diesel && c.fullLoadLambda !== 0 && t('summary.lambda', { lambda: fixed(c.fullLoadLambda, 2) })),
+        part(c.revLimiter !== 'stock' && t('summary.limiter', { kind: label(REV_LIMITERS, c.revLimiter) })),
+        part(c.launchRpm !== 0 && t('summary.launch', { rpm: c.launchRpm })),
+        part(c.flatShift && t('summary.flatShift')),
+        part(c.tractionControl !== 'off' && t('summary.traction', { kind: label(TRACTION_CONTROLS, c.tractionControl) })),
+      ].join(''),
       exhaust: c.electric ? t('summary.noExhaust') : t('summary.exhaust', { line: label(EXHAUSTS, c.exhaust), outlets: label(ROUTINGS, c.routing) }),
       gearbox: spec.gears === 1 ? t('spec.gears.one') : t('summary.gearbox', { gears: t('spec.gears.many', { gears: spec.gears }), kind: label(BOX_KINDS, c.boxKind) }),
-      car: t('summary.car', { body: label(BODIES, c.body), mass: c.massKg, drive: label(DRIVES, c.drive) }),
+      // Les conditions, rangées dans le volet de la voiture : l'air, l'altitude, le moteur au démarrage.
+      car: [
+        t('summary.car', { body: label(BODIES, c.body), mass: c.massKg, drive: label(DRIVES, c.drive) }),
+        part(c.ambientC !== 20 && t('summary.ambient', { c: c.ambientC })),
+        part(c.altitudeM !== 0 && t('summary.altitude', { m: whole(c.altitudeM) })),
+        part(!c.electric && c.startTemp !== 'warm' && t('summary.coldStart')),
+      ].join(''),
       listener: typeof listener === 'number' ? t(POSITION_LABEL[listener]) : t('listener.free'),
       share: preset?.name ?? t('builder.custom'),
       display: animated ? t('summary.display', { lang: t('display.languageName'), speed: t(`speed.${speed}` as MessageKey) }) : t('summary.displayOff', { lang: t('display.languageName') }),
@@ -471,8 +559,14 @@
           <p class="flag"><span>{t('common.state')}</span><strong data-testid="box-overload">{t('state.overload')}</strong></p>
         {:else if running && telemetry.lugging}
           <p class="flag"><span>{t('common.state')}</span><strong>{t('state.lugging')}</strong></p>
+        {:else if running && telemetry.ecuLaunch}
+          <p class="flag info"><span>{t('common.state')}</span><strong data-testid="live-launch">{t('state.launch')}</strong></p>
         {:else if limiter && running && !telemetry.cranking}
           <p class="flag danger"><span>{t('common.state')}</span><strong>{t('state.limiter')}</strong></p>
+        {:else if running && telemetry.ecuFlat}
+          <p class="flag info"><span>{t('common.state')}</span><strong data-testid="live-flat">{t('state.flatShift')}</strong></p>
+        {:else if running && telemetry.ecuTraction > 0.02}
+          <p class="flag"><span>{t('common.state')}</span><strong data-testid="live-traction">{t('state.traction')}</strong></p>
         {:else if telemetry.cranking}
           <p class="flag info"><span>{t('common.state')}</span><strong>{t('state.cranking')}</strong></p>
         {:else if Math.abs(telemetry.slip) > 4}
@@ -544,7 +638,7 @@
             <div><dt>{t('common.power')}</dt><dd data-testid="spec-hp">{Math.round(spec.peakHp)} {t('unit.hp')}</dd></div>
             <div><dt>{t('common.torque')}</dt><dd data-testid="spec-torque">{Math.round(spec.peakTorque)} Nm</dd></div>
             <div><dt>{t('spec.weightRatio')}</dt><dd>{weightRatio} {t('unit.hpPerTon')}</dd></div>
-            <div><dt>{t('spec.zeroTo100')}</dt><dd data-testid="spec-100">{spec.zeroTo100 > 0 ? `${decimal(spec.zeroTo100)} s` : '—'}</dd></div>
+            <div><dt>{t('spec.zeroTo100')}</dt><dd data-testid="spec-100" aria-busy={Number.isNaN(spec.zeroTo100)}>{Number.isNaN(spec.zeroTo100) ? '…' : spec.zeroTo100 > 0 ? `${decimal(spec.zeroTo100)} s` : '—'}</dd></div>
             <div><dt>{t('spec.topSpeed')}</dt><dd data-testid="spec-top">{Math.round(spec.topSpeed)} km/h</dd></div>
             <div><dt>{t('common.gearbox')}</dt><dd>{spec.gears === 1 ? t('spec.gears.one') : t('spec.gears.many', { gears: spec.gears })}</dd></div>
           {/if}
@@ -559,7 +653,7 @@
         </div>
         {#if mounted.engine}
           <section class="pane" hidden={view !== 'engine'} aria-label={t('section.engine')}>
-            <EngineView config={shown} telemetry={feed('engine')} {motion} slow={speed} />
+            <EngineView config={shown} shape={posed} telemetry={feed('engine')} {motion} slow={speed} />
           </section>
         {/if}
         {#if mounted.clutch}
@@ -584,7 +678,7 @@
 
     <aside class="rail" aria-label={t('section.instruments')}>
       <section class="card">
-        <GaugeBank config={shown} {spec} {motion} {readings} telemetry={() => telemetry} running={() => running} {sample} />
+        <GaugeBank config={shown} {spec} {motion} {readings} telemetry={() => telemetry} running={() => running} {sample} onrefill={() => engine.refillNitrous()} />
       </section>
       <section class="card" aria-label={t('section.curves.aria')}>
         <PowerCurves {spec} rpm={telemetry.rpm} {liveHp} liveTorque={liveTorque} {running} />
@@ -628,7 +722,7 @@
     <GearboxPanel {config} {shown} {spec} rpm={panel === 'gearbox' ? telemetry.rpm : 0} speed={panel === 'gearbox' ? telemetry.speed : 0} gear={panel === 'gearbox' ? telemetry.gear : 0} {running} onapply={apply} onlive={live} />
   </Panel>
   <Panel id="car" title={t('panel.car')} open={panel === 'car'} onclose={closePanel}>
-    <CarSettings {config} {spec} onapply={apply} onlive={live} />
+    <CarSettings {config} {shown} {spec} onapply={apply} onlive={live} />
   </Panel>
   <Panel id="listener" title={t('section.listener')} open={panel === 'listener'} onclose={closePanel}>
     <ListenerPanel config={shown} settled={config} telemetry={panel === 'listener' ? telemetry : IDLE_TELEMETRY} {motion} {engine} {loaded} {running} bind:place={listener} />

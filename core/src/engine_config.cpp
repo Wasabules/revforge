@@ -1,14 +1,24 @@
 #include "revforge/engine_config.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 #include "kotlin_math.hpp"
 #include "revforge/air_filter.hpp"
+#include "revforge/architecture.hpp"
 #include "revforge/supercharger.hpp"
 #include "revforge/carburetor.hpp"
+#include "revforge/combustion.hpp"
+#include "revforge/injection.hpp"
+#include "revforge/particulate_filter.hpp"
+#include "revforge/cam.hpp"
+#include "revforge/valve_float.hpp"
 #include "portable_math.hpp"
+#include "revforge/two_stroke.hpp"
 
 namespace revforge {
+
+static_assert(2 * kMaxRotors <= kMaxCylinders, "deux explosions par rotor doivent tenir dans les tableaux par cylindre");
 
 namespace {
 
@@ -38,7 +48,24 @@ void applyCarburetor(const EngineConfig& engine, EngineProfile& p) {
     const double settled = 1.0 / carb.partLambda;
     const double lean = torqueOfRichness(settled * (1.0 - carb.spread)) / torqueOfRichness(settled);
     const double rich = torqueOfRichness(settled * (1.0 + carb.spread)) / torqueOfRichness(settled);
-    for (int i = 0; i < p.firingCount; ++i) p.firingGain[i] *= static_cast<float>(i % 2 == 0 ? lean : rich);
+    // Sur un deux-temps, chaque cylindre allume deux fois par cycle : son mélange reste le sien.
+    for (int i = 0; i < p.firingCount; ++i) p.firingGain[i] *= static_cast<float>((p.twoStroke ? i % p.pistons : i) % 2 == 0 ? lean : rich);
+}
+
+/**
+ * Ce que le son doit savoir de l'injection : le tic d'une injection directe, ce que la rampe commune et la recirculation font
+ * au bruit de combustion, le filtre dans la ligne. Rien de tout cela sur l'injection indirecte et la pompe mécanique d'origine.
+ */
+void applyInjection(const EngineConfig& e, EngineProfile& p) {
+    p.directInjection = directInjected(e);
+    if (particulateFiltered(e)) {
+        const ParticulateFilterSpec spec = particulateFilterSpecOf(e);
+        ParticulateFilter mean;
+        mean.configure(spec);
+        p.filterResistance = static_cast<float>(filterLineResistance(spec, mean.sootG()));
+    }
+    p.commonRail = commonRailed(e);
+    p.egr = recirculated(e);
 }
 
 // ── Le moteur rotatif : voir « Le moteur rotatif » dans docs/modele.md ──
@@ -80,7 +107,8 @@ void applyRotary(const EngineConfig& e, EngineProfile& p) {
     const int rotors = e.rotors();
     const int firings = 2 * rotors;
     const double chamberCc = static_cast<double>(e.displacementCc) / rotors;
-    const double compression = compressionOf(e.aspiration, kRotaryCompressionNatural, kRotaryCompressionBoosted);
+    // Un autre rotor, plus ou moins creusé : la lumière s'ouvre sur un gaz plus ou moins détendu, et le démarreur le sent.
+    const double compression = e.compressionRatio > 0.0f ? static_cast<double>(compressionRatioOf(e)) : compressionOf(e.aspiration, kRotaryCompressionNatural, kRotaryCompressionBoosted);
     const double pistonCompression = compressionOf(e.aspiration, kPistonCompressionNatural, kPistonCompressionBoosted);
     p.rotary = true;
     p.rotors = rotors;
@@ -116,6 +144,120 @@ void applyRotary(const EngineConfig& e, EngineProfile& p) {
     const double openCc = chamberCc * (1.0 / (compression - 1.0) + kOpenedShare);
     p.blowdownS = static_cast<float>(kPistonBlowdownS * (openCc / portCm2) / kPistonVolumeOverAreaCm);
     p.starter.compressionRatio = static_cast<float>(compression);
+}
+
+// ── Les architectures : voir « Les architectures » dans docs/modele.md ──
+// Longueur de collecteur d'une culasse seule (celle d'un moteur en ligne), et des deux culasses d'un V : la plus proche de la
+// jonction, puis l'autre. Mêmes ordres de grandeur qu'en ligne et en V ci-dessus.
+constexpr float kOneHeadHeaderM = 0.62f;
+constexpr float kNearHeadHeaderM = 0.55f;
+constexpr float kFarHeadHeaderM = 0.72f;
+// Le dessin du site : bielle de 1,6 course, axe de piston à 0,36 alésage sous le haut du piston (`engineLayout.ts`).
+constexpr double kRodPerStroke = 1.6;
+constexpr double kPinBelowCrownPerBore = 0.36;
+
+/**
+ * Ce que le son tire de l'architecture : l'instant de chaque allumage, la culasse où il souffle, la longueur de son conduit.
+ * L'indice suit la convention d'origine : l'indice c allume au rang N − c de l'ordre (le temps à rebours), d'où des instants
+ * croissants. Rien n'est réglé à l'oreille : l'irrégularité de chaque ligne vient de l'ordre et du partage entre les culasses.
+ */
+void applyArchitecture(const EngineConfig& e, EngineProfile& p) {
+    const Architecture a = architectureOf(e);
+    const int n = a.cylinders;
+    p.cylinders = n;
+    p.firingCount = n;
+    // La rangée loin de l'échappement a un conduit plus long dans la culasse : l'écart des deux rangées au plan de joint.
+    const double strokeM = static_cast<double>(e.strokeMm()) / 1000.0;
+    const double deckM = (0.5 + kRodPerStroke) * strokeM + kPinBelowCrownPerBore * static_cast<double>(e.boreMm) / 1000.0;
+    const double halfRow = a.rowAngleDeg / 2.0 * portable::kPi / 180.0;
+    const float rowGapM = static_cast<float>(2.0 * (deckM * portable::sin(halfRow) + a.rowOffsetMm / 1000.0 * portable::cos(halfRow)));
+    for (int c = 0; c < n; ++c) {
+        const int slot = c == 0 ? 0 : n - c;
+        const std::size_t at = static_cast<std::size_t>(c);
+        const std::size_t number = static_cast<std::size_t>(a.order[static_cast<std::size_t>(slot)] - 1);
+        p.firing[at] = c == 0 ? 0.0f : static_cast<float>((720.0 - a.firingDeg[static_cast<std::size_t>(slot)]) / 720.0);
+        const int head = a.heads == 2 ? a.head[number] : 0;
+        p.bank[at] = head;
+        const float spread = kCylinderSpread[at % kCylinderSpread.size()];
+        const float headerSpread = kHeaderSpread[at % kHeaderSpread.size()];
+        // Une culasse : comme en ligne. Deux : comme en V, la seconde respire un peu moins bien et a son collecteur plus loin.
+        p.firingGain[at] = a.heads == 2 ? spread * (head == 0 ? 1.0f : 0.96f) : spread;
+        p.headerM[at] = a.heads == 2 ? (head == 0 ? kNearHeadHeaderM : kFarHeadHeaderM) + 0.04f * headerSpread : kOneHeadHeaderM + 0.05f * headerSpread;
+        if (a.rowAngleDeg > 0.0) {
+            // L'échappement sort du côté opposé à l'admission : à droite d'une culasse seule, à l'extérieur d'un W.
+            const int exhaustSide = a.heads == 2 ? (head == 0 ? -1 : 1) : 1;
+            const int rowSide = a.row[number] == 0 ? -1 : 1;
+            if (rowSide != exhaustSide) p.headerM[at] += rowGapM;
+        }
+    }
+    for (int c = n; c < kMaxCylinders; ++c) {
+        const std::size_t at = static_cast<std::size_t>(c);
+        p.firing[at] = 0.0f;
+        p.firingGain[at] = 0.0f;
+        p.headerM[at] = 0.0f;
+        p.bank[at] = 0;
+    }
+    p.twoBanks = a.heads == 2 && n >= 4 && e.routing != ExhaustRouting::Single;
+}
+
+/**
+ * Ce qui change sur un deux-temps, une fois le moteur rempli comme un quatre-temps : voir `EngineProfile::twoStroke`. Chaque cylindre
+ * allume deux fois en deux tours, à 360° d'écart ; ses lumières remplacent les soupapes ; son cycle intégré donne ce que le carter
+ * fait entrer et ce que le cylindre garde.
+ */
+void applyTwoStroke(const EngineConfig& e, EngineProfile& p) {
+    const int pistons = e.pistons();
+    const int firings = 2 * pistons;
+    const TwoStrokePorts ports = twoStrokePortsOf(e);
+    // Ce que chaque cylindre avait en quatre temps : sa force, son collecteur, sa rangée. Il les garde à ses deux explosions.
+    const std::array<float, kMaxCylinders> gain = p.firingGain;
+    const std::array<float, kMaxCylinders> header = p.headerM;
+    const std::array<int, kMaxCylinders> bank = p.bank;
+    const float release = static_cast<float>(twoStrokeReleaseShare(e));
+    p.twoStroke = true;
+    p.pistons = pistons;
+    p.cylinders = firings;
+    p.firingCount = firings;
+    for (int i = 0; i < kMaxCylinders; ++i) {
+        p.firing[static_cast<std::size_t>(i)] = 0.0f;
+        p.firingGain[static_cast<std::size_t>(i)] = 0.0f;
+        p.headerM[static_cast<std::size_t>(i)] = 0.0f;
+        p.bank[static_cast<std::size_t>(i)] = 0;
+    }
+    for (int i = 0; i < firings; ++i) {
+        // À intervalles égaux, 360°/cylindres de vilebrequin : l'explosion i et i + pistons sont celles du même cylindre, un tour plus tard.
+        const std::size_t at = static_cast<std::size_t>(i);
+        const std::size_t piston = static_cast<std::size_t>(i % pistons);
+        p.firing[at] = static_cast<float>(i) / static_cast<float>(firings);
+        p.firingGain[at] = gain[piston] * release;
+        p.headerM[at] = header[piston];
+        p.bank[at] = bank[piston];
+    }
+    // Le cycle de 720° du son, compté depuis l'explosion : les lumières d'un tour, symétriques autour du point mort bas, et l'admission
+    // dans le carter autour du point mort haut suivant.
+    p.portEvo = static_cast<float>(ports.exhaustOpenDeg / 720.0);
+    p.portEvc = static_cast<float>((360.0 - ports.exhaustOpenDeg) / 720.0);
+    p.portTo = static_cast<float>(ports.transferOpenDeg / 720.0);
+    p.portTc = static_cast<float>((360.0 - ports.transferOpenDeg) / 720.0);
+    p.portIo = static_cast<float>((360.0 - ports.inletOpenBtdcDeg) / 720.0);
+    p.portIc = static_cast<float>((360.0 + ports.inletOpenBtdcDeg) / 720.0);
+    p.rodOverStroke = static_cast<float>(ports.rodOverStroke);
+    for (int k = 0; k < kTwoStrokePoints; ++k) {
+        const TwoStrokeCharge charge = twoStrokeFullLoad(e, twoStrokeTableRpm(e, k));
+        p.delivery[static_cast<std::size_t>(k)] = static_cast<float>(charge.delivery);
+        p.purity[static_cast<std::size_t>(k)] = static_cast<float>(charge.scavenging);
+    }
+    p.scavengeDisplacement = static_cast<float>(kScavengeDisplacement);
+    p.scavengeShortCircuit = static_cast<float>(kScavengeShortCircuit);
+    // La bouffée : le volume du cylindre à l'ouverture, face à la section de la lumière, rapportés au cylindre de référence du son.
+    const double sweptCc = static_cast<double>(e.displacementCc) / pistons;
+    const double strokeCm = static_cast<double>(e.strokeMm()) / 10.0;
+    const double boreCm = static_cast<double>(e.boreMm) / 10.0;
+    const double openCc = sweptCc * (1.0 / (ports.geometricCompression - 1.0) + (1.0 - ports.exhaustHeight));
+    const double portCm2 = ports.exhaustWidth * boreCm * ports.exhaustHeight * strokeCm;
+    p.blowdownS = static_cast<float>(kPistonBlowdownS * (openCc / portCm2) / kPistonVolumeOverAreaCm);
+    // Le démarreur ne comprime que ce que la lumière d'échappement enferme.
+    p.starter.compressionRatio = static_cast<float>(ports.trappedCompression);
 }
 
 }  // namespace
@@ -155,6 +297,10 @@ double rotaryEfficiencyShare(Aspiration aspiration) {
     return ottoEfficiency(compression) / ottoEfficiency(pistonCompression) * (1.0 - kWallLossPerRatio * (wall - 1.0)) * (1.0 - kApexLeakLoss);
 }
 
+double rotaryCycleEfficiency(double compressionRatio) {
+    return ottoEfficiency(compressionRatio) * (1.0 - kWallLossPerRatio * (rotaryWallRatio(static_cast<float>(compressionRatio)) - 1.0));
+}
+
 const ExhaustSpec& exhaustSpec(Exhaust exhaust) {
     static const ExhaustSpec stock{2.6f, 0.45f, 0.45f, 700.0f, 0.05f, 1.0f, 1.0f};
     static const ExhaustSpec sport{2.2f, 0.85f, 1.0f, 1500.0f, 0.04f, 0.35f, 2.0f};
@@ -162,9 +308,13 @@ const ExhaustSpec& exhaustSpec(Exhaust exhaust) {
     static const ExhaustSpec noMuffler{2.0f, 1.15f, 1.4f, 2000.0f, 0.045f, 0.25f, 2.5f};
     static const ExhaustSpec noResonator{2.4f, 0.5f, 0.6f, 800.0f, 0.05f, 1.0f, 1.1f};
     static const ExhaustSpec quiet{2.8f, 0.3f, 0.3f, 500.0f, 0.055f, 0.6f, 0.6f};
+    // La chambre de détente : un long tube (collecteur, cônes et pointe, de l'ordre de 2 m) qui résonne grave, une pointe étroite et
+    // un petit silencieux garni, entre la ligne sport et la directe pour le souffle de sortie (supposé, comme les autres lignes).
+    static const ExhaustSpec expansion{2.2f, 1.0f, 1.2f, 1800.0f, 0.045f, 0.3f, 2.5f};
     switch (exhaust) {
         case Exhaust::Sport: return sport;
         case Exhaust::Straight: return straight;
+        case Exhaust::Expansion: return expansion;
         case Exhaust::MufflerDelete: return noMuffler;
         case Exhaust::ResonatorDelete: return noResonator;
         case Exhaust::Quiet: return quiet;
@@ -220,14 +370,16 @@ EngineProfile EngineConfig::toProfile() const {
     const float redline = static_cast<float>(redlineRpm);
     const ExhaustSpec& spec = exhaustSpec(exhaust);
 
+    // Au-delà des tableaux, rien ne s'écrit : la CLI refuse ce nombre, et le site ne le propose pas.
+    const int count = cylinders < 1 ? 1 : (cylinders > kMaxCylinders ? kMaxCylinders : cylinders);
     EngineProfile p;
-    p.cylinders = cylinders;
-    p.firingCount = cylinders;
+    p.cylinders = count;
+    p.firingCount = count;
     p.idleRpm = idle;
     p.redlineRpm = redline;
     p.revMultiplier = revMultiplier > 0.0f ? revMultiplier : fullRangeMultiplier(idle, redline);
 
-    for (int i = 0; i < cylinders; ++i) {
+    for (int i = 0; i < count; ++i) {
         const float even = static_cast<float>(i) / static_cast<float>(cylinders);
         // Temps d'allumage
         if (layout == Layout::Boxer && cylinders % 2 == 0) {
@@ -244,6 +396,8 @@ EngineProfile EngineConfig::toProfile() const {
             case Layout::Boxer: p.firingGain[i] = spread * (i % 2 == 0 ? 1.0f : 0.76f); break;
             // Deux explosions de suite sur une même rangée : le « glouglou ».
             case Layout::CrossPlane: p.firingGain[i] = spread * kCrossPlaneCrowded[i % kCrossPlaneCrowded.size()]; break;
+            case Layout::Vr:
+            case Layout::W: break;  // voir `applyArchitecture`
             case Layout::Rotary: break;  // voir `applyRotary`
         }
         // Longueurs réalistes : égales en ligne, par rangée en V, très inégales sur un boxer.
@@ -253,6 +407,8 @@ EngineProfile EngineConfig::toProfile() const {
             case Layout::V: p.headerM[i] = (i % 2 == 0 ? 0.55f : 0.72f) + 0.04f * headerSpread; break;
             case Layout::CrossPlane: p.headerM[i] = (kCrossPlaneLeft[i % kCrossPlaneLeft.size()] ? 0.5f : 0.86f) + 0.04f * headerSpread; break;
             case Layout::Boxer: p.headerM[i] = i % 2 == 0 ? 0.48f : 1.05f; break;
+            case Layout::Vr:
+            case Layout::W: break;  // voir `applyArchitecture`
             case Layout::Rotary: break;
         }
         // La rangée de ce cylindre : en ligne, il n'y en a qu'une. Les petits moteurs rejoignent vite une seule ligne.
@@ -292,6 +448,8 @@ EngineProfile EngineConfig::toProfile() const {
         p.stackRadiusM = static_cast<float>(revforge::stackRadiusM(*this));
     }
     p.camshaft = valvetrain();
+    // L'affolement des soupapes et les poussoirs : rien sans soupapes (rotatif, deux-temps).
+    p.valves = valvetrainProfileOf(*this);
 
     // Le démarreur dépend de ce qu'il doit lancer : la puissance suit la cylindrée et la compression.
     // Un rotatif se lance comme le quatre temps de deux fois sa cylindrée : il comprime autant à chaque tour.
@@ -300,6 +458,14 @@ EngineProfile EngineConfig::toProfile() const {
     s.kind = (cylinders >= 8 || litres > 4.5f) ? StarterKind::Direct : StarterKind::Reduction;
     // Un moteur suralimenté comprime moins pour ne pas détoner, quelle que soit la façon dont il l'est.
     s.compressionRatio = isDiesel ? 18.0f : (aspiration != Aspiration::Natural ? 9.5f : 10.5f);
+    if (compressionRatio > 0.0f) {
+        // Un autre taux : le démarreur comprime autre chose, et la soupape d'échappement s'ouvre sur un gaz plus ou moins détendu.
+        const float stock = s.compressionRatio;
+        s.compressionRatio = compressionRatioOf(*this);
+        const float release = static_cast<float>(releasePressureShare(static_cast<double>(s.compressionRatio), static_cast<double>(stock)));
+        for (int i = 0; i < cylinders; ++i) p.firingGain[i] *= release;
+        p.dieselKnockScale = revforge::dieselKnockScale(*this);
+    }
     s.powerKw = (0.75f + 0.38f * litres) * (isDiesel ? 1.15f : 1.0f);
     s.ringTeeth = static_cast<int>(km::coerceIn(105.0f + 9.0f * litres, 110.0f, 170.0f));
     if (s.kind == StarterKind::Direct) {
@@ -319,8 +485,16 @@ EngineProfile EngineConfig::toProfile() const {
         s.motorInertia = 0.00008f + 0.00001f * litres;
     }
     if (layout == Layout::Rotary) applyRotary(*this, p);
+    else if (twoStroke()) applyTwoStroke(*this, p);
+    // Un VR, un W, ou plus de douze cylindres : l'ordre d'allumage réel, ses intervalles et ses culasses (quatre temps seulement).
+    else if (ownArchitecture(*this)) applyArchitecture(*this, p);
+    // La chambre de détente, accordée sur ce moteur : sur un quatre-temps (CLI seulement), sur l'ouverture de sa soupape.
+    if (exhaust == Exhaust::Expansion) p.chamber = expansionChamberFor(*this);
     // Après le rotatif : les explosions inégales d'une pipe commune se posent sur les siennes.
-    if (fuelSystemOf(*this) != FuelSystem::Injection) applyCarburetor(*this, p);
+    if (hasCarburetor(*this)) applyCarburetor(*this, p);
+    if (directInjected(*this) || particulateFiltered(*this) || commonRailed(*this) || recirculated(*this)) applyInjection(*this, p);
+    // La came, si ce n'est pas celle d'origine : son calage, sa bouffée, ses gaz résiduels.
+    if (!camIsStock(*this)) applyCam(*this, p);
     return p;
 }
 

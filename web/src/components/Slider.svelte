@@ -7,12 +7,14 @@
     step: number;
     format: (value: number) => string;
     disabled?: boolean;
+    /** Le nom lu par les aides techniques, quand l'étiquette visible ne suffit pas seule (« Valeur »). */
+    ariaLabel?: string;
     /** Pendant le glissé : affichage seulement. */
     oninput?: (value: number) => void;
     /** Au relâchement : le changer à chaque pixel couperait le son sans cesse. */
     onchange: (value: number) => void;
   }
-  let { label, value, min, max, step, format, disabled = false, oninput, onchange }: Props = $props();
+  let { label, value, min, max, step, format, disabled = false, ariaLabel, oninput, onchange }: Props = $props();
 
   const uid = $props.id();
   let dragging = $state<number | null>(null);
@@ -32,6 +34,7 @@
     {step}
     value={shown}
     {disabled}
+    aria-label={ariaLabel}
     style:--progress="{((shown - min) / (max - min)) * 100}%"
     oninput={(event) => {
       dragging = Number(event.currentTarget.value);

@@ -1,4 +1,4 @@
-import { carArgs, configArgs, gearboxArgs, gearRatios, type EngineConfig } from './config';
+import { carArgs, configArgs, gearboxArgs, gearRatios, tuningArgs, type EngineConfig } from './config';
 import { t } from './i18n.svelte';
 
 export const Mode = { Off: 0, Neutral: 1, Drive: 2, Lap: 3, Manual: 4 } as const;
@@ -9,6 +9,22 @@ export const Listener = { Outside: 0, Cabin: 1, EngineBay: 2, Front: 3, Side: 4,
 export type ListenerValue = (typeof Listener)[keyof typeof Listener];
 
 export const KW_TO_HP = 1.35962;
+
+/**
+ * Le son se calcule à 48 kHz, quelle que soit la carte son : le navigateur rééchantillonne. Le simulateur n'est pas invariant en
+ * fréquence d'échantillonnage (ses bruits filtrés gardent leur variance par échantillon : −6 dB à 192 kHz), et une interface à
+ * 192 kHz lui demanderait quatre fois plus de calcul. Tout le monde entend donc le même moteur, celui de la CLI à `--rate 48000`.
+ */
+export const SIMULATION_RATE = 48000;
+
+function audioContextAt(rate: number): AudioContext {
+  try {
+    return new AudioContext({ latencyHint: 'interactive', sampleRate: rate });
+  } catch {
+    // Un navigateur qui refuse cette fréquence garde la sienne.
+    return new AudioContext({ latencyHint: 'interactive' });
+  }
+}
 
 export interface Telemetry {
   rpm: number;
@@ -45,6 +61,13 @@ export interface Telemetry {
   antiLagHeatKw: number;
   antiLagAirFlow: number;
   antiLagLostNm: number;
+  /**
+   * La régulation de pression, en bar absolus : la pression que vise la wastegate (ressort) ou le calculateur (électronique,
+   * selon le rapport), et celle qui règne avant le papillon. Le rapport cyclique de l'électrovanne, 0 à 1 ; −1 sans électrovanne.
+   */
+  boostTargetBar: number;
+  boostChargeBar: number;
+  boostDuty: number;
   /** Le compresseur mécanique : l'arbre (tr/min), ce qu'il prend au vilebrequin (kW), la part du débit rendue à l'entrée. Les pressions et températures sont les mêmes champs que pour un turbo. */
   chargerRpm: number;
   chargerKw: number;
@@ -113,10 +136,87 @@ export interface Telemetry {
   energyKwhPer100km: number;
   energyAvgKwhPer100km: number;
   energyTripKwh: number;
+  /**
+   * Les températures du moteur (°C) : eau, huile, métal ; le calorstat (0 à 1) et le ventilateur (0 ou 1) ; la viscosité de
+   * l'huile (mPa·s). Le réseau tourne toujours ; il n'agit qu'après un départ à froid, et alors : frottements en plus (Nm),
+   * ralenti visé en plus (tr/min), carburant en plus (part), et les frottements du moteur chaud à ce régime (Nm).
+   */
+  coolantC: number;
+  oilC: number;
+  metalC: number;
+  thermostat: number;
+  fan: number;
+  oilViscosity: number;
+  coldFrictionNm: number;
+  coldIdleRpm: number;
+  coldEnrichment: number;
+  warmFrictionNm: number;
+  /** Le cliquetis, quand la combustion n'est plus celle d'origine : avance appliquée et limite (° avant le PMH), avance retirée par le capteur (°), part des cycles qui cliquettent (0-1). Tout à 0 sinon. */
+  sparkAdvance: number;
+  knockLimit: number;
+  knockRetard: number;
+  knockShare: number;
+  /**
+   * Le calculateur, lu de la simulation : l'avance face à la carte d'origine (°, positif plus tôt), le λ demandé (0 sans
+   * objet), la part des explosions qui ont lieu (0 à 1), le rupteur, le launch control, le passage à fond (0 ou 1), et la
+   * part du couple que retire l'antipatinage (0 à 1).
+   */
+  ecuAdvance: number;
+  ecuLambda: number;
+  ecuFired: number;
+  ecuLimiter: number;
+  ecuLaunch: number;
+  ecuFlat: number;
+  ecuTraction: number;
+  /** Le filtre à particules : remplissage (0 après une régénération, 1 à la suivante), contre-pression (kPa), régénération (0 ou 1), température (°C). */
+  dpfLoad: number;
+  dpfKpa: number;
+  dpfRegen: number;
+  dpfC: number;
+  /** Part de gaz d'échappement recirculés dans la charge, en ce moment. */
+  egrShare: number;
+  /** La distribution variable : le second profil est en prise (0 ou 1), et l'avance du déphaseur d'admission (degrés de vilebrequin). */
+  camHigh: number;
+  camPhaser: number;
+  /**
+   * Deux turbos, twincharger, aubes (twin_turbo.cpp). Le second arbre (tr/min), sa pression avant turbine (bar relatifs), sa
+   * soupape, son débit (kg/s), son gaz (°C) ; l'ouverture des aubes de chacun (0 fermées, 1 grandes ouvertes) ; l'étape d'un
+   * séquentiel (0 le primaire seul, 1 le secondaire lancé à part, 2 les deux), sa vanne d'échappement (0 à 1) et son clapet
+   * d'admission ouvert (0 ou 1) ; l'embrayage du compresseur d'un twincharger (0 ou 1), son volet (1 ouvert) et la pression
+   * entre les deux étages. Tout à zéro sur un turbo simple.
+   */
+  turbo2Rpm: number;
+  turbo2Exhaust: number;
+  turbo2Wastegate: number;
+  turbo2Flow: number;
+  turbo2GasC: number;
+  turboVane: number;
+  turbo2Vane: number;
+  twinStage: number;
+  twinValve: number;
+  twinOnline: number;
+  chargerClutch: number;
+  chargerFlap: number;
+  chargerInterstage: number;
+  /** L'air de charge : au collecteur, après l'échangeur, l'eau et le protoxyde (°C) ; la boucle d'un air-eau (°C) ; l'eau injectée (g/s). */
+  chargeC: number;
+  chargeWaterC: number;
+  waterGps: number;
+  /** La bouteille de protoxyde : pression relative (bar), ce qu'il en reste (kg), ce qui en sort (g/s, 0 fermé). */
+  nitrousBar: number;
+  nitrousKg: number;
+  nitrousFlow: number;
 }
 
 export const IDLE_TELEMETRY: Telemetry = {
-  rpm: 0, speed: 0, gear: 0, throttle: 0, load: 0, boost: 0, turbine: 0, turboRelease: 0, turboRpm: 0, turboCharge: 0, turboPlenum: 0, turboOutlet: 0, turboInlet: 0, turboExhaust: 0, turboWastegate: 0, turboBlowoff: 0, turboFlow: 0, turboOutC: 20, turboCoolC: 20, intakeAirC: 20, turboGasC: 20, antiLag: 0, antiLagHeatKw: 0, antiLagAirFlow: 0, antiLagLostNm: 0, chargerRpm: 0, chargerKw: 0, chargerSpill: 0, torque: 0, power: 0, clutch: 0, clutchInputRpm: 0, clutchSlipKw: 0, clutchTorque: 0, wheelRpm: 0, slip: 0, pops: 0, cut: 0, shifting: 0, cranking: 0, stalled: 0, lugging: 0, legKind: 0, legTarget: 0, gradePct: 0, underpowered: 0, levelDbA: 0, listenerX: 0, listenerY: 0, listenerZ: 0, peak: 0, outputRpm: 0, meshed: 0, shiftStep: 0, grinding: 0, overload: 0, boxWear: 0, boxBroken: 0, boxPending: 0, boxConeSlip: 0, boxRattle: 0, boxLoose0: 0, boxLoose1: 0, boxLoose2: 0, boxLoose3: 0, fuelLph: 0, fuelLper100km: 0, fuelTripL: 0, fuelAvgLper100km: 0, tripKm: 0, co2GPerKm: 0, oilGph: 0, oilTripMl: 0, oilMlPer1000km: 0, energyKwhPer100km: 0, energyAvgKwhPer100km: 0, energyTripKwh: 0,
+  rpm: 0, speed: 0, gear: 0, throttle: 0, load: 0, boost: 0, turbine: 0, turboRelease: 0, turboRpm: 0, turboCharge: 0, turboPlenum: 0, turboOutlet: 0, turboInlet: 0, turboExhaust: 0, turboWastegate: 0, turboBlowoff: 0, turboFlow: 0, turboOutC: 20, turboCoolC: 20, intakeAirC: 20, turboGasC: 20, antiLag: 0, antiLagHeatKw: 0, antiLagAirFlow: 0, antiLagLostNm: 0, boostTargetBar: 0, boostChargeBar: 0, boostDuty: -1, chargerRpm: 0, chargerKw: 0, chargerSpill: 0, torque: 0, power: 0, clutch: 0, clutchInputRpm: 0, clutchSlipKw: 0, clutchTorque: 0, wheelRpm: 0, slip: 0, pops: 0, cut: 0, shifting: 0, cranking: 0, stalled: 0, lugging: 0, legKind: 0, legTarget: 0, gradePct: 0, underpowered: 0, levelDbA: 0, listenerX: 0, listenerY: 0, listenerZ: 0, peak: 0, outputRpm: 0, meshed: 0, shiftStep: 0, grinding: 0, overload: 0, boxWear: 0, boxBroken: 0, boxPending: 0, boxConeSlip: 0, boxRattle: 0, boxLoose0: 0, boxLoose1: 0, boxLoose2: 0, boxLoose3: 0, fuelLph: 0, fuelLper100km: 0, fuelTripL: 0, fuelAvgLper100km: 0, tripKm: 0, co2GPerKm: 0, oilGph: 0, oilTripMl: 0, oilMlPer1000km: 0, energyKwhPer100km: 0, energyAvgKwhPer100km: 0, energyTripKwh: 0,
+  coolantC: 20, oilC: 20, metalC: 20, thermostat: 0, fan: 0, oilViscosity: 0, coldFrictionNm: 0, coldIdleRpm: 0, coldEnrichment: 0, warmFrictionNm: 0,
+  sparkAdvance: 0, knockLimit: 0, knockRetard: 0, knockShare: 0,
+  ecuAdvance: 0, ecuLambda: 0, ecuFired: 1, ecuLimiter: 0, ecuLaunch: 0, ecuFlat: 0, ecuTraction: 0,
+  dpfLoad: 0, dpfKpa: 0, dpfRegen: 0, dpfC: 0, egrShare: 0,
+  camHigh: 0, camPhaser: 0,
+  turbo2Rpm: 0, turbo2Exhaust: 0, turbo2Wastegate: 0, turbo2Flow: 0, turbo2GasC: 20, turboVane: 0, turbo2Vane: 0, twinStage: 0, twinValve: 0, twinOnline: 0, chargerClutch: 0, chargerFlap: 0, chargerInterstage: 0,
+  chargeC: 20, chargeWaterC: 20, waterGps: 0, nitrousBar: 0, nitrousKg: 0, nitrousFlow: 0,
 };
 
 export interface CurvePoint {
@@ -182,9 +282,12 @@ export interface Spec {
   peakHpRpm: number;
   gears: number;
   ratios: number[];
-  /** Le turbo monté : diamètre de la roue (mm), inertie de l'arbre (kg·m²). */
+  /** Le turbo monté : diamètre de la roue (mm), inertie de l'arbre (kg·m²). Sur un biturbo, ceux de l'un des deux. */
   turboWheelMm: number;
   turboInertia: number;
+  /** Le nombre d'arbres de turbo (0, 1 ou 2), et le régime où s'ouvre l'embrayage du compresseur d'un twincharger (0 sans). */
+  turboUnits: number;
+  chargerOffRpm: number;
   /** À la puissance maximale : la perte du filtre (kPa) et la température de l'air admis (°C). */
   intakeDropKpa: number;
   intakeAirC: number;
@@ -197,9 +300,50 @@ export interface Spec {
   starter: { direct: boolean; kw: number; ring: number; pinion: number; helix: number };
   /** Le carburateur, s'il y en a un : corps, col du venturi, perte de charge à la puissance maximale. */
   carb: { throats: number; throatMm: number; dropKpa: number };
+  /** La combustion : le taux réel, son rendement face au taux d'origine, la plus petite marge au cliquetis à pleine charge (°, négative s'il cliquette) et son régime, le capteur. */
+  combustion: { ratio: number; efficiency: number; marginDeg: number; marginRpm: number; sensor: boolean };
+  /**
+   * La carte du calculateur, à pleine charge et au régime de la puissance maximale : l'avance demandée (° avant le point
+   * mort haut), le couple face à la carte d'origine, et le gaz à la sortie des cylindres, réglé et d'origine (°C).
+   */
+  ecu: { rpm: number; sparkDeg: number; fullShare: number; exhaustC: number; stockExhaustC: number };
+  /**
+   * La distribution (`rf_valve_sheet`) : régime d'affolement (0 sans soupapes), masse ramenée à la soupape (g), ressort posé et à
+   * pleine levée (N), fréquence propre de la chaîne (Hz), rapport du culbuteur.
+   */
+  valves: { floatRpm: number; massG: number; seatN: number; openN: number; naturalHz: number; ratio: number };
+  /** Le kit de protoxyde : le régime à partir duquel il s'ouvre, pied au plancher (0 sans kit). */
+  nitrousRpm: number;
   curve: CurvePoint[];
   box: BoxSpec;
+  /**
+   * L'injection, calculée (0 là où elle n'a pas de sens) : refroidissement de la charge d'une injection directe (K) et remplissage
+   * gagné (part), pression d'injection à pleine charge (bar), couple gagné à 1500 tr/min par la rampe commune (part), claquement
+   * au ralenti face à la pompe mécanique (dB), recirculation la plus forte (part), contre-pression du filtre propre et plein (kPa).
+   */
+  injection: { coolingK: number; fillGain: number; railBar: number; lowEnd: number; knockDb: number; egr: number; dpfCleanKpa: number; dpfFullKpa: number };
+  /** La came, telle que le C++ la calcule (voir `rf_cam_spec`) : calage à 1 mm du profil de base et du second, croisement, fermeture de l'admission après le point mort bas, compression effective, régime de bascule, et le ralenti qu'elle donne. */
+  cam: CamSpec;
 }
+
+export interface CamSpec {
+  ivo: number;
+  ivc: number;
+  evo: number;
+  evc: number;
+  liftMm: number;
+  overlap: number;
+  ivcAbdc: number;
+  effectiveRatio: number;
+  switchRpm: number;
+  idleKpa: number;
+  idleResidual: number;
+  idleCov: number;
+  seatDeg: number;
+  high: { ivo: number; ivc: number; evo: number; evc: number };
+}
+
+export const EMPTY_CAM: CamSpec = { ivo: 0, ivc: 0, evo: 0, evc: 0, liftMm: 0, overlap: 0, ivcAbdc: 0, effectiveRatio: 0, switchRpm: 0, idleKpa: 0, idleResidual: 0, idleCov: 0, seatDeg: 0, high: { ivo: 0, ivc: 0, evo: 0, evc: 0 } };
 
 /** La voiture vue de dessus, en mètres (voir `Telemetry.listenerX`), pour la placer sur le plan. */
 export interface CarPlan {
@@ -224,7 +368,7 @@ export interface SoundSheet {
   lineLoss: { hz: number; db: number }[];
 }
 
-export const EMPTY_SPEC: Spec = { idle: 0, redline: 7000, peakTorque: 0, peakTorqueRpm: 0, peakHp: 0, peakHpRpm: 0, gears: 0, ratios: [], turboWheelMm: 0, turboInertia: 0, intakeDropKpa: 0, intakeAirC: 20, chargerRatio: 0, chargerVolume: 0, chargerWheelMm: 0, zeroTo100: 0, topSpeed: 0, starter: { direct: false, kw: 0, ring: 0, pinion: 0, helix: 0 }, carb: { throats: 0, throatMm: 0, dropKpa: 0 }, curve: [], box: EMPTY_BOX };
+export const EMPTY_SPEC: Spec = { idle: 0, redline: 7000, peakTorque: 0, peakTorqueRpm: 0, peakHp: 0, peakHpRpm: 0, gears: 0, ratios: [], turboWheelMm: 0, turboInertia: 0, turboUnits: 0, chargerOffRpm: 0, intakeDropKpa: 0, intakeAirC: 20, chargerRatio: 0, chargerVolume: 0, chargerWheelMm: 0, zeroTo100: 0, topSpeed: 0, starter: { direct: false, kw: 0, ring: 0, pinion: 0, helix: 0 }, carb: { throats: 0, throatMm: 0, dropKpa: 0 }, nitrousRpm: 0, combustion: { ratio: 0, efficiency: 1, marginDeg: 0, marginRpm: 0, sensor: false }, ecu: { rpm: 0, sparkDeg: 0, fullShare: 1, exhaustC: 0, stockExhaustC: 0 }, curve: [], box: EMPTY_BOX, injection: { coolingK: 0, fillGain: 0, railBar: 0, lowEnd: 0, knockDb: 0, egr: 0, dpfCleanKpa: 0, dpfFullKpa: 0 }, cam: EMPTY_CAM, valves: { floatRpm: 0, massG: 0, seatN: 0, openN: 0, naturalHz: 0, ratio: 0 } };
 
 interface RfExports {
   memory: WebAssembly.Memory;
@@ -236,6 +380,18 @@ interface RfExports {
   rf_antilag_heat_kw(): number;
   rf_antilag_air_flow(): number;
   rf_antilag_lost_nm(): number;
+  rf_boost_target(): number;
+  rf_boost_charge(): number;
+  rf_boost_duty(): number;
+  /** L'air de charge (télémétrie : charge_air.cpp) ; le régime d'activation du kit, pour la fiche (0 sans kit). */
+  rf_charge_c(): number;
+  rf_charge_water_c(): number;
+  rf_water_gps(): number;
+  rf_nitrous_bar(): number;
+  rf_nitrous_kg(): number;
+  rf_nitrous_flow(): number;
+  rf_nitrous_refill(): void;
+  rf_nitrous_activation_rpm(): number;
   rf_render(frames: number): void;
   rf_render_stereo(frames: number): void;
   rf_set_listener(listener: number): void;
@@ -254,6 +410,8 @@ interface RfExports {
   rf_sheet_level(item: number): number;
   rf_sheet_line_loss(fromHz: number, toHz: number): number;
   rf_set_config(...args: number[]): void;
+  /** Les réglages du socle moteur : posés, pas appliqués. Juste avant rf_set_config ou rf_set_electric. */
+  rf_set_tuning(...args: number[]): void;
   rf_intake_air_c(rpm: number): number;
   rf_intake_drop_kpa(rpm: number): number;
   rf_turbo_wheel_mm(): number;
@@ -287,6 +445,41 @@ interface RfExports {
   rf_carb_throats(): number;
   rf_carb_throat_mm(): number;
   rf_carb_drop_kpa(): number;
+  rf_compression_ratio(): number;
+  rf_compression_efficiency(): number;
+  rf_knock_sensor(): number;
+  rf_knock_margin_deg(): number;
+  rf_knock_margin_rpm(): number;
+  rf_spark_advance(): number;
+  rf_knock_limit(): number;
+  rf_knock_retard(): number;
+  rf_knock_share(): number;
+  rf_injection_figure(item: number): number;
+  rf_dpf_kpa_at(full: number): number;
+  rf_dpf_load(): number;
+  rf_dpf_kpa(): number;
+  rf_dpf_regen(): number;
+  rf_dpf_c(): number;
+  rf_egr_share(): number;
+  rf_cam_spec(which: number): number;
+  rf_cam_high(): number;
+  rf_cam_phaser(): number;
+  rf_valve_sheet(item: number): number;
+  rf_turbo_units(): number;
+  rf_turbo2_rpm(): number;
+  rf_turbo2_exhaust(): number;
+  rf_turbo2_wastegate(): number;
+  rf_turbo2_flow(): number;
+  rf_turbo2_gas_c(): number;
+  rf_turbo_vane(): number;
+  rf_turbo2_vane(): number;
+  rf_twin_stage(): number;
+  rf_twin_valve(): number;
+  rf_twin_online(): number;
+  rf_charger_clutch(): number;
+  rf_charger_flap(): number;
+  rf_charger_interstage(): number;
+  rf_charger_off_rpm(): number;
   rf_starter_ring(): number;
   rf_starter_pinion(): number;
   rf_starter_helix(): number;
@@ -336,22 +529,60 @@ interface RfExports {
   rf_energy_avg_kwh_per_100km(): number;
   rf_energy_trip_kwh(): number;
   rf_reset_trip(): void;
+  /** Les températures du moteur (°C), le calorstat (0 à 1), le ventilateur, la viscosité de l'huile (mPa·s). */
+  rf_coolant_c(): number;
+  rf_oil_c(): number;
+  rf_metal_c(): number;
+  rf_thermostat(): number;
+  rf_fan(): number;
+  rf_oil_viscosity(): number;
+  /** Ce que le moteur froid change : frottements en plus (Nm), ralenti visé en plus (tr/min), carburant en plus (part). */
+  rf_cold_friction_nm(): number;
+  rf_cold_idle_rpm(): number;
+  rf_cold_enrichment(): number;
+  rf_warm_friction_nm(rpm: number): number;
+  /** Le calculateur : ce qu'il fait en ce moment, et sa carte pour la fiche. */
+  rf_ecu_advance(): number;
+  rf_ecu_lambda(): number;
+  rf_ecu_fired(): number;
+  rf_ecu_limiter(): number;
+  rf_ecu_launch(): number;
+  rf_ecu_flat(): number;
+  rf_ecu_traction(): number;
+  rf_ecu_full_share(): number;
+  rf_ecu_spark_deg(rpm: number, load: number): number;
+  rf_ecu_exhaust_c(rpm: number, stockMap: number): number;
 }
 
 /** Le moteur finit de tourner sur son élan avant qu'on suspende l'audio. */
 const RUNDOWN_BEFORE_SUSPEND_MS = 2200;
 const CURVE_POINTS = 56;
 
-/** Le moteur : un exemplaire dans l'AudioWorklet pour le son, un autre ici pour les calculs. */
+/** Les deux calculs que fait le worker (`calcWorker.ts`). */
+type CalcKind = 'sprint' | 'sheet';
+/** Les bandes d'octave de la fiche acoustique. */
+const SHEET_BANDS = [125, 250, 500, 1000, 2000, 4000];
+
+/**
+ * Le moteur : un exemplaire dans l'AudioWorklet pour le son, un autre ici pour les calculs, et un troisième dans un worker pour
+ * ce qui est trop long pour ce thread : le 0 à 100 km/h de la fiche (`sprint`) et sa fiche acoustique (`soundSheet`).
+ */
 export class Engine {
   analyser: AnalyserNode | null = null;
   private context: AudioContext | null = null;
   private node: AudioWorkletNode | null = null;
   private bytes: ArrayBuffer | null = null;
   private local: RfExports | null = null;
+  private calc: Worker | null = null;
+  private calcBroken = false;
+  /** Un calcul à la fois dans le worker ; pour chacun des deux, seul le dernier demandé attend son tour. */
+  private calcRunning: { kind: CalcKind; config: EngineConfig; resolve: (values: number[] | null) => void } | null = null;
+  private calcNext: Partial<Record<CalcKind, { config: EngineConfig; resolve: (values: number[] | null) => void }>> = {};
   private suspendTimer: ReturnType<typeof setTimeout> | undefined;
   // Les choix de conduite faits avant le démarrage : le worklet n'existe pas encore, il les reçoit au démarrage.
   private driving = { manual: false, assisted: true, shiftMode: 0, scenario: 0 };
+  /** Le dernier message de chaque partie du réglage reçu par le worklet, qui le garde jusqu'au suivant (`setConfig`). */
+  private sentParts: Record<'car' | 'gearbox' | 'engine', string> = { car: '', gearbox: '', engine: '' };
 
   constructor(private onTelemetry: (t: Telemetry) => void, private onError: (message: string) => void) {}
 
@@ -373,7 +604,7 @@ export class Engine {
   async start(config: EngineConfig, mode: ModeValue, volume: number): Promise<void> {
     clearTimeout(this.suspendTimer);
     if (!this.context) {
-      const context = new AudioContext({ latencyHint: 'interactive' });
+      const context = audioContextAt(SIMULATION_RATE);
       await context.audioWorklet.addModule(`${import.meta.env.BASE_URL}worklet.js`);
       const node = new AudioWorkletNode(context, 'revforge', {
         numberOfInputs: 0,
@@ -426,11 +657,25 @@ export class Engine {
     this.node?.port.postMessage(command);
   }
 
+  /**
+   * Chacun des trois messages reconstruit tout le modèle de conduite sur le thread du son (`applyPowertrain`) : 0,8 ms sur la
+   * citadine, 8,6 ms sur un turbo, 28 ms quand le calculateur régule la pression, pour 2,7 ms par bloc de 128 échantillons à
+   * 48 kHz. Seul part ce qui a changé depuis le dernier envoi : le worklet garde le reste tel quel.
+   */
   setConfig(config: EngineConfig): void {
-    this.send({ type: 'car', args: carArgs(config) });
-    this.send({ type: 'gearbox', args: gearboxArgs(config), ratios: gearRatios(config) });
-    if (config.electric) this.send({ type: 'electric' });
-    else this.send({ type: 'config', args: configArgs(config) });
+    if (!this.node) return;
+    this.sendChanged('car', { type: 'car', args: carArgs(config) });
+    this.sendChanged('gearbox', { type: 'gearbox', args: gearboxArgs(config), ratios: gearRatios(config) });
+    // Les réglages du socle voyagent avec le moteur : un seul changement, jamais un moteur à moitié réglé.
+    if (config.electric) this.sendChanged('engine', { type: 'electric', tuning: tuningArgs(config) });
+    else this.sendChanged('engine', { type: 'config', args: configArgs(config), tuning: tuningArgs(config) });
+  }
+
+  private sendChanged(part: 'car' | 'gearbox' | 'engine', command: Record<string, unknown>): void {
+    const key = JSON.stringify(command);
+    if (key === this.sentParts[part]) return;
+    this.sentParts[part] = key;
+    this.send(command);
   }
 
   setMode(mode: ModeValue): void {
@@ -474,6 +719,11 @@ export class Engine {
     this.send({ type: 'resetTrip' });
   }
 
+  /** Remplit la bouteille de protoxyde. */
+  refillNitrous(): void {
+    this.send({ type: 'refillNitrous' });
+  }
+
   /** Relance le démarreur, après un calage. */
   crank(): void {
     this.send({ type: 'crank' });
@@ -514,6 +764,7 @@ export class Engine {
     rf.rf_set_car(...carArgs(config));
     gearRatios(config).forEach((ratio, i) => rf.rf_set_gear_ratio(i + 1, ratio));
     rf.rf_set_gearbox(...gearboxArgs(config));
+    rf.rf_set_tuning(...tuningArgs(config));
     if (config.electric) rf.rf_set_electric();
     else rf.rf_set_config(...configArgs(config));
     return rf;
@@ -560,7 +811,94 @@ export class Engine {
     };
   }
 
-  /** Puissance, couple et performances de ce réglage : les mêmes calculs que ceux qui font rouler la voiture. */
+  /**
+   * Le 0 à 100 km/h de la fiche pour ce réglage, conduit par le worker : de 0,1 à 0,6 s de calcul, que la page n'attend pas.
+   * Une demande remplacée avant d'être partie rend `null`.
+   */
+  async sprint(config: EngineConfig): Promise<number | null> {
+    const values = await this.offload('sprint', config);
+    return values ? values[0] : null;
+  }
+
+  private offload(kind: CalcKind, config: EngineConfig): Promise<number[] | null> {
+    return new Promise((resolve) => {
+      this.calcNext[kind]?.resolve(null);
+      this.calcNext[kind] = { config, resolve };
+      this.flushCalc();
+    });
+  }
+
+  /** Ce que le worker calcule, ici : sans worker, ou s'il n'a pas pu se charger. */
+  private calcHere(kind: CalcKind, config: EngineConfig): number[] {
+    const rf = this.applyLocal(config);
+    if (!rf) return kind === 'sprint' ? [0] : [];
+    if (kind === 'sprint') return [rf.rf_zero_to_100()];
+    return [...[0, 1, 2, 3].map((item) => rf.rf_sheet_level(item)), ...SHEET_BANDS.map((hz) => rf.rf_sheet_line_loss(hz / Math.SQRT2, hz * Math.SQRT2))];
+  }
+
+  private flushCalc(): void {
+    if (this.calcRunning) return;
+    const kind = (['sprint', 'sheet'] as const).find((k) => this.calcNext[k]);
+    if (!kind) return;
+    const next = this.calcNext[kind]!;
+    delete this.calcNext[kind];
+    const worker = this.calcWorker();
+    if (!worker) {
+      next.resolve(this.calcHere(kind, next.config));
+      this.flushCalc();
+      return;
+    }
+    this.calcRunning = { kind, ...next };
+    const config = next.config;
+    worker.postMessage({
+      type: kind,
+      car: carArgs(config),
+      ratios: gearRatios(config),
+      gearbox: gearboxArgs(config),
+      tuning: tuningArgs(config),
+      config: configArgs(config),
+      electric: Boolean(config.electric),
+      bands: SHEET_BANDS,
+    });
+  }
+
+  private calcWorker(): Worker | null {
+    if (this.calc || this.calcBroken || !this.bytes || typeof Worker === 'undefined') return this.calc;
+    try {
+      const worker = new Worker(new URL('./calcWorker.ts', import.meta.url), { type: 'module' });
+      worker.onmessage = ({ data }: MessageEvent<{ values: number[] }>) => {
+        const running = this.calcRunning;
+        this.calcRunning = null;
+        running?.resolve(data.values);
+        this.flushCalc();
+      };
+      // Un worker qui ne se charge pas : ce qui attendait se calcule ici, et tout ce qui suit aussi.
+      worker.onerror = () => {
+        this.calcBroken = true;
+        this.calc = null;
+        const running = this.calcRunning;
+        this.calcRunning = null;
+        running?.resolve(this.calcHere(running.kind, running.config));
+        this.flushCalc();
+      };
+      worker.postMessage({ type: 'load', bytes: this.bytes.slice(0) });
+      this.calc = worker;
+    } catch {
+      this.calcBroken = true;
+    }
+    return this.calc;
+  }
+
+  /** La carte du calculateur, au régime de la puissance maximale et à pleine charge : tout vient du C++. */
+  private ecuSpec(rf: RfExports): Spec['ecu'] {
+    const rpm = rf.rf_peak_power_rpm();
+    return { rpm, sparkDeg: rf.rf_ecu_spark_deg(rpm, 1), fullShare: rf.rf_ecu_full_share(), exhaustC: rf.rf_ecu_exhaust_c(rpm, 0), stockExhaustC: rf.rf_ecu_exhaust_c(rpm, 1) };
+  }
+
+  /**
+   * Puissance, couple et performances de ce réglage : les mêmes calculs que ceux qui font rouler la voiture. Sans le 0 à 100
+   * (`zeroTo100` vaut NaN), que `sprint` calcule à part.
+   */
   spec(config: EngineConfig): Spec {
     const rf = this.applyLocal(config);
     if (!rf) return EMPTY_SPEC;
@@ -583,17 +921,44 @@ export class Engine {
       ratios: Array.from({ length: gears }, (_, i) => rf.rf_overall_ratio(i + 1)),
       turboWheelMm: rf.rf_turbo_wheel_mm(),
       turboInertia: rf.rf_turbo_inertia(),
+      turboUnits: rf.rf_turbo_units(),
+      chargerOffRpm: rf.rf_charger_off_rpm(),
       intakeDropKpa: rf.rf_intake_drop_kpa(rf.rf_peak_power_rpm()),
       intakeAirC: rf.rf_intake_air_c(rf.rf_peak_power_rpm()),
       chargerRatio: rf.rf_supercharger_ratio(),
       chargerVolume: rf.rf_supercharger_volume(),
       chargerWheelMm: rf.rf_supercharger_wheel_mm(),
-      zeroTo100: rf.rf_zero_to_100(),
+      zeroTo100: Number.NaN,
       topSpeed: rf.rf_top_speed(),
       starter: { direct: rf.rf_starter_direct() === 1, kw: rf.rf_starter_kw(), ring: rf.rf_starter_ring(), pinion: rf.rf_starter_pinion(), helix: rf.rf_starter_helix() },
       carb: { throats: rf.rf_carb_throats(), throatMm: rf.rf_carb_throat_mm(), dropKpa: rf.rf_carb_drop_kpa() },
+      combustion: {
+        ratio: rf.rf_compression_ratio(),
+        efficiency: rf.rf_compression_efficiency(),
+        marginDeg: rf.rf_knock_margin_deg(),
+        marginRpm: rf.rf_knock_margin_rpm(),
+        sensor: rf.rf_knock_sensor() === 1,
+      },
+      ecu: this.ecuSpec(rf),
+      cam: {
+        ivo: rf.rf_cam_spec(0), ivc: rf.rf_cam_spec(1), evo: rf.rf_cam_spec(2), evc: rf.rf_cam_spec(3), liftMm: rf.rf_cam_spec(4), overlap: rf.rf_cam_spec(5),
+        ivcAbdc: rf.rf_cam_spec(6), effectiveRatio: rf.rf_cam_spec(7), switchRpm: rf.rf_cam_spec(8), idleKpa: rf.rf_cam_spec(9), idleResidual: rf.rf_cam_spec(10),
+        idleCov: rf.rf_cam_spec(11), seatDeg: rf.rf_cam_spec(12), high: { ivo: rf.rf_cam_spec(13), ivc: rf.rf_cam_spec(14), evo: rf.rf_cam_spec(15), evc: rf.rf_cam_spec(16) },
+      },
+      valves: { floatRpm: rf.rf_valve_sheet(0), massG: rf.rf_valve_sheet(1), seatN: rf.rf_valve_sheet(2), openN: rf.rf_valve_sheet(3), naturalHz: rf.rf_valve_sheet(4), ratio: rf.rf_valve_sheet(5) },
+      nitrousRpm: rf.rf_nitrous_activation_rpm(),
       curve,
       box: this.boxSpec(rf, gears, redline),
+      injection: {
+        coolingK: rf.rf_injection_figure(0),
+        fillGain: rf.rf_injection_figure(1),
+        railBar: rf.rf_injection_figure(2),
+        lowEnd: rf.rf_injection_figure(3),
+        knockDb: rf.rf_injection_figure(4),
+        egr: rf.rf_injection_figure(5),
+        dpfCleanKpa: rf.rf_dpf_kpa_at(0),
+        dpfFullKpa: rf.rf_dpf_kpa_at(1),
+      },
     };
   }
 
@@ -622,17 +987,19 @@ export class Engine {
     };
   }
 
-  /** Les niveaux de ce réglage : quelques dizaines de millisecondes de calcul, à ne pas appeler à chaque glissé. */
-  soundSheet(config: EngineConfig): SoundSheet | null {
-    const rf = this.applyLocal(config);
-    if (!rf) return null;
-    const bands = [125, 250, 500, 1000, 2000, 4000];
+  /**
+   * Les niveaux de ce réglage, mesurés en jouant le son : près d'une seconde de calcul, dans le worker. Une demande remplacée
+   * avant d'être partie rend `null`.
+   */
+  async soundSheet(config: EngineConfig): Promise<SoundSheet | null> {
+    const values = await this.offload('sheet', config);
+    if (!values) return null;
     return {
-      standstill: rf.rf_sheet_level(0),
-      outsideFull: rf.rf_sheet_level(1),
-      cabinIdle: rf.rf_sheet_level(2),
-      cabinFull: rf.rf_sheet_level(3),
-      lineLoss: bands.map((hz) => ({ hz, db: rf.rf_sheet_line_loss(hz / Math.SQRT2, hz * Math.SQRT2) })),
+      standstill: values[0],
+      outsideFull: values[1],
+      cabinIdle: values[2],
+      cabinFull: values[3],
+      lineLoss: SHEET_BANDS.map((hz, i) => ({ hz, db: values[4 + i] })),
     };
   }
 

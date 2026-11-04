@@ -34,9 +34,11 @@ struct AirInlet {
 /**
  * L'air derrière ce filtre, pour ce débit : ΔP = k·ṁ², où `k` donne 3 kPa au débit nominal sur le papier d'origine, et
  * la température de `airFilterRiseK`. À appeler pour toute entrée de compresseur : le dimensionnement fixe le débit
- * nominal, et `regime` est le régime rapporté à celui du point nominal.
+ * nominal, et `regime` est le régime rapporté à celui du point nominal. `ambientPa`, `ambientK` : l'air du jour, celui de
+ * référence par défaut (atmosphere.hpp).
  */
-AirInlet airInletBehind(AirFilter filter, EnginePlacement placement, double flowKgS, double ratedFlowKgS, double regime);
+AirInlet airInletBehind(AirFilter filter, EnginePlacement placement, double flowKgS, double ratedFlowKgS, double regime, double ambientPa = 101325.0,
+                        double ambientK = 293.0);
 
 /**
  * Ce que l'air gagne en température avant d'atteindre le filtre, à pleine charge (K). Bilan du compartiment : ce qui y est
@@ -52,7 +54,10 @@ double naturalFilterCoefficient(double displacementM3, double ratedFlowKgS);
 double stackLengthM(const EngineConfig& engine);
 /** Le rayon de la bouche d'un cornet (m). */
 double stackRadiusM(const EngineConfig& engine);
-/** Le quart d'onde de ce tube ouvert à un bout, correction de bout comprise (Hz). */
+/**
+ * Le quart d'onde de ce tube ouvert à un bout, correction de bout comprise (Hz). Le tube est coupé une fois pour toutes dans
+ * l'air de référence ; sa résonance suit la vitesse du son de l'air du jour (`ambientC`).
+ */
 double stackResonanceHz(const EngineConfig& engine);
 /**
  * Gain de remplissage par l'onde qui revient dans le cornet, à ce régime (Heywood, § 7.6). L'aspiration lance une

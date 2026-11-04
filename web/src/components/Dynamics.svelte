@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
   import Meter from './Meter.svelte';
+  import { REFERENCE_C } from '../lib/atmosphere';
+  import { camIsStock } from '../lib/cam';
   import { animate } from '../lib/canvas';
   import { CLUTCH_SMOKE_C } from '../lib/clutchMechanism';
   import type { EngineConfig } from '../lib/config';
@@ -30,6 +32,18 @@
   let peakNode: HTMLElement;
 
   const percent = (value: number) => t('unit.percent', { value: whole(value) });
+  /**
+   * Le cliquetis n'est calculé qu'une fois changé ce que lit sa carte (`combustionStock` et `knockConditionsStock`, combustion.cpp) :
+   * la combustion, l'air du jour, la came, l'avance du calculateur, l'injection directe ou l'air de charge, sur un moteur à étincelle.
+   * Avant, la carte d'origine reste sous sa limite.
+   */
+  const knocks = $derived.by(() => {
+    if (config.electric || !(config.fuel === 'petrol' || config.layout === 'rotary')) return false;
+    const boosted = config.aspiration !== 'natural';
+    const chargeAir = (boosted && config.intercooler !== 'air_to_air') || config.waterInjection || config.nitrousKw > 0;
+    return config.compressionRatio !== 0 || config.fuelGrade !== 'ron95' || config.ambientC !== REFERENCE_C || config.altitudeM !== 0
+      || !camIsStock(config) || config.ignitionOffsetDeg !== 0 || config.fuelSystem === 'direct' || chargeAir;
+  });
   const on = (value: () => number) => () => (running() ? value() : 0);
 
   onMount(() => {
@@ -60,6 +74,8 @@
     const value = (telemetry() as unknown as Record<string, unknown>)[key];
     return typeof value === 'number' ? value : null;
   };
+  /** L'étape d'un séquentiel, dans l'ordre de `TwinTurboState::stage`. */
+  const STAGE_KEYS = ['twinStage.0', 'twinStage.1', 'twinStage.2'] as const;
   const rows = $derived<Row[]>([
     { label: t('tacho.label'), value: () => `${whole(telemetry().rpm)} ${t('unit.rpm')}`, source: sim },
     { label: t('common.speed'), value: () => `${whole(telemetry().speed)} km/h`, source: sim },
@@ -78,6 +94,20 @@
       { label: t('live.turbo'), value: () => `${fixed(telemetry().boost * config.boostBar, 2)} bar`, source: sim },
       { label: t('gauge.turbineName'), value: () => `${whole((telemetry() as Telemetry & { turbineRpm?: number }).turbineRpm ?? motion.turbineRpm(config))} ${t('unit.rpm')}`, source: calculated },
       { label: t('gauge.turbineInlet'), value: () => `${whole(telemetry().turboGasC)} °C`, source: sim },
+      // Deux turbos, twincharger, aubes : ce que `twin_turbo.cpp` calcule.
+      ...(config.turboLayout === 'twin_parallel' || config.turboLayout === 'twin_sequential' ? [
+        { label: t('live.turbo2'), value: () => `${whole(telemetry().turbo2Rpm)} ${t('unit.rpm')}`, source: sim },
+      ] : []),
+      ...(config.turboLayout === 'twin_sequential' ? [
+        { label: t('live.twinStage'), value: () => t(STAGE_KEYS[Math.min(Math.max(Math.round(telemetry().twinStage), 0), 2)]), source: sim },
+      ] : []),
+      ...(config.turboLayout === 'twincharger' ? [
+        { label: t('live.chargerClutch'), value: () => t(telemetry().chargerClutch > 0 ? 'live.clutchEngaged' : 'live.clutchOpen'), source: sim },
+        { label: t('gauge.chargerName'), value: () => `${whole(telemetry().chargerRpm)} ${t('unit.rpm')}`, source: sim },
+      ] : []),
+      ...(config.variableGeometry ? [
+        { label: t('live.vanes'), value: () => t('live.vanesValue', { open: whole(telemetry().turboVane * 100) }), source: sim },
+      ] : []),
       ...(config.fuel === 'petrol' && config.antiLag !== 'off' ? [
         { label: t('gauge.antiLagHeat'), value: () => `${fixed(telemetry().antiLagHeatKw, 1)} kW`, source: sim },
         { label: t('gauge.antiLagLost'), value: () => `${whole(telemetry().antiLagLostNm)} Nm`, source: sim },
@@ -88,6 +118,13 @@
       { label: t('gauge.chargerName'), value: () => `${whole(telemetry().chargerRpm)} ${t('unit.rpm')}`, source: sim },
       { label: t('gauge.chargerKw'), value: () => `${fixed(telemetry().chargerKw, 1)} kW`, source: sim },
     ] : []),
+    // Le calculateur : ce qu'il demande et ce qu'il coupe, lu de la simulation. Avance et richesse sur un moteur à étincelle.
+    ...(!config.electric && config.fuel !== 'diesel' ? [
+      { label: t('gauge.ecuAdvance'), value: () => `${telemetry().ecuAdvance > 0 ? '+' : ''}${fixed(telemetry().ecuAdvance, 1)}°`, source: sim },
+      { label: t('gauge.ecuLambda'), value: () => (telemetry().ecuLambda > 0 ? fixed(telemetry().ecuLambda, 2) : '—'), source: sim },
+    ] : []),
+    ...(config.electric ? [] : [{ label: t('gauge.ecuFired'), value: () => percent(telemetry().ecuFired * 100), source: sim }]),
+    ...(config.tractionControl !== 'off' ? [{ label: t('gauge.ecuTraction'), value: () => percent(telemetry().ecuTraction * 100), source: sim }] : []),
     { label: t('meter.accel'), value: () => `${fixed(readings.accelG, 2)} g`, source: calculated },
     { label: t('meter.slip'), value: () => `${fixed(telemetry().slip, 1)} m/s`, source: sim },
     { label: t('meter.clutchKw'), value: () => `${fixed(telemetry().clutchSlipKw, 1)} kW`, source: sim },
@@ -97,6 +134,12 @@
     { label: t('stat.wheels'), value: () => `${whole(telemetry().wheelRpm)} ${t('unit.rpm')}`, source: sim },
     { label: t('meter.wear'), value: () => percent(telemetry().boxWear * 100), source: sim },
     { label: t('level.title'), value: () => `${whole(telemetry().levelDbA)} dB(A)`, source: sim },
+    ...(knocks ? [
+      { label: t('table.sparkAdvance'), value: () => `${fixed(telemetry().sparkAdvance, 1)}°`, source: sim },
+      { label: t('table.knockLimit'), value: () => `${fixed(telemetry().knockLimit, 1)}°`, source: sim },
+      { label: t('meter.knock'), value: () => `${fixed(telemetry().knockRetard, 1)}°`, source: sim },
+      { label: t('table.knockShare'), value: () => percent(telemetry().knockShare * 100), source: sim },
+    ] : []),
     ...(extra('fuelLph') !== null ? [{ label: t('table.fuel'), value: () => `${fixed(extra('fuelLph') ?? 0, 1)} L/h`, source: () => t('source.estimate') }] : []),
     ...(extra('oilGph') !== null ? [{ label: t('table.oil'), value: () => `${fixed(extra('oilGph') ?? 0, 1)} g/h`, source: () => t('source.estimate') }] : []),
     { label: t('stat.peak'), value: () => (readings.peakDb <= -60 ? '—' : `${whole(readings.peakDb)} dBFS`), source: sim },
@@ -130,6 +173,9 @@
     {#if !config.electric}
       <Meter id="clutch-kw" label={t('meter.clutchKw')} note={t('meter.clutchKw.note')} unit="kW" min={0} max={30} digits={1} {clock} read={on(() => telemetry().clutchSlipKw)} format={(value) => fixed(value, 1)} />
       <Meter id="clutch-c" label={t('meter.clutchC')} note={t('meter.clutchC.note')} unit="°C" min={0} max={400} warnAt={CLUTCH_SMOKE_C} {clock} read={() => motion.clutchSurface} format={(value) => whole(value)} />
+      {#if knocks}
+        <Meter id="knock" label={t('meter.knock')} note={t('meter.knock.note')} unit="°" min={0} max={20} digits={1} {clock} read={on(() => telemetry().knockRetard)} format={(value) => fixed(value, 1)} />
+      {/if}
       <Meter id="wear" label={t('meter.wear')} note={t('meter.wear.note')} unit="%" min={0} max={100} dangerAt={100} {clock} read={() => telemetry().boxWear * 100} format={(value) => whole(value)} />
     {/if}
   </div>

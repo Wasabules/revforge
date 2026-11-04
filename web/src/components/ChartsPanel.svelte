@@ -37,6 +37,9 @@
     when?: () => boolean;
   }
 
+  const BOOST_SERIES: Series = { channel: 'boost', get label() { return t('charts.boost.series'); }, factor: () => config.boostBar };
+  const BOOST_TARGET_SERIES: Series = { channel: 'boostTarget', get label() { return t('charts.boost.target'); } };
+
   const CHARTS: Chart[] = [
     { key: 'rpm', get title() { return t('charts.rpm'); }, get unit() { return t('unit.rpm'); }, digits: 0, series: [{ channel: 'rpm', get label() { return t('common.engine'); } }, { channel: 'inputRpm', get label() { return t('charts.rpm.input'); } }], range: () => [0, spec.redline || 7000] },
     { key: 'speed', get title() { return t('common.speed'); }, unit: 'km/h', digits: 0, series: [{ channel: 'speed', get label() { return t('common.speed'); } }], range: () => [0, Math.max(spec.topSpeed, 60)] },
@@ -44,7 +47,9 @@
     { key: 'torque', get title() { return t('common.torque'); }, unit: 'Nm', digits: 0, series: [{ channel: 'torque', get label() { return t('charts.torque.crank'); } }, { channel: 'clutchTorque', get label() { return t('charts.torque.clutch'); } }], range: () => [-Math.max(spec.peakTorque, 50) * 0.3, Math.max(spec.peakTorque, 50) * 1.1] },
     { key: 'power', get title() { return t('common.power'); }, get unit() { return t('unit.hp'); }, digits: 0, series: [{ channel: 'power', get label() { return t('common.power'); }, factor: () => KW_TO_HP }], range: () => [-Math.max(spec.peakHp, 50) * 0.2, Math.max(spec.peakHp, 50) * 1.05] },
     { key: 'load', get title() { return t('charts.load'); }, unit: '%', digits: 0, series: [{ channel: 'load', get label() { return t('charts.load'); }, factor: () => 100 }], range: () => [0, 100] },
-    { key: 'boost', get title() { return t(config.aspiration === 'supercharger' ? 'charts.boost.charger' : 'charts.boost'); }, unit: 'bar', digits: 1, series: [{ channel: 'boost', get label() { return t('charts.boost.series'); }, factor: () => config.boostBar }], range: () => [0, config.boostBar * 1.1], when: () => config.aspiration !== 'natural' && !config.electric },
+    { key: 'boost', get title() { return t(config.aspiration === 'supercharger' ? 'charts.boost.charger' : 'charts.boost'); }, unit: 'bar', digits: 1,
+      // Sur un turbo, la pression que vise sa régulation, à côté de la vraie : la dérive du ressort et les dépassements s'y voient.
+      get series() { return config.aspiration === 'turbo' ? [BOOST_SERIES, BOOST_TARGET_SERIES] : [BOOST_SERIES]; }, range: () => [0, config.boostBar * 1.1], when: () => config.aspiration !== 'natural' && !config.electric },
     { key: 'clutchSlip', get title() { return t('charts.clutchSlip'); }, get unit() { return t('unit.rpm'); }, digits: 0, series: [{ channel: 'clutchSlipRpm', get label() { return t('charts.clutchSlip.series'); } }], range: () => [0, spec.redline || 7000], when: () => !config.electric },
     { key: 'clutchPower', get title() { return t('charts.clutchPower'); }, unit: 'kW', digits: 1, series: [{ channel: 'clutchSlipKw', get label() { return t('common.dissipated'); } }], range: () => [0, 30], when: () => !config.electric },
     { key: 'clutchTemp', get title() { return t('charts.clutchTemp'); }, unit: '°C', digits: 0, series: [{ channel: 'clutchTemp', get label() { return t('common.linings'); } }], range: () => [0, 400], when: () => !config.electric },

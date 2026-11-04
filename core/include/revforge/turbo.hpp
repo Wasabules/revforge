@@ -1,6 +1,8 @@
 #pragma once
 
 #include "revforge/anti_lag.hpp"
+#include "revforge/ecu.hpp"
+#include "revforge/charge_air.hpp"
 #include "revforge/engine_config.hpp"
 #include "revforge/turbo_pipe.hpp"
 
@@ -37,6 +39,15 @@ struct TurboSpec {
     AirFilter inletFilter = AirFilter::Stock;  // ce qui fixe la température à l'entrée du compresseur
     EnginePlacement inletPlacement = EnginePlacement::Front;
     TurboPipeSpec pipe;             // le tube avant la turbine : inactif à la longueur de référence
+    /**
+     * L'air du jour, où le compresseur aspire, où la ligne débouche, et contre lequel la soupape à ressort tient sa pression
+     * (`targetBar` reste relative). Le dimensionnement, lui, est fait dans l'air de référence : ces deux champs n'y entrent pas.
+     */
+    double ambientPa = 101325.0;
+    double ambientK = 293.0;
+    EcuExhaust ecu;                 // la carte du calculateur, si elle s'écarte de l'origine : avance et richesse
+    double turbineEtaShare = 1.0;   // rendement de la turbine, en part du nominal : moins d'1 aubes d'une géométrie variable fermées (twin_turbo.cpp)
+    ChargeCoolerSpec cooler;        // l'échangeur : air-air d'origine, sauf réglage (charge_air.cpp)
 };
 
 /** Ce qui change d'une milliseconde à l'autre, en unités physiques. */
@@ -70,6 +81,7 @@ struct TurboDrive {
     float wastegate = 0.0f;
     float wastegateFlowShare = 0.0f;  // ce qui contourne la turbine, rapporté au débit nominal
     AntiLagDrive antiLag;
+    float levelShare = 1.0f;      // niveau du sifflement d'un turbo parmi deux, plus petit : exactement 1 pour un turbo simple
 };
 
 /** Ce qu'il faut savoir du moteur à chaque pas. */
@@ -80,6 +92,21 @@ struct TurboInput {
     bool burning = false;
     AntiLagCommand antiLag;
     double carbRichness = 0.0;  // 1/λ imposé par un carburateur, qui ne dose pas sur commande. 0 : un calculateur qui dose.
+    EcuExhaust ecu;             // ce que le calculateur retarde ou coupe à ce pas (la carte est dans `TurboSpec::ecu`)
+    /**
+     * L'ouverture que demande une régulation électronique à la membrane, 0 fermée à 1 ouverte (voir `boost_control.hpp`).
+     * Négative : la wastegate à ressort, qui s'ouvre seule contre la pression de charge. La protection des roues garde le dernier mot.
+     */
+    double gateDemand = -1.0;
+    double cooledK = 0.0;       // la sortie de l'échangeur, quand l'air de charge la calcule (air-eau, aucun). 0 : l'air-air.
+    /** La vitesse de la voiture (m/s), dont l'air traverse le faisceau air-air. Par défaut, la soufflerie du banc de la fiche. */
+    double coolingAirMs = kChargeReferenceSpeedMs;
+    /**
+     * Le banc d'étalonnage de la régulation (boost_control.cpp) : le faisceau air-air déjà stabilisé, à l'équilibre de ce qui le
+     * traverse, comme le suppose `turboSteady`. Sa masse thermique (une constante de temps de 5 à 20 s) est une dérive lente que
+     * l'intégrale rattrape, pas la réponse de l'arbre que l'échelon doit mesurer.
+     */
+    bool settledCooler = false;
 };
 
 /** Le point d'équilibre à pleine charge : ce que donnent les courbes de la fiche. */
@@ -90,6 +117,8 @@ struct TurboSteady {
     double shaftRpm = 0.0;
     double wastegate = 0.0;
     double flow = 0.0;
+    double outK = 293.0;      // sortie du compresseur
+    double coolK = 293.0;     // sortie de l'échangeur
 };
 
 /**
@@ -121,6 +150,8 @@ public:
 
     /** Le gaz à la sortie des cylindres : celui de la turbine, sauf si un tube ajouté les sépare. C'est là que s'enflamme ce qui arrive imbrûlé. */
     double collectorK() const { return spec_.pipe.active && spec_.pipe.extraM > 0.0 ? pipe_.portK : state_.turbineInK; }
+    /** Le faisceau de l'air-air : la température de ses tranches (finitions). */
+    const AirCoolerCore& cooler() const { return core_; }
 
 private:
     struct AntiLagExhaust {
@@ -145,7 +176,16 @@ private:
     double omegaSquared_ = 0.0;
     bool valveHeld_ = false;
     TurboPipeState pipe_;
+    AirCoolerCore core_;
 };
+
+/** L'échangeur à l'équilibre au banc : l'air-air ε-NTU devant la soufflerie, ou celui du réglage (charge_air.cpp). */
+double turboCoolerOutletK(const TurboSpec& spec, double hotK, double flow);
+/**
+ * Ce que l'air-air change au couple de base d'un turbo, calibré sur l'échangeur d'origine (`stockCoolerOutletK`) : la densité de la
+ * charge, T_origine/T, à pression égale. 1 avec un autre échangeur, dont l'air de charge tient compte.
+ */
+double turboCoolerTorqueShare(const TurboSpec& spec, double hotK, double flow, double coolK);
 
 /** Ce dont le calcul a besoin pour dimensionner le turbo. */
 TurboSpec turboSpecFor(const EngineConfig& engine, double breathingAtRated);
@@ -155,5 +195,18 @@ TurboSteady turboSteady(const TurboSpec& spec, double rpm, double breathing);
 double turboBackPressureNm(const TurboSpec& spec, double chargePa, double turbineInPa, double flow, double fill);
 /** La densité de la charge, à pression égale, quand l'air arrive au compresseur plus chaud de `inletRiseK` (1 : rien ne change). */
 double turboChargeDensityShare(double boostBar, double boost, double inletRiseK, double flowShare);
+/**
+ * L'air piégé dans cet air du jour, rapporté à celui de l'air de référence, à même part `boost` de la pression demandée
+ * `boostBar` : la pression de charge (l'atmosphère plus la pression relative), et sa température après le compresseur,
+ * l'échangeur et les parois. Exactement 1 dans l'air de référence.
+ */
+double turboAmbientChargeShare(double boostBar, double boost, double inletRiseK, double flowShare, double ambientPa, double ambientK);
+
+/**
+ * Le gaz à la sortie des cylindres, le modèle de `TurboCharger` : la part de l'énergie du carburant qu'il emporte, et
+ * l'échauffement (K) si elle lui revenait toute, à ce remplissage. Pour qui n'a pas de turbo : le calculateur.
+ */
+double exhaustHeatShare(bool diesel, double redlineRpm, double rpm, double fill);
+double exhaustHeatRiseK(bool diesel, double fill);
 
 }  // namespace revforge

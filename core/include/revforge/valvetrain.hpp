@@ -30,11 +30,14 @@ double valveFilling(double z);
 /** Le travail perdu à vider le cylindre à cet indice (bar de pression moyenne), à comparer d'un indice à l'autre. */
 double exhaustLossBar(double z);
 
-/** Ce que les deux soupapes d'un simple arbre laissent entrer, par rapport aux quatre d'un double arbre : au plus 1. */
-double sohcFillingRatio(double boreMm, double strokeMm, double rpm);
+/**
+ * Ce que les deux soupapes d'un simple arbre laissent entrer, par rapport aux quatre d'un double arbre : au plus 1.
+ * `intakeSoundMs` : la vitesse du son dans l'air admis, celle de l'air de référence par défaut.
+ */
+double sohcFillingRatio(double boreMm, double strokeMm, double rpm, double intakeSoundMs = 343.0);
 
 /** Le couple au frein qui en reste, le remplissage et le travail perdu à l'échappement compris. */
-double sohcBreathingRatio(double boreMm, double strokeMm, double rpm);
+double sohcBreathingRatio(double boreMm, double strokeMm, double rpm, double intakeSoundMs = 343.0);
 
 /** Moins de section, le gaz va plus vite : l'accord de l'admission descend comme la racine de la section (Engelman). */
 double sohcTuningRatio(double boreMm);

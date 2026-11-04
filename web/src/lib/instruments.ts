@@ -4,7 +4,6 @@
  */
 import type { EngineConfig } from './config';
 import type { Telemetry } from './engine';
-import { P_ATM } from './fluidGas';
 import { lang, type Lang } from './i18n.svelte';
 import type { Motion } from './motion';
 
@@ -91,6 +90,9 @@ export class Readings {
   accelG = 0;
   /** Sortie du son, crête sur la dernière période, en dB sous la pleine échelle. */
   peakDb = -60;
+  /** Eau et huile (°C), du réseau thermique : l'air ambiant tant que le son n'a pas démarré. */
+  coolantC = 20;
+  oilC = 20;
   private lastNow = -1;
 
   constructor(private motion: Motion) {}
@@ -102,13 +104,18 @@ export class Readings {
     const motion = this.motion;
     this.accelG = motion.acceleration / 9.81;
     this.peakDb = t.peak > 1e-3 ? 20 * Math.log10(t.peak) : -60;
+    // Le réseau thermique tourne même moteur coupé : il refroidit. Avant le premier son, le moteur est tel qu'on l'a choisi :
+    // chaud, à la référence (eau 90 °C, huile 100 °C, celles de `kWarmCoolantC` et `kWarmOilC`), ou froid, à l'air ambiant.
+    const cold = config.startTemp === 'cold';
+    this.coolantC = running ? t.coolantC : cold ? config.ambientC : 90;
+    this.oilC = running ? t.oilC : cold ? config.ambientC : 100;
 
     const net = config.electric ? null : motion.meters;
     const ready = net !== null && net.n > 0 && net.zP[net.zonePlenum] > 0;
     const turning = running && t.rpm > 150 && !t.cranking && !t.stalled;
     // Moteur à l'arrêt, plus de dépression ni de pression : le collecteur est à l'air libre.
-    const manifold = ready && turning ? (net.zP[net.zonePlenum] - P_ATM) / 1e5 : 0;
-    const back = ready && turning ? (net.zP[net.zoneJoin] - P_ATM) / 1e5 : 0;
+    const manifold = ready && turning ? (net.zP[net.zonePlenum] - net.pAtm) / 1e5 : 0;
+    const back = ready && turning ? (net.zP[net.zoneJoin] - net.pAtm) / 1e5 : 0;
     this.manifoldBar += (manifold - this.manifoldBar) * (1 - Math.exp(-seconds / 0.06));
     // Les bouffées se suivent au temps du gaz : la moyenne aussi, pour que l'aiguille ne batte pas au ralenti.
     this.backBar += (back - this.backBar) * (1 - Math.exp(-seconds / Math.max(0.05 * motion.slow, 0.08)));

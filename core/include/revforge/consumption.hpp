@@ -4,6 +4,7 @@
 
 #include "revforge/carburetor.hpp"
 #include "revforge/engine_config.hpp"
+#include "revforge/injection.hpp"
 
 namespace revforge {
 
@@ -18,6 +19,8 @@ struct FuelSpec {
 };
 
 const FuelSpec& fuelSpecOf(Fuel fuel);
+/** Ce que brûle ce moteur : le carburant choisi, sauf sur un diesel. Pour la consommation en litres. */
+const FuelSpec& fuelSpecOf(const EngineConfig& engine);
 
 /**
  * Ce que dépense ce moteur à chaque instant : un bilan d'énergie, calé sur le couple qu'il donne vraiment.
@@ -44,6 +47,10 @@ public:
     double naturalGrossNm(double rpm) const;
 
     bool electric() const { return electric_; }
+    /** Un deux-temps : son huile est mélangée à l'essence, et part avec elle. */
+    bool twoStroke() const { return twoStroke_; }
+    /** L'huile d'un mélange à `kPremixRatio` pour ce débit d'essence (g/s). */
+    double premixOilGps(double fuelGps) const;
     const FuelSpec& fuel() const { return *fuel_; }
 
 private:
@@ -68,6 +75,21 @@ private:
     double idleCircuitGps_ = 0.0;
     double idleRpm_ = 1.0;
     double carbAirShare_ = 1.0;
+    // L'air du jour, rapporté à l'air de référence : ce qu'il reste d'air dans un litre de cylindrée (atmosphere.hpp).
+    double ambientAirShare_ = 1.0;
+    // La carte du calculateur, si elle s'écarte de l'origine (ecu.hpp) : l'avance change ce que chaque gramme donne au piston,
+    // la richesse ce qu'il en faut par gramme d'air.
+    bool ecuMap_ = false;
+    double sparkEfficiency_ = 1.0;
+    double lambdaRatio_ = 1.0;
+    // L'injection : une rampe commune brûle plus vite qu'une pompe mécanique, la recirculation dilue la charge partielle.
+    bool commonRail_ = false;
+    bool egr_ = false;
+    DieselPoint dieselPoint_;
+    // Le deux-temps : ce qu'il faut savoir du moteur pour son balayage et ses ratés, et si l'essence arrive avec l'air.
+    bool twoStroke_ = false;
+    bool injectedInCylinder_ = false;
+    EngineConfig engine_;
 };
 
 /** L'état du moteur à ce pas, tel que `DrivingModel` le donne. */
@@ -84,6 +106,8 @@ struct ConsumptionInput {
     bool burning = false;
     double extraFuelGps = 0.0;  // l'anti-lag : carburant au-delà de ce que demande le cylindre
     double extraAirGps = 0.0;   // l'anti-lag : air qui n'est pas passé par les cylindres
+    double enrichment = 0.0;    // moteur froid : carburant ajouté, en part de celui qui brûle, qui repart imbrûlé
+    double fuelShare = 1.0;     // le calculateur : part des cylindres qui reçoivent leur carburant (coupure d'injection partielle)
 };
 
 /**

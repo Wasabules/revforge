@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { ouvrir, voir } from './aide';
+import { CALCUL_A_PART, ouvrir, voir } from './aide';
 
 declare global {
   interface Window {
@@ -107,6 +107,8 @@ test('balade : le pilote automatique démarre seul', async ({ page }) => {
 });
 
 test('tous les préréglages jouent, sans erreur ni silence', async ({ page }) => {
+  // Vingt-trois préréglages depuis le VR6, le W12, le W16 et le V16 : quelques secondes chacun au plus.
+  test.setTimeout(120_000);
   const errors = await start(page);
   await ouvrir(page, 'share');
   const select = page.getByTestId('preset');
@@ -152,16 +154,21 @@ test('la fiche technique suit les réglages : puissance, couple, performances', 
   await page.goto('./');
   await expect(page.getByTestId('start')).toHaveText('Démarrer le moteur');
   const number = async (id: string) => Number((await page.getByTestId(id).textContent())!.replace(/[^0-9,]/g, '').replace(',', '.'));
+  // Le 0 à 100 se calcule à part, dans un worker : « … » le temps du calcul.
+  const sprint = async () => {
+    await expect(page.getByTestId('spec-100')).not.toHaveText('…');
+    return number('spec-100');
+  };
   await expect.poll(() => number('spec-hp')).toBeGreaterThan(50);
-  const before = { hp: await number('spec-hp'), torque: await number('spec-torque'), sprint: await number('spec-100') };
+  const before = { hp: await number('spec-hp'), torque: await number('spec-torque'), sprint: await sprint() };
   await ouvrir(page, 'engine');
   await page.getByRole('slider', { name: 'Cylindrée' }).fill('4000');
   await expect.poll(() => number('spec-hp')).toBeGreaterThan(before.hp * 1.5);
   expect(await number('spec-torque')).toBeGreaterThan(before.torque * 1.5);
-  expect(await number('spec-100')).toBeLessThan(before.sprint);
+  expect(await sprint()).toBeLessThan(before.sprint);
   await ouvrir(page, 'car');
   await page.getByRole('slider', { name: 'Masse' }).fill('2500');
-  await expect.poll(() => number('spec-100')).toBeGreaterThan(5);
+  await expect.poll(sprint).toBeGreaterThan(5);
   await expect(page.getByTestId('power-curves')).toContainText('Couple');
 });
 
@@ -373,24 +380,37 @@ test('aucun débordement horizontal sur téléphone', async ({ page }) => {
 
 // ── Où l'on écoute ──
 
-/** Le niveau estimé, une fois la tête arrivée (elle glisse, à 6 m/s) et le sonomètre posé (constante de temps « fast », 125 ms). */
-async function settledDb(page: Page) {
-  const at = () => telemetry(page).then((t) => [t.listenerX, t.listenerY]);
+/**
+ * Le niveau estimé, comme le lit un sonomètre posé : la tête arrivée (elle glisse, à 6 m/s), le ralenti retombé après le démarrage
+ * (il redescend de 1200 à 800 tr/min en deux secondes, et le niveau avec lui), puis la moyenne en énergie sur `averageMs`. Le
+ * ralenti respire : il bat de ±1,5 % en 2,5 s environ, et le niveau de l'habitacle de ±2 dB avec lui. Une lecture seule, au « fast »
+ * de 125 ms, ou une moyenne plus courte qu'un battement, lisent ce battement plutôt que ce qu'on cherche : pour un écart de quelques
+ * dB, cinq secondes, deux battements.
+ */
+async function settledDb(page: Page, averageMs = 1500) {
+  const at = () => telemetry(page).then((t) => [t.listenerX, t.listenerY, t.rpm]);
   let before = await at();
   await expect
     .poll(
       async () => {
-        await page.waitForTimeout(150);
+        await page.waitForTimeout(1000);
         const now = await at();
         const moved = Math.hypot(now[0] - before[0], now[1] - before[1]);
+        // Le ralenti bat de ±1,5 % autour de sa consigne : 3 % en une seconde, c'est qu'il redescend encore.
+        const revved = Math.abs(now[2] - before[2]) / Math.max(before[2], 1);
         before = now;
-        return moved;
+        return moved < 0.01 && revved < 0.03;
       },
       { timeout: 15_000 },
     )
-    .toBeLessThan(0.01);
-  await page.waitForTimeout(700);
-  return (await telemetry(page)).levelDbA;
+    .toBe(true);
+  let energy = 0;
+  let count = 0;
+  for (const end = Date.now() + averageMs; Date.now() < end; count++) {
+    energy += 10 ** ((await telemetry(page)).levelDbA / 10);
+    await page.waitForTimeout(50);
+  }
+  return 10 * Math.log10(energy / count);
 }
 
 const position = (page: Page, name: string) => page.getByRole('group', { name: "Position d'écoute" }).getByRole('button', { name, exact: true });
@@ -483,9 +503,9 @@ test("les vitres ne se proposent qu'à bord, et font entrer le dehors", async ({
   await expect(windows).toHaveCount(0);
   await position(page, 'Habitacle').click();
   await expect(windows).toBeVisible();
-  const closed = await settledDb(page);
+  const closed = await settledDb(page, 5000);
   await windows.getByRole('button', { name: 'Ouvertes' }).click();
-  await expect.poll(() => settledDb(page), { timeout: 8000 }).toBeGreaterThan(closed + 1);
+  expect(await settledDb(page, 5000)).toBeGreaterThan(closed + 1);
 });
 
 test("changer d'échappement se voit sur la fiche : niveau et ce que retient la ligne", async ({ page }) => {
@@ -498,10 +518,10 @@ test("changer d'échappement se voit sur la fiche : niveau et ce que retient la 
   const loss = await page.getByTestId('line-loss').innerHTML();
   await ouvrir(page, 'exhaust');
   await page.getByRole('group', { name: 'Échappement' }).getByRole('button', { name: 'Ligne directe' }).click();
-  await expect.poll(read).toBeGreaterThan(origin + 10);
+  await expect.poll(read, CALCUL_A_PART).toBeGreaterThan(origin + 10);
   expect(await page.getByTestId('line-loss').innerHTML()).not.toBe(loss);
   await page.getByRole('group', { name: 'Échappement' }).getByRole('button', { name: 'Confort' }).click();
-  await expect.poll(read).toBeLessThan(origin);
+  await expect.poll(read, CALCUL_A_PART).toBeLessThan(origin);
 });
 
 test("isolation et emplacement du moteur changent l'habitacle sur la fiche", async ({ page }) => {
@@ -514,12 +534,12 @@ test("isolation et emplacement du moteur changent l'habitacle sur la fiche", asy
   const normal = await read();
   await ouvrir(page, 'car');
   await page.getByRole('group', { name: 'Insonorisation' }).getByRole('button', { name: 'Course' }).click();
-  await expect.poll(read).toBeGreaterThan(normal + 8);
+  await expect.poll(read, CALCUL_A_PART).toBeGreaterThan(normal + 8);
   await page.getByRole('group', { name: 'Insonorisation' }).getByRole('button', { name: 'Luxe' }).click();
-  await expect.poll(read).toBeLessThan(normal - 3);
+  await expect.poll(read, CALCUL_A_PART).toBeLessThan(normal - 3);
   const luxury = await read();
   await page.getByRole('group', { name: 'Moteur', exact: true }).getByRole('button', { name: 'Central' }).click();
-  await expect.poll(read).toBeGreaterThan(luxury + 2);
+  await expect.poll(read, CALCUL_A_PART).toBeGreaterThan(luxury + 2);
 });
 
 test('le lien de partage garde emplacement, isolation et sorties, et les anciens liens restent valides', async ({ page }) => {

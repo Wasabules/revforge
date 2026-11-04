@@ -60,6 +60,10 @@ export class GasPainter {
   private sootR = 40;
   private sootG = 38;
   private sootB = 36;
+  /** La fumée d'huile d'un deux-temps : bleutée, la lumière diffusée par de fines gouttes (diffusion de Rayleigh-Mie). */
+  private oilR = 150;
+  private oilG = 168;
+  private oilB = 200;
   private dark = true;
 
   private plumeCanvas: HTMLCanvasElement | null = null;
@@ -95,6 +99,9 @@ export class GasPainter {
       this.sootR = 92;
       this.sootG = 88;
       this.sootB = 84;
+      this.oilR = 150;
+      this.oilG = 168;
+      this.oilB = 200;
     } else {
       this.hazeR = 118;
       this.hazeG = 118;
@@ -102,6 +109,9 @@ export class GasPainter {
       this.sootR = 34;
       this.sootG = 32;
       this.sootB = 30;
+      this.oilR = 92;
+      this.oilG = 108;
+      this.oilB = 146;
     }
     this.tubeStyles = new Array(T_LEVELS * Y_LEVELS);
     for (let y = 0; y < Y_LEVELS; y++) {
@@ -204,7 +214,12 @@ export class GasPainter {
 
   private fillPlume(field: FluidField, data: Uint8ClampedArray): void {
     const { nx, ny, temp, smoke, soot, flame, kind } = field;
-    const { heatR, heatG, heatB, hazeR, hazeG, hazeB, sootR, sootG, sootB } = this;
+    const { heatR, heatG, heatB, hazeR, hazeG, hazeB } = this;
+    // Les suies d'un diesel sont noires, l'huile d'un deux-temps bleue : le même traceur.
+    const oil = this.gas.net.isTwoStroke;
+    const sootR = oil ? this.oilR : this.sootR;
+    const sootG = oil ? this.oilG : this.sootG;
+    const sootB = oil ? this.oilB : this.sootB;
     if (!this.plumeFade) {
       this.plumeFade = new Float32Array(nx * ny);
       const margin = 10;

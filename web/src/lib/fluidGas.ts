@@ -10,13 +10,18 @@
  *
  * Rien ici n'alloue pendant le calcul. Ce modèle sert à l'affichage : il suit l'état de `DrivingModel`
  * (régime, remplissage, coupure, et sur un turbo le rapport de pression, la sortie du compresseur et les soupapes),
- * il ne le remplace pas et n'agit jamais sur le son. Il n'y a qu'un turbo : celui du C++.
+ * il ne le remplace pas et n'agit jamais sur le son. Les turbos sont ceux du C++ : un, ou deux (`twin_turbo.cpp`), chacun
+ * avec sa turbine au bout de sa rangée et son chemin d'air jusqu'au plénum.
  */
+import { architectureOf, type Architecture } from './architecture';
+import { ambientAirOf } from './atmosphere';
 import { carburetorOf } from './carburetor';
 import type { EngineConfig, Exhaust, Layout } from './config';
 import { EXHAUST_LINES, TURBO_SCALE } from './exhaustLines';
 import { WALL_RISE_K } from './heat';
-import { sohcSectionShare } from './valves';
+import { sohcSectionShare, twoValves } from './valves';
+import { camShift } from './cam';
+import { CRANKCASE_COMPRESSION, EXHAUST_WIDTH, expansionLine, GEOMETRIC_COMPRESSION, INLET_WIDTH, isTwoStroke, ROD_OVER_STROKE, TRANSFER_WIDTH, twoStrokePorts } from './twoStroke';
 import { CYCLE_PER_SHAFT, EXHAUST_PORT_SHARE, firingsPerCycle, INTAKE_PORT_SHARE, isRotary, rotaryCompression, rotaryShape, SHAFT_EVC, SHAFT_EVO, SHAFT_INTAKE_SWEEP, SHAFT_IVC, SHAFT_IVO, SHAFT_PORT_SWEEP, sweptCc, WALL_RATIO } from './rotary';
 
 export const GAMMA = 1.36;
@@ -53,6 +58,15 @@ export const EVC = 378;
 export const IVO = 342;
 export const IVC = 590;
 
+/**
+ * Le taux de compression du gaz à l'écran : celui d'origine à 0, sinon le réglage, borné à ce qui existe. Recopie `compressionRatioOf`
+ * (combustion.cpp) : un diesel sous 14:1 ne s'allume plus, un rotor n'a plus de creux au-delà de 11,9:1. Une erreur ne change que ce qu'on voit.
+ */
+export function compressionRatioOf(config: EngineConfig, stock: number, low: number, high: number): number {
+  const set = config.compressionRatio ?? 0;
+  return set > 0 ? Math.min(Math.max(set, low), high) : stock;
+}
+
 /** Avance à l'allumage ou à l'injection (degrés avant le point mort haut). */
 export function ignitionAdvance(diesel: boolean, rpm: number): number {
   const rpmShare = Math.min(rpm / 7000, 1.4);
@@ -75,6 +89,8 @@ export interface LineSection {
   area: number;
   /** Les tubes suivent la longueur de la voiture, pas les volumes. */
   stretches: boolean;
+  /** La pièce d'une chambre de détente : diffuseur, ventre, cône de retour, pointe. */
+  part?: string;
 }
 
 /**
@@ -94,6 +110,19 @@ function sectionsOf(exhaust: Exhaust): LineSection[] {
 }
 
 export const LINE_SECTIONS = Object.fromEntries((Object.keys(EXHAUST_LINES) as Exhaust[]).map((exhaust) => [exhaust, sectionsOf(exhaust)])) as Record<Exhaust, LineSection[]>;
+
+/**
+ * La chambre de détente de ce moteur, accordée sur lui (`expansionLine`, recopie d'`expansionChamberFor`) : `LINE_SECTIONS.expansion`
+ * n'est que celle du préréglage. Les cônes y sont des marches, chacune de quelques cellules : le gaz y voit une pente.
+ */
+export function expansionSections(config: EngineConfig, baseArea: number): LineSection[] {
+  const parts = expansionLine(config, baseArea);
+  return parts.map(({ part, length, area }, i) => {
+    if (part === 'muffler') return { kind: 'muffler', length, area, stretches: false, part };
+    if (i === parts.length - 1) return { kind: 'tail', length, area, stretches: true, part };
+    return { kind: 'tube', length, area, stretches: false, part };
+  });
+}
 
 /** Longueur de ligne de chaque carrosserie : recopie de `BodySpec::exhaustScale`. */
 const LINE_SCALE: Record<EngineConfig['body'], number> = { city: 0.85, compact: 1, coupe: 1.1, supercar: 0.45, van: 1.25, retro: 0.98 };
@@ -135,6 +164,14 @@ export interface GasInputs {
   antiLagAirFlow?: number;
   /** Cycles de deux tours parcourus depuis le début, sans repli : un rotatif en a besoin, son cycle dure trois tours. */
   turnsTotal?: number;
+  /**
+   * Deux turbos (`twin_turbo.cpp`) : rapport de pression du second compresseur, ouverture de sa soupape, vanne d'échappement du
+   * secondaire d'un séquentiel (0 fermée, 1 ouverte) et son clapet d'admission. Absents : les mêmes que le premier, tout ouvert.
+   */
+  compressorRatio2?: number;
+  wastegate2?: number;
+  twinValve?: number;
+  secondaryOnline?: boolean;
 }
 
 /**
@@ -156,6 +193,10 @@ class FrameInputs implements GasInputs {
   antiLagHeatW: number | undefined = undefined;
   antiLagAirFlow: number | undefined = undefined;
   turnsTotal: number | undefined = undefined;
+  compressorRatio2: number | undefined = undefined;
+  wastegate2: number | undefined = undefined;
+  twinValve: number | undefined = undefined;
+  secondaryOnline: boolean | undefined = undefined;
 
   copy(from: GasInputs): this {
     this.rpm = from.rpm;
@@ -171,6 +212,10 @@ class FrameInputs implements GasInputs {
     this.antiLagHeatW = from.antiLagHeatW;
     this.antiLagAirFlow = from.antiLagAirFlow;
     this.turnsTotal = from.turnsTotal;
+    this.compressorRatio2 = from.compressorRatio2;
+    this.wastegate2 = from.wastegate2;
+    this.twinValve = from.twinValve;
+    this.secondaryOnline = from.secondaryOnline;
     return this;
   }
 }
@@ -236,8 +281,44 @@ const CHARGER_INTAKE: typeof TURBO_INTAKE = [
   { kind: 'cold', length: 0.2, area: 1, drag: 0, wall: 0.1 },
 ];
 
-/** Longueur de chaque collecteur (m) : mêmes ordres de grandeur que `EngineConfig::toProfile`. */
-function headerLength(layout: Layout, cylinder: number): number {
+/**
+ * Les autres échangeurs : recopie de `ChargePath` (core/src/charge_air.cpp), mêmes longueurs, même volume rapporté à celui de
+ * l'air-air d'origine. Air-eau sur un turbo : une brique près du papillon, la moitié de la perte du faisceau, un tube froid court.
+ * Aucun : un seul tube du compresseur au papillon. Sur un compresseur, l'air-eau garde le chemin d'origine, déjà court.
+ */
+const TURBO_INTAKE_WATER: typeof TURBO_INTAKE = [
+  TURBO_INTAKE[0],
+  TURBO_INTAKE[1],
+  TURBO_INTAKE[2],
+  { kind: 'cooler', length: 0.25, area: 4, drag: 750, wall: 3 },
+  { kind: 'cold', length: 0.2, area: 1, drag: 0, wall: 0.1 },
+];
+const TURBO_INTAKE_NONE: typeof TURBO_INTAKE = [TURBO_INTAKE[0], TURBO_INTAKE[1], TURBO_INTAKE[2], { kind: 'cold', length: 0.35, area: 1, drag: 0, wall: 0.1 }];
+const CHARGER_INTAKE_NONE: typeof TURBO_INTAKE = [CHARGER_INTAKE[0], CHARGER_INTAKE[1], CHARGER_INTAKE[2], CHARGER_INTAKE[4]];
+
+/** Le chemin de l'air entre le filtre et le papillon, selon la machine et l'échangeur. */
+export function intakeChainOf(config: Pick<EngineConfig, 'aspiration' | 'intercooler'>): typeof TURBO_INTAKE | null {
+  const cooler = config.intercooler ?? 'air_to_air';
+  if (config.aspiration === 'turbo') return cooler === 'none' ? TURBO_INTAKE_NONE : cooler === 'air_to_water' ? TURBO_INTAKE_WATER : TURBO_INTAKE;
+  if (config.aspiration === 'supercharger') return cooler === 'none' ? CHARGER_INTAKE_NONE : CHARGER_INTAKE;
+  return null;
+}
+
+/**
+ * Longueur de chaque collecteur (m) : mêmes ordres de grandeur que `EngineConfig::toProfile`. Un VR, un W et plus de douze
+ * cylindres passent par leur architecture, comme `applyArchitecture` : la culasse, puis la rangée loin de l'échappement, dont le
+ * conduit traverse la culasse de l'écart des deux rangées au plan de joint (`rowGap`).
+ */
+function headerLength(layout: Layout, cylinder: number, architecture: Architecture | null, rowGap: number): number {
+  if (architecture) {
+    const head = architecture.heads === 2 ? architecture.head[cylinder] : 0;
+    const base = architecture.heads === 2 ? (head === 0 ? 0.55 : 0.72) : 0.62;
+    if (architecture.rowAngleDeg === 0) return base;
+    // L'échappement sort à droite d'une culasse seule, à l'extérieur d'un W.
+    const exhaustSide = architecture.heads === 2 ? (head === 0 ? -1 : 1) : 1;
+    const rowSide = architecture.row[cylinder] === 0 ? -1 : 1;
+    return rowSide === exhaustSide ? base : base + rowGap;
+  }
   switch (layout) {
     // Une lumière par rotor, tout de suite un court tube : `headerM` de `applyRotary`.
     case 'rotary': return 0.42;
@@ -245,6 +326,8 @@ function headerLength(layout: Layout, cylinder: number): number {
     case 'v': return cylinder % 2 === 0 ? 0.55 : 0.72;
     case 'cross_plane': return cylinder % 2 === 0 ? 0.5 : 0.86;
     case 'boxer': return cylinder % 2 === 0 ? 0.48 : 1.05;
+    case 'vr': return 0.62;
+    case 'w': return cylinder % 2 === 0 ? 0.55 : 0.72;
   }
 }
 
@@ -407,6 +490,25 @@ export class GasNetwork {
   /** Tubes de collecteur : un par cylindre, ou un par rotor, ses trois chambres passant par la même lumière. */
   runners = 0;
   private rotary = false;
+  /**
+   * Un deux-temps : une explosion par tour, un carter par cylindre (volume à zéro dimension qui suit le piston), et trois lumières
+   * que le piston découvre. Rien de cela ne tourne sur un quatre-temps.
+   */
+  private twoStroke = false;
+  /** Premier volume de carter : celui du cylindre c est `crankZone + c`. */
+  crankZone = -1;
+  private crankcaseMin = 0;
+  /** Où commencent les lumières, en part de la course depuis le point mort haut, et la section de chacune grande ouverte (m²). */
+  private exhaustFrom = 1;
+  private transferFrom = 1;
+  private inletTravel = 0;
+  private transferArea = 0;
+  private inletArea = 0;
+  private flowOpening = 0;
+  private flowNow = 0;
+  /** Débit par les transferts (kg/s, vers le cylindre) et par l'admission du carter (kg/s, vers le carter). */
+  cylTransfer = new Float64Array(0);
+  caseInlet = new Float64Array(0);
   /** Sur un rotatif, le cycle d'une chambre dure trois tours d'arbre, et non deux : 2/3, 1 sinon. */
   private cycleScale = 1;
   private advanceScale = 1;
@@ -434,14 +536,31 @@ export class GasNetwork {
   get hasTurbine(): boolean {
     return this.turbo;
   }
+  /** Deux turbines, deux chemins d'air. */
+  get hasTwin(): boolean {
+    return this.twin;
+  }
   /** Le carburant de ce moteur : un diesel en charge rejette des suies. */
   get isDiesel(): boolean {
     return this.diesel;
+  }
+  /** Un deux-temps : son huile mélangée à l'essence sort en fumée bleue. */
+  get isTwoStroke(): boolean {
+    return this.twoStroke;
   }
   private turbo = false;
   /** Un compresseur mécanique : le chemin de l'air d'un turbo, sans turbine ni décharge. */
   private charger = false;
   private airChain: typeof TURBO_INTAKE | null = null;
+  /**
+   * Deux turbos : une turbine au bout de chaque rangée (un moteur en ligne est coupé en deux, avant et arrière), deux chemins
+   * d'air, chacun avec son compresseur, jusqu'au plénum. En séquentiel, un tube relie les deux collecteurs, et la vanne du
+   * secondaire règle ce qui passe par sa turbine.
+   */
+  private twin = false;
+  private sequential = false;
+  /** Coupé en avant et arrière : un moteur en ligne à deux turbos. */
+  frontRear = false;
   private flutter = false;
   private antiLagEvent = 0;
   private boostBar = 0;
@@ -476,6 +595,11 @@ export class GasNetwork {
   /** Échangeur : première cellule, et leur nombre. */
   coolerFirst = -1;
   coolerCount = 0;
+  /** Le second chemin d'air d'un biturbo : ses cellules, ses tronçons, son compresseur ; vide sinon. */
+  intake2First = 0;
+  intake2Count = 0;
+  intakeParts2: IntakePart[] = [];
+  compressor2Cell = -1;
   /** Numéros des volumes : jonction (ou unique collecteur), plénum. */
   zoneJoin = 0;
   zonePlenum = 0;
@@ -484,6 +608,8 @@ export class GasNetwork {
 
   // ── Organes ──
   private turbineArea = 0;
+  /** Séquentiel : la section du tube qui relie les deux collecteurs (m²). */
+  private crossArea = 0;
   private throttleMax = 0;
   private releaseArea = 0;
   /** Débit moyen demandé par les cylindres (kg/s), pour doser le papillon. */
@@ -497,6 +623,15 @@ export class GasNetwork {
   compressorFlow = 0;
   /** Puissance reprise par la turbine (W). */
   turbinePower = 0;
+  /** Le second turbo d'un biturbo : débits de sa turbine, de sa soupape, de son compresseur, de son papillon (kg/s), puissance (W). */
+  turbineFlow2 = 0;
+  wastegateFlow2 = 0;
+  compressorFlow2 = 0;
+  throttleFlow2 = 0;
+  throttleShare2 = 0;
+  turbinePower2 = 0;
+  /** Ce qui passe d'un collecteur à l'autre, en séquentiel (kg/s, du premier vers le second). */
+  crossFlow = 0;
   /** État à l'air libre, pour le panache. */
   exitU = 0;
   exitT = T_AMB;
@@ -518,11 +653,23 @@ export class GasNetwork {
   private cycleNow = 0;
   private turnRate = 0;
   private boostNow = 1;
+  private boost2Now = 1;
   private outKNow = 0;
+  /** Débit voulu à travers les deux papillons d'un biturbo (kg/s), pour le pas en cours. */
+  private throttleWant = 0;
   /** La densité de l'air à l'entrée de l'admission : plus faible sous le capot. */
   private inletRho = RHO_ATM;
   /** Sa température (K), pour qui la montre. */
   inletK = T_AMB;
+  /**
+   * L'air du jour (`atmosphere.ts`) : pression (Pa) et température (K) de l'atmosphère, sa masse volumique, son énergie par
+   * volume, et le rapport qui ramène une pression relative du turbo à l'atmosphère du jour. Exactement `P_ATM`, `T_AMB`… à 20 °C, 0 m.
+   */
+  pAtm = P_ATM;
+  tAmb = T_AMB;
+  private rhoAtm = RHO_ATM;
+  private eAtm = E_ATM;
+  private boostScale = 1;
   /** Pas de calcul faits à la dernière image. */
   lastSteps = 0;
   /** Temps physique simulé depuis la dernière construction (s). */
@@ -534,6 +681,8 @@ export class GasNetwork {
   build(config: EngineConfig, order: number[]): void {
     const rotary = isRotary(config);
     this.rotary = rotary;
+    const twoStroke = isTwoStroke(config);
+    this.twoStroke = twoStroke;
     // Sur un rotatif, une « cylindre » du calcul est une chambre : trois par rotor, sur un cycle de trois tours d'arbre.
     const count = rotary ? 3 * config.cylinders : config.cylinders;
     const runners = rotary ? config.cylinders : count;
@@ -549,40 +698,61 @@ export class GasNetwork {
     this.cell = CELL_M;
     this.turbo = config.aspiration === 'turbo';
     this.charger = config.aspiration === 'supercharger';
-    this.airChain = this.turbo ? TURBO_INTAKE : this.charger ? CHARGER_INTAKE : null;
+    this.airChain = this.turbo || this.charger ? intakeChainOf(config) : null;
+    this.twin = this.turbo && (config.turboLayout === 'twin_parallel' || config.turboLayout === 'twin_sequential');
+    this.sequential = this.twin && config.turboLayout === 'twin_sequential';
     this.diesel = config.fuel === 'diesel' && !rotary;
     this.flutter = config.turboRelease === 'flutter';
     this.boostBar = config.boostBar;
-    this.banks = config.layout !== 'inline' && count >= 4 && !rotary ? 2 : 1;
+    // Les culasses : une en ligne et en VR, deux en V, en W et à plat. Chaque cylindre souffle dans le collecteur de la sienne.
+    const architecture = rotary ? null : architectureOf(config);
+    this.banks = architecture && architecture.heads === 2 && count >= 4 ? 2 : 1;
+    // Deux turbos : deux collecteurs, quoi qu'il en soit. Un moteur en ligne se coupe en avant et arrière, comme en C++.
+    if (this.twin && runners >= 2) this.banks = 2;
+    // Une seule culasse (en ligne, VR) se coupe en avant et arrière, comme en C++ ; deux culasses gardent la leur.
+    this.frontRear = this.twin && this.banks === 2 && (architecture ? architecture.heads === 1 : config.layout === 'inline');
+    // Un VR, un W, plus de douze cylindres : leurs collecteurs suivent leur architecture (`applyArchitecture`).
+    const own = architecture && (config.layout === 'vr' || config.layout === 'w' || count > 12) ? architecture : null;
+    // L'air du jour : le tube s'ouvre sur lui, l'admission l'avale, la soupape du turbo tient sa pression au-dessus de lui.
+    const air = ambientAirOf(config);
+    this.pAtm = air.pressurePa;
+    this.tAmb = air.temperatureK;
+    this.rhoAtm = this.pAtm / (R * this.tAmb);
+    this.eAtm = this.pAtm / G1;
+    this.boostScale = P_ATM / this.pAtm;
     const filter = AIR_FILTER_GAS[config.airFilter ?? 'stock'];
     const engineAt = config.placement ?? (config.body === 'supercar' ? 'mid' : 'front');
-    this.inletK = T_AMB + filter.bay * BAY_RISE_K[engineAt];
-    this.inletRho = (RHO_ATM * T_AMB) / this.inletK;
+    this.inletK = this.tAmb + filter.bay * BAY_RISE_K[engineAt];
+    this.inletRho = (this.rhoAtm * this.tAmb) / this.inletK;
     const carb = carburetorOf(config);
 
     // Géométrie du cylindre.
     const bore = config.boreMm / 1000;
-    const cylinderVolume = volume / count;
+    // Un deux-temps balaie deux fois sa cylindrée en deux tours : le volume d'un cylindre reste celui de sa cylindrée.
+    const cylinderVolume = twoStroke ? (config.displacementCc * 1e-6) / count : volume / count;
     this.boreArea = (Math.PI * bore * bore) / 4;
     const stroke = cylinderVolume / this.boreArea;
     this.crank = stroke / 2;
-    this.rod = stroke * 1.6;
-    const ratio = this.diesel ? 18 : this.airChain ? 9.5 : 10.5;
+    this.rod = stroke * (twoStroke ? ROD_OVER_STROKE : 1.6);
+    // Un deux-temps lit aussi le taux réglé (comme `twoStrokePortsOf` en C++), 7,5 d'origine.
+    const ratio = twoStroke ? compressionRatioOf(config, GEOMETRIC_COMPRESSION, 4, 24) : compressionRatioOf(config, this.diesel ? 18 : this.airChain ? 9.5 : 10.5, this.diesel ? 14 : 4, 24);
     this.clearance = cylinderVolume / (ratio - 1);
     this.exhaustValve = 0.19 * this.boreArea;
     this.intakeValve = 0.24 * this.boreArea;
-    if (config.camshaft === 'sohc' && !rotary) {
-      // Deux soupapes au lieu de quatre : le même calcul de section que le C++ (`valves.ts`).
+    if (twoValves(config.camshaft ?? 'dohc') && !rotary) {
+      // Deux soupapes au lieu de quatre, sous un simple arbre comme sous des culbuteurs : le même calcul de section que le C++ (`valves.ts`).
       const share = sohcSectionShare(config.boreMm);
       this.exhaustValve *= share.exhaust;
       this.intakeValve *= share.intake;
     }
     this.cycleScale = 1;
     this.advanceScale = 1;
-    this.evo = EVO;
-    this.evc = EVC;
-    this.ivo = IVO;
-    this.ivc = IVC;
+    // La came : ce qu'elle change au calage d'origine, lu à 1 mm (cam.ts). Rien sur la came d'origine.
+    const cam = camShift(config);
+    this.evo = EVO + cam.evo;
+    this.evc = EVC + cam.evc;
+    this.ivo = IVO + cam.ivo;
+    this.ivc = IVC + cam.ivc;
     this.sweepEx = 0;
     this.sweepIn = 0;
     this.wallGain = 14;
@@ -594,7 +764,7 @@ export class GasNetwork {
       this.boreArea = chamber / fakeStroke;
       this.crank = fakeStroke / 2;
       this.rod = fakeStroke * 5000;
-      this.clearance = chamber / (rotaryCompression(config.aspiration) - 1);
+      this.clearance = chamber / (compressionRatioOf(config, rotaryCompression(config.aspiration), 4, 11.9) - 1);
       const across = shape.radius * shape.width * 1e-6;
       this.exhaustValve = EXHAUST_PORT_SHARE * across;
       this.intakeValve = INTAKE_PORT_SHARE * across;
@@ -609,13 +779,32 @@ export class GasNetwork {
       // La chambre allongée a presque deux fois plus de paroi pour le même volume.
       this.wallGain = 14 * WALL_RATIO;
     }
+    if (twoStroke) {
+      // Un cycle par tour : deux en 720°. Les lumières, découvertes par le piston, à la hauteur que dit `twoStrokePorts`.
+      const ports = twoStrokePorts(config);
+      this.cycleScale = 2;
+      this.advanceScale = 2;
+      this.evo = 2 * ports.exhaustOpen;
+      this.evc = 2 * (360 - ports.exhaustOpen);
+      this.exhaustFrom = 1 - ports.exhaustHeight;
+      this.transferFrom = 1 - ports.transferHeight;
+      this.inletTravel = ports.inletTravel;
+      // Coefficients de débit des lumières : ceux du cycle en C++ (0,7 ; 0,65 ; 0,7).
+      this.exhaustValve = 0.7 * EXHAUST_WIDTH * bore * ports.exhaustHeight * stroke;
+      this.transferArea = 0.65 * TRANSFER_WIDTH * bore * ports.transferHeight * stroke;
+      this.inletArea = 0.7 * INLET_WIDTH * bore * ports.inletTravel * stroke;
+      this.crankcaseMin = cylinderVolume / (CRANKCASE_COMPRESSION - 1);
+    }
 
     // Collecteurs : un tube par cylindre, plus fins que la ligne qu'ils alimentent.
     const runnerArea = base * Math.min(1, 1.15 / Math.sqrt(runners));
     const runnerCells = new Int32Array(runners);
     let cells = 0;
+    // L'écart des deux rangées d'une culasse au plan de joint, comme `applyArchitecture` : bielle de 1,6 course, désaxage compris.
+    const halfRow = own ? (own.rowAngleDeg / 2) * (Math.PI / 180) : 0;
+    const rowGap = own ? 2 * ((2.1 * stroke + 0.36 * bore) * Math.sin(halfRow) + (own.rowOffsetMm / 1000) * Math.cos(halfRow)) : 0;
     for (let i = 0; i < runners; i++) {
-      runnerCells[i] = Math.max(8, Math.round(headerLength(config.layout, i) / CELL_M));
+      runnerCells[i] = Math.max(8, Math.round(headerLength(config.layout, i, own, rowGap) / CELL_M));
       cells += runnerCells[i];
     }
     this.runnerCells = runnerCells;
@@ -634,7 +823,7 @@ export class GasNetwork {
     const lineFirst = cells;
     const placed: PlacedSection[] = [];
     let at = 0;
-    for (const section of LINE_SECTIONS[config.exhaust]) {
+    for (const section of config.exhaust === 'expansion' ? expansionSections(config, base) : LINE_SECTIONS[config.exhaust]) {
       const length = section.length * (section.stretches ? scale : 1);
       const n = Math.max(3, Math.round(length / CELL_M));
       placed.push({ ...section, length, first: cells, count: n, from: at, to: at + n * CELL_M, diameter: this.pipeDiameter * Math.sqrt(section.area) });
@@ -647,11 +836,14 @@ export class GasNetwork {
     this.lineLength = at;
 
     // Ce que le tube a en plus de la référence : le gaz le parcourt, et le compresseur part avec la turbine.
-    const pipeExtra = this.turbo ? ((config.turboPipeMm ?? 400) - 400) / 1000 : 0;
+    const pipeExtra = this.turbo && !this.twin ? ((config.turboPipeMm ?? 400) - 400) / 1000 : 0;
 
     // Admission : un simple conduit sans turbo ; avec, la vraie chaîne, coupée par le compresseur.
     const intakeFirst = cells;
-    const intakeArea = base * 1.2;
+    // Deux chemins d'air, chacun de la section qui donne au tout le volume du C++ : deux turbos d'une moitié de moteur ont chacun
+    // leurs conduits (`chargeVolumeM3` d'une moitié, deux fois).
+    const chargeVolume = (v: number) => Math.min(Math.max(1.5e-3 + 2.5 * v, 2.5e-3), 14e-3);
+    const intakeArea = base * 1.2 * (this.twin ? chargeVolume(volume / 2) / chargeVolume(volume) : 1);
     const parts: IntakePart[] = [];
     if (this.airChain) {
       let cell = intakeFirst;
@@ -677,6 +869,18 @@ export class GasNetwork {
       parts.push({ kind: 'venturi', first: after, count: venturiCount, area: throatArea });
       parts.push({ kind: 'duct', first: after + venturiCount, count: Math.max(3, Math.round((carb.kind === 'single' ? 0.39 : 0.15) / CELL_M)), area: 1 });
     }
+    // Le second chemin d'air, à la suite : mêmes pièces, son propre compresseur, son propre papillon sur le même plénum.
+    const parts2: IntakePart[] = [];
+    if (this.twin && this.airChain) {
+      const after = parts[parts.length - 1];
+      let cell = after.first + after.count;
+      for (const part of this.airChain) {
+        const count = Math.max(3, Math.round(part.length / CELL_M));
+        parts2.push({ kind: part.kind, first: cell, count, area: part.kind === 'filter' ? filter.mouth : part.area });
+        cell += count;
+      }
+    }
+    this.intakeParts2 = parts2;
     this.intakeParts = parts;
     const lastPart = parts[parts.length - 1];
     const coldPart = parts.find((part) => part.kind === 'cold');
@@ -690,6 +894,10 @@ export class GasNetwork {
     // La décharge et la vanne d'air de l'anti-lag : seulement sur un turbo. Un compresseur n'a que sa soupape de dérivation, interne.
     this.releaseCell = this.turbo && coldPart ? coldPart.first + coldPart.count - Math.round(0.25 / CELL_M) : -1;
     cells += this.intakeCount;
+    this.intake2First = cells;
+    this.intake2Count = parts2.length > 0 ? parts2[parts2.length - 1].first + parts2[parts2.length - 1].count - cells : 0;
+    this.compressor2Cell = parts2.find((part) => part.kind === 'hot')?.first ?? -1;
+    cells += this.intake2Count;
 
     // Après tout le reste : à la référence, aucune cellule ne change de numéro.
     const pipeCells = pipeExtra > 0 ? Math.max(3, Math.round(pipeExtra / CELL_M)) : 0;
@@ -716,7 +924,7 @@ export class GasNetwork {
     this.dA = new Float64Array(n);
     this.dragRate = new Float64Array(n);
     this.wallRate = new Float64Array(n);
-    this.wallT = new Float64Array(n).fill(T_AMB);
+    this.wallT = new Float64Array(n).fill(this.tAmb);
     this.wallDecay = new Float64Array(n);
 
     const runnerFirst = new Int32Array(count);
@@ -759,9 +967,9 @@ export class GasNetwork {
         else if (nextArea > 0) steps.push(cell);
       }
     });
-    parts.forEach((part, p) => {
+    const shapeChain = (list: IntakePart[], compressorAt: number) => list.forEach((part, p) => {
       const areaHere = intakeArea * part.area;
-      const nextArea = p + 1 < parts.length ? intakeArea * parts[p + 1].area : 0;
+      const nextArea = p + 1 < list.length ? intakeArea * list[p + 1].area : 0;
       const spec = this.airChain?.find((item) => item.kind === part.kind);
       for (let k = 0; k < part.count; k++) {
         const cell = part.first + k;
@@ -776,9 +984,11 @@ export class GasNetwork {
         if (k + 1 < part.count) this.faceA[cell] = areaHere;
         else if (nextArea > 0 && nextArea !== areaHere) steps.push(cell);
         // Le compresseur a sa propre face : entre deux tronçons de même section, seule celle-là reste à part.
-        else if (nextArea > 0 && parts[p + 1].first !== this.compressorCell) this.faceA[cell] = areaHere;
+        else if (nextArea > 0 && list[p + 1].first !== compressorAt) this.faceA[cell] = areaHere;
       }
     });
+    shapeChain(parts, this.compressorCell);
+    shapeChain(parts2, this.compressor2Cell);
     for (let k = 0; k < pipeCells; k++) {
       const cell = this.pipeFirst + k;
       this.area[cell] = base;
@@ -793,6 +1003,11 @@ export class GasNetwork {
       this.wallRate[i] = 0.05 / Math.max(Math.sqrt((4 * this.area[i]) / Math.PI), 0.02);
     }
     // Sur la chaîne d'un turbo, le tube chaud garde sa chaleur et seul l'échangeur en prend.
+    for (const part of parts2) {
+      const spec = this.airChain?.find((item) => item.kind === part.kind);
+      if (!spec) continue;
+      for (let k = 0; k < part.count; k++) this.wallRate[part.first + k] = spec.wall;
+    }
     for (const part of parts) {
       const spec = this.airChain?.find((item) => item.kind === part.kind);
       if (!spec) continue;
@@ -800,7 +1015,10 @@ export class GasNetwork {
     }
 
     // Volumes : collecteur par rangée, éventuelle jonction, plénum. Volute du turbo dans le dernier avant la ligne.
-    const zones = this.banks + (this.banks === 2 ? 1 : 0) + (pipeCells > 0 ? 1 : 0) + 1;
+    const shared = this.banks + (this.banks === 2 ? 1 : 0) + (pipeCells > 0 ? 1 : 0) + 1;
+    // Le carter de chaque cylindre d'un deux-temps, après tous les autres : à la référence, aucun volume ne change de numéro.
+    const zones = shared + (twoStroke ? count : 0);
+    this.crankZone = twoStroke ? shared : -1;
     this.zoneCount = zones;
     this.zM = new Float64Array(zones);
     this.zE = new Float64Array(zones);
@@ -811,8 +1029,8 @@ export class GasNetwork {
     const zoneBank = new Int32Array(this.banks);
     for (let b = 0; b < this.banks; b++) zoneBank[b] = b;
     this.zoneJoin = this.banks === 2 ? 2 : 0;
-    this.zonePlenum = zones - 1;
-    this.zoneTurbine = pipeCells > 0 ? zones - 2 : this.zoneJoin;
+    this.zonePlenum = shared - 1;
+    this.zoneTurbine = pipeCells > 0 ? shared - 2 : this.zoneJoin;
     this.zV[this.zonePlenum] = Math.max(volume * 1.3, 0.8e-3);
 
     // Liens tube-volume.
@@ -828,12 +1046,13 @@ export class GasNetwork {
       this.zV[zone] += area * 2.5 * CELL_M;
     };
     for (let i = 0; i < runners; i++) {
-      const b = this.banks === 2 ? i % 2 : 0;
+      const b = this.banks === 2 ? (this.frontRear ? (i < runners / 2 ? 0 : 1) : architecture && architecture.heads === 2 ? architecture.head[i] : i % 2) : 0;
       link(runnerFirst[i] + runnerCells[i] - 1, zoneBank[b], 1, runnerArea);
     }
     if (this.banks === 2) {
       for (let b = 0; b < 2; b++) {
-        link(bankFirst[b], zoneBank[b], -1, base);
+        // Deux turbos : la turbine de la rangée, et non un raccord, ouvre le collecteur sur son tube.
+        if (!this.twin) link(bankFirst[b], zoneBank[b], -1, base);
         link(bankFirst[b] + bankCells - 1, this.zoneJoin, 1, base);
       }
     }
@@ -846,18 +1065,27 @@ export class GasNetwork {
       orifice[2] = upstream * 0.45;
       orificeFlux();
       this.turbineArea = peakFlow / orifice[3];
-      // Plus court que la référence, ce qui manque au tube manque à ce volume ; déporté, le tube a ses cellules, et la volute reste contre la turbine.
-      this.zV[this.zoneJoin] += volume * 1.5 + (pipeExtra < 0 ? base * pipeExtra : 0);
-      if (pipeCells > 0) {
-        link(this.pipeFirst, this.zoneJoin, -1, base);
-        link(this.pipeFirst + pipeCells - 1, this.zoneTurbine, 1, base);
-        this.zV[this.zoneTurbine] += volume * 0.5;
+      if (this.twin) {
+        // Une volute au bout de chaque collecteur ; les tubes d'après se rejoignent, puis la ligne.
+        for (let b = 0; b < 2; b++) this.zV[zoneBank[b]] += volume * 0.75;
+        link(lineFirst, this.zoneJoin, -1, base * placed[0].area);
+      } else {
+        // Plus court que la référence, ce qui manque au tube manque à ce volume ; déporté, le tube a ses cellules, et la volute reste contre la turbine.
+        this.zV[this.zoneJoin] += volume * 1.5 + (pipeExtra < 0 ? base * pipeExtra : 0);
+        if (pipeCells > 0) {
+          link(this.pipeFirst, this.zoneJoin, -1, base);
+          link(this.pipeFirst + pipeCells - 1, this.zoneTurbine, 1, base);
+          this.zV[this.zoneTurbine] += volume * 0.5;
+        }
       }
       // Les roues sont d'autant plus petites que le turbo l'est : même loi qu'en C++ (D²).
       // Comme en C++ aussi, sa turbine ne laisse passer qu'une part du gaz au point nominal : la soupape prend le reste.
       // Le coefficient est calé pour retrouver la pression avant la turbine du C++, à 15 % près au point nominal.
       const size = TURBO_SCALE[config.turboSize ?? 'medium'];
       this.turbineArea *= size * size * (this.diesel ? 0.5 : 0.33);
+      // Deux turbines, chacune pour la moitié du gaz.
+      if (this.twin) this.turbineArea *= 0.5;
+      this.crossArea = this.sequential ? base : 0;
     } else {
       link(lineFirst, this.zoneJoin, -1, base * placed[0].area);
     }
@@ -893,6 +1121,14 @@ export class GasNetwork {
       right[this.compressorCell - 1] = intakeArea;
       left[this.compressorCell] = intakeArea;
     }
+    // Le second chemin d'air : son entrée à l'air libre, son papillon, son compresseur.
+    if (this.intake2Count > 0) {
+      const last2 = this.intake2First + this.intake2Count - 1;
+      left[this.intake2First] = this.area[this.intake2First];
+      right[last2] = this.area[last2];
+      right[this.compressor2Cell - 1] = intakeArea;
+      left[this.compressor2Cell] = intakeArea;
+    }
     for (let i = 0; i < n; i++) this.dA[i] = right[i] - left[i];
     this.exitArea = this.area[lastCell];
 
@@ -921,13 +1157,20 @@ export class GasNetwork {
     this.cylLiftIn = new Float64Array(count);
     this.cylTheta = new Float64Array(count);
     this.cylFired = new Uint8Array(count);
+    this.cylTransfer = new Float64Array(count);
+    this.caseInlet = new Float64Array(count);
     this.cylHeat = new Float64Array(count);
     this.cylArmed = new Uint8Array(count).fill(1);
     this.cylWasOpen = new Uint8Array(count);
+    if (twoStroke) {
+      // Le carter suit le piston : le plus petit au point mort bas.
+      for (let c = 0; c < count; c++) this.zV[this.crankZone + c] = this.crankcaseMin + cylinderVolume * 0.5;
+    }
     for (let i = 0; i < count; i++) {
-      this.bank[i] = this.banks === 2 ? i % 2 : 0;
-      // Le cylindre au rang s de l'ordre d'allumage passe au point mort haut quand le cycle vaut s/N.
-      this.phase[i] = 1 - order.indexOf(i + 1) / count;
+      this.bank[i] = this.banks === 2 ? (this.frontRear ? (i < count / 2 ? 0 : 1) : architecture && architecture.heads === 2 ? architecture.head[i] : i % 2) : 0;
+      // Le cylindre au rang s de l'ordre d'allumage passe au point mort haut quand le cycle vaut s/N, ou à son angle s'ils sont inégaux.
+      const slot = order.indexOf(i + 1);
+      this.phase[i] = architecture && !architecture.even && slot >= 0 ? 1 - architecture.firingDeg[slot] / 720 : 1 - slot / count;
       if (rotary) {
         // La face k du rotor au rang s explose quand l'arbre vaut s·360/rotors + 360·k, sur un cycle de 1080°.
         const rotor = Math.floor(i / 3);
@@ -942,21 +1185,21 @@ export class GasNetwork {
   /** Tout au repos, à la température de l'air. */
   reset(): void {
     for (let i = 0; i < this.n; i++) {
-      this.rho[i] = RHO_ATM;
+      this.rho[i] = this.rhoAtm;
       this.mom[i] = 0;
-      this.ene[i] = E_ATM;
+      this.ene[i] = this.eAtm;
       this.trc[i] = 0;
     }
     for (let z = 0; z < this.zoneCount; z++) {
-      this.zM[z] = RHO_ATM * this.zV[z];
-      this.zE[z] = (P_ATM / G1) * this.zV[z];
+      this.zM[z] = this.rhoAtm * this.zV[z];
+      this.zE[z] = (this.pAtm / G1) * this.zV[z];
       this.zY[z] = 0;
     }
     for (let c = 0; c < this.cylinders; c++) {
-      const v = this.volumeAt(this.phase[c] * 4 * Math.PI);
+      const v = this.volumeAt(this.phase[c] * (this.twoStroke ? 2 : 4) * Math.PI);
       this.cylV[c] = v;
-      this.cylM[c] = RHO_ATM * v;
-      this.cylU[c] = (P_ATM / G1) * v;
+      this.cylM[c] = this.rhoAtm * v;
+      this.cylU[c] = (this.pAtm / G1) * v;
       this.cylY[c] = 0;
       this.cylBurn[c] = 0;
       this.cylFired[c] = 0;
@@ -979,17 +1222,17 @@ export class GasNetwork {
     const last = this.lineFirst + this.lineCount;
     for (let i = 0; i < this.n; i++) {
       if (i >= last && i < this.pipeFirst) continue;
-      const t = T_AMB + 120 + hot * this.wallDecay[i];
-      const r = P_ATM / (R * t);
+      const t = this.tAmb + 120 + hot * this.wallDecay[i];
+      const r = this.pAtm / (R * t);
       this.rho[i] = r;
       this.mom[i] = 0;
-      this.ene[i] = E_ATM;
+      this.ene[i] = this.eAtm;
       this.trc[i] = r;
     }
     for (let z = 0; z < this.zonePlenum; z++) {
-      const t = T_AMB + 120 + hot * 0.45;
-      this.zM[z] = (P_ATM / (R * t)) * this.zV[z];
-      this.zE[z] = (P_ATM / G1) * this.zV[z];
+      const t = this.tAmb + 120 + hot * 0.45;
+      this.zM[z] = (this.pAtm / (R * t)) * this.zV[z];
+      this.zE[z] = (this.pAtm / G1) * this.zV[z];
       this.zY[z] = this.zM[z];
     }
     this.primitives();
@@ -1019,11 +1262,11 @@ export class GasNetwork {
       let r = rho[i];
       // Garde-fou : une valeur aberrante ne doit jamais contaminer le reste du tube.
       if (!(r > DENSITY_FLOOR) || !(ene[i] > 0)) {
-        if (!(r >= 0)) r = RHO_ATM;
+        if (!(r >= 0)) r = this.rhoAtm;
         r = Math.max(r, DENSITY_FLOOR);
         rho[i] = r;
         mom[i] = 0;
-        ene[i] = E_ATM;
+        ene[i] = this.eAtm;
         trc[i] = 0;
       }
       const ru = mom[i];
@@ -1050,8 +1293,8 @@ export class GasNetwork {
     for (let z = 0; z < this.zoneCount; z++) {
       // Même garde-fou que pour les cellules.
       if (!(this.zM[z] > 1e-7) || !(this.zE[z] > 0)) {
-        this.zM[z] = RHO_ATM * this.zV[z];
-        this.zE[z] = E_ATM * this.zV[z];
+        this.zM[z] = this.rhoAtm * this.zV[z];
+        this.zE[z] = this.eAtm * this.zV[z];
         this.zY[z] = 0;
       }
       const pressure = (G1 * this.zE[z]) / this.zV[z];
@@ -1093,16 +1336,20 @@ export class GasNetwork {
   private setWalls(heat: number): void {
     // Sous ce modèle, la température des parois vient de `Motion.heat`, qui avance en temps réel.
     const hot = WALL_RISE_K * heat;
-    for (let i = 0; i < this.n; i++) this.wallT[i] = T_AMB + hot * this.wallDecay[i];
+    for (let i = 0; i < this.n; i++) this.wallT[i] = this.tAmb + hot * this.wallDecay[i];
   }
 
   private stepCylinders(inputs: GasInputs): void {
+    if (this.twoStroke) {
+      this.stepTwoStroke(inputs);
+      return;
+    }
     const { rho, mom, ene, trc, p, u, c: sound, invV, area, dt, cycleNow: cycle, turnRate: turnsPerSecond, crank, rod, clearance, boreArea } = this;
     const burning = inputs.burning;
     const load = inputs.load;
     const plenum = this.zonePlenum;
     let plenumOut = 0;
-    const wallCylinder = T_AMB + 160 * inputs.heat;
+    const wallCylinder = this.tAmb + 160 * inputs.heat;
     const advance = ignitionAdvance(this.diesel, inputs.rpm) * this.advanceScale;
     const duration = burnDegrees(this.diesel, inputs.rpm);
     const antiLag = inputs.antiLag ?? 0;
@@ -1120,8 +1367,8 @@ export class GasNetwork {
       const volume = clearance + boreArea * (crank + rod - crank * Math.cos(radians) - Math.sqrt(rod * rod - crank * crank * sine * sine));
       // Même garde-fou que pour les cellules : un cylindre aberrant repart à l'état de l'air.
       if (!(this.cylM[c] > 1e-9) || !(this.cylU[c] > 0)) {
-        this.cylM[c] = RHO_ATM * this.cylV[c];
-        this.cylU[c] = E_ATM * this.cylV[c];
+        this.cylM[c] = this.rhoAtm * this.cylV[c];
+        this.cylU[c] = this.eAtm * this.cylV[c];
         this.cylY[c] = 0;
       }
       let mass = this.cylM[c];
@@ -1305,19 +1552,255 @@ export class GasNetwork {
     this.demand += (plenumOut - this.demand) * smooth;
   }
 
+  /**
+   * D'un volume à l'autre par un orifice de section `flowOpening` (carter et plénum) : masse, énergie, gaz brûlé. Le débit (kg/s) de
+   * `from` vers `to` va dans `flowNow`. Des champs plutôt qu'un argument et un retour à virgule : rien n'est alloué.
+   */
+  private zoneFlow(from: number, to: number): void {
+    this.flowNow = 0;
+    const opening = this.flowOpening;
+    const pFrom = (G1 * this.zE[from]) / this.zV[from];
+    const pTo = (G1 * this.zE[to]) / this.zV[to];
+    if (pFrom <= pTo || opening <= 0) return;
+    const tFrom = pFrom / ((this.zM[from] / this.zV[from]) * R);
+    orifice[0] = pFrom;
+    orifice[1] = tFrom;
+    orifice[2] = pTo;
+    orificeFlux();
+    const limit = (0.4 * (pFrom - pTo) * Math.min(this.zV[from], this.zV[to])) / (GAMMA * R * tFrom);
+    const dm = Math.min(opening * orifice[3] * this.dt, limit, 0.1 * this.zM[from]);
+    const enthalpy = CP * tFrom;
+    const share = this.zY[from] / this.zM[from];
+    this.zM[from] -= dm;
+    this.zE[from] -= dm * enthalpy;
+    this.zY[from] -= dm * share;
+    this.zM[to] += dm;
+    this.zE[to] += dm * enthalpy;
+    this.zY[to] += dm * share;
+    this.flowNow = dm / this.dt;
+  }
+
+  /**
+   * Le deux-temps : chaque cylindre et son carter. Le piston comprime le carter en descendant, le mélange passe par les transferts dès
+   * qu'il les découvre, la bouffée sort par la lumière d'échappement un peu avant, et le carter aspire dans le plénum autour du point
+   * mort haut. Même combustion, mêmes parois et même vidange qu'un quatre-temps, sur un cycle d'un tour.
+   */
+  private stepTwoStroke(inputs: GasInputs): void {
+    const { rho, mom, ene, trc, p, u, c: sound, invV, area, dt, cycleNow: cycle, turnRate: turnsPerSecond, crank, rod, clearance, boreArea } = this;
+    const burning = inputs.burning;
+    const plenum = this.zonePlenum;
+    let plenumOut = 0;
+    const wallCylinder = T_AMB + 160 * inputs.heat;
+    const advance = ignitionAdvance(false, inputs.rpm) * this.advanceScale;
+    const duration = burnDegrees(false, inputs.rpm) * this.advanceScale;
+    const { evo, evc, wallGain, cycleScale, exhaustFrom, transferFrom, inletTravel } = this;
+    const swept = boreArea * 2 * crank;
+    for (let c = 0; c < this.cylinders; c++) {
+      let phase = cycle * cycleScale + this.phase[c];
+      phase -= Math.floor(phase);
+      const theta = phase * 720;
+      this.cylTheta[c] = theta;
+      // Un tour de vilebrequin par cycle.
+      const radians = phase * 2 * Math.PI;
+      const sine = Math.sin(radians);
+      const travel = (crank + rod - crank * Math.cos(radians) - Math.sqrt(rod * rod - crank * crank * sine * sine)) / (2 * crank);
+      const volume = clearance + swept * travel;
+      if (!(this.cylM[c] > 1e-9) || !(this.cylU[c] > 0)) {
+        this.cylM[c] = RHO_ATM * this.cylV[c];
+        this.cylU[c] = E_ATM * this.cylV[c];
+        this.cylY[c] = 0;
+      }
+      let mass = this.cylM[c];
+      let energy = this.cylU[c];
+      let burnt = this.cylY[c];
+      let pressure = (G1 * energy) / this.cylV[c];
+      energy -= pressure * (volume - this.cylV[c]);
+      this.cylV[c] = volume;
+      // Le carter, sous le piston : il se comprime quand le piston descend.
+      const zone = this.crankZone + c;
+      const caseVolume = this.crankcaseMin + swept * (1 - travel);
+      this.zE[zone] -= ((G1 * this.zE[zone]) / this.zV[zone]) * (caseVolume - this.zV[zone]);
+      this.zV[zone] = caseVolume;
+
+      // Combustion, au point mort haut de chaque tour.
+      const sinceSpark = theta >= 720 - advance ? theta - (720 - advance) : theta + advance;
+      if (sinceSpark < duration + 2) {
+        if (this.cylArmed[c] === 1) {
+          this.cylArmed[c] = 0;
+          this.cylBurn[c] = 0;
+          this.cylFired[c] = burning ? 1 : 0;
+          const air = Math.max(mass - burnt, 0);
+          this.cylHeat[c] = burning ? air * 3.0e6 * 0.66 : 0;
+        }
+        if (this.cylFired[c] === 1) {
+          const t = sinceSpark / duration;
+          const x = t >= 1 ? 1 : 1 - Math.exp(-5 * t * t * t);
+          const gain = x - this.cylBurn[c];
+          if (gain > 0) {
+            energy += this.cylHeat[c] * gain;
+            burnt += (mass - burnt) * (gain / Math.max(1 - this.cylBurn[c], 1e-3));
+            this.cylBurn[c] = x;
+          }
+        }
+      } else {
+        this.cylBurn[c] = 0;
+        if (sinceSpark > duration + 20) this.cylArmed[c] = 1;
+      }
+      pressure = (G1 * energy) / volume;
+      let temperature = pressure / ((mass / volume) * R);
+      energy -= wallGain * dt * (temperature - wallCylinder) * mass * CV;
+
+      // La lumière d'échappement : le piston la découvre, l'aire suit sa course.
+      let exhaustFlow = 0;
+      if (travel > exhaustFrom) {
+        const lift = (travel - exhaustFrom) / (1 - exhaustFrom);
+        this.cylLiftEx[c] = lift;
+        if (this.cylWasOpen[c] === 0 && theta > evo && theta < evc) {
+          this.cylWasOpen[c] = 1;
+          this.blowdowns++;
+          this.lastBlowdownCylinder = c;
+          if (this.cylFired[c] === 1) this.burntBlowdowns++;
+        }
+        const k = this.runnerFirst[c];
+        const opening = this.exhaustValve * lift;
+        pressure = (G1 * energy) / volume;
+        temperature = pressure / ((mass / volume) * R);
+        if (pressure >= p[k]) {
+          orifice[0] = pressure;
+          orifice[1] = temperature;
+          orifice[2] = p[k];
+          orificeFlux();
+          const limit = (0.8 * (pressure - p[k]) * Math.min(volume, 1 / invV[k])) / (GAMMA * R * temperature);
+          const dm = Math.min(opening * orifice[3] * dt, limit, 0.25 * mass);
+          exhaustFlow = dm / dt;
+          const enthalpy = CP * temperature;
+          const share = burnt / mass;
+          mass -= dm;
+          energy -= dm * enthalpy;
+          burnt -= dm * share;
+          const w = invV[k] * dm;
+          const speed = Math.min(exhaustFlow / (rho[k] * area[k]), sound[k]);
+          rho[k] += w;
+          ene[k] += w * enthalpy + 0.5 * w * speed * speed;
+          trc[k] += w * share;
+          mom[k] += w * speed;
+        } else {
+          const tk = p[k] / (rho[k] * R);
+          orifice[0] = p[k];
+          orifice[1] = tk;
+          orifice[2] = pressure;
+          orificeFlux();
+          const limit = (0.8 * (p[k] - pressure) * Math.min(volume, 1 / invV[k])) / (GAMMA * R * tk);
+          const dm = Math.min(opening * orifice[3] * dt, limit, (0.2 * rho[k]) / invV[k]);
+          exhaustFlow = -dm / dt;
+          const w = invV[k] * dm;
+          const enthalpy = (ene[k] + p[k]) / rho[k];
+          const share = trc[k] / rho[k];
+          rho[k] -= w;
+          ene[k] -= w * enthalpy;
+          trc[k] -= w * share;
+          mom[k] -= w * u[k];
+          mass += dm;
+          energy += dm * enthalpy;
+          burnt += dm * share;
+        }
+      } else {
+        this.cylLiftEx[c] = 0;
+        this.cylWasOpen[c] = 0;
+      }
+      this.cylExhaust[c] = exhaustFlow;
+
+      // Les transferts : le carter pousse son mélange dans le cylindre, ou le cylindre refoule dans le carter.
+      let transferFlow = 0;
+      if (travel > transferFrom) {
+        const lift = (travel - transferFrom) / (1 - transferFrom);
+        this.cylLiftIn[c] = lift;
+        const opening = this.transferArea * lift;
+        pressure = (G1 * energy) / volume;
+        temperature = pressure / ((mass / volume) * R);
+        const pz = (G1 * this.zE[zone]) / this.zV[zone];
+        const tz = pz / ((this.zM[zone] / this.zV[zone]) * R);
+        if (pz >= pressure) {
+          orifice[0] = pz;
+          orifice[1] = tz;
+          orifice[2] = pressure;
+          orificeFlux();
+          const limit = (0.4 * (pz - pressure) * Math.min(volume, this.zV[zone])) / (GAMMA * R * tz);
+          const dm = Math.min(opening * orifice[3] * dt, limit, 0.1 * this.zM[zone]);
+          transferFlow = dm / dt;
+          const enthalpy = CP * tz;
+          const share = this.zY[zone] / this.zM[zone];
+          this.zM[zone] -= dm;
+          this.zE[zone] -= dm * enthalpy;
+          this.zY[zone] -= dm * share;
+          mass += dm;
+          energy += dm * enthalpy;
+          burnt += dm * share;
+        } else {
+          orifice[0] = pressure;
+          orifice[1] = temperature;
+          orifice[2] = pz;
+          orificeFlux();
+          const limit = (0.4 * (pressure - pz) * Math.min(volume, this.zV[zone])) / (GAMMA * R * temperature);
+          const dm = Math.min(opening * orifice[3] * dt, limit, 0.2 * mass);
+          transferFlow = -dm / dt;
+          const enthalpy = CP * temperature;
+          const share = burnt / mass;
+          mass -= dm;
+          energy -= dm * enthalpy;
+          burnt -= dm * share;
+          this.zM[zone] += dm;
+          this.zE[zone] += dm * enthalpy;
+          this.zY[zone] += dm * share;
+        }
+      } else {
+        this.cylLiftIn[c] = 0;
+      }
+      this.cylTransfer[c] = transferFlow;
+      this.cylIntake[c] = transferFlow;
+
+      // L'admission du carter : la jupe du piston découvre la lumière autour du point mort haut.
+      let inletFlow = 0;
+      if (travel < inletTravel) {
+        this.flowOpening = (this.inletArea * (inletTravel - travel)) / inletTravel;
+        this.zoneFlow(plenum, zone);
+        inletFlow = this.flowNow;
+        this.zoneFlow(zone, plenum);
+        inletFlow -= this.flowNow;
+      }
+      this.caseInlet[c] = inletFlow;
+      plenumOut += inletFlow;
+
+      if (energy < 150 * mass * CV) energy = 150 * mass * CV;
+      this.cylM[c] = mass;
+      this.cylU[c] = energy;
+      this.cylY[c] = burnt < 0 ? 0 : burnt > mass ? mass : burnt;
+      this.cylP[c] = (G1 * energy) / volume;
+      this.cylT[c] = (this.cylP[c] * volume) / (mass * R);
+    }
+    const interval = 2 / Math.max(turnsPerSecond * this.firings, 1);
+    const smooth = dt / (dt + Math.max(interval, 0.01));
+    this.demand += (plenumOut - this.demand) * smooth;
+  }
+
   /** Papillon, compresseur, turbine, décharge : les passages qui séparent deux parties du réseau. */
   private stepOrgans(inputs: GasInputs): void {
+    if (this.twin) {
+      this.stepTwinOrgans(inputs);
+      return;
+    }
     const { rho, mom, ene, trc, p, u, invV, area, dt } = this;
     const plenum = this.zonePlenum;
     const firstIntake = this.intakeFirst;
     const lastIntake = firstIntake + this.intakeCount - 1;
     const chained = this.airChain !== null;
-    const boostFactor = chained ? 1 + inputs.boost * this.boostBar : 1;
+    // La pression relative du turbo, posée sur l'atmosphère du jour : `boostScale` vaut exactement 1 au niveau de la mer.
+    const boostFactor = chained ? 1 + inputs.boost * this.boostBar * this.boostScale : 1;
     // Le turbo calculé par `TurboCharger` ou le compresseur par `Supercharger` : c'est lui que sent la voiture. Sans lui, le rapport se déduit de la pression.
     const compressorRatio = chained ? (inputs.compressorRatio ?? boostFactor) : 1;
 
     // Papillon : il s'ouvre juste assez pour tenir la pression que demande le remplissage réel.
-    const wanted = this.diesel ? P_ATM * boostFactor : P_ATM * (0.18 + 0.82 * Math.min(inputs.load, 1)) * boostFactor;
+    const wanted = this.diesel ? this.pAtm * boostFactor : this.pAtm * (0.18 + 0.82 * Math.min(inputs.load, 1)) * boostFactor;
     const pZone = this.zP[plenum];
     const tZone = this.zT[plenum];
     // Une face de section variable entre le conduit et le plénum : grande ouverte, c'est un simple
@@ -1353,7 +1836,7 @@ export class GasNetwork {
     this.zY[plenum] += moved * share;
     this.throttleFlow = throttleFlow;
     // Le plénum tiédit au contact du moteur. Sur un turbo, c'est l'air de l'échangeur qui compte : il ne fait que tiédir.
-    this.zE[plenum] += (dt / (chained ? 0.6 : 0.05)) * (T_AMB + 30 * inputs.heat - tZone) * this.zM[plenum] * CV;
+    this.zE[plenum] += (dt / (chained ? 0.6 : 0.05)) * (this.tAmb + 30 * inputs.heat - tZone) * this.zM[plenum] * CV;
 
     if (!chained) return;
 
@@ -1367,11 +1850,11 @@ export class GasNetwork {
     let releaseFlow = 0;
     if (!this.flutter && inputs.release > 0.02) {
       const v = this.releaseCell;
-      if (p[v] > P_ATM) {
+      if (p[v] > this.pAtm) {
         const tv = p[v] / (rho[v] * R);
         orifice[0] = p[v];
         orifice[1] = tv;
-        orifice[2] = P_ATM;
+        orifice[2] = this.pAtm;
         orificeFlux();
         const flow = this.releaseArea * Math.min(inputs.release, 1) * orifice[3];
         const dm = Math.min(flow * dt, 0.2 * rho[v] / invV[v]);
@@ -1448,6 +1931,178 @@ export class GasNetwork {
     this.turbineFlow = turbineFlow;
     this.wastegateFlow = wastegateFlow;
     this.turbinePower = power;
+  }
+
+
+  /**
+   * Deux turbos : un papillon par chemin d'air sur le même plénum, chacun pour la moitié de ce que demandent les cylindres ; un
+   * compresseur par chemin ; une turbine au bout de chaque collecteur, avec sa soupape. En séquentiel, la vanne du secondaire
+   * règle sa turbine, son clapet ferme son chemin d'air, et un tube relie les deux collecteurs.
+   */
+  private stepTwinOrgans(inputs: GasInputs): void {
+    const { rho, mom, ene, trc, p, u, invV, area, dt } = this;
+    const plenum = this.zonePlenum;
+    const boostFactor = 1 + inputs.boost * this.boostBar;
+    const compressorRatio = inputs.compressorRatio ?? boostFactor;
+    const wanted = this.diesel ? P_ATM * boostFactor : P_ATM * (0.18 + 0.82 * Math.min(inputs.load, 1)) * boostFactor;
+    const pZone = this.zP[plenum];
+    const tZone = this.zT[plenum];
+    this.throttleWant = this.demand + ((wanted - pZone) * this.zV[plenum]) / (R * tZone * 0.006);
+    const online = inputs.secondaryOnline !== false;
+    for (let chain = 0; chain < 2; chain++) {
+      const last = chain === 0 ? this.intakeFirst + this.intakeCount - 1 : this.intake2First + this.intake2Count - 1;
+      reservoir[0] = this.zM[plenum] / this.zV[plenum];
+      reservoir[1] = pZone;
+      this.reservoirFlux(last, 1);
+      const unit = flux[0];
+      let opening = this.throttleMax;
+      if (!this.diesel && inputs.load <= 0.9) {
+        if (unit > 1) opening = Math.min(Math.max((0.5 * this.throttleWant) / unit, 0), this.throttleMax);
+        else if (pZone > wanted * 1.02) opening = this.throttleMax * 0.015;
+      }
+      // Le clapet du secondaire, fermé tant qu'il ne pousse pas sur la charge : son chemin d'air reste clos.
+      if (chain === 1 && !online) opening = 0;
+      const throttleFlow = opening * unit;
+      const moved = throttleFlow * dt;
+      const w = invV[last];
+      const share = moved > 0 ? trc[last] / rho[last] : this.zY[plenum] / this.zM[plenum];
+      const energyMoved = opening * flux[2] * dt;
+      rho[last] -= moved * w;
+      ene[last] -= energyMoved * w;
+      trc[last] -= moved * share * w;
+      mom[last] -= (opening * flux[1] + (this.throttleMax - opening) * p[last]) * dt * w;
+      this.zM[plenum] += moved;
+      this.zE[plenum] += energyMoved;
+      this.zY[plenum] += moved * share;
+      if (chain === 0) {
+        this.throttleShare = opening / this.throttleMax;
+        this.throttleFlow = throttleFlow;
+      } else {
+        this.throttleShare2 = opening / this.throttleMax;
+        this.throttleFlow2 = throttleFlow;
+      }
+    }
+    this.zE[plenum] += (dt / 0.6) * (T_AMB + 30 * inputs.heat - tZone) * this.zM[plenum] * CV;
+
+    this.boostNow = compressorRatio;
+    this.boost2Now = inputs.compressorRatio2 ?? compressorRatio;
+    this.outKNow = inputs.compressorOutK ?? 0;
+    this.compressorFaceAt(0);
+    this.compressorFaceAt(1);
+
+    // La soupape de décharge, commune, sur le premier chemin.
+    let releaseFlow = 0;
+    if (!this.flutter && inputs.release > 0.02) {
+      const v = this.releaseCell;
+      if (p[v] > P_ATM) {
+        orifice[0] = p[v];
+        orifice[1] = p[v] / (rho[v] * R);
+        orifice[2] = P_ATM;
+        orificeFlux();
+        const dm = Math.min(this.releaseArea * Math.min(inputs.release, 1) * orifice[3] * dt, 0.2 * rho[v] / invV[v]);
+        releaseFlow = dm / dt;
+        const w = invV[v] * dm;
+        const enthalpy = (ene[v] + p[v]) / rho[v];
+        rho[v] -= w;
+        ene[v] -= w * enthalpy;
+        mom[v] -= w * u[v];
+      }
+    }
+    this.releaseFlow = releaseFlow;
+
+    // Séquentiel : les deux collecteurs sont reliés, le gaz va vers la turbine qui le laisse passer.
+    this.crossFlow = 0;
+    if (this.sequential) {
+      const high = this.zP[0] >= this.zP[1] ? 0 : 1;
+      const low = 1 - high;
+      orifice[0] = this.zP[high];
+      orifice[1] = this.zT[high];
+      orifice[2] = this.zP[low];
+      orificeFlux();
+      const dm = Math.min(this.crossArea * orifice[3] * dt, 0.2 * this.zM[high], 0.4 * (this.zP[high] - this.zP[low]) * Math.min(this.zV[high], this.zV[low]) / (GAMMA * R * this.zT[high]));
+      if (dm > 0) {
+        const share = this.zY[high] / this.zM[high];
+        const enthalpy = CP * this.zT[high];
+        this.zM[high] -= dm;
+        this.zE[high] -= dm * enthalpy;
+        this.zY[high] -= dm * share;
+        this.zM[low] += dm;
+        this.zE[low] += dm * enthalpy;
+        this.zY[low] += dm * share;
+        this.crossFlow = high === 0 ? dm / dt : -dm / dt;
+      }
+    }
+
+    // Une turbine au bout de chaque collecteur, vers le tube de sa rangée.
+    for (let b = 0; b < 2; b++) {
+      const zone = b;
+      const first = this.bankFirst[b];
+      const pz = this.zP[zone];
+      const tz = this.zT[zone];
+      // La vanne d'échappement du secondaire : fermée, sa turbine ne voit presque rien passer.
+      const valve = b === 1 && this.sequential ? Math.min(Math.max(inputs.twinValve ?? 1, 0), 1) : 1;
+      const turbineArea = this.turbineArea * valve;
+      let turbineFlow = 0;
+      let wastegateFlow = 0;
+      let power = 0;
+      if (pz >= p[first]) {
+        orifice[0] = pz;
+        orifice[1] = tz;
+        orifice[2] = p[first];
+        orificeFlux();
+        const unit = orifice[3];
+        const opened = b === 0 ? inputs.wastegate : inputs.wastegate2;
+        const gate = opened !== undefined ? opened * 2 : inputs.boost > 0.9 ? Math.min((inputs.boost - 0.9) / 0.08, 1) * 0.6 : 0;
+        const flowT = turbineArea * unit;
+        const flowW = turbineArea * gate * unit;
+        const limit = Math.min(0.2 * this.zM[zone], 0.8 * (pz - p[first]) * Math.min(this.zV[zone], 1 / invV[first]) / (GAMMA * R * tz));
+        const total = Math.min((flowT + flowW) * dt, limit);
+        const share = flowT + flowW > 0 ? total / ((flowT + flowW) * dt) : 0;
+        turbineFlow = flowT * share;
+        wastegateFlow = flowW * share;
+        const ratio = Math.max(p[first] / pz, CRITICAL_RATIO * 0.6);
+        const taken = 0.68 * CP * tz * (1 - ratio ** COMPRESSOR_EXP);
+        const enthalpy = CP * tz;
+        const burntShare = this.zY[zone] / this.zM[zone];
+        power = turbineFlow * taken;
+        this.zM[zone] -= total;
+        this.zE[zone] -= total * enthalpy;
+        this.zY[zone] -= total * burntShare;
+        const w = invV[first];
+        const speed = Math.min(total / dt / (rho[first] * area[first]), this.c[first]);
+        rho[first] += w * total;
+        ene[first] += w * (turbineFlow * dt * (enthalpy - taken) + wastegateFlow * dt * enthalpy + 0.5 * total * speed * speed);
+        trc[first] += w * total * burntShare;
+        mom[first] += w * total * speed;
+      } else if (turbineArea > 0) {
+        const tf = p[first] / (rho[first] * R);
+        orifice[0] = p[first];
+        orifice[1] = tf;
+        orifice[2] = pz;
+        orificeFlux();
+        const dm = Math.min(turbineArea * orifice[3] * dt, 0.2 * rho[first] / invV[first], 0.8 * (p[first] - pz) * Math.min(this.zV[zone], 1 / invV[first]) / (GAMMA * R * tf));
+        turbineFlow = -dm / dt;
+        const w = invV[first] * dm;
+        const enthalpy = (ene[first] + p[first]) / rho[first];
+        const share = trc[first] / rho[first];
+        rho[first] -= w;
+        ene[first] -= w * enthalpy;
+        trc[first] -= w * share;
+        mom[first] -= w * u[first];
+        this.zM[zone] += dm;
+        this.zE[zone] += dm * enthalpy;
+        this.zY[zone] += dm * share;
+      }
+      if (b === 0) {
+        this.turbineFlow = turbineFlow;
+        this.wastegateFlow = wastegateFlow;
+        this.turbinePower = power;
+      } else {
+        this.turbineFlow2 = turbineFlow;
+        this.wastegateFlow2 = wastegateFlow;
+        this.turbinePower2 = power;
+      }
+    }
   }
 
   /** Flux à toutes les faces : les mêmes pour les deux voisines, donc masse et énergie sont conservées. */
@@ -1550,6 +2205,7 @@ export class GasNetwork {
     // Les deux bouts à l'air libre : l'extérieur impose sa pression, et son air si ça rentre.
     this.openEnd(this.lineFirst + this.lineCount - 1, 1);
     this.openEnd(this.intakeFirst, -1);
+    if (this.intake2Count > 0) this.openEnd(this.intake2First, -1);
   }
 
   /**
@@ -1637,8 +2293,14 @@ export class GasNetwork {
 
   /** Compresseur : une face comme les autres, mais la pression y saute du rapport que fixe le turbo. */
   private compressorFace(): void {
-    const { rho, mom, ene, trc, rho0, ene0, p, u, c, y, invV, area, dt, boostNow: ratio } = this;
-    const b = this.compressorCell;
+    this.compressorFaceAt(0);
+  }
+
+  /** `chain` : 0 le premier chemin d'air, 1 le second d'un biturbo. */
+  private compressorFaceAt(chain: number): void {
+    const { rho, mom, ene, trc, rho0, ene0, p, u, c, y, invV, area, dt } = this;
+    const ratio = chain === 0 ? this.boostNow : this.boost2Now;
+    const b = chain === 0 ? this.compressorCell : this.compressor2Cell;
     const a = b - 1;
     const pB = p[b] / ratio;
     const rB = rho0[b] * ratio ** (-1 / GAMMA);
@@ -1667,7 +2329,8 @@ export class GasNetwork {
     trc[b] += tr * invV[b];
     ene[b] += face * flux[2] * work * dt * invV[b];
     mom[b] += face * flux[1] * ratio * dt * invV[b];
-    this.compressorFlow = m / dt;
+    if (chain === 0) this.compressorFlow = m / dt;
+    else this.compressorFlow2 = m / dt;
   }
 
   /**
@@ -1704,8 +2367,8 @@ export class GasNetwork {
     const { rho, mom, ene, trc, y, invV, area, dt } = this;
     const face = area[i];
     // L'admission prend l'air là où le filtre va le chercher ; l'échappement, s'il aspire, celui du dehors.
-    reservoir[0] = side < 0 ? this.inletRho : RHO_ATM;
-    reservoir[1] = P_ATM;
+    reservoir[0] = side < 0 ? this.inletRho : this.rhoAtm;
+    reservoir[1] = this.pAtm;
     this.reservoirFlux(i, side);
     const m = side * face * flux[0] * dt;
     const w = invV[i];

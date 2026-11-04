@@ -3,6 +3,7 @@ import { layoutKey } from '../src/lib/engineLayout';
 import { gasKey } from '../src/lib/fluid';
 import { rotaryKey } from '../src/lib/rotary';
 import type { EngineConfig } from '../src/lib/config';
+import { ouvrir } from './aide';
 
 /** Là où les réglages se rencontrent : voir « Quand les réglages se rencontrent » dans docs/modele.md. */
 const BASE = '4.inline.2000.84.6800.stock.natural.petrol.0.off.dump_valve~compact.1350.18.front.1';
@@ -114,6 +115,10 @@ test.describe('les clés de reconstruction', () => {
     ['type de compresseur', { superchargerKind: 'centrifugal' }],
     ['tube', { turboPipeMm: 3000 }],
     ['architecture', { layout: 'v' }],
+    ['deux-temps', { cycle: 'two_stroke' }],
+    ['came', { camLiftMm: 12 }],
+    ['culbuteurs', { camshaft: 'ohv' }],
+    ['échangeur', { intercooler: 'none' }],
   ];
 
   for (const [name, change] of CHANGES) {
@@ -126,6 +131,13 @@ test.describe('les clés de reconstruction', () => {
 
   test('l’air sous le capot change avec l’emplacement du moteur : le gaz le suit', () => {
     expect(gasKey({ ...engine, placement: 'mid' })).not.toBe(gasKey(engine));
+  });
+
+  test('deux turbos : la vue et le réseau de gaz se reconstruisent', () => {
+    const turbo = { ...engine, aspiration: 'turbo' } as EngineConfig;
+    const twin = { ...turbo, turboLayout: 'twin_parallel' } as EngineConfig;
+    expect(layoutKey(twin)).not.toBe(layoutKey(turbo));
+    expect(gasKey(twin)).not.toBe(gasKey(turbo));
   });
 
   test('sur un rotatif aussi', () => {
@@ -144,5 +156,32 @@ test.describe('les clés de reconstruction', () => {
     await page.getByTestId('open-engine').click();
     await page.getByTestId('panel-engine').getByRole('button', { name: 'Cône' }).click();
     await expect.poll(inlet).toBeGreaterThan(300);
+  });
+});
+
+/** Les sujets du moteur réunis : voir « Quand les réglages se rencontrent (2) » dans docs/modele.md. */
+test.describe('les sujets du moteur réunis', () => {
+  test('l’avance du calculateur passe par la carte du cliquetis : la fiche dit qu’il cliquette, et la jauge paraît', async ({ page }) => {
+    // 6° de plus sur une carte d'origine à 2° de sa limite à bas régime : la marge tombe à −4°.
+    await open(page, `${BASE}~~adv=6`);
+    await ouvrir(page, 'engine');
+    await expect(page.getByTestId('panel-engine').getByTestId('combustion-figures')).toContainText('dépasse la limite de cliquetis');
+    await expect(page.getByTestId('meter-knock')).toHaveCount(1);
+  });
+
+  test('deux turbos ou des aubes : l’anti-lag et le tube reviennent au défaut, comme dans le C++', async ({ page }) => {
+    await open(page);
+    const read = await page.evaluate(() => {
+      const { encodeConfig, decodeConfig, config } = (window as any).__revforge;
+      const single = { ...config(), aspiration: 'turbo', antiLag: 'retard', turboPipeMm: 3000 };
+      const back = (next: object) => {
+        const decoded = decodeConfig(encodeConfig(next));
+        return [decoded.antiLag, decoded.turboPipeMm];
+      };
+      return { single: back(single), twin: back({ ...single, turboLayout: 'twin_sequential' }), vanes: back({ ...single, variableGeometry: true }) };
+    });
+    expect(read.single).toEqual(['retard', 3000]);
+    expect(read.twin).toEqual(['off', 400]);
+    expect(read.vanes).toEqual(['off', 400]);
   });
 });

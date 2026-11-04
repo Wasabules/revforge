@@ -6,6 +6,7 @@
 #include <cstddef>
 
 #include "portable_math.hpp"
+#include "revforge/atmosphere.hpp"
 
 namespace revforge {
 
@@ -88,7 +89,8 @@ FuelSystem fuelSystemOf(const EngineConfig& e) { return e.fuel == Fuel::Diesel ?
 
 CarburetorSpec carburetorSpecOf(const EngineConfig& e) {
     CarburetorSpec s;
-    s.kind = fuelSystemOf(e);
+    // Une injection, indirecte ou directe : pas de venturi.
+    s.kind = hasCarburetor(e) ? fuelSystemOf(e) : FuelSystem::Injection;
     if (s.kind == FuelSystem::Injection) return s;
     // Le volume avalé en deux tours d'arbre, et le nombre de bouffées qu'il fait : un rotor en donne deux, chacune d'une chambre.
     const double litres = e.sweptCcPerTwoTurns() / 1000.0;
@@ -111,6 +113,9 @@ CarburetorSpec carburetorSpecOf(const EngineConfig& e) {
     s.partLambda = 1.0 - s.spread;
     s.fullLambda = (e.aspiration != Aspiration::Natural ? kBestLambdaTurbo : kBestLambda) * (1.0 - s.spread);
     s.pumpG = kPumpCm3PerLitre * litres * kFuelKgM3 / 1000.0;
+    const AmbientAir air = ambientAirOf(e);
+    s.airDensityShare = air.densityRatio;
+    s.airTemperatureShare = air.temperatureRatio;
     return s;
 }
 
@@ -145,9 +150,10 @@ double carburetorDropPa(const CarburetorSpec& spec, double displacementM3, doubl
     const double area = portable::kPi / 4.0 * spec.throatM * spec.throatM;
     // Le débit moyen d'un corps. Sa pression dynamique compte selon le débit : pas le carré de la moyenne, car l'à-coup pèse.
     const double speed = displacementM3 * rpm / 120.0 * volumetric / spec.throats / area;
-    const double head = 0.5 * kAirKgM3 * speed * speed * throatPulsation(spec.sharing);
+    // Le même volume d'air du jour : sa masse volumique et sa vitesse du son (exactement celles de référence à 20 °C, 0 m).
+    const double head = 0.5 * kAirKgM3 * speed * speed * throatPulsation(spec.sharing) * spec.airDensityShare;
     // Au-delà de Mach 0,3, le gaz se comprime : la dépression croît plus vite que v².
-    const double mach2 = 2.0 * head / kAirKgM3 / (kSoundMs * kSoundMs);
+    const double mach2 = 2.0 * head / (kAirKgM3 * spec.airDensityShare) / (kSoundMs * kSoundMs * spec.airTemperatureShare);
     const double compressible = head * (1.0 + mach2 / 4.0);
     const double overPipe = spec.throatM / spec.pipeM;
     const double pipeK = kPipeFriction * spec.pipeLengthM / spec.pipeM + spec.pipeBendsK;
@@ -161,6 +167,8 @@ double carburetorRichness(const CarburetorSpec& spec, double share, double rpm) 
     // La soupape d'enrichissement s'ouvre quand la dépression tombe : elle ne connaît ni la puissance ni la température.
     const double nearFull = clamp((share - 0.85) / 0.15, 0.0, 1.0);
     richness += (1.0 / spec.fullLambda - richness) * nearFull;
+    // Des gicleurs choisis dans l'air de référence : un air moins dense passe moins vite qu'eux, et le mélange s'enrichit.
+    if (spec.airDensityShare != 1.0) richness /= std::sqrt(spec.airDensityShare);
     return richness;
 }
 
@@ -184,7 +192,7 @@ void Carburetor::configure(const CarburetorSpec& spec, double displacementM3) {
     spec_ = spec;
     throatArea_ = portable::kPi / 4.0 * spec.throatM * spec.throatM;
     pulsationRoot_ = std::sqrt(throatPulsation(spec.sharing));
-    chargeG_ = kAirKgM3 * 1000.0 * displacementM3 * spec.plenumShare;
+    chargeG_ = kAirKgM3 * 1000.0 * displacementM3 * spec.plenumShare * spec.airDensityShare;
     torqueShare_ = 1.0;
     primed_ = false;
 }
@@ -197,11 +205,17 @@ void Carburetor::step(const CarburetorInput& in, double dt) {
     // La dépression au col suit la crête des bouffées : la vitesse efficace, pas la moyenne.
     const double density = kAirKgM3 * in.density;
     const double speed = through / 1000.0 / density / spec_.throats / throatArea_ * pulsationRoot_;
-    const double share = wallShareAt(spec_, speed, in.fill);
-    const double tau = filmTauAt(speed, in.fill);
+    double share = wallShareAt(spec_, speed, in.fill);
+    double tau = filmTauAt(speed, in.fill);
+    // À froid, l'essence distille moins sur la paroi : plus de dépôt, qui repart plus lentement. Moteur chaud, rien ne change.
+    if (in.coolantC != kWarmCoolantC) {
+        const FilmParameters cold = coldFilmShare(in.coolantC, in.fill);
+        share = std::min(share * cold.deposit, 0.95);
+        tau *= cold.tauS;
+    }
     if (!primed_) {
         metered_ = wanted;
-        film_ = share * wanted * tau;
+        film_.massG = share * wanted * tau;
         suspended_ = in.airGps > 0.0 ? wanted * std::max(chargeG_ * in.fill, kMinAheadG) / in.airGps : 0.0;
         pumpLeft_ = 0.0;
         pumpRate_ = 0.0;
@@ -221,8 +235,8 @@ void Carburetor::step(const CarburetorInput& in, double dt) {
     pumpLeft_ -= pumpGps_ * dt;
 
     const double toWall = share * metered_ + kPumpWallShare * pumpGps_;
-    const double fromWall = film_ / tau;
-    film_ = std::max(film_ + (toWall - fromWall) * dt, 0.0);
+    const double fromWall = film_.release(tau);
+    film_.advance(toWall, fromWall, dt);
     // Ce qui reste en suspension attend dans le collecteur : ce qu'on y met en le remplissant n'atteint les cylindres qu'avec l'air qui le quitte.
     const double airAhead = std::max(chargeG_ * in.fill, kMinAheadG);
     const double drawn = in.airGps / airAhead;
@@ -238,7 +252,9 @@ void Carburetor::step(const CarburetorInput& in, double dt) {
     }
     const double now = intoCylinders * kStoichiometric / in.airGps;
     lambda_ = now > 0.0 ? 1.0 / now : 0.0;
-    torqueShare_ = torqueOfRichness(now) / torqueOfRichness(settled);
+    // Rapporté au mélange pour lequel les gicleurs ont été choisis : celui de l'air de référence.
+    const double calibrated = spec_.airDensityShare != 1.0 ? settled * std::sqrt(spec_.airDensityShare) : settled;
+    torqueShare_ = torqueOfRichness(now) / torqueOfRichness(calibrated);
 }
 
 }  // namespace revforge

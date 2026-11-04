@@ -18,8 +18,10 @@ function load() {
   return rf;
 }
 
-const LAYOUT = { inline: 0, v: 1, cross_plane: 2, boxer: 3, rotary: 4 };
-const EXHAUST = { stock: 0, sport: 1, straight: 2, no_muffler: 3, no_resonator: 4, quiet: 5 };
+const LAYOUT = { inline: 0, v: 1, cross_plane: 2, boxer: 3, rotary: 4, vr: 5, w: 6 };
+const EXHAUST = { stock: 0, sport: 1, straight: 2, no_muffler: 3, no_resonator: 4, quiet: 5, expansion: 6 };
+const CAMSHAFT = { dohc: 0, sohc: 1, ohv: 2 };
+const FUEL_SYSTEM = { injection: 0, single: 1, multi: 2, direct: 3 };
 const BODY = { city: 0, compact: 1, coupe: 2, supercar: 3, van: 4, retro: 5 };
 const DRIVE = { front: 0, rear: 1, all: 2 };
 const PLACEMENT = { front: 0, mid: 1, rear: 2 };
@@ -35,6 +37,44 @@ const TEETH = { helical: 0, spur: 1 };
 // Même ordre que `ShiftMode` et `DriveScenario` en C++.
 const SHIFT = { normal: 0, eco: 1, sport: 2, track: 3, paddles: 4 };
 const SCENARIO = { city: 0, stop_go: 1, country: 2, motorway: 3, mountain: 4, drag: 5, track: 6, hill_start: 7, towing: 8 };
+
+// ── Les réglages du socle moteur : même ordre que les énumérations C++ et les tableaux de config.ts ──
+const START = { warm: 0, cold: 1 };
+const GRADE = { ron95: 0, ron98: 1, race102: 2, e85: 3, methanol: 4 };
+const LIMITER = { stock: 0, soft: 1, ignition_cut: 2 };
+const TRACTION = { off: 0, sport: 1, full: 2 };
+const DIESEL_INJECTION = { mechanical: 0, common_rail: 1 };
+const VVT = { fixed: 0, phased: 1, two_step: 2, phased_two_step: 3 };
+const SPRINGS = { stock: 0, stiff: 1 };
+const TURBO_LAYOUT = { single: 0, twin_parallel: 1, twin_sequential: 2, twincharger: 3 };
+const BOOST_CONTROL = { spring: 0, electronic: 1, by_gear: 2 };
+const INTERCOOLER = { air: 0, water: 1, none: 2 };
+const CYCLE = { four_stroke: 0, two_stroke: 1 };
+/** Les arguments de `rf_set_tuning`, dans son ordre, à leur défaut : le moteur d'aujourd'hui. */
+const TUNING = {
+  ambientC: 20, altitudeM: 0, startTemp: 0, compressionRatio: 0, fuelGrade: 0, ignitionOffsetDeg: 0, fullLoadLambda: 0, revLimiter: 0,
+  launchRpm: 0, flatShift: 0, tractionControl: 0, dieselInjection: 0, egr: 0, particulateFilter: 0, camDurationDeg: 0, camLiftMm: 0,
+  lobeSeparationDeg: 0, valveTiming: 0, valveSprings: 0, turboLayout: 0, variableGeometry: 0, boostControl: 0, intercooler: 0,
+  waterInjection: 0, nitrousKw: 0, cycle: 0,
+};
+// Les noms et l'ordre de `TUNING` sont ceux de la signature de `rf_set_tuning` : un écart décalerait tous les réglages qui suivent.
+{
+  const source = readFileSync(new URL('../wasm/exports.cpp', import.meta.url), 'utf-8');
+  const signature = source.match(/void rf_set_tuning\(([^)]*)\)/)?.[1] ?? '';
+  const names = signature.split(',').map((param) => param.trim().split(/\s+/).pop());
+  if (names.join(',') !== Object.keys(TUNING).join(',')) {
+    console.log(`DIFFÉRENT  rf_set_tuning : ${names.join(',')}\n           check_wasm  : ${Object.keys(TUNING).join(',')}`);
+    process.exit(1);
+  }
+}
+/**
+ * Pose les réglages du socle : seuls ceux qui changent sont à écrire, `tune(rf, { altitudeM: 2000 })`. À appeler AVANT
+ * `rf_set_config` (ou `rf_set_electric`), qui les applique : après, ils attendraient le prochain moteur.
+ */
+function tune(rf, changes) {
+  for (const key of Object.keys(changes)) if (!(key in TUNING)) throw new Error(`réglage inconnu : ${key}`);
+  rf.rf_set_tuning(...Object.keys(TUNING).map((key) => changes[key] ?? TUNING[key]));
+}
 
 function fnv(state, samples) {
   let hash = state;
@@ -281,7 +321,7 @@ function driveLikeNative(rf, seconds) {
   for (let i = 0; i < Math.ceil((44100 * seconds) / 128); i++) rf.rf_render(128);
 }
 function checkFigures(label, rf, native) {
-  const figures = { fuel_lph: rf.rf_fuel_lph(), fuel_trip_l: rf.rf_fuel_trip_l(), trip_km: rf.rf_trip_km(), oil_trip_ml: rf.rf_oil_trip_ml(), energy_trip_kwh: rf.rf_energy_trip_kwh() };
+  const figures = { fuel_lph: rf.rf_fuel_lph(), fuel_trip_l: rf.rf_fuel_trip_l(), trip_km: rf.rf_trip_km(), oil_trip_ml: rf.rf_oil_trip_ml(), energy_trip_kwh: rf.rf_energy_trip_kwh(), coolant_c: rf.rf_coolant_c(), oil_c: rf.rf_oil_c() };
   for (const [key, value] of Object.entries(figures)) check(`${label}, ${key}`, String(value), String(native[key]));
 }
 {
@@ -509,5 +549,457 @@ for (const [name, system] of [['single', 1], ['multi', 2]]) {
   rf.rf_set_config(2, LAYOUT.rotary, 1308, 84, 8000, EXHAUST.sport, 2, 0, 0, 0, 0, 0.7, ROUTING.single, TURBO.medium, 1, 0, 400, 1, 2, 1);
   rf.rf_set_mode(3);
   check('birotor à vis, cône, carburateur', render(rf, 20, 128), native('--layout', 'rotary', '--cylinders', '2', '--cc', '1308', '--redline', '8000', '--exhaust', 'sport', '--aspiration', 'supercharger', '--boost', '0.7', '--supercharger', 'twin_screw', '--cam', 'sohc', '--filter', 'cone', '--carb', 'single', '--body', 'coupe', '--mass', '1300', '--rim', '18', '--drive', 'rear', '--insulation', 'standard', '--scenario', 'lap', '--seconds', '20'));
+}
+// Le socle moteur : tous ses réglages changés à la fois, et les valeurs ajoutées aux énumérations, au son comme à la consommation.
+{
+  const changed = {
+    ambientC: 35, altitudeM: 2000, startTemp: START.cold, compressionRatio: 11.5, fuelGrade: GRADE.e85, ignitionOffsetDeg: -4, fullLoadLambda: 0.85,
+    revLimiter: LIMITER.ignition_cut, launchRpm: 4500, flatShift: 1, tractionControl: TRACTION.full, dieselInjection: DIESEL_INJECTION.common_rail, egr: 1,
+    particulateFilter: 1, camDurationDeg: 270, camLiftMm: 11.5, lobeSeparationDeg: 108, valveTiming: VVT.phased_two_step, valveSprings: SPRINGS.stiff,
+    turboLayout: TURBO_LAYOUT.twincharger, variableGeometry: 1, boostControl: BOOST_CONTROL.by_gear, intercooler: INTERCOOLER.water, waterInjection: 1, nitrousKw: 75,
+    cycle: CYCLE.two_stroke,
+  };
+  const options = ['--ambient', '35', '--altitude', '2000', '--start', 'cold', '--compression', '11.5', '--grade', 'e85', '--advance', '-4', '--lambda', '0.85',
+    '--limiter', 'ignition_cut', '--launch', '4500', '--flat-shift', '1', '--traction', 'full', '--diesel-injection', 'common_rail', '--egr', '1', '--dpf', '1',
+    '--cam-duration', '270', '--cam-lift', '11.5', '--lsa', '108', '--vvt', 'phased_two_step', '--springs', 'stiff', '--turbo-layout', 'twincharger', '--vgt', '1',
+    '--boost-control', 'by_gear', '--intercooler', 'water', '--water', '1', '--nitrous', '75', '--cycle', 'two_stroke'];
+  const engineArgs = ['--cylinders', '6', '--layout', 'vr', '--cc', '2800', '--bore', '81', '--redline', '6500', '--exhaust', 'expansion', '--aspiration', 'turbo', '--boost', '1.2',
+    '--cam', 'ohv', '--fuel-system', 'direct', '--body', 'compact', '--mass', '1450', '--rim', '18', '--drive', 'all', '--placement', 'front', '--insulation', 'standard'];
+  const socle = () => {
+    const rf = load();
+    rf.rf_set_car(BODY.compact, 1450, 18, DRIVE.all, PLACEMENT.front, INSULATION.standard);
+    tune(rf, changed);
+    rf.rf_set_config(6, LAYOUT.vr, 2800, 81, 6500, EXHAUST.expansion, 1, 0, 0, 0, 0, 1.2, ROUTING.single, TURBO.medium, 0, 0, 400, CAMSHAFT.ohv, 0, FUEL_SYSTEM.direct);
+    rf.rf_set_mode(3);
+    return rf;
+  };
+  check('socle moteur, tout changé', render(socle(), 20, 128), native(...engineArgs, ...options, '--scenario', 'lap', '--seconds', '20'));
+  const rf = socle();
+  driveLikeNative(rf, 20);
+  checkFigures('socle moteur, consommation', rf, nativeFigures(...engineArgs, ...options, '--scenario', 'lap', '--seconds', '20'));
+}
+// Le socle moteur, sur un préréglage : les options l'emportent sur lui, et une voiture électrique reçoit aussi ses réglages.
+{
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1450, 18, DRIVE.all, PLACEMENT.front, INSULATION.standard);
+  tune(rf, { ambientC: -10, altitudeM: 3000, startTemp: START.cold, launchRpm: 5000, tractionControl: TRACTION.sport, flatShift: 1 });
+  rf.rf_set_config(4, LAYOUT.boxer, 2500, 99, 6800, EXHAUST.sport, 1, 0, 0, 1, 1, 1.2, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+  rf.rf_set_mode(3);
+  check('socle moteur, sur un préréglage', render(rf, 20, 128), native('--preset', 'boxer_four_turbo', '--ambient', '-10', '--altitude', '3000', '--start', 'cold', '--launch', '5000', '--traction', 'sport', '--flat-shift', '1', '--scenario', 'lap', '--seconds', '20'));
+}
+{
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1800, 19, DRIVE.rear, PLACEMENT.front, INSULATION.standard);
+  tune(rf, { ambientC: 40, altitudeM: 1500, tractionControl: TRACTION.full });
+  rf.rf_set_electric();
+  rf.rf_set_mode(3);
+  check('socle moteur, électrique', render(rf, 20, 128), native('--preset', 'electric', '--ambient', '40', '--altitude', '1500', '--traction', 'full', '--scenario', 'lap', '--seconds', '20'));
+}
+// Les architectures : leur son passe par `architectureOf`. Un VR6 sur son tour, un W16 en deux lignes, un V14 aux intervalles inégaux au démarreur.
+{
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1285, 15, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  // Comme le préréglage : ses rapports, posés avant la boîte qui les lit.
+  [3.3, 1.94, 1.31, 1.03, 0.84].forEach((ratio, gear) => rf.rf_set_gear_ratio(gear + 1, ratio));
+  rf.rf_set_gearbox(BOX.synchro, 5, FAMILY.custom, 3.68, TEETH.helical, 0, 0, 0, 0);
+  rf.rf_set_config(6, LAYOUT.vr, 2792, 81, 6500, EXHAUST.stock, 0, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, CAMSHAFT.sohc, 0, 0);
+  rf.rf_set_mode(3);
+  check('tour complet, VR6', render(rf, 30, 128), native('--preset', 'vr6_golf', '--scenario', 'lap', '--seconds', '30'));
+}
+{
+  const rf = load();
+  rf.rf_set_car(BODY.supercar, 1888, 20, DRIVE.all, PLACEMENT.mid, INSULATION.light);
+  rf.rf_set_config(16, LAYOUT.w, 7993, 86, 6400, EXHAUST.sport, 1, 0, 0, 0, 0, 1.2, ROUTING.dual, TURBO.medium, 0, 0, 400, 0, 0, 0);
+  rf.rf_set_mode(4);
+  rf.rf_set_manual_rpm(4000);
+  check('régime tenu, W16 deux lignes', render(rf, 4, 512), native('--cylinders', '16', '--layout', 'w', '--cc', '7993', '--bore', '86', '--redline', '6400', '--exhaust', 'sport', '--aspiration', 'turbo', '--boost', '1.2', '--routing', 'dual', '--body', 'supercar', '--mass', '1888', '--rim', '20', '--drive', 'all', '--placement', 'mid', '--insulation', 'light', '--scenario', 'steady', '--rpm', '4000'));
+}
+{
+  const rf = load();
+  rf.rf_set_car(BODY.coupe, 2400, 19, DRIVE.rear, PLACEMENT.front, INSULATION.light);
+  rf.rf_set_config(14, LAYOUT.v, 7000, 86, 6000, EXHAUST.sport, 0, 0, 0, 0, 0, 1, ROUTING.dual, TURBO.medium, 0, 0, 400, 0, 0, 0);
+  rf.rf_set_mode(1);
+  rf.rf_crank();
+  check('démarrage, V14 à 45°', render(rf, 5, 128), native('--cylinders', '14', '--layout', 'v', '--cc', '7000', '--bore', '86', '--redline', '6000', '--exhaust', 'sport', '--routing', 'dual', '--body', 'coupe', '--mass', '2400', '--rim', '19', '--drive', 'rear', '--placement', 'front', '--insulation', 'light', '--scenario', 'start'));
+}
+// L'air du jour : `portable::pow` de l'atmosphère type, l'arbre du turbo à 3000 m, un tube dans l'air froid, un carburateur en
+// altitude, et ce qu'ils consomment.
+for (const [label, changes, options, pipe] of [
+  ['turbo à 3000 m', { altitudeM: 3000 }, ['--altitude', '3000'], 400],
+  ['turbo par -25 °C, tube de 2500 mm', { ambientC: -25 }, ['--ambient', '-25'], 2500],
+]) {
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1400, 18, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  tune(rf, changes);
+  rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6500, EXHAUST.sport, 1, 0, 0, 0, 0, 1.3, ROUTING.single, TURBO.medium, 0, 0, pipe, 0, 0);
+  check(`air du jour, ${label}`, turboStab(rf, 24), native(...turboArgs, '--turbo', 'medium', '--release', 'dump_valve', '--turbo-pipe', String(pipe), ...options));
+}
+{
+  const carb = () => {
+    const rf = citadine();
+    tune(rf, { ambientC: 32, altitudeM: 2400 });
+    rf.rf_set_config(4, LAYOUT.inline, 1360, 75, 6200, EXHAUST.stock, 0, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0, FUEL_SYSTEM.single);
+    rf.rf_set_mode(FRESH);
+    return rf;
+  };
+  const args = ['--preset', 'city_14', '--carb', 'single', '--ambient', '32', '--altitude', '2400', '--scenario', 'lap', '--seconds', '30'];
+  check('air du jour, carburateur à 2400 m', render(carb(), 30, 128), native(...args));
+  const rf = carb();
+  driveLikeNative(rf, 30);
+  checkFigures('air du jour, carburateur à 2400 m', rf, nativeFigures(...args));
+}
+// La thermique : un départ à froid par 5 °C, ralenti accéléré et frottements de l'huile froide, au son et aux températures.
+{
+  const coldV8 = () => {
+    const rf = load();
+    rf.rf_set_car(BODY.coupe, 1700, 19, DRIVE.rear, PLACEMENT.front, INSULATION.light);
+    tune(rf, { ambientC: 5, startTemp: START.cold });
+    rf.rf_set_config(8, LAYOUT.cross_plane, 5000, 96, 6000, EXHAUST.sport, 0, 0, 0, 1, 0, 1, ROUTING.dual, TURBO.medium, 0, 0, 400, 0, 0);
+    rf.rf_set_mode(1);
+    rf.rf_crank();
+    return rf;
+  };
+  const coldArgs = ['--preset', 'v8_cross_plane', '--ambient', '5', '--start', 'cold', '--scenario', 'start', '--seconds', '20'];
+  check('thermique, démarrage à froid du V8', render(coldV8(), 20, 128), native(...coldArgs));
+  const rf = coldV8();
+  driveLikeNative(rf, 20);
+  checkFigures('thermique, démarrage à froid du V8', rf, nativeFigures(...coldArgs));
+}
+// La combustion : un taux plus haut qui cliquette sans capteur (carburateurs, le son du cliquetis) et avec (injection, l'avance retirée),
+// l'E85 sur un turbo et sa consommation, un diesel et un rotatif plus ou moins comprimés, au démarrage comme en roulant.
+{
+  const carbArgs = ['--cylinders', '4', '--cc', '2000', '--bore', '84', '--redline', '6800', '--exhaust', 'sport', '--body', 'compact', '--mass', '1200', '--rim', '16'];
+  for (const [name, system] of [['multi', FUEL_SYSTEM.multi], ['injection', FUEL_SYSTEM.injection]]) {
+    const rf = load();
+    rf.rf_set_car(BODY.compact, 1200, 16, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+    tune(rf, { compressionRatio: 12.5 });
+    rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6800, EXHAUST.sport, 0, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0, system);
+    check(`cliquetis à 12,5:1, ${name}`, turboStab(rf, 24), native(...carbArgs, '--carb', name === 'multi' ? 'multi' : 'injection', '--compression', '12.5', '--scenario', 'turbo', '--seconds', '24'));
+  }
+  const hotArgs = ['--cylinders', '4', '--cc', '2000', '--bore', '84', '--redline', '6500', '--aspiration', 'turbo', '--boost', '1.3', '--exhaust', 'sport', '--body', 'compact', '--mass', '1400', '--rim', '18', '--compression', '10.5', '--grade', 'e85'];
+  const ethanol = () => {
+    const rf = load();
+    rf.rf_set_car(BODY.compact, 1400, 18, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+    tune(rf, { compressionRatio: 10.5, fuelGrade: GRADE.e85 });
+    rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6500, EXHAUST.sport, 1, 0, 0, 0, 0, 1.3, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+    rf.rf_set_mode(3);
+    return rf;
+  };
+  check('E85 et 10,5:1 sur un turbo', render(ethanol(), 20, 128), native(...hotArgs, '--scenario', 'lap', '--seconds', '20'));
+  const rf = ethanol();
+  driveLikeNative(rf, 20);
+  checkFigures('E85 et 10,5:1, consommation', rf, nativeFigures(...hotArgs, '--scenario', 'lap', '--seconds', '20'));
+}
+{
+  const rf = load();
+  rf.rf_set_car(BODY.van, 1950, 16, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  rf.rf_set_gearbox(BOX.synchro, 0, 0, 0, 0, 0, 0, 0, 1);
+  tune(rf, { compressionRatio: 15 });
+  rf.rf_set_config(4, LAYOUT.inline, 2000, 85, 4500, EXHAUST.stock, 1, 1, 0, 0, 0, 1.8, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+  rf.rf_set_mode(1);
+  rf.rf_crank();
+  check('diesel à 15:1, démarrage', render(rf, 5, 128), native('--preset', 'diesel_four', '--compression', '15', '--scenario', 'start'));
+}
+// Deux turbos, twincharger, aubes (twin_turbo.cpp) : chaque montage, avec son second sifflement et son compresseur.
+{
+  const v6 = ['--cylinders', '6', '--layout', 'v', '--cc', '3000', '--bore', '86', '--redline', '6800', '--aspiration', 'turbo', '--boost', '1', '--exhaust', 'sport',
+    '--body', 'coupe', '--mass', '1500', '--rim', '18', '--drive', 'rear', '--placement', 'front', '--insulation', 'standard', '--scenario', 'turbo', '--seconds', '24'];
+  for (const [layout, vanes] of [['twin_parallel', 0], ['twin_sequential', 0], ['twin_parallel', 1]]) {
+    const rf = load();
+    rf.rf_set_car(BODY.coupe, 1500, 18, DRIVE.rear, PLACEMENT.front, INSULATION.standard);
+    tune(rf, { turboLayout: TURBO_LAYOUT[layout], variableGeometry: vanes });
+    rf.rf_set_config(6, LAYOUT.v, 3000, 86, 6800, EXHAUST.sport, 1, 0, 0, 0, 0, 1.0, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0, 0);
+    check(`biturbo, V6 ${layout}${vanes ? ', aubes' : ''}`, turboStab(rf, 24), native(...v6, '--turbo-layout', layout, '--vgt', String(vanes)));
+  }
+  // La régulation électronique sur deux turbos : une électrovanne, un PID étalonné sur leur banc, l'étagement du séquentiel.
+  for (const layout of ['twin_parallel', 'twin_sequential']) {
+    const rf = load();
+    rf.rf_set_car(BODY.coupe, 1500, 18, DRIVE.rear, PLACEMENT.front, INSULATION.standard);
+    tune(rf, { turboLayout: TURBO_LAYOUT[layout], boostControl: BOOST_CONTROL.electronic });
+    rf.rf_set_config(6, LAYOUT.v, 3000, 86, 6800, EXHAUST.sport, 1, 0, 0, 0, 0, 1.0, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0, 0);
+    check(`biturbo électronique, V6 ${layout}`, turboStab(rf, 24), native(...v6, '--turbo-layout', layout, '--boost-control', 'electronic'));
+  }
+}
+{
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1300, 17, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  tune(rf, { turboLayout: TURBO_LAYOUT.twincharger });
+  rf.rf_set_config(4, LAYOUT.inline, 1390, 77, 7000, EXHAUST.stock, 1, 0, 0, 0, 0, 1.5, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0, 0);
+  check('twincharger, 1.4 à Roots', turboStab(rf, 24), native('--cylinders', '4', '--cc', '1390', '--bore', '77', '--redline', '7000', '--aspiration', 'turbo', '--boost', '1.5', '--exhaust', 'stock',
+    '--body', 'compact', '--mass', '1300', '--rim', '17', '--drive', 'front', '--placement', 'front', '--insulation', 'standard', '--turbo-layout', 'twincharger', '--scenario', 'turbo', '--seconds', '24'));
+}
+// Finitions : les arbres du biturbo dans l'air du jour (à 3000 m, la soupape tient une pression relative).
+{
+  const rf = load();
+  rf.rf_set_car(BODY.coupe, 1500, 18, DRIVE.rear, PLACEMENT.front, INSULATION.standard);
+  tune(rf, { turboLayout: TURBO_LAYOUT.twin_parallel, altitudeM: 3000 });
+  rf.rf_set_config(6, LAYOUT.v, 3000, 86, 6800, EXHAUST.sport, 1, 0, 0, 0, 0, 1.0, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0, 0);
+  check('biturbo parallèle à 3000 m', turboStab(rf, 24), native('--cylinders', '6', '--layout', 'v', '--cc', '3000', '--bore', '86', '--redline', '6800', '--aspiration', 'turbo', '--boost', '1',
+    '--exhaust', 'sport', '--body', 'coupe', '--mass', '1500', '--rim', '18', '--drive', 'rear', '--placement', 'front', '--insulation', 'standard', '--altitude', '3000',
+    '--scenario', 'turbo', '--seconds', '24', '--turbo-layout', 'twin_parallel', '--vgt', '0'));
+}
+{
+  const rf = load();
+  rf.rf_set_car(BODY.coupe, 1300, 18, DRIVE.rear, PLACEMENT.front, INSULATION.standard);
+  tune(rf, { compressionRatio: 11 });
+  rf.rf_set_config(2, LAYOUT.rotary, 1308, 84, 9000, EXHAUST.sport, 0, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+  rf.rf_set_mode(3);
+  check('birotor à 11:1', render(rf, 20, 128), native('--layout', 'rotary', '--cylinders', '2', '--cc', '1308', '--redline', '9000', '--exhaust', 'sport', '--body', 'coupe', '--mass', '1300', '--rim', '18', '--drive', 'rear', '--compression', '11', '--scenario', 'lap', '--seconds', '20'));
+}
+// Le calculateur, actif : chaque réglage change le rendu, par un chemin que les autres cas ne prennent pas.
+// Les coups de gaz au point mort de `blips` : le rupteur progressif, l'avance et la richesse réglées, sur un atmosphérique.
+{
+  const rf = load();
+  rf.rf_set_car(BODY.city, 1100, 15, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  tune(rf, { ignitionOffsetDeg: 6, fullLoadLambda: 0.95, revLimiter: LIMITER.soft });
+  rf.rf_set_config(4, LAYOUT.inline, 2000, 86, 7200, EXHAUST.sport, 0, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+  rf.rf_set_mode(FRESH);
+  rf.rf_set_mode(1);
+  const hash = render(rf, 14, 128, (step) => {
+    const t = step * TICK_S - 1;
+    const inBlip = t - 4 * Math.floor(t / 4);
+    rf.rf_set_controls(t >= 0 && inBlip < 1.2 ? 1 : 0, 0, 0);
+  });
+  check('calculateur, rupteur progressif', hash, native('--cylinders', '4', '--cc', '2000', '--bore', '86', '--redline', '7200', '--exhaust', 'sport', '--advance', '6', '--lambda', '0.95', '--limiter', 'soft', '--scenario', 'blips'));
+}
+// Le même, à coupure d'allumage : l'essence passe, et ses détonations ont leur propre tirage.
+{
+  const rf = load();
+  rf.rf_set_car(BODY.city, 1100, 15, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  tune(rf, { ignitionOffsetDeg: -5, revLimiter: LIMITER.ignition_cut });
+  rf.rf_set_config(4, LAYOUT.inline, 2000, 86, 7200, EXHAUST.sport, 0, 0, 0, 2, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+  rf.rf_set_mode(FRESH);
+  rf.rf_set_mode(1);
+  const hash = render(rf, 14, 128, (step) => {
+    const t = step * TICK_S - 1;
+    const inBlip = t - 4 * Math.floor(t / 4);
+    rf.rf_set_controls(t >= 0 && inBlip < 1.2 ? 1 : 0, 0, 0);
+  });
+  check('calculateur, coupure d\'allumage', hash, native('--cylinders', '4', '--cc', '2000', '--bore', '86', '--redline', '7200', '--exhaust', 'sport', '--pops', 'strong', '--advance', '-5', '--limiter', 'ignition_cut', '--scenario', 'blips'));
+}
+// Le départ de `launch_control` sur un turbo : launch control au frein, puis passage à fond et antipatinage, au son comme à la consommation.
+{
+  const carArgs = ['--cylinders', '4', '--cc', '2000', '--bore', '84', '--redline', '6500', '--aspiration', 'turbo', '--boost', '1.3', '--exhaust', 'sport', '--body', 'compact', '--mass', '1400', '--rim', '18'];
+  const ecuArgs = ['--advance', '-3', '--lambda', '0.85', '--limiter', 'ignition_cut', '--launch', '4500', '--flat-shift', '1', '--traction', 'sport', '--scenario', 'launch_control', '--seconds', '16'];
+  const start = () => {
+    const rf = load();
+    rf.rf_set_car(BODY.compact, 1400, 18, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+    tune(rf, { ignitionOffsetDeg: -3, fullLoadLambda: 0.85, revLimiter: LIMITER.ignition_cut, launchRpm: 4500, flatShift: 1, tractionControl: TRACTION.sport });
+    rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6500, EXHAUST.sport, 1, 0, 0, 0, 0, 1.3, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+    rf.rf_set_mode(FRESH);
+    rf.rf_set_mode(2);
+    return rf;
+  };
+  // Le rendu natif écrit son 0-100 avant l'empreinte : seule la dernière ligne compte.
+  const controls = (rf) => (step) => {
+    const t = step * TICK_S;
+    rf.rf_set_controls(t >= 1 ? 1 : 0, t >= 1 && t < 4 ? 1 : 0, 0);
+  };
+  const rf = start();
+  check('calculateur, launch control', render(rf, 16, 128, controls(rf)), native(...carArgs, ...ecuArgs).split('\n').pop());
+  const figures = start();
+  for (let i = 0; i < Math.ceil((44100 * 16) / 128); i++) {
+    controls(figures)(i);
+    figures.rf_render(128);
+  }
+  checkFigures('calculateur, consommation', figures, nativeFigures(...carArgs, ...ecuArgs));
+}
+// L'antipatinage d'une voiture électrique : le couple du moteur, directement.
+{
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1800, 19, DRIVE.rear, PLACEMENT.front, INSULATION.standard);
+  tune(rf, { tractionControl: TRACTION.full });
+  rf.rf_set_electric();
+  rf.rf_set_mode(FRESH);
+  rf.rf_set_mode(2);
+  const hash = render(rf, 10, 128, (step) => rf.rf_set_controls(step * TICK_S >= 1 ? 1 : 0, 0, 0));
+  check('calculateur, électrique', hash, native('--preset', 'electric', '--traction', 'full', '--scenario', 'launch', '--seconds', '10'));
+}
+// L'injection : la rampe commune, la recirculation et le filtre changent le son et la consommation d'un diesel ; l'injection
+// directe ajoute son tic sous le capot. Chacun de ces réglages change le rendu : un argument mal routé se verrait ici.
+{
+  const railed = () => {
+    const rf = load();
+    rf.rf_set_car(BODY.van, 1950, 16, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+    rf.rf_set_gearbox(BOX.synchro, 0, 0, 0, 0, 0, 0, 0, 1);
+    tune(rf, { dieselInjection: DIESEL_INJECTION.common_rail, egr: 1, particulateFilter: 1 });
+    rf.rf_set_config(4, LAYOUT.inline, 2000, 85, 4500, EXHAUST.stock, 1, 1, 0, 0, 0, 1.8, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0, 0);
+    rf.rf_set_mode(3);
+    return rf;
+  };
+  const dieselArgs = ['--preset', 'diesel_four', '--diesel-injection', 'common_rail', '--egr', '1', '--dpf', '1', '--scenario', 'lap'];
+  check('injection : rampe commune, recirculation, filtre', render(railed(), 20, 128), native(...dieselArgs, '--seconds', '20'));
+  const rf = railed();
+  driveLikeNative(rf, 60);
+  checkFigures('injection : rampe commune, consommation', rf, nativeFigures(...dieselArgs));
+}
+{
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1250, 17, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  tune(rf, { egr: 1, particulateFilter: 1 });
+  rf.rf_set_config(4, LAYOUT.inline, 1998, 82, 7300, EXHAUST.sport, 0, 0, 0, 1, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0, FUEL_SYSTEM.direct);
+  rf.rf_set_listener(LISTENER.bay);
+  rf.rf_set_mode(3);
+  check('injection directe, recirculation, filtre, sous le capot', render(rf, 20, 128), native('--preset', 'hot_hatch_na', '--fuel-system', 'direct', '--egr', '1', '--dpf', '1', '--listener', 'bay', '--scenario', 'lap', '--seconds', '20'));
+}
+// La came : un profil pointu (remplissage calculé, ralenti qui galope, à son propre tirage), puis deux profils et un
+// déphaseur pied au plancher, avec la bascule et son verrou. Au son comme à la consommation.
+const camArgs = ['--cylinders', '4', '--cc', '2000', '--bore', '86', '--redline', '7200', '--exhaust', 'sport', '--body', 'compact', '--mass', '1200', '--rim', '16'];
+const camLoad = (changes) => {
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1200, 16, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  tune(rf, changes);
+  rf.rf_set_config(4, LAYOUT.inline, 2000, 86, 7200, EXHAUST.sport, 0, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+  return rf;
+};
+{
+  const race = { camDurationDeg: 300, camLiftMm: 13, lobeSeparationDeg: 104 };
+  const raceOptions = ['--cam-duration', '300', '--cam-lift', '13', '--lsa', '104'];
+  const rf = camLoad(race);
+  rf.rf_set_mode(3);
+  check('came pointue, tour', render(rf, 20, 128), native(...camArgs, ...raceOptions, '--scenario', 'lap', '--seconds', '20'));
+  const figures = camLoad(race);
+  figures.rf_set_mode(3);
+  driveLikeNative(figures, 20);
+  checkFigures('came pointue, consommation', figures, nativeFigures(...camArgs, ...raceOptions, '--scenario', 'lap', '--seconds', '20'));
+}
+{
+  const rf = camLoad({ valveTiming: VVT.phased_two_step });
+  rf.rf_set_mode(FRESH);
+  rf.rf_set_mode(2);
+  const hash = render(rf, 12, 128, (step) => rf.rf_set_controls(step * TICK_S >= 1 ? 1 : 0, 0, 0));
+  check('came, deux profils et déphaseur, plein gaz', hash, native(...camArgs, '--vvt', 'phased_two_step', '--scenario', 'launch', '--seconds', '12'));
+}
+// Finitions : le cycle de la came dans l'air du jour (par 40 °C, la bascule des deux profils monte avec la vitesse du son).
+{
+  const rf = camLoad({ valveTiming: VVT.two_step, ambientC: 40 });
+  rf.rf_set_mode(FRESH);
+  rf.rf_set_mode(2);
+  const hash = render(rf, 12, 128, (step) => rf.rf_set_controls(step * TICK_S >= 1 ? 1 : 0, 0, 0));
+  check('came, deux profils par 40 °C, plein gaz', hash, native(...camArgs, '--vvt', 'two_step', '--ambient', '40', '--scenario', 'launch', '--seconds', '12'));
+}
+// Les culbuteurs : le choc des poussoirs au ralenti, puis tout un tour, au son comme à la consommation (frottement de came).
+{
+  const pushrodV8 = (changes) => {
+    const rf = load();
+    rf.rf_set_car(BODY.coupe, 1700, 19, DRIVE.rear, PLACEMENT.front, INSULATION.light);
+    tune(rf, changes);
+    rf.rf_set_config(8, LAYOUT.cross_plane, 5000, 96, 6000, EXHAUST.sport, 0, 0, 0, 1, 0, 1, ROUTING.dual, TURBO.medium, 0, 0, 400, CAMSHAFT.ohv, 0);
+    return rf;
+  };
+  const steady = pushrodV8({});
+  steady.rf_set_mode(4);
+  steady.rf_set_manual_rpm(900);
+  check('culbuteurs, ralenti tenu', render(steady, 4, 512), native('--preset', 'v8_cross_plane', '--cam', 'ohv', '--scenario', 'steady', '--rpm', '900'));
+  const lap = pushrodV8({ valveSprings: SPRINGS.stiff });
+  lap.rf_set_mode(3);
+  check('culbuteurs et ressorts raides, tour de V8', render(lap, 30, 128), native('--preset', 'v8_cross_plane', '--cam', 'ohv', '--springs', 'stiff', '--scenario', 'lap', '--seconds', '30'));
+  const fuel = pushrodV8({ valveSprings: SPRINGS.stiff });
+  fuel.rf_set_mode(3);
+  driveLikeNative(fuel, 30);
+  checkFigures('culbuteurs et ressorts raides, consommation', fuel, nativeFigures('--preset', 'v8_cross_plane', '--cam', 'ohv', '--springs', 'stiff', '--scenario', 'lap', '--seconds', '30'));
+}
+// L'affolement : une came plus pointue avec ses ressorts d'origine le fait tomber sous la zone rouge. Au-delà, le remplissage
+// chute, les cycles se dispersent et le siège claque ; régime tenu au-dessus, puis le tour, où la conduite l'atteint.
+{
+  const pointed = { camLiftMm: 12.5, camDurationDeg: 200 };
+  const options = ['--cam-lift', '12.5', '--cam-duration', '200'];
+  const hatch = () => {
+    const rf = load();
+    rf.rf_set_car(BODY.compact, 1250, 17, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+    tune(rf, pointed);
+    rf.rf_set_config(4, LAYOUT.inline, 1998, 82, 7300, EXHAUST.sport, 0, 0, 0, 1, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+    return rf;
+  };
+  const steady = hatch();
+  steady.rf_set_mode(4);
+  steady.rf_set_manual_rpm(7200);
+  check('affolement, régime tenu au-delà', render(steady, 4, 512), native('--preset', 'hot_hatch_na', ...options, '--scenario', 'steady', '--rpm', '7200'));
+  const lap = hatch();
+  lap.rf_set_mode(3);
+  check('affolement, tour', render(lap, 30, 128), native('--preset', 'hot_hatch_na', ...options, '--scenario', 'lap', '--seconds', '30'));
+}
+// La régulation de pression : le banc, les gains et le PID, au bit près, sur le coup de gaz et au départ d'une traction.
+for (const [name, code] of [['electronic', BOOST_CONTROL.electronic], ['by_gear', BOOST_CONTROL.by_gear]]) {
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1400, 18, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  tune(rf, { boostControl: code });
+  rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6500, EXHAUST.sport, 1, 0, 0, 0, 0, 1.3, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+  check(`régulation ${name}, retard du turbo`, turboStab(rf, 24), native(...turboArgs, '--turbo', 'medium', '--release', 'dump_valve', '--boost-control', name));
+}
+{
+  const rf = load();
+  rf.rf_set_car(BODY.city, 1150, 16, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  tune(rf, { boostControl: BOOST_CONTROL.by_gear });
+  rf.rf_set_config(3, LAYOUT.inline, 1200, 75, 6000, EXHAUST.stock, 1, 0, 0, 0, 0, 1.2, ROUTING.single, TURBO.small, 0, 0, 400, 0, 0);
+  rf.rf_set_mode(FRESH);
+  rf.rf_set_mode(2);
+  const hash = render(rf, 12, 128, (step) => rf.rf_set_controls(step * TICK_S >= 1 ? 1 : 0, 0, 0));
+  check('selon le rapport, plein gaz', hash, native('--cylinders', '3', '--cc', '1200', '--bore', '75', '--redline', '6000', '--aspiration', 'turbo', '--boost', '1.2', '--turbo', 'small',
+    '--exhaust', 'stock', '--body', 'city', '--mass', '1150', '--rim', '16', '--drive', 'front', '--boost-control', 'by_gear', '--scenario', 'launch', '--seconds', '12'));
+}
+{
+  const rf = load();
+  rf.rf_set_car(BODY.coupe, 1300, 18, DRIVE.rear, PLACEMENT.front, INSULATION.standard);
+  tune(rf, { turboLayout: TURBO_LAYOUT.twin_sequential });
+  rf.rf_set_config(2, LAYOUT.rotary, 1308, 84, 8000, EXHAUST.sport, 1, 0, 0, 0, 0, 0.7, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0, 0);
+  rf.rf_set_mode(3);
+  check('séquentiel, birotor', render(rf, 20, 128), native('--layout', 'rotary', '--cylinders', '2', '--cc', '1308', '--redline', '8000', '--exhaust', 'sport', '--aspiration', 'turbo', '--boost', '0.7',
+    '--turbo-layout', 'twin_sequential', '--body', 'coupe', '--mass', '1300', '--rim', '18', '--drive', 'rear', '--insulation', 'standard', '--scenario', 'lap', '--seconds', '20'));
+}
+{
+  // Le diesel vient du préréglage, comme pour sa consommation plus haut (`--fuel diesel` donne aussi un diesel : voir plus bas).
+  const rf = load();
+  rf.rf_set_car(BODY.van, 1950, 16, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  rf.rf_set_gearbox(BOX.synchro, 0, 0, 0, 0, 0, 0, 0, 1);
+  tune(rf, { variableGeometry: 1 });
+  rf.rf_set_config(4, LAYOUT.inline, 2000, 85, 4500, EXHAUST.stock, 1, 1, 0, 0, 0, 1.8, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+  check('diesel à aubes', turboStab(rf, 24), native('--preset', 'diesel_four', '--vgt', '1', '--scenario', 'turbo', '--seconds', '24'));
+}
+{
+  // `--fuel diesel` : un diesel donné en entier, sans préréglage. La CLI le prenait pour l'affichage de la consommation.
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1400, 16, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  rf.rf_set_config(4, LAYOUT.inline, 1900, 82, 4500, EXHAUST.stock, 1, 1, 0, 0, 0, 1.2, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+  rf.rf_set_mode(3);
+  check('--fuel diesel, sans préréglage', render(rf, 10, 128), native('--cylinders', '4', '--cc', '1900', '--bore', '82', '--redline', '4500', '--aspiration', 'turbo', '--fuel', 'diesel', '--boost', '1.2',
+    '--body', 'compact', '--mass', '1400', '--rim', '16', '--drive', 'front', '--insulation', 'standard', '--scenario', 'lap', '--seconds', '10'));
+}
+// L'air de charge : un turbo sans échangeur, au coup de gaz ; un compresseur à l'air-eau, avec l'eau et le protoxyde, pied au plancher,
+// consommation comprise (le gicleur d'essence du kit se paie à part).
+{
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1400, 18, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  tune(rf, { intercooler: INTERCOOLER.none });
+  rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6500, EXHAUST.sport, 1, 0, 0, 0, 0, 1.3, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+  check('air de charge, turbo sans échangeur', turboStab(rf, 24), native(...turboArgs, '--intercooler', 'none'));
+}
+{
+  const rf = load();
+  rf.rf_set_car(BODY.compact, 1400, 18, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  tune(rf, { intercooler: INTERCOOLER.water, waterInjection: 1, nitrousKw: 60 });
+  rf.rf_set_config(4, LAYOUT.inline, 2000, 84, 6500, EXHAUST.sport, 2, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+  rf.rf_set_mode(FRESH);
+  rf.rf_set_mode(2);
+  const args = [...chargerArgs, '--supercharger', 'roots', '--intercooler', 'water', '--water', '1', '--nitrous', '60', '--scenario', 'launch'];
+  check('air de charge, air-eau, eau, protoxyde', render(rf, 20, 128, (step) => rf.rf_set_controls(step * TICK_S >= 1 ? 1 : 0, 0, 0)), native(...args));
+  checkFigures('air de charge, consommation', rf, nativeFigures(...args));
+}
+// Deux-temps : le cycle intégré, ses ratés à son propre générateur, l'huile mélangée, puis la chambre de détente accordée sur lui.
+{
+  const twoStroke = (exhaust) => {
+    const rf = load();
+    rf.rf_set_car(BODY.retro, 813, 15, DRIVE.front, PLACEMENT.front, INSULATION.light);
+    rf.rf_set_gearbox(BOX.synchro, 4, 0, 0, 0, 0, 0, 0, 0);
+    tune(rf, { cycle: 1 });
+    rf.rf_set_config(3, LAYOUT.inline, 841, 70, 5000, exhaust, 0, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0, FUEL_SYSTEM.single);
+    rf.rf_set_mode(3);
+    return rf;
+  };
+  check('deux-temps, tour complet', render(twoStroke(EXHAUST.stock), 30, 128), native('--preset', 'two_stroke_triple', '--scenario', 'lap', '--seconds', '30'));
+  check('deux-temps, chambre de détente', render(twoStroke(EXHAUST.expansion), 30, 128), native('--preset', 'two_stroke_triple', '--exhaust', 'expansion', '--scenario', 'lap', '--seconds', '30'));
+  const rf = twoStroke(EXHAUST.stock);
+  driveLikeNative(rf, 30);
+  checkFigures('deux-temps, consommation et huile', rf, nativeFigures('--preset', 'two_stroke_triple', '--scenario', 'lap', '--seconds', '30'));
 }
 process.exit(failed ? 1 : 0);

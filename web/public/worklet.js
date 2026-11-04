@@ -24,8 +24,9 @@ class RevforgeProcessor extends AudioWorkletProcessor {
   onCommand(command) {
     const { rf } = this;
     switch (command.type) {
-      case 'config': rf.rf_set_config(...command.args); break;
-      case 'electric': rf.rf_set_electric(); break;
+      // Les réglages du socle d'abord : rf_set_tuning les pose, rf_set_config ou rf_set_electric les applique.
+      case 'config': rf.rf_set_tuning(...command.tuning); rf.rf_set_config(...command.args); break;
+      case 'electric': rf.rf_set_tuning(...command.tuning); rf.rf_set_electric(); break;
       case 'mode': rf.rf_set_mode(command.mode); break;
       case 'car': rf.rf_set_car(...command.args); break;
       case 'gearbox':
@@ -35,6 +36,7 @@ class RevforgeProcessor extends AudioWorkletProcessor {
       case 'assist': rf.rf_set_clutch_assist(command.assisted ? 1 : 0); break;
       case 'repair': rf.rf_repair_gearbox(); break;
       case 'resetTrip': rf.rf_reset_trip(); break;
+      case 'refillNitrous': rf.rf_nitrous_refill(); break;
       case 'controls': rf.rf_set_controls(command.pedal, command.brake, command.clutch); break;
       case 'transmission': rf.rf_set_transmission(command.manual ? 1 : 0); break;
       case 'shiftMode': rf.rf_set_shift_mode(command.mode); break;
@@ -96,6 +98,9 @@ class RevforgeProcessor extends AudioWorkletProcessor {
         antiLagHeatKw: rf.rf_antilag_heat_kw(),
         antiLagAirFlow: rf.rf_antilag_air_flow(),
         antiLagLostNm: rf.rf_antilag_lost_nm(),
+        boostTargetBar: rf.rf_boost_target(),
+        boostChargeBar: rf.rf_boost_charge(),
+        boostDuty: rf.rf_boost_duty(),
         chargerRpm: rf.rf_supercharger_rpm(),
         chargerKw: rf.rf_supercharger_kw(),
         chargerSpill: rf.rf_supercharger_spill(),
@@ -147,6 +152,53 @@ class RevforgeProcessor extends AudioWorkletProcessor {
         energyKwhPer100km: rf.rf_energy_kwh_per_100km(),
         energyAvgKwhPer100km: rf.rf_energy_avg_kwh_per_100km(),
         energyTripKwh: rf.rf_energy_trip_kwh(),
+        coolantC: rf.rf_coolant_c(),
+        oilC: rf.rf_oil_c(),
+        metalC: rf.rf_metal_c(),
+        thermostat: rf.rf_thermostat(),
+        fan: rf.rf_fan(),
+        oilViscosity: rf.rf_oil_viscosity(),
+        coldFrictionNm: rf.rf_cold_friction_nm(),
+        coldIdleRpm: rf.rf_cold_idle_rpm(),
+        coldEnrichment: rf.rf_cold_enrichment(),
+        warmFrictionNm: rf.rf_warm_friction_nm(rf.rf_rpm()),
+        sparkAdvance: rf.rf_spark_advance(),
+        knockLimit: rf.rf_knock_limit(),
+        knockRetard: rf.rf_knock_retard(),
+        knockShare: rf.rf_knock_share(),
+        ecuAdvance: rf.rf_ecu_advance(),
+        ecuLambda: rf.rf_ecu_lambda(),
+        ecuFired: rf.rf_ecu_fired(),
+        ecuLimiter: rf.rf_ecu_limiter(),
+        ecuLaunch: rf.rf_ecu_launch(),
+        ecuFlat: rf.rf_ecu_flat(),
+        ecuTraction: rf.rf_ecu_traction(),
+        dpfLoad: rf.rf_dpf_load(),
+        dpfKpa: rf.rf_dpf_kpa(),
+        dpfRegen: rf.rf_dpf_regen(),
+        dpfC: rf.rf_dpf_c(),
+        egrShare: rf.rf_egr_share(),
+        camHigh: rf.rf_cam_high(),
+        camPhaser: rf.rf_cam_phaser(),
+        turbo2Rpm: rf.rf_turbo2_rpm(),
+        turbo2Exhaust: rf.rf_turbo2_exhaust(),
+        turbo2Wastegate: rf.rf_turbo2_wastegate(),
+        turbo2Flow: rf.rf_turbo2_flow(),
+        turbo2GasC: rf.rf_turbo2_gas_c(),
+        turboVane: rf.rf_turbo_vane(),
+        turbo2Vane: rf.rf_turbo2_vane(),
+        twinStage: rf.rf_twin_stage(),
+        twinValve: rf.rf_twin_valve(),
+        twinOnline: rf.rf_twin_online(),
+        chargerClutch: rf.rf_charger_clutch(),
+        chargerFlap: rf.rf_charger_flap(),
+        chargerInterstage: rf.rf_charger_interstage(),
+        chargeC: rf.rf_charge_c(),
+        chargeWaterC: rf.rf_charge_water_c(),
+        waterGps: rf.rf_water_gps(),
+        nitrousBar: rf.rf_nitrous_bar(),
+        nitrousKg: rf.rf_nitrous_kg(),
+        nitrousFlow: rf.rf_nitrous_flow(),
         peak: this.peak,
       });
       this.peak = 0;

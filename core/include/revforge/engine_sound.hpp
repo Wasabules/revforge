@@ -5,6 +5,9 @@
 #include <memory>
 #include <vector>
 
+#include "revforge/combustion.hpp"
+#include "revforge/ecu.hpp"
+#include "revforge/cam.hpp"
 #include "revforge/engine_config.hpp"
 #include "revforge/gearbox.hpp"
 #include "revforge/supercharger.hpp"
@@ -59,8 +62,26 @@ public:
      * Sans cet appel, le son déduit tout cela de la pression de `setDrive`.
      */
     void setTurbo(const TurboDrive& drive);
+    /**
+     * Le second arbre d'un biturbo : son propre sifflement, à sa propre vitesse, et son propre tirage. Sans cet appel, il
+     * n'existe pas et ne coûte rien.
+     */
+    void setTurboB(const TurboDrive& drive);
     /** Le vrai compresseur, quand il y en a un : sa vitesse et l'écart de pression font son sifflement. */
     void setSupercharger(const SuperchargerDrive& drive);
+    /**
+     * Le calculateur, quand il agit : l'étincelle retardée ouvre les cylindres sur plus de pression, les cylindres coupés
+     * n'explosent pas, et le mélange d'un cylindre dont seule l'étincelle est coupée peut détoner dans la ligne. Inactif, ou
+     * sans cet appel, rien ne change au son.
+     */
+    void setEcu(const EcuDrive& drive);
+    /** La distribution variable : le profil en prise et le déphaseur. Sans effet sur une came d'origine. */
+    void setCam(const CamDrive& drive);
+    /**
+     * Ce que l'air de charge ajoute à la pression d'ouverture de l'échappement, en part d'un atmosphérique à pleine charge :
+     * le protoxyde, ou une charge plus ou moins dense (`DrivingModel::chargeFill`). 0 : rien ne change.
+     */
+    void setCharge(float fill);
     /** Le démarreur : alimenté ; pignon engagé dans la couronne. Le contact des dents fait le son. */
     void setStarter(bool powered, bool meshed, float load = 0.5f);
     /** Vitesse de la voiture et glissement des pneus : vent, roulement, crissement. */
@@ -70,6 +91,13 @@ public:
     /** Le claquement, pour l'affichage : position d'une roue folle dans son jeu (-1 à 1), force du dernier choc. Ne change rien au son. */
     float gearboxLoose(int index) const;
     float gearboxStrike() const;
+    /**
+     * Le cliquetis, quand le modèle de conduite dit que le moteur peut cliqueter : la chambre résonne, et le bloc la rayonne. Sans cet
+     * appel, ou tant que `drive.active` est faux, rien ne tourne et rien ne s'entend.
+     */
+    void setKnock(const KnockDrive& drive);
+    /** Les combustions qui ont cliqueté depuis le début. */
+    std::uint32_t knocks() const;
     /** Une position toute prête, à la mesure de cette voiture. */
     void setListener(Listener listener);
     /**
@@ -87,6 +115,9 @@ public:
     float limiterGain() const;
     /** Nombre de détonations depuis le début : pour faire jaillir une flamme à l'écran. */
     std::uint32_t pops() const;
+    /** Deux temps : la part des explosions manquées depuis le début (0 sur un quatre-temps), et leur nombre. */
+    float misfireShare() const;
+    std::uint32_t twoStrokeEvents() const;
     /** Vitesse de la turbine, 0 à 1 : elle garde son élan quand la pression retombe. */
     float turbine() const;
     /** Décharge du turbo en cours (0 : aucune). */

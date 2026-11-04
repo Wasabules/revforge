@@ -4,6 +4,8 @@
 
 #include "portable_math.hpp"
 #include "revforge/air_filter.hpp"
+#include "revforge/atmosphere.hpp"
+#include "supercharger_laws.hpp"
 
 namespace revforge {
 
@@ -129,7 +131,7 @@ double shaftPower(const SuperchargerSpec& spec, double omega, double inletPa, do
     if (centrifugal(spec)) {
         const double head = positive(headFor(outletPa / inletPa, inletK));
         const double tip = omega * 0.5 * spec.wheelDiameterM;
-        const double rho = airDensity(kAtmosphere, kAmbientK);
+        const double rho = airDensity(spec.ambientPa, spec.ambientK);
         const double windage = kWindage * rho * tip * tip * tip * spec.wheelDiameterM * spec.wheelDiameterM;
         *outK = inletK + head / kCentrifugalEta / kAirCp;
         return positive(flow) * head / kCentrifugalEta + windage + spec.frictionW * share * share;
@@ -143,9 +145,24 @@ double shaftPower(const SuperchargerSpec& spec, double omega, double inletPa, do
     return work + spec.frictionW * share * share;
 }
 
-double coolerOutlet(double hotK, double flow, double rated) {
+double coolerOutlet(double hotK, double flow, double rated, double ambientK) {
     const double effect = kCoolerEffectLow - kCoolerEffectFall * clamp(flow / rated, 0.0, 1.5);
-    return hotK - effect * (hotK - kAmbientK);
+    return hotK - effect * (hotK - ambientK);
+}
+
+/**
+ * L'échangeur à l'équilibre : l'air-air ε-NTU devant la soufflerie du banc, dans l'air du jour (finitions), ou celui du réglage
+ * (charge_air.cpp). La loi d'origine ne sert plus qu'au dimensionnement, avant que le faisceau ne le soit.
+ */
+double coolerOutletOf(const SuperchargerSpec& spec, double hotK, double flow) {
+    if (spec.cooler.kind == Intercooler::AirToAir) {
+        if (spec.cooler.faceM2 <= 0.0) return coolerOutlet(hotK, flow, spec.ratedFlow, spec.ambientK);
+        ChargeConditions air;
+        air.ambientK = spec.ambientK;
+        air.ambientPa = spec.ambientPa;
+        return benchCoolerOutletK(spec.cooler, hotK, flow, air);
+    }
+    return chargeCoolerSteadyK(spec.cooler, hotK, flow);
 }
 
 /** Le vide du collecteur ouvre la soupape : pas de pression inutile pédale relâchée. */
@@ -153,7 +170,7 @@ double bypassWanted(double fill) { return clamp((kBypassClosedFill - fill) / (kB
 
 double bypassFlowAt(const SuperchargerSpec& spec, double opening, double outletPa, double inletPa) {
     if (opening <= 1e-4) return 0.0;
-    const double rho = airDensity(outletPa > inletPa ? outletPa : inletPa, kAmbientK);
+    const double rho = airDensity(outletPa > inletPa ? outletPa : inletPa, spec.ambientK);
     return kDischarge * spec.bypassArea * opening * rho * orificeSpeed(outletPa - inletPa, rho);
 }
 
@@ -174,11 +191,11 @@ struct Ends {
 Ends endsFor(const SuperchargerSpec& spec, double chargePa, double engineFlow, double coolK, double rpm) {
     Ends e;
     if (spec.inletFilter == AirFilter::Stock) {
-        e.inletPa = kAtmosphere - spec.filterDrop * engineFlow * engineFlow;
-        e.inletK = kAmbientK;
+        e.inletPa = spec.ambientPa - spec.filterDrop * engineFlow * engineFlow;
+        e.inletK = spec.ambientK;
     } else {
         // Le compresseur reste celui qui a été dimensionné sur le papier d'origine : seul change l'air qu'il reçoit.
-        const AirInlet in = airInletBehind(spec.inletFilter, spec.inletPlacement, engineFlow, spec.ratedFlow, rpm / (kSuperchargerRatedShare * spec.redlineRpm));
+        const AirInlet in = airInletBehind(spec.inletFilter, spec.inletPlacement, engineFlow, spec.ratedFlow, rpm / (kSuperchargerRatedShare * spec.redlineRpm), spec.ambientPa, spec.ambientK);
         e.inletPa = in.pressurePa;
         e.inletK = in.temperatureK;
     }
@@ -200,14 +217,14 @@ Point pointAt(const SuperchargerSpec& spec, double rpm, double breathing, double
     Point p;
     const double omega = shaftOmegaAt(spec, rpm);
     const double plenum = chargePa * fill;
-    double coolK = kAmbientK;
-    Ends ends{kAtmosphere, kAtmosphere, kAmbientK};
+    double coolK = spec.ambientK;
+    Ends ends{spec.ambientPa, spec.ambientPa, spec.ambientK};
     for (int pass = 0; pass < 2; ++pass) {
         p.engineFlow = engineFlowAt(spec, rpm, breathing, plenum, coolK);
         ends = endsFor(spec, chargePa, p.engineFlow, coolK, rpm);
         p.compressorFlow = compressorFlowAt(spec, omega, ends.inletPa, ends.inletK, ends.outletPa);
         p.shaftW = shaftPower(spec, omega, ends.inletPa, ends.inletK, ends.outletPa, p.compressorFlow, &p.outK);
-        coolK = coolerOutlet(p.outK, p.engineFlow, spec.ratedFlow);
+        coolK = coolerOutletOf(spec, p.outK, p.engineFlow);
     }
     p.coolK = coolK;
     p.surplus = p.compressorFlow - p.engineFlow - bypassFlowAt(spec, bypassWanted(fill), ends.outletPa, ends.inletPa);
@@ -218,7 +235,48 @@ Point pointAt(const SuperchargerSpec& spec, double rpm, double breathing, double
 
 // ── Le dimensionnement ──
 
+namespace {
+
+SuperchargerSpec sizeSupercharger(const EngineConfig& e, double breathingAtSizing, double breathingAtRated);
+
+/**
+ * Les derniers compresseurs dimensionnés. Le modèle de conduite en redemande à chaque pas, par `superchargerSpecOf` (le couple,
+ * la consommation, l'entraînement) et par le profil du son (`idleRpmOf`), avec deux moteurs différents : d'où quatre places.
+ * Fusion des finitions : depuis que le dimensionnement passe cinq fois par le faisceau ε-NTU, un pas de conduite d'un moteur à
+ * compresseur coûtait dix fois plus qu'à l'intégration (le 0 à 100 de la fiche du V8 à compresseur : 5,8 s dans le WASM).
+ * Le résultat ne dépend que de ce qu'on lui passe : le même calcul, au bit près, une fois par réglage.
+ */
+struct SizingMemo {
+    bool valid = false;
+    EngineConfig engine;
+    double atSizing = 0.0;
+    double atRated = 0.0;
+    SuperchargerSpec spec;
+};
+constexpr int kSizingMemos = 4;
+SizingMemo g_sizing[kSizingMemos];
+int g_sizingNext = 0;
+
+}  // namespace
+
 SuperchargerSpec superchargerSpecFor(const EngineConfig& e, double breathingAtSizing, double breathingAtRated) {
+    for (const SizingMemo& memo : g_sizing) {
+        if (memo.valid && memo.atSizing == breathingAtSizing && memo.atRated == breathingAtRated && memo.engine == e) return memo.spec;
+    }
+    const SuperchargerSpec spec = sizeSupercharger(e, breathingAtSizing, breathingAtRated);
+    SizingMemo& slot = g_sizing[g_sizingNext];
+    g_sizingNext = (g_sizingNext + 1) % kSizingMemos;
+    slot.engine = e;
+    slot.atSizing = breathingAtSizing;
+    slot.atRated = breathingAtRated;
+    slot.spec = spec;
+    slot.valid = true;
+    return spec;
+}
+
+namespace {
+
+SuperchargerSpec sizeSupercharger(const EngineConfig& e, double breathingAtSizing, double breathingAtRated) {
     SuperchargerSpec s;
     s.kind = e.superchargerKind;
     // Le volume avalé en deux tours d'arbre : tous les débits ci-dessous s'en déduisent avec rpm/120.
@@ -286,7 +344,9 @@ SuperchargerSpec superchargerSpecFor(const EngineConfig& e, double breathingAtSi
         s.rotorVolumeM3 = perSecond * 2.0 * kPi / sizingOmega;
         double outK = kAmbientK;
         shaftPower(s, sizingOmega, ends.inletPa, ends.inletK, ends.outletPa, flow, &outK);
-        coolK = coolerOutlet(outK, flow, s.ratedFlow);
+        // Finitions : dimensionné avec l'échangeur de série, le faisceau ε-NTU devant la soufflerie du banc, qui rend plus que
+        // l'ancienne loi à ce débit partiel : la pression demandée est bien tenue à 40 % du régime maximal.
+        coolK = benchCoolerOutletK(airToAirCoolerFor(s.ratedFlow, outK), outK, flow);
     }
     s.leakArea = leak * portable::pow(s.rotorVolumeM3, 2.0 / 3.0);
     s.frictionW = kRotorFrictionW * s.rotorVolumeM3 / kReferenceRotorM3;
@@ -296,18 +356,20 @@ SuperchargerSpec superchargerSpecFor(const EngineConfig& e, double breathingAtSi
     return s;
 }
 
+}  // namespace
+
 // ── L'équilibre ──
 
 SuperchargerSteady superchargerSteady(const SuperchargerSpec& spec, double rpm, double breathing, double fill) {
     SuperchargerSteady out;
     if (rpm <= 0.0 || breathing <= 0.0) return out;
     const double share = clamp(fill, 0.0, 1.0);
-    const double target = kAtmosphere + spec.targetBar * 1e5;
+    const double target = spec.ambientPa + spec.targetBar * 1e5;
     Point found = pointAt(spec, rpm, breathing, target, share);
     double chargePa = target;
     // Assez de débit pour la pression demandée : la soupape rend le surplus à l'entrée. Sinon, le volume s'équilibre plus bas.
     if (found.surplus < 0.0) {
-        double low = kAtmosphere - 0.3e5;
+        double low = spec.ambientPa - 0.3e5;
         double high = target;
         for (int i = 0; i < 18; ++i) {
             const double middle = 0.5 * (low + high);
@@ -317,7 +379,7 @@ SuperchargerSteady superchargerSteady(const SuperchargerSpec& spec, double rpm, 
         found = pointAt(spec, rpm, breathing, chargePa, share);
     }
     out.chargePa = chargePa;
-    out.boost = clamp((chargePa - kAtmosphere) / (spec.targetBar * 1e5), 0.0, 1.0);
+    out.boost = clamp((chargePa - spec.ambientPa) / (spec.targetBar * 1e5), 0.0, 1.0);
     out.outK = found.outK;
     out.coolK = found.coolK;
     out.flow = found.engineFlow;
@@ -329,7 +391,32 @@ SuperchargerSteady superchargerSteady(const SuperchargerSpec& spec, double rpm, 
     return out;
 }
 
+namespace {
+
+SuperchargerSpec inReferenceAir(SuperchargerSpec spec) {
+    spec.ambientPa = kAtmosphere;
+    spec.ambientK = kAmbientK;
+    return spec;
+}
+
+}  // namespace
+
+double superchargerAmbientChargeShare(const SuperchargerSpec& spec, double rpm, double breathing, double boost) {
+    if (spec.ambientPa == kAtmosphere && spec.ambientK == kAmbientK) return 1.0;
+    // La charge part de l'atmosphère du jour, à sa température, et les parois la réchauffent d'autant moins qu'elle est chaude.
+    const SuperchargerSpec reference = inReferenceAir(spec);
+    const double gauge = (boost > 0.0 ? boost : 0.0) * spec.targetBar * 1e5;
+    const bool running = boost > 0.0 && rpm > 0.0 && breathing > 0.0;
+    const auto trapped = [&](const SuperchargerSpec& s) {
+        const double chargePa = s.ambientPa + gauge;
+        return chargePa / trappedAirK(running ? pointAt(s, rpm, breathing, chargePa, 1.0).coolK : s.ambientK);
+    };
+    return trapped(spec) / trapped(reference);
+}
+
 double superchargerAirShare(const SuperchargerSpec& spec, double rpm, double breathing, double boost) {
+    // Calibré dans l'air de référence : l'air du jour passe par `superchargerAmbientChargeShare`.
+    if (spec.ambientPa != kAtmosphere || spec.ambientK != kAmbientK) return superchargerAirShare(inReferenceAir(spec), rpm, breathing, boost);
     if (boost <= 0.0) return 1.0;
     const double chargePa = kAtmosphere + boost * spec.targetBar * 1e5;
     if (rpm <= 0.0 || breathing <= 0.0) return chargePa / kAtmosphere;
@@ -340,7 +427,7 @@ double superchargerAirShare(const SuperchargerSpec& spec, double rpm, double bre
 
 void Supercharger::setSpec(const SuperchargerSpec& spec) { spec_ = spec; }
 
-double Supercharger::boost() const { return (state_.chargePa - kAtmosphere) / (spec_.targetBar * 1e5); }
+double Supercharger::boost() const { return (state_.chargePa - spec_.ambientPa) / (spec_.targetBar * 1e5); }
 
 double Supercharger::driveNm(double rpm) const {
     const double omega = rpm * 2.0 * kPi / 60.0;
@@ -371,7 +458,7 @@ void Supercharger::step(double dt, const SuperchargerInput& input) {
     const double opening = s.bypass;
 
     const double coolK = s.coolerOutK;
-    const double target = kAtmosphere + spec.targetBar * 1e5;
+    const double target = spec.ambientPa + spec.targetBar * 1e5;
     // Ce qui entre dans le volume moins ce qui en sort, pour une pression donnée.
     const auto surplus = [&spec, rpm, omega, fill, coolK, breathing, opening](double chargePa) {
         const double engine = engineFlowAt(spec, rpm, breathing, chargePa * fill, coolK);
@@ -383,7 +470,7 @@ void Supercharger::step(double dt, const SuperchargerInput& input) {
     const double now = surplus(s.chargePa);
     const double slope = (surplus(s.chargePa + 200.0) - now) / 200.0;
     double next = s.chargePa + dt * gain * now / (1.0 - dt * gain * (slope < 0.0 ? slope : 0.0));
-    if (next < 0.5 * kAtmosphere) next = 0.5 * kAtmosphere;
+    if (next < 0.5 * spec.ambientPa) next = 0.5 * spec.ambientPa;
     // La soupape tient la pression demandée : ce qui dépasse repart à l'entrée.
     if (next > target) next = target;
     s.chargePa = next;
@@ -398,10 +485,35 @@ void Supercharger::step(double dt, const SuperchargerInput& input) {
     const double returned = s.compressorFlow - engine;
     s.spillShare = s.compressorFlow > 1e-6 ? clamp(returned / s.compressorFlow, 0.0, 1.0) : 0.0;
 
-    double outK = kAmbientK;
+    double outK = spec.ambientK;
     s.shaftW = shaftPower(spec, omega, ends.inletPa, ends.inletK, ends.outletPa, s.compressorFlow, &outK) / spec.driveEfficiency;
     s.compressorOutK = outK;
-    s.coolerOutK += (coolerOutlet(outK, engine, spec.ratedFlow) - s.coolerOutK) * dt / kCoolerMassS;
+    // L'air de charge tient la boucle d'eau, ou il n'y a pas d'échangeur : il rend la température.
+    if (input.cooledK > 0.0) {
+        s.coolerOutK = input.cooledK;
+    } else if (spec.cooler.kind == Intercooler::AirToAir && spec.cooler.faceM2 > 0.0) {
+        // L'air-air : la charge traverse le faisceau, que l'air de route refroidit et dont l'aluminium garde la chaleur.
+        ChargeConditions air;
+        air.ambientK = spec.ambientK;
+        air.ambientPa = spec.ambientPa;
+        s.coolerOutK = core_.step(spec.cooler, dt, outK, engine, input.coolingAirMs, air);
+    } else {
+        s.coolerOutK += (coolerOutlet(outK, engine, spec.ratedFlow, spec.ambientK) - s.coolerOutK) * dt / kCoolerMassS;
+    }
 }
+
+double superchargerCoolerOutletK(const SuperchargerSpec& spec, double hotK, double flow) { return coolerOutletOf(spec, hotK, flow); }
+
+// ── Les mêmes lois, pour le twincharger (twin_turbo.cpp) : un renvoi, rien de recopié ──
+namespace supercharger_laws {
+
+double compressorFlow(const SuperchargerSpec& spec, double omega, double inletPa, double inletK, double outletPa) { return compressorFlowAt(spec, omega, inletPa, inletK, outletPa); }
+double shaftPower(const SuperchargerSpec& spec, double omega, double inletPa, double inletK, double outletPa, double flow, double* outK) {
+    return revforge::shaftPower(spec, omega, inletPa, inletK, outletPa, flow, outK);
+}
+double orificeSpeed(double across, double rho) { return revforge::orificeSpeed(across, rho); }
+double discharge() { return kDischarge; }
+
+}  // namespace supercharger_laws
 
 }  // namespace revforge

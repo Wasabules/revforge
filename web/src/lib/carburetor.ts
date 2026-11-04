@@ -22,7 +22,8 @@ const PIPE_OVER_THROAT = 1.25;
 
 /** `null` : pas de carburateur sur ce moteur (injection, diesel ou électrique). */
 export function carburetorOf(config: EngineConfig): CarbGeometry | null {
-  if (config.electric || config.fuel === 'diesel' || !config.fuelSystem || config.fuelSystem === 'injection') return null;
+  // Socle : l'injection directe n'a pas plus de carburateur que l'indirecte.
+  if (config.electric || config.fuel === 'diesel' || !config.fuelSystem || config.fuelSystem === 'injection' || config.fuelSystem === 'direct') return null;
   // Le volume avalé en deux tours d'arbre : un rotatif en balaie deux fois sa cylindrée.
   const litres = sweptCc(config) / 1000;
   const krpm = (RATED_SHARE * config.redlineRpm) / 1000;

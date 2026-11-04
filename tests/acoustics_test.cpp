@@ -8,6 +8,7 @@
 
 #include "acoustics.hpp"
 #include "exhaust_line.hpp"
+#include "revforge/atmosphere.hpp"
 #include "revforge/driving_model.hpp"
 #include "revforge/presets.hpp"
 #include "revforge/sound_sheet.hpp"
@@ -738,6 +739,34 @@ TEST_CASE("un moteur derrière les sièges s'entend bien plus dans l'habitacle")
     CHECK(exhaustScaleOf(car.car) < 0.6f);
 }
 
+TEST_CASE("l'habitacle ne dépend pas de la fréquence d'échantillonnage : sa réponse garde sa durée") {
+    // À 192 kHz, 1024 points ne faisaient que 5 ms : tout ce qui se passe sous 200 Hz se perdait entre deux points du filtre.
+    CHECK(CabinPath::firLengthFor(44100.0f) == CabinPath::kFirLength);
+    CHECK(CabinPath::firLengthFor(48000.0f) == CabinPath::kFirLength);
+    CHECK(CabinPath::firLengthFor(96000.0f) == 2 * CabinPath::kFirLength);
+    CHECK(CabinPath::firLengthFor(192000.0f) == 4 * CabinPath::kFirLength);
+    const CarAcoustics car = findPreset("hot_hatch_na")->powertrain().profile().car;
+    const auto heard = [&car](float rate, double hz) {
+        CabinPath path(rate);
+        path.setCar(car);
+        std::array<float, kSources> in{};
+        double energy = 0.0;
+        const int total = static_cast<int>(rate);
+        for (int n = 0; n < total; ++n) {
+            in[static_cast<std::size_t>(Source::ExhaustA)] = static_cast<float>(std::sin(2.0 * 3.141592653589793 * hz * n / rate));
+            float left = 0.0f, right = 0.0f;
+            path.process(in, 0.0f, left, right, false);
+            if (n > total / 3) energy += static_cast<double>(left) * left;
+        }
+        return 10.0 * std::log10(energy / (total - total / 3));
+    };
+    for (const double hz : {63.0, 100.0, 160.0, 400.0, 1000.0}) {
+        const double gap = heard(192000.0f, hz) - heard(48000.0f, hz);
+        MESSAGE("habitacle, " << hz << " Hz : 192 kHz face à 48 kHz, " << gap << " dB");
+        CHECK(std::fabs(gap) < 1.0);
+    }
+}
+
 TEST_CASE("le bloc est là où on l'a mis, et se fait entendre à travers la cloison la plus proche") {
     Powertrain car = withExhaust("city_14", Exhaust::Quiet);
     car.car.placement = EnginePlacement::Front;
@@ -1086,4 +1115,53 @@ TEST_CASE("rouler vite n'ajoute presque rien tout en haut du spectre") {
     const double fast = topBand(47.0f);
     MESSAGE("à l'arrêt " << parked << " dB, à 170 km/h " << fast << " dB");
     CHECK(fast - parked < 3.0);
+}
+
+// ── L'air du jour (voir « L'air ambiant » dans docs/modele.md) ──
+
+TEST_CASE("l'absorption suit la température et l'humidité des tables de l'ISO 9613-2") {
+    // ISO 9613-2, tableau 2, dB/km : 30 °C et 70 %, puis 15 °C à 20, 50 et 80 %.
+    struct Row {
+        double celsius, humidity, hz, value;
+    };
+    const Row rows[] = {
+        {30.0, 70.0, 1000, 7.4}, {30.0, 70.0, 2000, 12.7}, {30.0, 70.0, 4000, 23.1}, {30.0, 70.0, 8000, 59.3},
+        {15.0, 20.0, 1000, 8.2}, {15.0, 20.0, 2000, 28.2}, {15.0, 20.0, 4000, 88.8}, {15.0, 20.0, 8000, 202.0},
+        {15.0, 50.0, 1000, 4.2}, {15.0, 50.0, 2000, 10.8}, {15.0, 50.0, 4000, 36.2}, {15.0, 50.0, 8000, 129.0},
+        {15.0, 80.0, 1000, 4.1}, {15.0, 80.0, 2000, 8.3}, {15.0, 80.0, 4000, 23.7}, {15.0, 80.0, 8000, 82.8},
+    };
+    for (const Row& row : rows) {
+        INFO(row.celsius << " °C, " << row.humidity << " %, " << row.hz << " Hz");
+        CHECK(std::fabs(airAbsorptionDbPerM(row.hz, row.celsius, row.humidity) * 1000.0 - row.value) < std::max(0.06, row.value * 0.015));
+    }
+    // L'air du jour passe bien par là, à l'humidité de référence : 50 %.
+    CHECK(ambientAbsorptionDbPerM(ambientAir(15.0, 0.0), 4000.0) == airAbsorptionDbPerM(4000.0, 15.0, 50.0, 101.325));
+}
+
+TEST_CASE("dans l'air froid, le son arrive plus tard, et l'air du jour fait son absorption") {
+    const auto arrival = [](const CarAcoustics& car) {
+        FieldProbe probe(car);
+        probe.at(30.0f, 0.0f, 1000.0f);
+        return static_cast<double>(arrivalOf(probe.impulse(kRate / 5).first));
+    };
+    const CarAcoustics warm = emptyCar();
+    CarAcoustics cold = emptyCar();
+    cold.air = airAcousticsOf(ambientAir(-30.0, 0.0));
+    const double ratio = arrival(cold) / arrival(warm);
+    MESSAGE("arrivée à 30 m : " << ratio << " fois plus tard à -30 °C");
+    CHECK(ratio == doctest::Approx(343.0 / static_cast<double>(cold.air.soundSpeedMs)).epsilon(0.01));
+
+    // À 0 °C et 50 %, l'air retire bien plus de 8 kHz qu'à 20 °C : ISO 9613-1, sur 60 m.
+    CarAcoustics chilly = emptyCar();
+    const AmbientAir zero = ambientAir(0.0, 0.0);
+    chilly.air = airAcousticsOf(zero);
+    FieldProbe probe(chilly);
+    probe.at(60.0f, 0.0f, 1000.0f);
+    probe.tone(100.0, 0.05);
+    const double low = probe.tone(100.0).first;
+    const double high = probe.tone(8000.0).first;
+    const double expected = ambientAbsorptionDbPerM(zero, 8000.0) * 60.0;
+    MESSAGE("air à 60 m, 0 °C : " << db(low / high) << " dB à 8 kHz, attendu " << expected);
+    CHECK(db(low / high) == doctest::Approx(expected).epsilon(0.2));
+    CHECK(expected > airAbsorptionDbPerM(8000.0) * 60.0 + 2.0);
 }

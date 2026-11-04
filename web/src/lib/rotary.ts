@@ -10,6 +10,7 @@
  * En haut, les bougies et le point mort haut d'explosion ; en bas, le point mort haut d'échange, entre les deux lumières.
  */
 import type { EngineConfig } from './config';
+import { isTwoStroke } from './twoStroke';
 
 const DEG = Math.PI / 180;
 
@@ -23,11 +24,13 @@ export const ROTOR_COUNTS = [2, 3, 4];
 const ROTOR_ORDERS: Record<number, number[]> = { 2: [1, 2], 3: [1, 3, 2], 4: [1, 3, 4, 2] };
 export const rotorOrder = (rotors: number): number[] => ROTOR_ORDERS[rotors] ?? ROTOR_ORDERS[2];
 
-/** Explosions en un cycle de deux tours d'arbre : une par cylindre, deux par rotor. */
-export const firingsPerCycle = (config: Pick<EngineConfig, 'layout' | 'cylinders'>): number => (isRotary(config) ? 2 * config.cylinders : config.cylinders);
+/** Explosions en un cycle de deux tours d'arbre : une par cylindre, deux par rotor ou par cylindre d'un deux-temps (`firingsPerTwoTurns`). */
+export const firingsPerCycle = (config: Pick<EngineConfig, 'layout' | 'cylinders'> & { cycle?: EngineConfig['cycle'] }): number =>
+  isRotary(config) || isTwoStroke(config) ? 2 * config.cylinders : config.cylinders;
 
-/** Le volume balayé en deux tours d'arbre (cm³) : deux fois la cylindrée d'un rotatif. Recopie de `sweptCcPerTwoTurns`. */
-export const sweptCc = (config: Pick<EngineConfig, 'layout' | 'displacementCc'>): number => (isRotary(config) ? 2 : 1) * config.displacementCc;
+/** Le volume balayé en deux tours d'arbre (cm³) : deux fois la cylindrée d'un rotatif ou d'un deux-temps. Recopie de `sweptCcPerTwoTurns`. */
+export const sweptCc = (config: Pick<EngineConfig, 'layout' | 'displacementCc'> & { cycle?: EngineConfig['cycle'] }): number =>
+  (isRotary(config) || isTwoStroke(config) ? 2 : 1) * config.displacementCc;
 
 // ── Les chiffres communs : recopies de core/src/engine_config.cpp et engine_sound.cpp ──
 
@@ -135,6 +138,8 @@ export interface RotaryLayout {
   ring: { z: number; width: number; teeth: number; radius: number };
   pinion: { teeth: number; radius: number; angle: number; x: number; y: number };
   turbo: boolean;
+  /** Turbos : 2 en parallèle ou en séquence (le 13B-REW), 1 sinon, 0 sans turbo. */
+  turbos: number;
   charger: boolean;
   /** Le carburateur, s'il y en a un : un col commun, ou un par rotor. */
   carb: 'single' | 'multi' | null;
@@ -154,7 +159,7 @@ function starterTeeth(rotors: number, displacementCc: number): { ring: number; p
 
 /** Ce qui fait changer les pièces : à clé égale, les mêmes maillages. */
 export function rotaryKey(config: EngineConfig): string {
-  return `rotary|${config.cylinders}|${config.displacementCc}|${config.aspiration}|${config.boxFlywheel}|${config.superchargerKind}|${config.airFilter}|${config.fuelSystem}|${config.turboPipeMm}|${config.turboSize}`;
+  return `rotary|${config.cylinders}|${config.displacementCc}|${config.aspiration}|${config.boxFlywheel}|${config.superchargerKind}|${config.airFilter}|${config.fuelSystem}|${config.turboPipeMm}|${config.turboSize}${config.aspiration === 'turbo' && (config.turboLayout ?? 'single') !== 'single' ? `|${config.turboLayout}` : ''}`;
 }
 
 export function rotaryLayout(config: EngineConfig): RotaryLayout {
@@ -214,6 +219,7 @@ export function rotaryLayout(config: EngineConfig): RotaryLayout {
     ring: { z: rearZ - width * 0.32, width: width * 0.16, teeth: teeth.ring, radius: ringRadius },
     pinion: { teeth: teeth.pinion, radius: pinionRadius, angle: pinionAngle, x: Math.cos(pinionAngle) * (ringRadius + pinionRadius), y: Math.sin(pinionAngle) * (ringRadius + pinionRadius) },
     turbo: config.aspiration === 'turbo',
+    turbos: config.aspiration !== 'turbo' ? 0 : config.turboLayout === 'twin_parallel' || config.turboLayout === 'twin_sequential' ? 2 : 1,
     charger: config.aspiration === 'supercharger',
     carb: config.fuelSystem === 'single' || config.fuelSystem === 'multi' ? config.fuelSystem : null,
     airFilter: config.airFilter ?? 'stock',

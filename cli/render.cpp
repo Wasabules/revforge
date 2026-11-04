@@ -6,13 +6,17 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
 
+#include "revforge/architecture.hpp"
 #include "revforge/driving_model.hpp"
 #include "revforge/engine_sound.hpp"
 #include "revforge/presets.hpp"
+#include "revforge/valve_float.hpp"
+#include "revforge/two_stroke.hpp"
 
 using namespace revforge;
 
@@ -23,8 +27,10 @@ constexpr int kTick = 128;
 
 void usage() {
     std::puts(
-        "revforge-render --out file.wav|-|none [--preset ID | settings] [--scenario lap|blips|launch|start|steady|passby|rattle|shifts|turbo|grind|reverse|clutchblips|idle|cruise|wltc|tipin]\n"
+        "revforge-render --out file.wav|-|none [--preset ID | settings] [--scenario lap|blips|launch|launch_control|start|steady|passby|rattle|shifts|turbo|grind|reverse|clutchblips|idle|cruise|wltc|tipin|soak]\n"
         "  --scenario tipin  held at --rpm in third, then flat out: prints the torque of the first second\n"
+        "  --scenario launch_control  brake and throttle held for 3 s, then the brake released: prints the 0-100 km/h from the release\n"
+        "  --scenario soak   a minute at a standstill, then three flat-out starts: prints the charge-air temperatures\n"
         "  --out none        drive the model without rendering any sound: for the figures of --fuel\n"
         "  --list            list the presets\n"
         "  --seconds N       duration (lap: 60, or one loop of --drive-scenario; blips: 14, steady: 4)\n"
@@ -34,15 +40,29 @@ void usage() {
         "  --kmh N           speed held by cruise (the trip is measured once settled, after 60 s)\n"
         "  --rate N          sample rate (44100)\n"
         "  --volume X        volume (0.7)\n"
-        "Engine:   --cylinders N --layout inline|v|cross_plane|boxer|rotary --cc N --bore N --redline N\n"
-        "          --exhaust stock|sport|straight|no_muffler|no_resonator|quiet --routing single|dual|h|x\n"
+        "Engine:   --cylinders N (1 to 16) --layout inline|v|cross_plane|boxer|rotary|vr|w --cc N --bore N --redline N\n"
+        "          --layout vr: VR5 or VR6, one head over two rows 15 deg apart. --layout w: W8, W12 or W16, two VR banks.\n"
+        "                       Elsewhere, and above 12 cylinders unless v or w, the engine is built as a v.\n"
+        "          --exhaust stock|sport|straight|no_muffler|no_resonator|quiet|expansion --routing single|dual|h|x\n"
         "          --aspiration natural|turbo|supercharger --fuel petrol|diesel\n"
         "          --pops off|light|strong --release dump_valve|flutter --boost BAR --turbo small|medium|large\n"
         "          --supercharger roots|twin_screw|centrifugal --antilag off|retard|air|cut --turbo-pipe MM\n"
-        "          --cam dohc|sohc --filter stock|panel|cone|stacks --carb injection|single|multi\n"
+        "          --cam dohc|sohc|ohv --filter stock|panel|cone|stacks --fuel-system injection|single|multi|direct (or --carb)\n"
         "          --stroke MM  sets --cc from the bore and the cylinders, in any order, and replaces --cc if both are given.\n"
         "                       On a --preset: applied to the preset's own bore and cylinders, which --bore and --cylinders do not change.\n"
         "                       Ignored on a rotary, which has no stroke; --bore and --cam are ignored there too.\n"
+        "          Each option below overrides a --preset, as --layout (on the preset's cylinders), --exhaust, --routing,\n"
+        "          --supercharger, --antilag, --turbo-pipe, --cam, --filter and --fuel-system do. A number at 0 keeps the engine's own value.\n"
+        "          Architecture: --cycle four_stroke|two_stroke\n"
+        "          Combustion:   --compression X (6 to 24) --grade ron95|ron98|race102|e85|methanol\n"
+        "          Valvetrain:   --cam-duration DEG --cam-lift MM --lsa DEG --vvt fixed|phased|two_step|phased_two_step\n"
+        "                        --springs stock|stiff\n"
+        "          Fueling:      --diesel-injection mechanical|common_rail --egr 0|1 --dpf 0|1\n"
+        "          Charging:     --turbo-layout single|twin_parallel|twin_sequential|twincharger --vgt 0|1\n"
+        "                        --boost-control spring|electronic|by_gear --intercooler air|water|none --water 0|1 --nitrous KW\n"
+        "          ECU:          --advance DEG --lambda X --limiter stock|soft|ignition_cut --launch RPM --flat-shift 0|1\n"
+        "                        --traction off|sport|full\n"
+        "          Conditions:   --ambient C --altitude M --start warm|cold\n"
         "Car:      --body city|compact|coupe|supercar|van|retro --mass KG --rim INCHES --drive front|rear|all\n"
         "          --placement front|mid|rear --insulation stripped|light|standard|comfort|luxury --windows open|closed\n"
         "Gearbox:  --gearbox synchro|dog|sequential|dual_clutch|converter --gears N --family matched|short|close|long\n"
@@ -52,8 +72,36 @@ void usage() {
         "          --stereo 1: two ears (otherwise one microphone at the centre of the head)\n"
         "          --db 1: also print the estimated A-weighted level\n"
         "          --fuel 1: also print the estimated fuel, oil or energy used, and the best of the engine's fuel map\n"
-        "          --trace FILE: write the turbo, its anti-lag and the fuel as CSV, one line per slice\n"
-        "          --walk 1: the head walks through the car at 1.2 m/s (with lap)");
+        "                    (--fuel 0|1 is this display; --fuel petrol|diesel chooses the engine's fuel)\n"
+        "          --trace FILE: write the turbo, its boost control, its anti-lag, the fuel, the knock, the engine management and the charge air as CSV, one line per slice\n"
+        "          --thermal FILE: write the engine temperatures and what a cold engine changes as CSV, one line per 0.1 s\n"
+        "          --walk 1: the head walks through the car at 1.2 m/s (with lap)\n"
+        "          --valves 1: also print the valvetrain: moving mass, springs, valve float rpm");
+}
+
+/** La distribution : ses pièces, son ressort et son régime d'affolement (voir « Les culbuteurs et l'affolement »). */
+void printValves(const Powertrain& powertrain) {
+    const EngineConfig& e = powertrain.engine;
+    if (powertrain.electric || !hasValves(e)) {
+        std::printf("Valvetrain: none, no valves\n");
+        return;
+    }
+    const Camshaft kind = e.valvetrain();
+    const ValvetrainParts parts = valvetrainParts(kind, static_cast<double>(e.boreMm), static_cast<double>(e.strokeMm()));
+    const CamLobe cam = camLobeOf(e);
+    const ValveSpring spring = valveSpringOf(e);
+    const double floatRpm = valveFloatRpm(e);
+    const double redline = static_cast<double>(e.redlineRpm);
+    const char* name = kind == Camshaft::Ohv ? "pushrods (OHV)" : (kind == Camshaft::Sohc ? "single overhead cam" : "twin overhead cams");
+    std::printf("Valvetrain: %s, %d valves per cylinder, rocker ratio %.2f, intake head %.1f mm\n", name, twoValves(kind) ? 2 : 4, parts.ratio, parts.headMm);
+    std::printf("Moving mass at the valve %.1f g: valve %.1f, retainer %.1f, a third of the spring %.1f, bucket %.1f, rocker %.1f, lifter and pushrod / ratio^2 %.1f\n",
+                parts.effectiveKg * 1000.0, parts.valveKg * 1000.0, parts.retainerKg * 1000.0, parts.springKg * 1000.0 / 3.0, parts.bucketKg * 1000.0,
+                parts.rockerAtValveKg * 1000.0, (parts.lifterKg + parts.pushrodKg) / (parts.ratio * parts.ratio) * 1000.0);
+    std::printf("Stiffness at the valve %.1f kN/mm, natural frequency %.0f Hz\n", parts.stiffnessNPerM / 1e6, parts.naturalHz);
+    std::printf("Cam: %.2f mm over %.0f deg; nose deceleration %.0f m/s^2 at the redline\n", cam.liftMm, cam.durationDeg, noseDecelerationMs2(cam, redline));
+    std::printf("Spring: %.0f N seated, %.0f N at full lift, %.1f N/mm\n", spring.preloadN, spring.forceN(cam.liftMm), spring.rateNPerMm);
+    std::printf("Valve float: %.0f rpm, %+.1f %% from the redline\n", floatRpm, (floatRpm / redline - 1.0) * 100.0);
+    std::printf("Cam friction at the redline: %.3f bar, of which stiff springs %.3f bar\n", followerFrictionBar(e, redline), springFrictionDeltaBar(e, redline));
 }
 
 template <typename T>
@@ -125,15 +173,73 @@ struct Output {
 std::FILE* g_trace = nullptr;
 
 void traceHeader() {
-    std::fputs("t,rpm,throttle,gear,boost,shaft_rpm,t3_c,turbine_kw,compressor_kw,air_g_s,heat_kw,fuel_g_s,torque_nm,lost_nm,antilag,kmh,flow_kg_s,blowoff,wastegate,charge_bar,exhaust_bar,trip_l,pops\n", g_trace);
+    std::fputs("t,rpm,throttle,gear,boost,shaft_rpm,t3_c,turbine_kw,compressor_kw,air_g_s,heat_kw,fuel_g_s,torque_nm,lost_nm,antilag,kmh,flow_kg_s,blowoff,wastegate,charge_bar,exhaust_bar,trip_l,pops,advance_deg,knock_limit_deg,knock_retard_deg,knock_share,knocks,"
+               "ecu_advance_deg,lambda,fired,limiter,launch,flat,traction,slip_ms,target_abs_bar,charge_abs_bar,duty,"
+               "shaft2_rpm,exhaust2_bar,stage,vane,vane2,clutch,charger_nm,interstage_bar,flap,"
+               "charge_c,water_loop_c,water_g_s,nitrous_g_s,bottle_bar,bottle_kg\n", g_trace);
 }
 
 void traceLine(const DrivingModel& model, const EngineSound& sound, double t) {
-    const TurboState& s = model.turbo().state();
+    const TurboState& s = model.turboState();
     const AntiLagState& a = model.turbo().antiLag();
-    std::fprintf(g_trace, "%.4f,%.1f,%.3f,%d,%.4f,%.0f,%.1f,%.3f,%.3f,%.3f,%.3f,%.4f,%.2f,%.2f,%d,%.2f,%.4f,%.3f,%.3f,%.4f,%.4f,%.6f,%u\n", t, model.rpm(), model.throttle(), model.gear(), model.boost(),
+    std::fprintf(g_trace, "%.4f,%.1f,%.3f,%d,%.4f,%.0f,%.1f,%.3f,%.3f,%.3f,%.3f,%.4f,%.2f,%.2f,%d,%.2f,%.4f,%.3f,%.3f,%.4f,%.4f,%.6f,%u,%.2f,%.2f,%.2f,%.4f,%u,", t, model.rpm(), model.throttle(), model.gear(), model.boost(),
                  s.shaftOmega * 60.0 / (2.0 * 3.141592653589793), s.turbineInK - 273.15, s.turbinePowerW / 1000.0, s.compressorPowerW / 1000.0, a.airFlow * 1000.0, a.collectorHeatW / 1000.0,
-                 model.consumption().fuelGps(), model.torqueNm(), model.antiLagLostNm(), model.antiLagActive() ? 1 : 0, model.speedKmh(), s.compressorFlow, s.blowOff, s.wastegate, s.chargePa / 1e5 - 1.01325, s.turbineInPa / 1e5 - 1.01325, model.consumption().fuelTripL(), static_cast<unsigned>(sound.pops()));
+                 model.consumption().fuelGps(), model.torqueNm(), model.antiLagLostNm(), model.antiLagActive() ? 1 : 0, model.speedKmh(), s.compressorFlow, s.blowOff, s.wastegate,
+                 (s.chargePa - model.turbo().spec().ambientPa) / 1e5, (s.turbineInPa - model.turbo().spec().ambientPa) / 1e5, model.consumption().fuelTripL(), static_cast<unsigned>(sound.pops()),
+                 model.sparkAdvanceDeg(), model.knockLimitDeg(), model.knockRetardDeg(), model.knockShare(), static_cast<unsigned>(sound.knocks()));
+    // Le calculateur : avance face à la carte d'origine, λ demandé, part des explosions, ce qui agit, glissement des roues.
+    std::fprintf(g_trace, "%.2f,%.3f,%.3f,%d,%d,%d,%.3f,%.3f,", model.ecuAdvanceDeg(), model.ecuLambda(), model.ecuFiredShare(), model.limiterActive() ? 1 : 0, model.launchHolding() ? 1 : 0,
+                 model.flatShifting() ? 1 : 0, model.ecuAction().traction, model.wheelSlip());
+    // La régulation de pression : la cible et la charge, en absolu (bar), et le rapport cyclique de l'électrovanne (−1 : ressort).
+    std::fprintf(g_trace, "%.4f,%.4f,%.3f", model.boostTargetPa() / 1e5, s.chargePa / 1e5, model.boostDuty());
+    // Deux turbos, twincharger, aubes : le second arbre, l'étape du séquentiel, les aubes, l'embrayage du compresseur.
+    const double ambientBar = model.turbo().spec().ambientPa / 1e5;
+    const TwinTurboState& w = model.twin().state();
+    const bool twin = model.twinTurbo();
+    std::fprintf(g_trace, ",%.0f,%.4f,%d,%.3f,%.3f,%d,%.2f,%.4f,%.3f,", twin ? w.unit[1].shaftOmega * 60.0 / (2.0 * 3.141592653589793) : 0.0, twin ? w.unit[1].turbineInPa / 1e5 - ambientBar : 0.0,
+                 twin ? w.stage : 0, twin ? w.vane[0] : 1.0, twin ? w.vane[1] : 1.0, twin && w.clutch ? 1 : 0, twin ? w.chargerNm : 0.0, twin ? w.interstagePa / 1e5 - ambientBar : 0.0, twin ? w.flap : 1.0);
+    // L'air de charge : la charge au collecteur, la boucle d'eau, l'eau et le protoxyde injectés, la bouteille (pression relative).
+    const ChargeAir& charge = model.chargeAir();
+    const bool charged = model.chargeAirEngine();
+    std::fprintf(g_trace, "%.2f,%.2f,%.3f,%.3f,%.3f,%.4f\n", model.manifoldCharge().temperatureK - 273.15, charge.waterLoopK() - 273.15,
+                 charged ? charge.waterGps() : 0.0, charged ? charge.nitrousKgS() * 1000.0 : 0.0,
+                 charged ? (charge.bottle().pressurePa - 101325.0) / 1e5 : 0.0, charged ? charge.bottle().massKg : 0.0);
+}
+
+/** `--thermal` : les températures et ce que le moteur froid change, pour mesurer la mise en température sans rien écouter. */
+std::FILE* g_thermal = nullptr;
+double g_thermalNext = 0.0;
+
+/** Les instants de la mise en température : le premier passage de chaque seuil (s), -1 tant qu'il n'est pas atteint. */
+struct WarmUp {
+    double thermostatS = -1.0;
+    double coolant70S = -1.0;
+    double oil80S = -1.0;
+    double idleWarmS = -1.0;
+    double peakCoolantC = -1000.0;
+    double peakOilC = -1000.0;
+    double fanS = 0.0;
+    bool active = false;  // rien de tout cela sur l'électrique
+    bool cold = false;    // parti à froid : la mise en température se mesure
+
+    void track(const DrivingModel& model, double t, double dt) {
+        if (!active) return;
+        const ThermalNetwork& th = model.thermal();
+        if (thermostatS < 0.0 && th.thermostat() > 0.01) thermostatS = t;
+        if (coolant70S < 0.0 && th.coolantC() >= 70.0) coolant70S = t;
+        if (oil80S < 0.0 && th.oilC() >= 80.0) oil80S = t;
+        if (idleWarmS < 0.0 && cold && model.coldIdleRpm() <= 0.0) idleWarmS = t;
+        peakCoolantC = std::max(peakCoolantC, th.coolantC());
+        peakOilC = std::max(peakOilC, th.oilC());
+        if (th.fan()) fanS += dt;
+    }
+};
+WarmUp g_warmUp;
+
+void thermalLine(const DrivingModel& model, double t) {
+    const ThermalNetwork& th = model.thermal();
+    std::fprintf(g_thermal, "%.1f,%.1f,%.2f,%.2f,%.2f,%.2f,%.2f,%.3f,%d,%.3f,%.3f,%.1f,%.3f,%.5f,%.0f,%.0f\n", t, model.rpm(), model.speedKmh(), th.coolantC(), th.oilC(), th.metalC(), th.radiatorC(),
+                 th.thermostat(), th.fan() ? 1 : 0, th.radiatorW() / 1000.0, model.coldFrictionNm(), model.coldIdleRpm(), model.coldEnrichment(), model.consumption().fuelTripL(), th.wallW(), model.torqueNm());
 }
 
 /** Le modèle de conduite pilote le son : chaque tranche est une pédale, ou le pilote automatique. */
@@ -146,13 +252,23 @@ void play(EngineSound& sound, DrivingModel& model, Output& out, int rate, Drive 
     while (done < out.frames()) {
         drive(step++, dt);
         if (g_trace != nullptr) traceLine(model, sound, static_cast<double>(step) * dt);
+        g_warmUp.track(model, static_cast<double>(step) * dt, dt);
+        if (g_thermal != nullptr && static_cast<double>(step) * dt >= g_thermalNext) {
+            thermalLine(model, static_cast<double>(step) * dt);
+            g_thermalNext += 0.1;
+        }
         sound.setTargetRpm(static_cast<float>(model.rpm()));
         sound.setDrive(static_cast<float>(model.load()), static_cast<float>(model.boost()), model.cut(), model.cranking(), static_cast<float>(model.throttle()));
         sound.setTurbo(model.turboDrive());
+        if (model.twinTurbo() && model.twin().spec().units == 2) sound.setTurboB(model.turboDriveB());
         sound.setSupercharger(model.superchargerDrive());
+        sound.setEcu(model.ecuDrive());
+        sound.setCharge(static_cast<float>(model.chargeFill()));
         sound.setStarter(model.starterPowered(), model.starterMeshed(), static_cast<float>(model.starterLoad()));
         sound.setRoad(static_cast<float>(model.speedKmh() / 3.6), static_cast<float>(model.wheelSlip()));
         sound.setGearbox(model.box(), model.gearboxDrive());
+        sound.setKnock(model.knockDrive());
+        sound.setCam(model.camDrive());
         const int n = static_cast<int>(std::min<std::size_t>(tick, out.frames() - done));
         out.render(sound, done, n);
         done += static_cast<std::size_t>(n);
@@ -174,6 +290,28 @@ void launch(EngineSound& sound, DrivingModel& model, Output& out, int rate) {
     play(sound, model, out, rate, [&model, rate](int step, double dt) {
         model.stepPedal(dt, static_cast<double>(step) * kTick / rate >= 1.0 ? 1.0 : 0.0, 0.0);
     });
+}
+
+/**
+ * Un départ arrêté comme sur une piste : une seconde au ralenti, puis pied sur le frein et au plancher pendant
+ * `kLaunchStageS`, puis on lâche le frein, pied au plancher jusqu'au bout. Avec le launch control, il tient le régime et
+ * la pression monte ; sans lui, le rupteur tient le moteur et l'embrayage patine contre les freins. Écrit le régime et la
+ * pression au lâcher, et le 0-100 km/h compté depuis le lâcher.
+ */
+void launchControl(EngineSound& sound, DrivingModel& model, Output& out, int rate) {
+    const double release = 1.0 + kLaunchStageS;
+    double rpmAtRelease = 0.0, boostAtRelease = 0.0, reached = 0.0;
+    play(sound, model, out, rate, [&](int step, double dt) {
+        const double t = static_cast<double>(step) * kTick / rate;
+        if (rpmAtRelease == 0.0 && t >= release) {
+            rpmAtRelease = model.rpm();
+            boostAtRelease = model.boost();
+        }
+        model.stepPedal(dt, t >= 1.0 ? 1.0 : 0.0, t >= 1.0 && t < release ? 1.0 : 0.0);
+        if (reached == 0.0 && t >= release && model.speedKmh() >= 100.0) reached = t + dt - release;
+    });
+    std::printf("Launch: %.0f rpm and %.2f of the boost at brake release; 0-100 km/h in %.2f s from the release%s\n", rpmAtRelease, boostAtRelease, reached,
+                reached == 0.0 ? " (not reached)" : "");
 }
 
 /** Point mort, moteur au ralenti : embrayé, ça claque ; débrayé, ça se tait ; puis de nouveau embrayé. */
@@ -376,6 +514,50 @@ void cruise(EngineSound& sound, DrivingModel& model, Output& out, int rate, doub
     });
 }
 
+/**
+ * La chaleur qui s'accumule dans l'air de charge : une minute à l'arrêt, puis trois départs arrêtés à fond pendant 8 s, un
+ * freinage, et 20 s de ralenti entre eux. Écrit la charge au collecteur et la boucle d'eau au début et à la fin de chaque départ.
+ */
+void soak(EngineSound& sound, DrivingModel& model, Output& out, int rate) {
+    int pull = 0;
+    int phase = 0;
+    double since = 0.0;
+    play(sound, model, out, rate, [&](int step, double dt) {
+        const double t = static_cast<double>(step) * kTick / rate;
+        const auto report = [&](const char* what) {
+            std::printf("%s %d at %.0f s: charge %.1f C, water loop %.1f C, %.0f km/h\n", what, pull, t, model.manifoldCharge().temperatureK - 273.15,
+                        model.chargeAir().waterLoopK() - 273.15, model.speedKmh());
+        };
+        switch (phase) {
+            case 0:
+                model.stepPedal(dt, 0.0, 0.3);
+                if (pull < 3 && t - since >= (pull == 0 ? 60.0 : 20.0)) {
+                    ++pull;
+                    report("Before pull");
+                    phase = 1;
+                    since = t;
+                }
+                break;
+            case 1:
+                model.stepPedal(dt, 1.0, 0.0);
+                if (t - since >= 8.0) {
+                    report("End of pull");
+                    phase = 2;
+                    since = t;
+                }
+                break;
+            default:
+                model.stepPedal(dt, 0.0, 0.6);
+                if (model.speedKmh() < 0.5) {
+                    phase = 0;
+                    since = t;
+                }
+                break;
+        }
+    });
+    std::printf("After %d pulls: charge %.1f C, water loop %.1f C\n", pull, model.manifoldCharge().temperatureK - 273.15, model.chargeAir().waterLoopK() - 273.15);
+}
+
 /** Au point mort, pied levé : le ralenti, une fois retombé le coup de gaz du démarrage. */
 void idling(EngineSound& sound, DrivingModel& model, Output& out, int rate) {
     bool measuring = false;
@@ -408,7 +590,7 @@ void wltc(EngineSound& sound, DrivingModel& model, Output& out, int rate, SpeedF
  * Une reprise : tenu en troisième à ce régime, puis pied au plancher. Écrit le couple de la première seconde, et le creux du
  * mélange s'il y a un carburateur. Sert à mesurer : ni le son ni les empreintes n'en dépendent.
  */
-void tipIn(EngineSound& sound, DrivingModel& model, Output& out, int rate, double fromRpm) {
+void tipIn(EngineSound& sound, DrivingModel& model, Output& out, int rate, double fromRpm, double wheelRadius) {
     constexpr double kHoldS = 12.0;
     model.setManual(true);
     model.requestShift(1);
@@ -417,11 +599,16 @@ void tipIn(EngineSound& sound, DrivingModel& model, Output& out, int rate, doubl
     play(sound, model, out, rate, [&](int step, double dt) {
         const double t = static_cast<double>(step) * kTick / rate;
         if (t < kHoldS) {
-            // On ne passe que si le rapport suivant retombe au-dessus du régime visé : pas de quoi caler.
+            // On ne passe que si le rapport suivant retombe au-dessus du régime visé : pas de quoi caler. Ce régime se lit à la
+            // vitesse de la voiture, comme au compteur : ni au moteur, qui tourne bien plus vite que la voiture ne roule tant que
+            // l'embrayage patine au départ, ni aux roues, qui peuvent patiner. Lu au moteur, la troisième entrait à 2 km/h, et le
+            // moteur calait dès que l'embrayage s'y refermait.
             const int now = model.gear();
             if (now >= 1 && now < 3 && !model.shifting()) {
-                const double next = model.rpm() * model.gearing().overall[static_cast<std::size_t>(now)] / model.gearing().overall[static_cast<std::size_t>(now - 1)];
-                if (next > std::max(fromRpm, model.idleRpm() * 1.4) || model.rpm() > model.redlineRpm() * 0.85) model.requestShift(1);
+                const double wheels = model.speedKmh() / 3.6 / wheelRadius * 60.0 / (2.0 * 3.141592653589793);
+                const double road = wheels * model.gearing().overall[static_cast<std::size_t>(now - 1)];
+                const double next = wheels * model.gearing().overall[static_cast<std::size_t>(now)];
+                if (next > std::max(fromRpm, model.idleRpm() * 1.4) || road > model.redlineRpm() * 0.85) model.requestShift(1);
             }
             const double error = (fromRpm - model.rpm()) / 1000.0;
             held = std::clamp(held + 0.5 * error * dt, 0.02, 1.0);
@@ -454,11 +641,72 @@ void printFuel(const DrivingModel& model, const Powertrain& powertrain, double s
         std::printf("Fuel (estimate): %.4f L in %.0f s, %.2f L/h, %.2f L/100 km over %.2f km, %.0f g CO2/km, average lambda %.2f\n", c.fuelTripL(), seconds, c.fuelTripL() / hours, c.fuelAvgLper100km(), c.tripKm(), c.co2GPerKm(), c.lambdaAverage());
         std::printf("Fuel map: best %.0f g/kWh at %.0f rpm, %.1f bar; %.0f g/kWh at peak power\n", best.bestGPerKwh, best.bestRpm, best.bestBmepBar, best.peakPowerGPerKwh);
         std::printf("Oil (order of magnitude, within a factor of three): %.2f mL, %.1f g/h, %.0f mL/1000 km\n", c.oilTripMl(), c.oilTripMl() * 0.85 / hours, c.oilMlPer1000km());
+        const ThermalNetwork& th = model.thermal();
+        const WarmUp& w = g_warmUp;
+        std::printf("Temperatures (%s start): coolant %.1f C (peak %.1f), oil %.1f C (peak %.1f), metal %.1f C, thermostat %.0f %%, fan %.0f s\n",
+                    w.cold ? "cold" : "warm", th.coolantC(), w.peakCoolantC, th.oilC(), w.peakOilC, th.metalC(), th.thermostat() * 100.0, w.fanS);
+        if (w.cold) {
+            std::printf("Warm-up: thermostat opens at %.0f s, coolant 70 C at %.0f s, oil 80 C at %.0f s, fast idle over at %.0f s (-1: not reached)\n", w.thermostatS, w.coolant70S, w.oil80S, w.idleWarmS);
+        }
     }
     const PowerSummary peak = powerSummary(powertrain);
     std::printf("Engine: %.1f Nm at %.0f rpm, %.1f kW at %.0f rpm, 0-100 km/h in %.2f s\n", peak.peakTorqueNm, peak.peakTorqueRpm, peak.peakPowerKw, peak.peakPowerRpm, measurePerformance(powertrain).zeroTo100S);
     // Au bit près, pour tools/check_wasm.mjs.
-    std::printf("raw fuel_lph=%.17g fuel_trip_l=%.17g trip_km=%.17g oil_trip_ml=%.17g energy_trip_kwh=%.17g\n", c.fuelLph(), c.fuelTripL(), c.tripKm(), c.oilTripMl(), c.energyTripKwh());
+    // Le réseau thermique aussi : l'électrique n'en a pas, il lit l'air ambiant, comme rf_coolant_c.
+    const double ambient = static_cast<double>(powertrain.engine.ambientC);
+    const double coolant = powertrain.electric ? ambient : model.thermal().coolantC();
+    const double oil = powertrain.electric ? ambient : model.thermal().oilC();
+    std::printf("raw fuel_lph=%.17g fuel_trip_l=%.17g trip_km=%.17g oil_trip_ml=%.17g energy_trip_kwh=%.17g coolant_c=%.17g oil_c=%.17g\n", c.fuelLph(), c.fuelTripL(), c.tripKm(), c.oilTripMl(), c.energyTripKwh(), coolant, oil);
+    if (model.chargeAirEngine()) {
+        // L'air de charge : la fiche à 100 km/h, face au même moteur sans eau, sans protoxyde, avec l'échangeur d'origine.
+        const ManifoldCharge now = steadyManifoldCharge(powertrain, peak.peakPowerRpm);
+        const ManifoldCharge stock = steadyManifoldCharge(chargeAirStock(powertrain), peak.peakPowerRpm);
+        std::printf("Charge air (estimate, at %.0f rpm, full load): %.1f C at the manifold (stock intercooler, dry: %.1f C), %.2f bar, %.0f%% of the air\n", peak.peakPowerRpm,
+                    now.temperatureK - 273.15, stock.temperatureK - 273.15, now.pressurePa / 1e5, now.airShare * 100.0);
+        const ChargeAir& charge = model.chargeAir();
+        if (charge.setup().nitrous.ratedKw > 0.0) {
+            std::printf("Nitrous: from %.0f rpm, %.1f g/s with a full bottle; bottle now %.1f bar, %.0f C, %.2f kg left\n", charge.setup().nitrous.activationRpm, charge.setup().nitrous.nitrousKgS * 1000.0,
+                        (charge.bottle().pressurePa - 101325.0) / 1e5, charge.bottle().kelvin - 273.15, charge.bottle().massKg);
+        }
+    }
+}
+
+/**
+ * `--knock 1` : la carte d'avance à pleine charge stabilisée, et la limite de cliquetis de ce moteur, régime par régime. Calculée même sur
+ * un moteur d'origine, où le modèle de conduite ne la lit pas : c'est ainsi qu'on vérifie qu'aucun préréglage ne cliquette.
+ */
+void printKnock(const Powertrain& powertrain, const EngineSound& sound) {
+    std::printf("Knocking combustions heard: %u\n", static_cast<unsigned>(sound.knocks()));
+    if (powertrain.electric || powertrain.engine.burnsDiesel()) {
+        const float ratio = compressionRatioOf(powertrain.engine);
+        std::printf("Knock: none (no spark). Compression %.1f:1 (stock %.1f:1), efficiency x%.4f\n", ratio, stockCompressionRatio(powertrain.engine), powertrain.electric ? 1.0 : compressionEfficiencyShare(powertrain.engine));
+        return;
+    }
+    // La carte que lit le modèle : l'air du jour, la came, l'injection directe et l'avance du calculateur (combustion.cpp).
+    KnockMap map;
+    map.build(powertrain, knockInputsOf(powertrain));
+    const FuelProperties& fuel = fuelPropertiesOf(powertrain.engine);
+    std::printf("Knock: compression %.1f:1 (stock %.1f:1), RON %.0f, efficiency x%.4f, fuel x%.4f, %s\n", compressionRatioOf(powertrain.engine), stockCompressionRatio(powertrain.engine), fuel.ron,
+                compressionEfficiencyShare(powertrain.engine), combustionTorqueShare(powertrain.engine) / compressionEfficiencyShare(powertrain.engine), map.sensor() ? "knock sensor" : "no knock sensor");
+    std::puts("  rpm   MBT  stock  limit  margin  applied  torque  gas_K  draper_Hz");
+    double worst = 1e9, worstRpm = 0.0;
+    const double idle = idleRpmOf(powertrain);
+    const double redline = redlineRpmOf(powertrain);
+    for (double rpm = std::ceil(idle / 250.0) * 250.0; rpm <= redline; rpm += 250.0) {
+        const KnockPoint point = map.at(rpm, 1.0);
+        // Face à l'avance demandée : la carte d'origine et l'écart du calculateur, comme `rf_knock_margin_deg`.
+        const double margin = point.limitDeg - (point.stockDeg + map.advanceOffsetDeg());
+        if (margin < worst) {
+            worst = margin;
+            worstRpm = rpm;
+        }
+        // Un rotatif : le premier mode en longueur de sa chambre en lame, c/(2L), L la corde entre deux sommets.
+        const EngineConfig& e = powertrain.engine;
+        const double hz = isRotary(e) ? burnedSoundMs(point.gasK) / (2.0 * 1.7320508 * rotaryGeometry(static_cast<double>(e.displacementCc) / e.rotors()).radiusMm / 1000.0)
+                                       : draperHz(e.boreMm / 1000.0, point.gasK);
+        std::printf("%5.0f %5.1f %6.1f %6.1f %7.1f %8.1f %7.4f %6.0f %9.0f\n", rpm, point.mbtDeg, point.stockDeg, point.limitDeg, margin, map.steadyAdvanceDeg(rpm), map.steadyTorqueShare(rpm), point.gasK, hz);
+    }
+    std::printf("Knock margin at full load: %.1f deg at %.0f rpm\n", worst, worstRpm);
 }
 
 /**
@@ -482,7 +730,7 @@ void passby(EngineSound& sound, DrivingModel& model, Output& out, int rate, floa
 
 int main(int argc, char** argv) {
     std::string out, scenario = "lap", presetId, at;
-    bool stereo = false, showDb = false, walk = false, showFuel = false;
+    bool stereo = false, showDb = false, walk = false, showFuel = false, showKnock = false, showValves = false;
     ShiftMode shiftMode = ShiftMode::Normal;
     DriveScenario driveScenario = DriveScenario::City;
     double kmh = 90.0;
@@ -495,6 +743,12 @@ int main(int argc, char** argv) {
     std::optional<AirFilter> airFilterChoice;
     std::optional<double> strokeChoice;
     std::optional<FuelSystem> fuelSystemChoice;
+    std::optional<Layout> layoutChoice;
+    // Les réglages du socle moteur : retenus ici, posés après le préréglage, qu'ils remplacent.
+    std::vector<std::function<void(EngineConfig&)>> tuning;
+    auto later = [&tuning](auto field, auto value) { tuning.push_back([field, value](EngineConfig& e) { e.*field = value; }); };
+    auto number = [](const std::string& text) { return static_cast<float>(std::atof(text.c_str())); };
+    auto whole = [](const std::string& text) { return std::atoi(text.c_str()); };
     bool customListener = false;
     Powertrain powertrain = referencePowertrain();
     EngineConfig& config = powertrain.engine;
@@ -549,7 +803,11 @@ int main(int argc, char** argv) {
         else if (arg == "--at") at = value;
         else if (arg == "--stereo") stereo = value != "0";
         else if (arg == "--db") showDb = value != "0";
-        else if (arg == "--fuel") showFuel = value != "0";
+        // `--fuel` dit deux choses, que sa valeur distingue : 0 ou 1, l'affichage de la consommation ; petrol ou diesel, le carburant
+        // (plus bas, avec les réglages du moteur). Avant, l'affichage prenait tout, et `--fuel diesel` ne donnait jamais un diesel.
+        else if (arg == "--fuel" && (value == "0" || value == "1")) showFuel = value != "0";
+        else if (arg == "--knock") showKnock = value != "0";
+        else if (arg == "--valves") showValves = value != "0";
         else if (arg == "--trace") {
             g_trace = std::fopen(value.c_str(), "w");
             if (g_trace == nullptr) {
@@ -557,6 +815,14 @@ int main(int argc, char** argv) {
                 return 2;
             }
             traceHeader();
+        }
+        else if (arg == "--thermal") {
+            g_thermal = std::fopen(value.c_str(), "w");
+            if (g_thermal == nullptr) {
+                std::fprintf(stderr, "Cannot write: %s\n", value.c_str());
+                return 2;
+            }
+            std::fputs("t,rpm,kmh,coolant_c,oil_c,metal_c,radiator_c,thermostat,fan,radiator_kw,cold_friction_nm,cold_idle_rpm,enrichment,trip_l,wall_w,torque_nm\n", g_thermal);
         }
         else if (arg == "--kmh") kmh = std::atof(value.c_str());
         else if (arg == "--walk") walk = value != "0";
@@ -596,14 +862,14 @@ int main(int argc, char** argv) {
             else if (arg == "--redline") config.redlineRpm = std::atoi(value.c_str());
             else if (arg == "--boost") config.boostBar = static_cast<float>(std::atof(value.c_str()));
             else if (arg == "--turbo") config.turboSize = pick<TurboSize>(value, {{"small", TurboSize::Small}, {"medium", TurboSize::Medium}, {"large", TurboSize::Large}});
-            else if (arg == "--layout") config.layout = pick<Layout>(value, {{"inline", Layout::Inline}, {"v", Layout::V}, {"cross_plane", Layout::CrossPlane}, {"boxer", Layout::Boxer}, {"rotary", Layout::Rotary}});
-            else if (arg == "--exhaust") { config.exhaust = pick<Exhaust>(value, {{"stock", Exhaust::Stock}, {"sport", Exhaust::Sport}, {"straight", Exhaust::Straight}, {"no_muffler", Exhaust::MufflerDelete}, {"no_resonator", Exhaust::ResonatorDelete}, {"quiet", Exhaust::Quiet}}); exhaustChoice = config.exhaust; }
+            else if (arg == "--layout") { config.layout = pick<Layout>(value, {{"inline", Layout::Inline}, {"v", Layout::V}, {"cross_plane", Layout::CrossPlane}, {"boxer", Layout::Boxer}, {"rotary", Layout::Rotary}, {"vr", Layout::Vr}, {"w", Layout::W}}); layoutChoice = config.layout; }
+            else if (arg == "--exhaust") { config.exhaust = pick<Exhaust>(value, {{"stock", Exhaust::Stock}, {"sport", Exhaust::Sport}, {"straight", Exhaust::Straight}, {"no_muffler", Exhaust::MufflerDelete}, {"no_resonator", Exhaust::ResonatorDelete}, {"quiet", Exhaust::Quiet}, {"expansion", Exhaust::Expansion}}); exhaustChoice = config.exhaust; }
             else if (arg == "--routing") { config.routing = pick<ExhaustRouting>(value, {{"single", ExhaustRouting::Single}, {"dual", ExhaustRouting::Dual}, {"h", ExhaustRouting::HPipe}, {"x", ExhaustRouting::XPipe}}); routing = config.routing; }
             else if (arg == "--aspiration") config.aspiration = pick<Aspiration>(value, {{"natural", Aspiration::Natural}, {"turbo", Aspiration::Turbo}, {"supercharger", Aspiration::Supercharger}});
             else if (arg == "--supercharger") superchargerChoice = pick<SuperchargerKind>(value, {{"roots", SuperchargerKind::Roots}, {"twin_screw", SuperchargerKind::TwinScrew}, {"centrifugal", SuperchargerKind::Centrifugal}});
             else if (arg == "--antilag") antiLagChoice = pick<AntiLag>(value, {{"off", AntiLag::Off}, {"retard", AntiLag::Retard}, {"air", AntiLag::AirInjection}, {"cut", AntiLag::CylinderCut}});
             else if (arg == "--turbo-pipe") turboPipeChoice = std::atoi(value.c_str());
-            else if (arg == "--cam") camshaftChoice = pick<Camshaft>(value, {{"dohc", Camshaft::Dohc}, {"sohc", Camshaft::Sohc}});
+            else if (arg == "--cam") camshaftChoice = pick<Camshaft>(value, {{"dohc", Camshaft::Dohc}, {"sohc", Camshaft::Sohc}, {"ohv", Camshaft::Ohv}});
             else if (arg == "--filter") airFilterChoice = pick<AirFilter>(value, {{"stock", AirFilter::Stock}, {"panel", AirFilter::Panel}, {"cone", AirFilter::Cone}, {"stacks", AirFilter::Stacks}});
             else if (arg == "--stroke") {
                 strokeChoice = std::atof(value.c_str());
@@ -612,7 +878,34 @@ int main(int argc, char** argv) {
                     return 2;
                 }
             }
-            else if (arg == "--carb") fuelSystemChoice = pick<FuelSystem>(value, {{"injection", FuelSystem::Injection}, {"single", FuelSystem::Carburetor}, {"multi", FuelSystem::MultiCarb}});
+            else if (arg == "--carb" || arg == "--fuel-system") fuelSystemChoice = pick<FuelSystem>(value, {{"injection", FuelSystem::Injection}, {"single", FuelSystem::Carburetor}, {"multi", FuelSystem::MultiCarb}, {"direct", FuelSystem::Direct}});
+            // Les réglages du socle moteur, dans l'ordre d'EngineConfig : une ligne par réglage.
+            else if (arg == "--ambient") later(&EngineConfig::ambientC, number(value));
+            else if (arg == "--altitude") later(&EngineConfig::altitudeM, whole(value));
+            else if (arg == "--start") later(&EngineConfig::startTemp, pick<StartTemp>(value, {{"warm", StartTemp::Warm}, {"cold", StartTemp::Cold}}));
+            else if (arg == "--compression") later(&EngineConfig::compressionRatio, number(value));
+            else if (arg == "--grade") later(&EngineConfig::fuelGrade, pick<FuelGrade>(value, {{"ron95", FuelGrade::Ron95}, {"ron98", FuelGrade::Ron98}, {"race102", FuelGrade::Race102}, {"e85", FuelGrade::E85}, {"methanol", FuelGrade::Methanol}}));
+            else if (arg == "--advance") later(&EngineConfig::ignitionOffsetDeg, whole(value));
+            else if (arg == "--lambda") later(&EngineConfig::fullLoadLambda, number(value));
+            else if (arg == "--limiter") later(&EngineConfig::revLimiter, pick<RevLimiter>(value, {{"stock", RevLimiter::Stock}, {"soft", RevLimiter::Soft}, {"ignition_cut", RevLimiter::IgnitionCut}}));
+            else if (arg == "--launch") later(&EngineConfig::launchRpm, whole(value));
+            else if (arg == "--flat-shift") later(&EngineConfig::flatShift, value != "0");
+            else if (arg == "--traction") later(&EngineConfig::tractionControl, pick<TractionControl>(value, {{"off", TractionControl::Off}, {"sport", TractionControl::Sport}, {"full", TractionControl::Full}}));
+            else if (arg == "--diesel-injection") later(&EngineConfig::dieselInjection, pick<DieselInjection>(value, {{"mechanical", DieselInjection::Mechanical}, {"common_rail", DieselInjection::CommonRail}}));
+            else if (arg == "--egr") later(&EngineConfig::egr, value != "0");
+            else if (arg == "--dpf") later(&EngineConfig::particulateFilter, value != "0");
+            else if (arg == "--cam-duration") later(&EngineConfig::camDurationDeg, whole(value));
+            else if (arg == "--cam-lift") later(&EngineConfig::camLiftMm, number(value));
+            else if (arg == "--lsa") later(&EngineConfig::lobeSeparationDeg, whole(value));
+            else if (arg == "--vvt") later(&EngineConfig::valveTiming, pick<ValveTiming>(value, {{"fixed", ValveTiming::Fixed}, {"phased", ValveTiming::Phased}, {"two_step", ValveTiming::TwoStep}, {"phased_two_step", ValveTiming::PhasedTwoStep}}));
+            else if (arg == "--springs") later(&EngineConfig::valveSprings, pick<ValveSprings>(value, {{"stock", ValveSprings::Stock}, {"stiff", ValveSprings::Stiff}}));
+            else if (arg == "--turbo-layout") later(&EngineConfig::turboLayout, pick<TurboLayout>(value, {{"single", TurboLayout::Single}, {"twin_parallel", TurboLayout::TwinParallel}, {"twin_sequential", TurboLayout::TwinSequential}, {"twincharger", TurboLayout::Twincharger}}));
+            else if (arg == "--vgt") later(&EngineConfig::variableGeometry, value != "0");
+            else if (arg == "--boost-control") later(&EngineConfig::boostControl, pick<BoostControl>(value, {{"spring", BoostControl::Spring}, {"electronic", BoostControl::Electronic}, {"by_gear", BoostControl::ByGear}}));
+            else if (arg == "--intercooler") later(&EngineConfig::intercooler, pick<Intercooler>(value, {{"air", Intercooler::AirToAir}, {"water", Intercooler::AirToWater}, {"none", Intercooler::None}}));
+            else if (arg == "--water") later(&EngineConfig::waterInjection, value != "0");
+            else if (arg == "--nitrous") later(&EngineConfig::nitrousKw, whole(value));
+            else if (arg == "--cycle") later(&EngineConfig::cycle, pick<EngineCycle>(value, {{"four_stroke", EngineCycle::FourStroke}, {"two_stroke", EngineCycle::TwoStroke}}));
             else if (arg == "--fuel") config.fuel = pick<Fuel>(value, {{"petrol", Fuel::Petrol}, {"diesel", Fuel::Diesel}});
             else if (arg == "--pops") config.pops = pick<PopLevel>(value, {{"off", PopLevel::Off}, {"light", PopLevel::Light}, {"strong", PopLevel::Strong}});
             else if (arg == "--release") config.turboRelease = pick<TurboRelease>(value, {{"dump_valve", TurboRelease::DumpValve}, {"flutter", TurboRelease::Flutter}});
@@ -647,6 +940,16 @@ int main(int argc, char** argv) {
     if (camshaftChoice) powertrain.engine.camshaft = *camshaftChoice;
     if (airFilterChoice) powertrain.engine.airFilter = *airFilterChoice;
     if (fuelSystemChoice) powertrain.engine.fuelSystem = *fuelSystemChoice;
+    // La disposition aussi : sur les cylindres du préréglage, qu'elle ne change pas. Un VR ou un W qui n'existe pas à ce nombre se construit en V.
+    if (layoutChoice) powertrain.engine.layout = *layoutChoice;
+    for (const auto& apply : tuning) apply(powertrain.engine);
+    if (powertrain.engine.cylinders < 1 || powertrain.engine.cylinders > kMaxCylinders) {
+        std::fprintf(stderr, "Expected 1 to %d cylinders: %d\n", kMaxCylinders, powertrain.engine.cylinders);
+        return 2;
+    }
+    if (!powertrain.electric && builtLayout(powertrain.engine.layout, powertrain.engine.cylinders) != powertrain.engine.layout) {
+        std::fprintf(stderr, "--layout: no such engine with %d cylinders, built as v (vr: 5 or 6, w: 8, 12 or 16, more than 12: v or w)\n", powertrain.engine.cylinders);
+    }
     // À la fin : la course se lit sur l'alésage et les cylindres retenus, ceux du préréglage s'il y en a un.
     if (strokeChoice) {
         // Un rotatif n'a pas de course : l'option ne dit rien de sa cylindrée.
@@ -663,8 +966,12 @@ int main(int argc, char** argv) {
         }
     }
     if (customBox) powertrain.gearbox = box;
+    // Un deux-temps balayé par son carter n'a ni diesel ni suralimentation : ce qui n'existe pas revient à ce qui existe.
+    if (coherentTwoStroke(powertrain.engine)) std::fprintf(stderr, "two-stroke: crankcase-scavenged, petrol and naturally aspirated only (at most %d cylinders)\n", powertrain.engine.pistons());
     const EngineProfile profile = powertrain.profile();
     DrivingModel model(powertrain);
+    g_warmUp.active = !powertrain.electric;
+    g_warmUp.cold = powertrain.engine.startTemp == StartTemp::Cold;
     model.setShiftMode(shiftMode);
     model.setDriveScenario(driveScenario);
 
@@ -680,6 +987,8 @@ int main(int argc, char** argv) {
         else if (scenario == "cruise") seconds = 180;
         else if (scenario == "wltc") seconds = 1800;
         else if (scenario == "tipin") seconds = 16;
+        else if (scenario == "launch_control") seconds = 16;
+        else if (scenario == "soak") seconds = 170;
     }
     EngineSound sound(rate);
     sound.setProfile(profile);
@@ -706,6 +1015,8 @@ int main(int argc, char** argv) {
         blips(sound, model, output, rate);
     } else if (scenario == "launch") {
         launch(sound, model, output, rate);
+    } else if (scenario == "launch_control") {
+        launchControl(sound, model, output, rate);
     } else if (scenario == "start") {
         start(sound, model, output, rate);
     } else if (scenario == "passby") {
@@ -729,7 +1040,9 @@ int main(int argc, char** argv) {
     } else if (scenario == "wltc") {
         wltc(sound, model, output, rate, driver);
     } else if (scenario == "tipin") {
-        tipIn(sound, model, output, rate, rpm);
+        tipIn(sound, model, output, rate, rpm, wheelRadiusM(powertrain.car));
+    } else if (scenario == "soak") {
+        soak(sound, model, output, rate);
     } else if (scenario == "steady") {
         sound.setTargetRpm(rpm);
         output.render(sound, 0, static_cast<int>(output.frames()));
@@ -741,6 +1054,8 @@ int main(int argc, char** argv) {
     const double measured = static_cast<double>(seconds) - (scenario == "cruise" ? kCruiseSettleS : (scenario == "idle" ? 5.0 : 0.0));
     if (silent) {
         if (showFuel) printFuel(model, powertrain, measured, driver.restarts);
+        if (showKnock) printKnock(powertrain, sound);
+        if (showValves) printValves(powertrain);
         return 0;
     }
     if (out == "-") {
@@ -752,10 +1067,14 @@ int main(int argc, char** argv) {
         }
         std::printf("%08x\n", hash);
         if (showFuel) printFuel(model, powertrain, measured, driver.restarts);
+        if (showKnock) printKnock(powertrain, sound);
+        if (showValves) printValves(powertrain);
         return 0;
     }
     writeWav(out, pcm, rate, channels);
     if (showFuel) printFuel(model, powertrain, measured, driver.restarts);
+    if (showKnock) printKnock(powertrain, sound);
+    if (showValves) printValves(powertrain);
     if (showDb) std::printf("LAeq %.1f dB(A), LAFmax %.1f dB(A)\n", 10.0 * std::log10(output.energy / static_cast<double>(std::max(output.reads, 1L))), output.loudest);
     return 0;
 }

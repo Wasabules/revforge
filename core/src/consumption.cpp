@@ -2,7 +2,11 @@
 
 #include <algorithm>
 
+#include "revforge/atmosphere.hpp"
+#include "revforge/combustion.hpp"
+#include "revforge/ecu.hpp"
 #include "revforge/powertrain.hpp"
+#include "revforge/two_stroke.hpp"
 
 namespace revforge {
 
@@ -35,6 +39,10 @@ constexpr double kEnrichAtAnyPower = 0.4;
 // Air par litre de cylindrée à la pression atmosphérique, et remplissage au pic de couple.
 constexpr double kAirGPerL = 1.2;
 constexpr double kPeakVolumetric = 0.9;
+// Le point nominal, pour l'air du jour : c'est là que le compartiment moteur chauffe ce qu'aspire un filtre sous le capot.
+constexpr double kRatedShare = 0.88;
+// L'excès d'air d'un diesel à pleine charge : l'oxygène que la recirculation ramène dépend de lui.
+constexpr double kSmokeLambda = 1.43;
 
 // Huile. Évaporation et projection sur la chemise, qui suivent le régime, et passage aux segments, qui suit la charge.
 // Un ordre de grandeur, à un facteur trois près : voir docs/modele.md.
@@ -60,24 +68,66 @@ double clamp(double v, double low, double high) { return v < low ? low : (v > hi
 
 const FuelSpec& fuelSpecOf(Fuel fuel) { return fuel == Fuel::Diesel ? kDiesel : kPetrol; }
 
+const FuelSpec& fuelSpecOf(const EngineConfig& engine) {
+    if (engine.burnsDiesel()) return kDiesel;
+    // Le Super 98 et l'essence de course ont les chiffres du 95 : seul leur octane change. L'E85 et le méthanol, ceux de combustion.cpp.
+    const auto from = [](FuelGrade grade) {
+        const FuelProperties& f = fuelProperties(grade);
+        return FuelSpec{f.densityKgPerL, f.lowerHeatingJPerG, f.co2GPerG, f.stoichiometricAfr};
+    };
+    static const FuelSpec ethanol = from(FuelGrade::E85);
+    static const FuelSpec methanol = from(FuelGrade::Methanol);
+    switch (engine.fuelGrade) {
+        case FuelGrade::E85: return ethanol;
+        case FuelGrade::Methanol: return methanol;
+        default: break;
+    }
+    return kPetrol;
+}
+
 void ConsumptionModel::configure(const Powertrain& p) {
     electric_ = p.electric;
     diesel_ = p.engine.burnsDiesel();
     turbo_ = p.engine.aspiration == Aspiration::Turbo;
     // Suralimenté, quelle que soit la façon : moins de compression, et plus d'enrichissement à pleine charge. L'huile des paliers, elle, ne concerne que le turbo.
     const bool boosted = p.engine.aspiration != Aspiration::Natural;
-    fuel_ = &fuelSpecOf(diesel_ ? Fuel::Diesel : Fuel::Petrol);
+    fuel_ = &fuelSpecOf(p.engine);
     // Le volume avalé en deux tours d'arbre : c'est lui qui remplit, et que le papillon étrangle.
     litres_ = p.engine.sweptCcPerTwoTurns() / 1000.0;
     oilPerKrpm_ = isRotary(p.engine) ? kOilMeteredGPerHPerLitreKrpm * static_cast<double>(p.engine.displacementCc) / 1000.0 : kOilGPerHPerLitreKrpm * litres_;
     redline_ = redlineRpmOf(p);
     baseEfficiency_ = diesel_ ? kEfficiencyDiesel : (boosted ? kEfficiencyPetrolTurbo : kEfficiencyPetrol);
     if (isRotary(p.engine)) baseEfficiency_ *= rotaryEfficiencyShare(p.engine.aspiration);
+    // Un autre taux de compression : le rendement que le couple a déjà reçu, pour que le carburant par kilogramme d'air ne change pas.
+    if (!electric_ && p.engine.compressionRatio > 0.0f) baseEfficiency_ *= compressionEfficiencyShare(p.engine);
+    // Un deux-temps ne comprime que ce que la lumière d'échappement enferme : le même rendement de cycle que son couple.
+    twoStroke_ = !p.electric && isTwoStroke(p.engine);
+    injectedInCylinder_ = p.engine.fuelSystem == FuelSystem::Direct;
+    engine_ = p.engine;
+    if (twoStroke_) baseEfficiency_ *= twoStrokeEfficiencyShare(p.engine);
     fullRichness_ = diesel_ ? 1.0 : 1.0 / (boosted ? kFullLoadLambdaTurbo : kFullLoadLambda);
-    throttlingNm_ = diesel_ ? 0.0 : kThrottlingBar * kAtmosphere * litres_ * 1e-3 / (4.0 * kPi);
+    // Le papillon fermé retient au plus l'atmosphère du jour : en altitude, moins de pompage à charge partielle.
+    throttlingNm_ = diesel_ ? 0.0 : kThrottlingBar * kAtmosphere * ambientAirOf(p.engine).pressureRatio * litres_ * 1e-3 / (4.0 * kPi);
+    // La carte du calculateur : la richesse réglée, et ce que l'avance et la richesse font du carburant (ecu.cpp).
+    ecuMap_ = !electric_ && ecuMapTuned(p.engine);
+    sparkEfficiency_ = 1.0;
+    lambdaRatio_ = 1.0;
+    if (ecuMap_) {
+        fullRichness_ = 1.0 / fullLoadLambdaOf(p.engine);
+        // Sur un quatre-temps à étincelle, le décalage d'avance passe par la carte du cliquetis, après l'air (`stepKnock`) : le couple
+        // que l'air paie ici ne l'a pas encore vu, et le carburant suit cet air. Le compter aussi au rendement le paierait deux fois.
+        sparkEfficiency_ = ecuAdvanceInKnockMap(p.engine) ? 1.0 : sparkTorqueShare(mapRetardDeg(p.engine));
+        lambdaRatio_ = lambdaFullLoadRatio(p.engine);
+    }
     peakNaturalNm_ = 1.0;
     peakGrossW_ = 1.0;
+    ambientAirShare_ = 1.0;
+    commonRail_ = !electric_ && commonRailed(p.engine);
+    egr_ = !electric_ && recirculated(p.engine);
+    if (commonRail_) dieselPoint_ = dieselPointOf(p, 0.6 * redline_, 1.0, 0.0);
     if (electric_) return;
+    // Un litre de cylindrée avale l'air du jour : les courbes ci-dessous en sont déjà diminuées, pas leur rapport.
+    ambientAirShare_ = ambientChargeShare(p, kRatedShare * redline_, 0.0);
     // Calculer ce qui vaut pour tout le régime une fois par réglage : `fullLoadTorqueNm` est trop lent pour chaque pas.
     for (int i = 0; i < kCurvePoints; ++i) {
         const double rpm = redline_ * i / (kCurvePoints - 1);
@@ -87,7 +137,7 @@ void ConsumptionModel::configure(const Powertrain& p) {
         const double fullGross = fullLoadTorqueNm(p, rpm, steadyBoost(p, rpm)) + frictionTorqueNm(p, rpm);
         peakGrossW_ = std::max(peakGrossW_, fullGross * rpm * 2.0 * kPi / 60.0);
     }
-    carburetor_ = fuelSystemOf(p.engine) != FuelSystem::Injection;
+    carburetor_ = hasCarburetor(p.engine);
     if (!carburetor_) return;
     carbSpec_ = carburetorSpecOf(p.engine);
     // Le remplissage de 0,9 vaut pour le moteur à injection : le venturi retire ce qu'il retire au couple.
@@ -122,6 +172,14 @@ double ConsumptionModel::fuelGps(double rpm, double brakeNm, double frictionNm, 
     // Le pompage dépend de la pression du collecteur, elle-même de ce travail : au-dessus de la pleine charge
     // atmosphérique, plus de papillon ; en dessous, une droite, donc une solution directe.
     double gross = onPistons + throttlingNm_ > natural ? onPistons : (onPistons + throttlingNm_) / (1.0 + throttlingNm_ / natural);
+    // La recirculation : pour le même air frais, le collecteur est plus plein de 1/(1 − x). Le papillon s'ouvre, le pompage baisse.
+    double egrShare = 0.0;
+    if (egr_ && gross > 0.0) {
+        egrShare = egrRate(diesel_, std::min(gross / natural, 1.0), rpm, redline_);
+        const double diluted = natural * (1.0 - egrShare);
+        if (!diesel_ && onPistons + throttlingNm_ <= diluted) gross = (onPistons + throttlingNm_) / (1.0 + throttlingNm_ / diluted);
+        else if (!diesel_) gross = onPistons;
+    }
     // Pas de coupure sur un carburateur : le circuit de ralenti débite tant que le moteur aspire.
     const double idleCircuit = carburetor_ ? idleCircuitGps_ * std::min(rpm / idleRpm_, 1.0) : 0.0;
     // Le moteur retient autant qu'un moteur entraîné : rien ne brûle.
@@ -133,20 +191,46 @@ double ConsumptionModel::fuelGps(double rpm, double brakeNm, double frictionNm, 
 
     const double slow = 1.0 - std::min(rpm / kHeatLossBelowRpm, 1.0);
     const double lowFill = (1.0 - fill) * (1.0 - fill);
-    const double efficiency = baseEfficiency_ * (1.0 - kHeatLossShare * slow * slow) * (1.0 - (diesel_ ? kLowFillLossDiesel : kLowFillLossPetrol) * lowFill);
+    double efficiency = baseEfficiency_ * (1.0 - kHeatLossShare * slow * slow) * (1.0 - (diesel_ ? kLowFillLossDiesel : kLowFillLossPetrol) * lowFill);
+    // Le couple qui arrive ici suit déjà la carte : l'étincelle décalée tire moins de chaque gramme, la richesse plus ou moins
+    // de chaque gramme d'air. C'est l'air, donc le carburant, qui ne change pas.
+    if (ecuMap_) {
+        const double enriched = clamp((gross / std::max(fullGrossNm, 1.0) - kEnrichFromShare) / (1.0 - kEnrichFromShare), 0.0, 1.0);
+        efficiency *= sparkEfficiency_ * (1.0 + (lambdaRatio_ - 1.0) * enriched);
+    }
+    // Une rampe commune brûle plus vite, au même point : ce que gagne le dégagement de chaleur, face à la pompe mécanique.
+    if (commonRail_) {
+        DieselPoint point = dieselPoint_;
+        point.rpm = rpm;
+        point.load = fill;
+        DieselPoint mechanical = point;
+        mechanical.commonRail = false;
+        efficiency *= dieselBurn(point).efficiency / dieselBurn(mechanical).efficiency;
+    }
+    // Une flamme diluée perd moins aux parois, mais brûle plus lentement.
+    if (egrShare > 0.0) efficiency *= egrEfficiencyShare(diesel_, egrShare, diesel_ ? kSmokeLambda / std::max(fill, 0.05) : 1.0);
 
     const double omega = rpm * 2.0 * kPi / 60.0;
     double richness = 1.0;
+    // Un deux-temps : une part du mélange file droit à l'échappement, et une charge qui rate repart en partie au balayage suivant.
+    // Injectée dans le cylindre, l'essence arrive après la fermeture de la lumière : seuls les ratés coûtent.
+    double lost = 1.0;
+    if (twoStroke_) {
+        const TwoStrokePartLoad part = twoStrokePartLoad(engine_, rpm, pressure);
+        lost = (injectedInCylinder_ ? 1.0 : part.trapping) * part.burnt;
+    }
     if (carburetor_) {
         const double mixture = carburetorRichness(carbSpec_, gross / fullGross, rpm);
-        return std::max(gross * omega / efficiency * mixture / fuel_->lowerHeatingJPerG, idleCircuit);
+        return std::max(gross * omega / efficiency * mixture / fuel_->lowerHeatingJPerG / lost, idleCircuit);
     }
-    if (fullRichness_ > 1.0) {
+    // Une carte réglée pauvre à pleine charge (λ au-dessus de 1) suit la même rampe, dans l'autre sens.
+    if (fullRichness_ != 1.0) {
         const double nearFull = clamp((gross / fullGross - kEnrichFromShare) / (1.0 - kEnrichFromShare), 0.0, 1.0);
         const double heat = clamp(gross * omega / peakGrossW_, 0.0, 1.0);
         richness = 1.0 + (fullRichness_ - 1.0) * nearFull * (kEnrichAtAnyPower + (1.0 - kEnrichAtAnyPower) * heat);
     }
-    return gross * omega / efficiency * richness / fuel_->lowerHeatingJPerG;
+    const double burnt = gross * omega / efficiency * richness / fuel_->lowerHeatingJPerG;
+    return twoStroke_ ? burnt / lost : burnt;
 }
 
 double ConsumptionModel::airGps(double rpm, double load, double fullGrossNm) const {
@@ -154,7 +238,7 @@ double ConsumptionModel::airGps(double rpm, double load, double fullGrossNm) con
     // Le couple à pleine charge suit l'air que le moteur avale : sa courbe donne le remplissage, et son rapport à la
     // courbe atmosphérique la pression du turbo. Un diesel n'est pas étranglé : il avale tout, quelle que soit la charge.
     const double admitted = (diesel_ ? 1.0 : clamp(load, 0.0, 1.0)) * std::max(fullGrossNm, 0.0) / peakNaturalNm_;
-    const double air = kAirGPerL * litres_ * rpm / 120.0 * kPeakVolumetric * admitted;
+    const double air = kAirGPerL * ambientAirShare_ * litres_ * rpm / 120.0 * kPeakVolumetric * admitted;
     return carburetor_ ? air * carbAirShare_ : air;
 }
 
@@ -163,6 +247,11 @@ double ConsumptionModel::oilGps(double rpm, double brakeNm) const {
     const double kw = std::max(brakeNm, 0.0) * rpm * 2.0 * kPi / 60.0 / 1000.0;
     const double perHour = oilPerKrpm_ * rpm / 1000.0 + kOilGPerKwh * kw;
     return perHour * (turbo_ ? kOilTurbo : 1.0) * (diesel_ ? kOilDiesel : 1.0) / 3600.0;
+}
+
+double ConsumptionModel::premixOilGps(double fuelGps) const {
+    // Un volume d'huile pour `kPremixRatio` d'essence : en masse, le rapport des densités.
+    return fuelGps / kPremixRatio * kOilDensityKgPerL / fuel_->densityKgPerL;
 }
 
 double ConsumptionModel::batteryW(double motorNm, double omega) const {
@@ -191,7 +280,11 @@ void ConsumptionMeter::step(const ConsumptionInput& in, double dt) {
     }
     batteryW_ = 0.0;
     fuelGps_ = in.burning ? model_.fuelGps(in.rpm, in.brakeNm, in.frictionNm, in.fullGrossNm) : 0.0;
+    // Moteur froid : ce que le calculateur ou le starter ajoute ne donne aucun couple, mais il se paie.
+    if (in.enrichment > 0.0) fuelGps_ *= 1.0 + in.enrichment;
     if (in.pumpGps > 0.0 && in.burning) fuelGps_ += in.pumpGps;
+    // Le calculateur coupe l'injection de certains cylindres : leur air passe, leur carburant non.
+    if (in.fuelShare != 1.0) fuelGps_ *= in.fuelShare;
     // L'air ne compte que là où quelque chose brûle : c'est ce qu'on compare au carburant.
     airGps_ = fuelGps_ > 0.0 ? model_.airGps(in.rpm, in.load, in.fullGrossNm) : 0.0;
     // Tant que le moteur tourne, l'huile passe, même pied levé : c'est la seule chose qui ne se coupe pas.
@@ -200,7 +293,8 @@ void ConsumptionMeter::step(const ConsumptionInput& in, double dt) {
         fuelGps_ += in.extraFuelGps;
         airGps_ += in.extraAirGps;
     }
-    oilGps_ = model_.oilGps(in.rpm, in.burning ? in.brakeNm : 0.0);
+    // Le deux-temps brûle son huile avec son essence : sans mélange qui passe, pas d'huile non plus.
+    oilGps_ = model_.twoStroke() ? model_.premixOilGps(fuelGps_) : model_.oilGps(in.rpm, in.burning ? in.brakeNm : 0.0);
     fuelG_ += fuelGps_ * dt;
     airG_ += airGps_ * dt;
     oilG_ += oilGps_ * dt;
@@ -256,16 +350,38 @@ double ConsumptionMeter::lambdaNow() const {
     return airGps_ / fuelGps_ / model_.fuel().stoichiometricAfr;
 }
 
+namespace {
+
+/**
+ * Le décalage d'avance d'un quatre-temps à étincelle passe par la carte du cliquetis, après l'air : à ce couple au frein, l'air (donc
+ * le carburant) est celui d'un couple plus grand, de la part que l'étincelle décalée n'a pas tirée. 1 sans décalage.
+ */
+double advanceShareOf(const Powertrain& p, double rpm) {
+    if (p.electric || !ecuAdvanceInKnockMap(p.engine)) return 1.0;
+    const KnockMap* map = knockMapOf(p);
+    return map != nullptr ? std::max(map->steadyTorqueShare(rpm), 0.05) : 1.0;
+}
+
+}  // namespace
+
 double brakeSpecificFuel(const Powertrain& p, double rpm, double brakeNm) {
     if (p.electric || brakeNm <= 0.0) return 0.0;
     ConsumptionModel model;
     model.configure(p);
     const double friction = frictionTorqueNm(p, rpm);
+    // Le carburant suit l'air : le couple que cet air donnerait à l'avance d'origine. La puissance, elle, reste celle demandée.
+    const double airBrakeNm = (brakeNm + friction) / advanceShareOf(p, rpm) - friction;
     const double fullGross = fullLoadTorqueNm(p, rpm, steadyBoost(p, rpm)) + friction;
     const double kw = brakeNm * rpm * 2.0 * kPi / 60.0 / 1000.0;
     // Le compresseur prend sa part aux pistons avant le frein : à cette charge, soupape ouverte ou non.
-    const double charger = p.engine.aspiration == Aspiration::Supercharger ? superchargerDriveNm(p, rpm, (brakeNm + friction + superchargerDriveNm(p, rpm, 1.0)) / fullGross) : 0.0;
-    return model.fuelGps(rpm, brakeNm, friction + charger, fullGross) * 3600.0 / kw;
+    double charger = p.engine.aspiration == Aspiration::Supercharger ? superchargerDriveNm(p, rpm, (airBrakeNm + friction + superchargerDriveNm(p, rpm, 1.0)) / fullGross) : 0.0;
+    // La pompe haute pression et le filtre à particules, à sa suie moyenne : la combustion les paie aussi.
+    if (directInjected(p.engine) || particulateFiltered(p.engine)) {
+        const double share = std::min((airBrakeNm + friction) / fullGross, 1.0);
+        const double boost = steadyBoost(p, rpm);
+        charger += directPumpTorqueNm(p, rpm, share, boost) + filterPumpingTorqueNm(p, rpm, share, boost, meanSootG(p));
+    }
+    return model.fuelGps(rpm, airBrakeNm, friction + charger, fullGross) * 3600.0 / kw;
 }
 
 FuelMapSummary fuelMapSummary(const Powertrain& p) {
@@ -280,15 +396,19 @@ FuelMapSummary fuelMapSummary(const Powertrain& p) {
         const double friction = frictionTorqueNm(p, rpm);
         const double full = fullLoadTorqueNm(p, rpm, steadyBoost(p, rpm));
         const double kw = rpm * 2.0 * kPi / 60.0 / 1000.0;
+        // `full` suit l'air : le décalage d'avance de la carte du cliquetis n'y est pas, il retire sa part au frein, pas à l'air.
+        const double advance = advanceShareOf(p, rpm);
         for (double share = 0.05; share <= 1.0001; share += 0.05) {
             const double charger = p.engine.aspiration == Aspiration::Supercharger ? superchargerDriveNm(p, rpm, share) : 0.0;
             const double brake = share * full - charger;
             if (brake <= 0.0) continue;
-            const double gPerKwh = model.fuelGps(rpm, brake, friction + charger, full + friction) * 3600.0 / (brake * kw);
+            const double delivered = advance == 1.0 ? brake : (brake + charger + friction) * advance - friction - charger;
+            if (delivered <= 0.0) continue;
+            const double gPerKwh = model.fuelGps(rpm, brake, friction + charger, full + friction) * 3600.0 / (delivered * kw);
             if (out.bestGPerKwh == 0.0 || gPerKwh < out.bestGPerKwh) {
                 out.bestGPerKwh = gPerKwh;
                 out.bestRpm = rpm;
-                out.bestBmepBar = brake / perBar;
+                out.bestBmepBar = delivered / perBar;
             }
         }
     }

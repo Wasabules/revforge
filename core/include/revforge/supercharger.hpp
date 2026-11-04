@@ -1,5 +1,6 @@
 #pragma once
 
+#include "revforge/charge_air.hpp"
 #include "revforge/engine_config.hpp"
 
 namespace revforge {
@@ -39,6 +40,10 @@ struct SuperchargerSpec {
     double bypassArea = 2e-3;        // soupape de dérivation grande ouverte (m²)
     AirFilter inletFilter = AirFilter::Stock;  // ce qui fixe la température et la perte à l'entrée du compresseur
     EnginePlacement inletPlacement = EnginePlacement::Front;
+    /** L'air du jour, où il aspire (voir `TurboSpec`). Le dimensionnement est fait dans l'air de référence. */
+    double ambientPa = 101325.0;
+    double ambientK = 293.0;
+    ChargeCoolerSpec cooler;         // l'échangeur : celui d'origine, sauf réglage (charge_air.cpp)
 };
 
 /** Ce qui change d'une milliseconde à l'autre, en unités physiques. */
@@ -83,6 +88,9 @@ struct SuperchargerInput {
     double rpm = 0.0;
     double fill = 0.0;       // remplissage 0-1 : le papillon, ou le carburant d'un diesel
     double breathing = 1.0;  // respiration du moteur à ce régime, 1 au pic de couple
+    double cooledK = 0.0;    // la sortie de l'échangeur, quand l'air de charge la calcule (air-eau, aucun). 0 : l'air-air.
+    /** La vitesse de la voiture (m/s), dont l'air traverse le faisceau air-air. Par défaut, la soufflerie du banc de la fiche. */
+    double coolingAirMs = kChargeReferenceSpeedMs;
 };
 
 /**
@@ -103,11 +111,17 @@ public:
     /** Couple pris au vilebrequin (Nm). */
     double driveNm(double rpm) const;
     SuperchargerDrive drive() const;
+    /** Le faisceau de l'air-air (finitions). */
+    const AirCoolerCore& cooler() const { return core_; }
 
 private:
     SuperchargerSpec spec_;
     SuperchargerState state_;
+    AirCoolerCore core_;
 };
+
+/** L'échangeur à l'équilibre au banc : l'air-air ε-NTU devant la soufflerie, ou celui du réglage (charge_air.cpp). */
+double superchargerCoolerOutletK(const SuperchargerSpec& spec, double hotK, double flow);
 
 /** La part du régime maximal où un compresseur volumétrique atteint la pression demandée : c'est là qu'on le dimensionne. */
 inline constexpr double kVolumetricSizingShare = 0.4;
@@ -120,8 +134,14 @@ SuperchargerSpec superchargerSpecFor(const EngineConfig& engine, double breathin
 SuperchargerSteady superchargerSteady(const SuperchargerSpec& spec, double rpm, double breathing, double fill = 1.0);
 /**
  * L'air admis, rapporté à celui de la pression atmosphérique : p/T, à cette pression et à ce régime. C'est ce qui fait le
- * couple : un air plus chaud pèse moins, d'où l'écart entre un Roots et une vis à même pression.
+ * couple : un air plus chaud pèse moins, d'où l'écart entre un Roots et une vis à même pression. Toujours dans l'air de
+ * référence, quel que soit celui de `spec`.
  */
 double superchargerAirShare(const SuperchargerSpec& spec, double rpm, double breathing, double boost);
+/**
+ * L'air piégé dans l'air du jour de `spec`, rapporté à celui de l'air de référence, à même part `boost` de la pression
+ * demandée : la charge part de l'atmosphère du jour, puis le compresseur, l'échangeur et les parois. Exactement 1 dans l'air de référence.
+ */
+double superchargerAmbientChargeShare(const SuperchargerSpec& spec, double rpm, double breathing, double boost);
 
 }  // namespace revforge

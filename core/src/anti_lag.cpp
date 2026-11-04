@@ -43,7 +43,6 @@ constexpr double kAirAreaAtRated = 1.1e-3;  // m² par kg/s de débit nominal
 constexpr double kAirDischarge = 0.65;
 constexpr double kAirValveS = 0.03;
 constexpr double kAirR = 287.0;
-constexpr double kAtmosphere = 101325.0;
 
 double squared(double v) { return v * v; }
 
@@ -100,7 +99,7 @@ void TurboCharger::antiLagExhaust(const AntiLagExhaust& in, double& gas, double&
         const double before = in.engineAir * (1.0 + in.fuelPerAir);
         const auto wanted = [&](double flow) {
             const double through = before + flow;
-            const double outPa = kAtmosphere + spec_.lineDrop * through * through;
+            const double outPa = spec_.ambientPa + spec_.lineDrop * through * through;
             const double inPa = std::sqrt(outPa * outPa + through * through * s.turbineInK / (passage * passage));
             const double across = s.chargePa - inPa;
             return across > 0.0 ? unit * across / std::sqrt(across + 500.0) : 0.0;

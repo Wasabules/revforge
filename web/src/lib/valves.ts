@@ -33,9 +33,13 @@ function valveArea(headMm: number, liftMm: number): number {
 
 const quarterValve = (boreMm: number, reach: number) => (boreMm / 2 - VALVE_EDGE_MM - reach * VALVE_BRIDGE_FOUR_MM) / (reach + 0.5);
 
+/** Deux soupapes par cylindre : en travers sous un simple arbre, en ligne sous des culbuteurs (`twoValves` en C++). */
+export const twoValves = (camshaft: Camshaft): boolean => camshaft !== 'dohc';
+
 export function valveSizes(camshaft: Camshaft, boreMm: number): ValveSizes {
   const lift = VALVE_LIFT_PER_BORE * boreMm;
-  if (camshaft === 'sohc') {
+  // Deux soupapes, en travers ou en ligne : le même bord et le même pont les bornent.
+  if (twoValves(camshaft)) {
     const intakeMm = (boreMm - 2 * VALVE_EDGE_MM - VALVE_BRIDGE_TWO_MM) / (1 + VALVE_EXHAUST_SHARE);
     const exhaustMm = VALVE_EXHAUST_SHARE * intakeMm;
     return { perCylinder: 2, intakeMm, exhaustMm, intakeAreaMm2: valveArea(intakeMm, lift), exhaustAreaMm2: valveArea(exhaustMm, lift) };

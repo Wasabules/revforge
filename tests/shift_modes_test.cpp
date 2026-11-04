@@ -114,7 +114,11 @@ Lap playScenario(const Powertrain& p, DriveScenario scenario, ShiftMode mode = S
 
 TEST_CASE("à même pédale, Éco passe avant Normal, Normal avant Sport, Sport avant Piste") {
     for (const char* id : kEngines) {
-        const Powertrain p = preset(id);
+        // À adhérence tenue : c'est alors le régime qui décide. Sans antipatinage, la propulsion de 3,2 L patine en première dès
+        // 60 % de pédale ; la boîte attend alors que la vitesse de la voiture tienne le rapport suivant (`decideShift`), et l'éco,
+        // qui y passe, monte plus haut que le normal, qui n'y passe pas sur route plate.
+        Powertrain p = preset(id);
+        p.engine.tractionControl = TractionControl::Sport;
         for (double pedal : {0.35, 0.6, 1.0}) {
             INFO(std::string(id) << " pédale " << pedal);
             const double eco = upshiftRpmAt(p, ShiftMode::Eco, pedal, 1);
@@ -359,6 +363,10 @@ TEST_CASE("les modes sportifs tiennent leur rapport en virage, les autres non") 
     const Powertrain p = preset("inline_six");
     const auto gearAfter = [&p](ShiftMode mode, double radius) {
         DrivingModel model(p);
+        // Fusion des finitions : la logique de passage, moteur tenu à sa référence chaude. Vingt secondes en première tout près du
+        // régime maximal portent l'huile à 112 °C ; ses frottements baissent, le moteur gagne 90 tr/min (7979 contre 7889), et la
+        // protection du régime maximal monte un rapport, ce qui est juste mais n'est pas ce qu'on mesure ici.
+        model.holdThermalReference(true);
         model.setShiftMode(mode);
         model.setCornerRadius(radius);
         for (double t = 0.0; t < 3.0; t += kMs) model.stepPedal(kMs, 0.25, 0.0);
@@ -399,7 +407,11 @@ TEST_CASE("le 0 à 100 en sport n'est jamais plus lent qu'en éco, sur tous les 
         if (all[i].powertrain().electric) continue;
         for (GearboxKind kind : kBoxes) {
             INFO(std::string(all[i].id) << " boîte " << static_cast<int>(kind));
-            const Powertrain p = withBox(all[i].id, kind);
+            Powertrain p = withBox(all[i].id, kind);
+            // À adhérence tenue : c'est alors le rapport qui décide. Sans antipatinage, le pneu à sommet donne raison à l'éco
+            // sur les propulsions et les intégrales les plus puissantes, qui patinent au-delà du sommet : monter plus tôt retire
+            // du couple aux roues (docs/modele.md, « Les modes de la boîte automatique »).
+            p.engine.tractionControl = TractionControl::Sport;
             const double eco = zeroTo100(p, ShiftMode::Eco);
             const double sport = zeroTo100(p, ShiftMode::Sport);
             CHECK(sport <= eco + 0.05);

@@ -48,6 +48,14 @@ async function firstUpshiftRpm(page: Page, pedal: 'full' | 'half'): Promise<numb
 
 test('le mode choisi change le régime où la boîte passe, en roulant', async ({ page }) => {
   const errors = await open(page);
+  // Une voiture qui ne patine pas à mi-pédale : la promesse porte sur le point de passage, pas sur la motricité. Avec le pneu à
+  // sommet, la compacte de 115 kW (traction, 1300 kg) demande à mi-pédale en première 118 Nm × 16,8 × 0,9 / 0,305 m = 5,85 kN
+  // à son essieu avant, pour 6,3 kN d'adhérence une fois le poids reporté sur l'arrière : elle passe le sommet au serrage de
+  // l'embrayage, ne garde plus que 0,76 de l'adhérence en patinant, et la boîte attend la vitesse avant de monter, quel que soit
+  // le mode. La citadine de 57 kW reste sous le sommet.
+  await ouvrir(page, 'share');
+  await page.getByTestId('preset').selectOption('city_14');
+  await page.keyboard.press('Escape');
   await start(page);
   await page.getByRole('button', { name: 'Conduite', exact: true }).click();
   await expect(shift(page)).toHaveValue('normal');

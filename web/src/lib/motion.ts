@@ -3,29 +3,20 @@
  * Un moteur à 6000 tr/min fait 50 cycles par seconde, trop pour un écran à 60 images : tout est
  * ralenti du même facteur, sans plafond, pour rester proportionnel au vrai régime.
  */
+import { ambientAirOf } from './atmosphere';
 import { activeClutch, advanceRace, bearingTouches, type RaceState } from './clutchMechanism';
 import type { EngineConfig, Exhaust } from './config';
 import type { Telemetry } from './engine';
 import { GasFlow, gasKey } from './fluid';
 import { ANTI_LAG_CODE, GasNetwork, antiLagFires, type GasInputs } from './fluidGas';
 import { GasPainter } from './fluidRender';
+import { architectureOf, firingOrderOf } from './architecture';
 import { firingsPerCycle, isRotary } from './rotary';
 
 export const SLOW_MOTION = 12;
 
-/** Cylindres dans l'ordre où ils s'allument (numérotés à partir de 1). */
-export const FIRING_ORDERS: Record<number, number[]> = {
-  2: [1, 2],
-  3: [1, 3, 2],
-  4: [1, 3, 4, 2],
-  5: [1, 2, 4, 5, 3],
-  6: [1, 5, 3, 6, 2, 4],
-  8: [1, 8, 4, 3, 6, 5, 7, 2],
-  10: [1, 6, 5, 10, 2, 7, 3, 8, 4, 9],
-  12: [1, 7, 5, 11, 3, 9, 6, 12, 2, 8, 4, 10],
-};
-
-export const firingOrder = (cylinders: number) => FIRING_ORDERS[cylinders] ?? FIRING_ORDERS[4];
+/** Les ordres d'allumage : ceux de l'architecture (`architecture.ts`), qui sait aussi ceux d'un VR et d'un W. */
+export { FIRING_ORDERS, firingOrder } from './architecture';
 
 /** Une bouffée qui parcourt la ligne. `burnt` faux : de l'air pompé, sans combustion. */
 export interface Pulse {
@@ -43,7 +34,9 @@ const MAX_PULSES = 90;
  */
 const TURBINE_EXTRA_SLOW = 60;
 /** Énergie d'une détonation (J) : un milligramme de carburant ou deux, selon ce que la ligne laisse sortir. */
-const POP_JOULES: Record<Exhaust, number> = { stock: 45, sport: 90, straight: 130, no_muffler: 120, no_resonator: 50, quiet: 25 };
+// Socle : la chambre de détente comme la ligne directe.
+// La chambre de détente finit par une pointe et un silencieux garni : autant qu'une ligne sport.
+const POP_JOULES: Record<Exhaust, number> = { stock: 45, sport: 90, straight: 130, no_muffler: 120, no_resonator: 50, quiet: 25, expansion: 90 };
 const CLUTCH_AMBIENT = 60;
 /** Inerties thermiques (J/K) et conductances (W/K) : un embrayage à sec encaisse un démarrage, pas une minute de patinage. */
 const CLUTCH_SURFACE_J = 900;
@@ -107,6 +100,22 @@ export class Motion {
   release = 0;
   /** L'arbre du turbo (tr/min) et les soupapes : ce que le modèle de conduite calcule, lissé comme le reste. */
   turboRpm = 0;
+  /**
+   * Le second arbre d'un biturbo (tr/min) et son angle (radians), comme le premier ; sa soupape. Les aubes (0 fermées, 1
+   * ouvertes), l'étape d'un séquentiel et sa vanne, l'embrayage et le volet d'un twincharger : lus de la simulation.
+   */
+  turbo2Rpm = 0;
+  turbine2Angle = 0;
+  wastegate2 = 0;
+  vane = 0;
+  vane2 = 0;
+  twinStage = 0;
+  twinValve = 0;
+  chargerClutch = false;
+  chargerFlap = 1;
+  /** Le rapport de pression du second compresseur : même roue, la hauteur suit le carré de la vitesse. Le clapet du secondaire. */
+  compressorRatio2 = 1;
+  twinOnline = true;
   /** L'arbre du compresseur mécanique (tr/min), son angle (radians) et ce qu'il prend au vilebrequin (kW) : ce que le modèle calcule, lissé comme le reste. */
   chargerRpm = 0;
   chargerAngle = 0;
@@ -174,8 +183,11 @@ export class Motion {
   reduced = !wantsAnimations();
   /** Facteur de ralenti de toutes les vues et du gaz : 1, c'est le temps réel. */
   slow = storedSpeed();
-  private gasInputs: GasInputs = { rpm: 0, load: 0, boost: 0, release: 0, burning: false, heat: 0, compressorRatio: 1, compressorOutK: 293, wastegate: 0, antiLag: 0, antiLagHeatW: 0, antiLagAirFlow: 0 };
+  private gasInputs: GasInputs = { rpm: 0, load: 0, boost: 0, release: 0, burning: false, heat: 0, compressorRatio: 1, compressorOutK: 293, wastegate: 0, antiLag: 0, antiLagHeatW: 0, antiLagAirFlow: 0, compressorRatio2: 1, wastegate2: 0, twinValve: 1, secondaryOnline: true };
   private gasConfig: EngineConfig | null = null;
+  /** L'atmosphère du jour (bar), relue quand le réglage change. */
+  private ambientBar = 1.01325;
+  private ambientFor: EngineConfig | null = null;
   // Ce qu'il reste à faire avancer au gaz pour l'image en cours : une jauge sans gaz peut passer la première.
   private gasDue = false;
   private dueSeconds = 0;
@@ -218,12 +230,30 @@ export class Motion {
     this.turbine += (t.turbine - this.turbine) * glide;
     this.release += (t.turboRelease - this.release) * glide;
     this.turboRpm += (t.turboRpm - this.turboRpm) * glide;
+    this.turbo2Rpm += (t.turbo2Rpm - this.turbo2Rpm) * glide;
+    this.wastegate2 += (t.turbo2Wastegate - this.wastegate2) * glide;
+    this.vane += (t.turboVane - this.vane) * glide;
+    this.vane2 += (t.turbo2Vane - this.vane2) * glide;
+    this.twinStage = t.twinStage;
+    this.twinValve += (t.twinValve - this.twinValve) * glide;
+    this.chargerClutch = t.chargerClutch > 0;
+    this.chargerFlap += (t.chargerFlap - this.chargerFlap) * glide;
+    // Deux roues pareilles : la hauteur suit U², donc le carré du rapport des vitesses d'arbre.
+    const shaftShare = this.turboRpm > 1000 ? this.turbo2Rpm / this.turboRpm : 1;
+    this.compressorRatio2 = 1 + (this.compressorRatio - 1) * shaftShare * shaftShare;
+    this.twinOnline = t.twinOnline > 0 || config.turboLayout !== 'twin_sequential';
     this.chargerRpm += (t.chargerRpm - this.chargerRpm) * glide;
     this.chargerKw += (t.chargerKw - this.chargerKw) * glide;
     this.chargerSpill += (t.chargerSpill - this.chargerSpill) * glide;
     this.wastegate += (t.turboWastegate - this.wastegate) * glide;
     this.blowoff += (t.turboBlowoff - this.blowoff) * glide;
-    this.compressorRatio += ((1.01325 + t.turboOutlet) / Math.max(1.01325 + t.turboInlet, 0.5) - this.compressorRatio) * glide;
+    // Les jauges du turbo se lisent au-dessus de l'atmosphère du jour, comme celles d'une voiture.
+    if (config !== this.ambientFor) {
+      this.ambientFor = config;
+      this.ambientBar = ambientAirOf(config).pressurePa / 1e5;
+    }
+    const atm = this.ambientBar;
+    this.compressorRatio += ((atm + t.turboOutlet) / Math.max(atm + t.turboInlet, 0.5) - this.compressorRatio) * glide;
     this.compressorOutK += (t.turboOutC + 273.15 - this.compressorOutK) * glide;
     this.coolerOutK += (t.turboCoolC + 273.15 - this.coolerOutK) * glide;
     this.antiLag = t.antiLag > 0;
@@ -284,6 +314,7 @@ export class Motion {
       const turbineTurns = this.turboRpm / 60 / this.slow / TURBINE_EXTRA_SLOW;
       this.turbineAngle = (this.turbineAngle + turbineTurns * 2 * Math.PI * seconds) % (Math.PI * 2);
       this.turbineBlur = Math.min(1, Math.max(0, (turbineTurns - 6) / 10));
+      this.turbine2Angle = (this.turbine2Angle + (this.turbo2Rpm / 60 / this.slow / TURBINE_EXTRA_SLOW) * 2 * Math.PI * seconds) % (Math.PI * 2);
       // Le compresseur : à sa vraie vitesse, comme le vilebrequin. Seule la roue d'un centrifuge a besoin du ralenti de la turbine.
       const chargerTurns = this.chargerRpm / 60 / this.slow / (config.superchargerKind === 'centrifugal' ? TURBINE_EXTRA_SLOW : 1);
       this.chargerAngle = (this.chargerAngle + chargerTurns * 2 * Math.PI * seconds) % (Math.PI * 2);
@@ -342,7 +373,7 @@ export class Motion {
     if (key !== this.meterKey) {
       this.meterKey = key;
       this.meterNet ??= new GasNetwork();
-      this.meterNet.build(config, firingOrder(config.cylinders));
+      this.meterNet.build(config, firingOrderOf(config));
       if (this.rpm > 300) this.meterNet.prefill(this.heat);
     }
     if (this.rpm <= 20 || seconds <= 0) return;
@@ -356,7 +387,7 @@ export class Motion {
   private advanceGas(seconds: number, before: number, turns: number, config: EngineConfig): void {
     if (config !== this.gasConfig) {
       this.gasConfig = config;
-      this.gas.configure(config, firingOrder(config.cylinders), this.rpm > 300, this.heat);
+      this.gas.configure(config, firingOrderOf(config), this.rpm > 300, this.heat);
     }
     const inputs = this.gasInputs;
     inputs.rpm = this.rpm;
@@ -372,6 +403,10 @@ export class Motion {
     inputs.antiLag = this.antiLag ? ANTI_LAG_CODE[config.antiLag ?? 'off'] : 0;
     inputs.antiLagHeatW = this.antiLagHeatW;
     inputs.antiLagAirFlow = this.antiLagAirFlow;
+    inputs.compressorRatio2 = this.compressorRatio2;
+    inputs.wastegate2 = this.wastegate2;
+    inputs.twinValve = this.twinValve;
+    inputs.secondaryOnline = this.twinOnline;
     if (this.reduced) {
       this.gas.active = false;
       if (this.meterWanted) this.advanceMeters(seconds, config, inputs);
@@ -390,27 +425,44 @@ export class Motion {
   private emit(before: number, turns: number, config: EngineConfig): void {
     // Sur un rotatif, deux explosions par rotor en deux tours : on repasse par l'ordre d'allumage des rotors.
     const count = firingsPerCycle(config);
-    const order = firingOrder(config.cylinders);
-    const banks = config.layout !== 'inline' && !isRotary(config) && count >= 6 ? 2 : 1;
-    const from = Math.floor(before * count);
-    const crossings = Math.floor((before + turns) * count) - from;
-    for (let i = 1; i <= crossings; i++) {
-      const slot = (from + i) % count;
-      const cylinder = order[slot % order.length] - 1;
-      this.lastCylinder = cylinder;
-      this.sinceFiring = 0;
-      const push = 0.3 + 0.7 * this.load + 0.25 * this.boost * config.boostBar;
-      // La coupure de cylindres : au même rythme que le son, certaines explosions manquent.
-      const fires = this.burning && !(this.antiLag && config.antiLag === 'cut' && !antiLagFires(this.antiLagEvent++));
-      this.pulses.push({
-        at: 0,
-        strength: fires ? Math.min(push, 1.4) : 0.18,
-        heat: fires ? 0.3 + 0.7 * this.load : 0,
-        burnt: fires,
-        bank: cylinder % banks,
-      });
+    const rotary = isRotary(config);
+    const architecture = rotary ? null : architectureOf(config);
+    const order = architecture ? architecture.order : firingOrderOf(config);
+    // Deux lignes dessinées sur deux culasses, au-delà de quatre cylindres : chaque bouffée part dans celle de sa culasse.
+    const banks = architecture && architecture.heads === 2 && count >= 6 ? 2 : 1;
+    if (architecture && !architecture.even) {
+      // Des intervalles inégaux (le V14) : chaque rang a son propre instant dans le cycle.
+      for (let slot = 0; slot < count; slot++) {
+        const at = architecture.firingDeg[slot] / 720;
+        const crossings = Math.floor(before + turns - at) - Math.floor(before - at);
+        const cylinder = order[slot] - 1;
+        for (let k = 0; k < crossings; k++) this.pulse(cylinder, banks === 2 ? architecture.head[cylinder] : 0, config);
+      }
+    } else {
+      const from = Math.floor(before * count);
+      const crossings = Math.floor((before + turns) * count) - from;
+      for (let i = 1; i <= crossings; i++) {
+        const slot = (from + i) % count;
+        const cylinder = order[slot % order.length] - 1;
+        this.pulse(cylinder, banks === 2 && architecture ? architecture.head[cylinder] : 0, config);
+      }
     }
     if (this.pulses.length > MAX_PULSES) this.pulses.splice(0, this.pulses.length - MAX_PULSES);
+  }
+
+  private pulse(cylinder: number, bank: number, config: EngineConfig): void {
+    this.lastCylinder = cylinder;
+    this.sinceFiring = 0;
+    const push = 0.3 + 0.7 * this.load + 0.25 * this.boost * config.boostBar;
+    // La coupure de cylindres : au même rythme que le son, certaines explosions manquent.
+    const fires = this.burning && !(this.antiLag && config.antiLag === 'cut' && !antiLagFires(this.antiLagEvent++));
+    this.pulses.push({
+      at: 0,
+      strength: fires ? Math.min(push, 1.4) : 0.18,
+      heat: fires ? 0.3 + 0.7 * this.load : 0,
+      burnt: fires,
+      bank,
+    });
   }
 
   /** La vitesse de l'arbre, calculée par le bilan de puissance du modèle de conduite. */
