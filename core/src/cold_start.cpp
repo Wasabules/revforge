@@ -31,7 +31,7 @@ constexpr double kAtmosphereBar = 1.01325;
 // la référence (4250 mPa·s mesurés à −30 °C pour une limite de 6600 : 0,644). Le monograde SAE 30 n'a pas de limite CCS : son
 // troisième point est l'extrapolation ASTM D341 (Walther) à −10 °C, faite pour les huiles minérales sans améliorant.
 // 0W-20 : 44 / 8,3 mm²/s, 6200 à −35 °C ; 10W-40 : 95 / 14,3, 7000 à −25 °C ; 15W-40 : 108 / 14,6, 7000 à −20 °C ;
-// 20W-50 : 165 / 18,5, 9500 à −15 °C ; SAE 30 : 100 / 11,0. Ajustement : scratchpad froid/oils.py (voir docs/modele.md).
+// 20W-50 : 165 / 18,5, 9500 à −15 °C ; SAE 30 : 100 / 11,0. Ajustement : tools/cold_start_fits.py (voir docs/modele.md).
 struct Vogel {
     double a, b, c;
 };
@@ -53,7 +53,8 @@ constexpr double kCrankViscosityExponent = 0.86;
 // ── La batterie ──
 // Essai EN 50342-1 à −18 °C : 7,5 V après 10 s au courant nominal I, repos de 10 s, puis 6 V au bout de 73 s à 0,6·I. Avec
 // V = E − I·R − V_K·x/(1 − x), x = q/Q (Shepherd), q la charge tirée que l'acide revient remplacer en 60 s (supposé), et le coude
-// atteint à la fin de l'essai (x = 0,96, supposé) : I·R = 5,129 V, V_K = 0,151 V, Q = 28,8 s × I (froid/battery.py).
+// atteint à la fin de l'essai (x = 0,96, supposé), la charge qui baisse comprise : I·R = 5,059 V, V_K = 0,139 V, Q = 33,3 s × I
+// (tools/cold_start_fits.py).
 constexpr double kFullVolts = 12.7;
 constexpr double kEmptyVolts = 11.8;
 constexpr double kRatedDropV = 5.059;
@@ -212,7 +213,7 @@ double runningViscosityExcess(OilGrade grade, double oilC) {
 double crankingViscosityExcess(OilGrade grade, double oilC) {
     if (oilC >= kGradeJoinC) return runningViscosityExcess(grade, oilC);
     // Sous 80 °C, au lancement : (μ/μ₈₀)^0,86, raccordé à la loi du moteur qui tourne à 80 °C. Entre Petroff (1) et la racine du
-    // moteur qui tourne (0,5), l'exposant que demande la table d'Exide (froid/exide.py).
+    // moteur qui tourne (0,5), l'exposant que demande la table d'Exide (tools/cold_start_fits.py).
     const double join = 1.0 + coldViscosityExcess(kGradeJoinC);
     return join * portable::pow(oilViscosityPaS(grade, oilC) / oilViscosityPaS(grade, kGradeJoinC), kCrankViscosityExponent) - 1.0;
 }
