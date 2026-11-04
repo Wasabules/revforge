@@ -176,8 +176,11 @@ void rf_set_windows(int open) {
 void rf_set_mode(int mode) {
     if (mode == g_mode) return;
     if (mode == kLap || g_mode == kLap) {
+        // La même voiture repart à l'arrêt, mais son moteur garde ses températures : il ne redevient pas froid pour autant.
+        const ThermalNetwork kept = g_model->thermal();
         g_model->~DrivingModel();
         new (g_model) DrivingModel(g_powertrain);
+        g_model->carryThermal(kept);
         // Le pilote automatique ne sait conduire qu'une automatique : le choix de la manuelle attend qu'on reprenne le volant.
         g_model->setManual(g_manualGearbox && mode != kLap);
         g_model->setClutchAssist(g_clutchAssist);
@@ -737,6 +740,30 @@ void rf_nitrous_refill() { g_model->refillNitrous(); }
 float rf_nitrous_activation_rpm() {
     const ChargeAirSetup setup = chargeAirSetupOf(g_powertrain);
     return setup.nitrous.ratedKw > 0.0 ? static_cast<float>(setup.nitrous.activationRpm) : 0.0f;
+}
+
+// ── Le moteur à l'arrêt : l'état au départ, et le refroidissement moteur coupé (thermal.cpp) ──
+
+static float thermalPart(const ThermalNetwork& net, int which) {
+    return thermalReading(which == 0 ? net.coolantC() : (which == 1 ? net.oilC() : net.metalC()));
+}
+/** Le moteur tel qu'on l'a choisi au départ (`startTemp`, à l'air du jour) : 0 l'eau, 1 l'huile, 2 le métal (°C). */
+float rf_start_thermal(int which) { return thermalPart(g_model->startThermal(), which); }
+/**
+ * Le son est resté suspendu tant de secondes, moteur coupé : le réseau refroidit d'autant, comme s'il avait avancé pas à pas.
+ * Le worklet l'appelle en reprenant, avant de relancer le démarreur.
+ */
+void rf_soak(float seconds) { g_model->soakThermal(static_cast<double>(seconds)); }
+/**
+ * Un moteur coupé, parti de ces températures (eau, huile, métal, en °C), au bout de `seconds` : 0 l'eau, 1 l'huile, 2 le métal.
+ * Les mêmes capacités et la même convection que le modèle de ce réglage ; rien ne change dans le modèle. Les jauges le lisent
+ * pendant que le son est suspendu.
+ */
+float rf_rest_thermal(float coolantC, float oilC, float metalC, float seconds, int which) {
+    ThermalNetwork net = g_model->thermal();
+    net.place(static_cast<double>(coolantC), static_cast<double>(oilC), static_cast<double>(metalC));
+    net.soak(static_cast<double>(seconds), static_cast<double>(g_powertrain.engine.ambientC));
+    return thermalPart(net, which);
 }
 
 }  // extern "C"

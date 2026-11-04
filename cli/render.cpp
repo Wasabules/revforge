@@ -62,7 +62,9 @@ void usage() {
         "                        --boost-control spring|electronic|by_gear --intercooler air|water|none --water 0|1 --nitrous KW\n"
         "          ECU:          --advance DEG --lambda X --limiter stock|soft|ignition_cut --launch RPM --flat-shift 0|1\n"
         "                        --traction off|sport|full\n"
-        "          Conditions:   --ambient C --altitude M --start warm|cold\n"
+        "          Conditions:   --ambient C --altitude M --start warm|half_hour|two_hours|cold\n"
+        "                        (warm: just driven; half_hour, two_hours: parked that long, cooled by the thermal network;\n"
+        "                        cold: overnight, everything at the ambient air)\n"
         "Car:      --body city|compact|coupe|supercar|van|retro --mass KG --rim INCHES --drive front|rear|all\n"
         "          --placement front|mid|rear --insulation stripped|light|standard|comfort|luxury --windows open|closed\n"
         "Gearbox:  --gearbox synchro|dog|sequential|dual_clutch|converter --gears N --family matched|short|close|long\n"
@@ -220,7 +222,19 @@ struct WarmUp {
     double peakOilC = -1000.0;
     double fanS = 0.0;
     bool active = false;  // rien de tout cela sur l'électrique
-    bool cold = false;    // parti à froid : la mise en température se mesure
+    bool cold = false;    // pas parti chaud : la mise en température se mesure
+    StartTemp start = StartTemp::Warm;
+    ThermalNetwork atStart;  // le moteur au départ, après son arrêt
+
+    const char* startName() const {
+        switch (start) {
+            case StartTemp::Cold: return "cold";
+            case StartTemp::HalfHour: return "half-hour";
+            case StartTemp::TwoHours: return "two-hour";
+            case StartTemp::Warm: break;
+        }
+        return "warm";
+    }
 
     void track(const DrivingModel& model, double t, double dt) {
         if (!active) return;
@@ -644,8 +658,12 @@ void printFuel(const DrivingModel& model, const Powertrain& powertrain, double s
         const ThermalNetwork& th = model.thermal();
         const WarmUp& w = g_warmUp;
         std::printf("Temperatures (%s start): coolant %.1f C (peak %.1f), oil %.1f C (peak %.1f), metal %.1f C, thermostat %.0f %%, fan %.0f s\n",
-                    w.cold ? "cold" : "warm", th.coolantC(), w.peakCoolantC, th.oilC(), w.peakOilC, th.metalC(), th.thermostat() * 100.0, w.fanS);
+                    w.startName(), th.coolantC(), w.peakCoolantC, th.oilC(), w.peakOilC, th.metalC(), th.thermostat() * 100.0, w.fanS);
         if (w.cold) {
+            // Ce que le réseau a calculé de l'arrêt : le moteur au moment de démarrer.
+            const ThermalNetwork& s = w.atStart;
+            std::printf("At the start (%s, %.0f C outside): coolant %.1f C, oil %.1f C, metal %.1f C, radiator %.1f C\n", w.startName(), static_cast<double>(powertrain.engine.ambientC),
+                        s.coolantC(), s.oilC(), s.metalC(), s.radiatorC());
             std::printf("Warm-up: thermostat opens at %.0f s, coolant 70 C at %.0f s, oil 80 C at %.0f s, fast idle over at %.0f s (-1: not reached)\n", w.thermostatS, w.coolant70S, w.oil80S, w.idleWarmS);
         }
     }
@@ -882,7 +900,7 @@ int main(int argc, char** argv) {
             // Les réglages du socle moteur, dans l'ordre d'EngineConfig : une ligne par réglage.
             else if (arg == "--ambient") later(&EngineConfig::ambientC, number(value));
             else if (arg == "--altitude") later(&EngineConfig::altitudeM, whole(value));
-            else if (arg == "--start") later(&EngineConfig::startTemp, pick<StartTemp>(value, {{"warm", StartTemp::Warm}, {"cold", StartTemp::Cold}}));
+            else if (arg == "--start") later(&EngineConfig::startTemp, pick<StartTemp>(value, {{"warm", StartTemp::Warm}, {"cold", StartTemp::Cold}, {"half_hour", StartTemp::HalfHour}, {"two_hours", StartTemp::TwoHours}}));
             else if (arg == "--compression") later(&EngineConfig::compressionRatio, number(value));
             else if (arg == "--grade") later(&EngineConfig::fuelGrade, pick<FuelGrade>(value, {{"ron95", FuelGrade::Ron95}, {"ron98", FuelGrade::Ron98}, {"race102", FuelGrade::Race102}, {"e85", FuelGrade::E85}, {"methanol", FuelGrade::Methanol}}));
             else if (arg == "--advance") later(&EngineConfig::ignitionOffsetDeg, whole(value));
@@ -971,7 +989,9 @@ int main(int argc, char** argv) {
     const EngineProfile profile = powertrain.profile();
     DrivingModel model(powertrain);
     g_warmUp.active = !powertrain.electric;
-    g_warmUp.cold = powertrain.engine.startTemp == StartTemp::Cold;
+    g_warmUp.cold = powertrain.engine.startTemp != StartTemp::Warm;
+    g_warmUp.start = powertrain.engine.startTemp;
+    g_warmUp.atStart = model.startThermal();
     model.setShiftMode(shiftMode);
     model.setDriveScenario(driveScenario);
 

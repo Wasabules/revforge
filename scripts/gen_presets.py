@@ -22,7 +22,8 @@ CAMSHAFT = {"dohc": "Dohc", "sohc": "Sohc", "ohv": "Ohv"}
 AIR_FILTER = {"stock": "Stock", "panel": "Panel", "cone": "Cone", "stacks": "Stacks"}
 FUEL_SYSTEM = {"injection": "Injection", "single": "Carburetor", "multi": "MultiCarb", "direct": "Direct"}
 # Les réglages du socle moteur : mêmes valeurs que les tableaux de web/src/lib/config.ts.
-START_TEMP = {"warm": "Warm", "cold": "Cold"}
+# Le défaut reste « warm » ici, comme en C++ et dans la CLI (la référence des empreintes) ; le site, lui, part d'une nuit.
+START_TEMP = {"warm": "Warm", "cold": "Cold", "half_hour": "HalfHour", "two_hours": "TwoHours"}
 FUEL_GRADE = {"ron95": "Ron95", "ron98": "Ron98", "race102": "Race102", "e85": "E85", "methanol": "Methanol"}
 REV_LIMITER = {"stock": "Stock", "soft": "Soft", "ignition_cut": "IgnitionCut"}
 TRACTION = {"off": "Off", "sport": "Sport", "full": "Full"}

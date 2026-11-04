@@ -39,7 +39,7 @@ const SHIFT = { normal: 0, eco: 1, sport: 2, track: 3, paddles: 4 };
 const SCENARIO = { city: 0, stop_go: 1, country: 2, motorway: 3, mountain: 4, drag: 5, track: 6, hill_start: 7, towing: 8 };
 
 // ── Les réglages du socle moteur : même ordre que les énumérations C++ et les tableaux de config.ts ──
-const START = { warm: 0, cold: 1 };
+const START = { warm: 0, cold: 1, half_hour: 2, two_hours: 3 };
 const GRADE = { ron95: 0, ron98: 1, race102: 2, e85: 3, methanol: 4 };
 const LIMITER = { stock: 0, soft: 1, ignition_cut: 2 };
 const TRACTION = { off: 0, sport: 1, full: 2 };
