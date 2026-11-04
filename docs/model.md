@@ -2565,7 +2565,7 @@ No fingerprint changes: `Warm` and `Cold` take the same path as before, to the b
 - **No under-bonnet air**: neither the heat that lingers under the bonnet after shutdown, nor the bonnet radiating, nor any encapsulation. The still-air coefficient is assumed, and constant: natural convection would grow as (ΔT)^1/4, radiation would drop in deep cold; no wind, rain or snow on a car parked outside.
 - **The radiator at rest** gets nothing more from the engine: no thermosiphon, no fan running on after shutdown.
 - **Overnight is exactly the outside air**, like the former cold start; a car parked in a garage is not offered.
-- **The battery**: its temperature, and what it gives the starter, belong to the starter; this network has none.
+- **The battery**: its temperature, and what it gives the starter, belong to the starter. Since the integration, the network has a battery node that follows the stop with its own inertia: see "When settings meet (3)".
 - Both intermediate stops apply to every engine, rotary and two-stroke included: the network is the same, with masses assumed per litre.
 
 ### What is read, what is exposed
@@ -2595,7 +2595,7 @@ E = 11.8 + 0.9·SOC     dq/dt = I − q/60 s     R(T) ∝ exp(706 K·(1/T − 1/
 - **Cold.** Resistance follows the rating convention (BCI: the 0 °C current is 1.2 times the −18 °C one), 706 K: 30 % less at 25 °C than at −18 °C, 15 % more at −30 °C. The high-rate charge falls faster (55 % at −18 °C of the 25 °C one, the order of Battery University): this is what makes a battery that is made to insist run out. The Exide table reproduced everywhere (available power 100, 65, 40, 25 % at 27, 0, −18, −35 °C) is harsher: it probably mixes both.
 - **The electrolyte freezes** according to the charge: −60 °C full, −24 °C half charged, −7 °C empty (specific-gravity tables). Frozen, the battery has thirty times its resistance (assumed).
 - **The current drawn** lowers the charge; at rest the acid returns to the plates (60 s, assumed); with the engine running the alternator holds 14.2 V and returns what the battery accepts, four times its discharge resistance (assumed), at most a quarter of its capacity in amps. It costs the engine nothing: the calibrated friction already includes it.
-- **Its temperature.** After a night outside, the air's; warm engine, the bay's, 12 K above (like the air-filter bay air, assumed); in between, by how far the coolant has come (computed by the other subject, "the state at the start"). A mid or rear engine has its battery up front: at air temperature. Glow plugs draw 48 A (four times 12 A, assumed).
+- **Its temperature.** After a night outside, the air's; warm engine, the bay's, 12 K above (like the air-filter bay air, assumed); in between, by how far the coolant has come (computed by the other subject, "the state at the start"). A mid or rear engine has its battery up front: at air temperature. Glow plugs draw 48 A (four times 12 A, assumed). Since the integration, this is the air around the battery: the battery itself follows it with its own inertia, a node of the thermal network ("When settings meet (3)").
 
 ### The starter
 
@@ -2698,3 +2698,83 @@ What it shows: the city car cranks at 154 rpm at −30 °C instead of 250-290, c
 Read: the air temperature (`ambientC`), the coolant and oil when the key turns (`ThermalNetwork`, computed by the state at the start), the air pressure (atmosphere), the fuel (`FuelGrade`), the starter's compression ratio. Exposed: `batteryStartC`, `starterWindingC`, `batterySpecOf`, `batteryVolts`, `stepBattery`, `crankingViscosityExcess`, `runningViscosityExcess`, `oilViscosityPaS(OilGrade, T)`, `crankCompression`, `vaporizedShare`, `startFuelShare`, `petrolFiringChance`, `crankIgnitionDelayDeg`, `glowPreheatS`; in `DrivingModel`: `releaseKey`, `startFailed`, `batteryVolts`, `starterAmps`, `preheatLeft`, `start()` (the record).
 
 Listening remains to be done, on files: `revforge-render --out cold.wav --preset city_14 --start cold --ambient -30 --scenario start --seconds 8`, the preheated diesel (`--preset diesel_four --start cold --ambient -20 --scenario start --seconds 10`), the misfiring two-stroke (`--preset two_stroke_triple --start cold --ambient -30 --scenario start --seconds 8`), and the Cadillac that does not catch (`--preset v16_cadillac --start cold --ambient -20 --scenario start --seconds 14`).
+
+## When settings meet (3): the stop and the starter
+
+The two previous sections were written at the same time, each without the other: "The start" computes the engine after a stop, "The starter" the battery, the starter, the oil and the catch. Brought together (`feat/froid`), they meet in four places. Code: the battery node of `ThermalNetwork` (`thermal.cpp`), `batteryThermalOf` (`cold_start.cpp`), `StartConditions::batteryC`; tests: the end of `tests/jonctions_test.cpp` and of `web/tests/jonctions.spec.ts`.
+
+### The battery after a stop
+
+The starter only knew the night (battery at the outside air) and the warm engine (in the bay, 12 K above); in between, it put the battery at the bay air, by how far the coolant had come, at once. There were two choices: read the bay temperature that the network gives, or give the battery its own mass in the network. The calculation decides:
+
+```
+Varta Blue Dynamic D24: 60 Ah, 540 A, 14.7 kg, 242 × 175 × 190 mm           (retailer data sheets)
+mass          m = Ah × 14.7/60 kg                       city car, 51.5 Ah: 12.6 kg
+capacity      C = m × 896 J/(kg·K)                      (lead-acid, literature value quoted by NREL; 872 measured)
+                                                        11.3 kJ/K
+area          S = 0.201 m² × (m/14.7)^(2/3)             the five faces off the tray: 0.181 m²
+conductance   G = 8 W/(m²·K) × S                        the network's still air, that of the block and sump: 1.45 W/K
+              τ = C/G = 7,800 s ≈ 2.2 h                 2 L diesel (75 Ah): 2.5 h; Cadillac (111 Ah): 2.8 h
+```
+
+A battery therefore takes as long to cool as the engine coolant (2.2 h for the same city car): putting it at the bay air after half an hour or two hours parked took away all its inertia. Hence a **battery node** in the network, with nothing typed in:
+
+```
+C_b dT_b/dt = G_b·(T_around − T_b)        T_around = batteryStartC(T_air, T_coolant, placement)
+```
+
+The air around it stays the starter's: the bay's, which follows the coolant, or the outside air for a mid or rear engine (its battery is up front). The node gives nothing back to the rest of the network: neither the coolant, nor the oil, nor the driving change. It steps with the network, engine running or off, and inside `soak` (1 s steps: within 0.01 K of the 10 ms step, test). Started warm, it is exactly the starter's reference battery; overnight, the air: the 80 fingerprints from before do not move.
+
+Battery at the start (°C) and the city car's start (`city_14`), against the battery without inertia from before the merge:
+
+| Air | Stop | Battery | Without inertia | Start |
+|---|---|---|---|---|
+| −30 °C | just driven | −18.0 | −18.0 | 277 rpm, caught at 0.82 s, 8.67 V |
+| −30 °C | 30 min | −18.2 | −20.0 | 282 rpm, 0.99 s, 8.60 V (8.54 without inertia) |
+| −30 °C | 2 h | −20.6 | −25.0 | 277 rpm, 1.01 s, 8.35 V (8.21 without inertia) |
+| −30 °C | overnight | −30.0 | −30.0 | 154 rpm, 1.80 s, 7.84 V |
+| 20 °C | 30 min | 31.9 | | 286 rpm, 0.82 s, 9.90 V |
+| 20 °C | 2 h | 29.5 | | 289 rpm, 0.97 s, 9.79 V |
+
+After two hours at −30 °C, the oil is down to 20.6 °C, but the engine cranks almost as when warm: below 80 °C of oil, cranking is played cycle by cycle, but at 20 °C the oil brakes little, and the battery has kept ten degrees more than the air. The other engines follow (`revforge-render --out none --preset X --scenario start --start two_hours --ambient -30`): the diesel (−20.3 °C, 219 rpm, without preheat, its coolant being at 23.5 °C), the Alfa's 20W-50 (−20.4 °C, 253 rpm), the Cadillac (−19.5 °C, 153 rpm: it starts, where the night stops it), the mid-engined flat six (its battery stays at −30 °C).
+
+**The cold-start table** of "The starter" is re-measured as it stands: the 23 presets at 20, −10, −20 and −30 °C give the same figures, overnight putting the battery at the air as before. The only difference in the code, without effect on these presets: the starter put an engine at its "natural" placement up front; it now takes the body's placement (`placementOf`), and a supercar left at its natural (mid) placement keeps its battery at the outside air.
+
+No published cooling curve of a battery under the bonnet was found: τ is not checked against a measurement.
+
+### Stop and restart on the site
+
+- **The suspended time.** Engine off, the sound is suspended 2.2 s later; on resuming, the worklet catches up that time (`rf_soak`): the battery cools with the rest of the network, and acid returns to its plates (`StartModel::rest`, the exact solution of `stepBattery` without current, one-minute time constant). The starter starts from that battery.
+- **The drive.** Switching to the drive, or back, rebuilds the model: it kept its temperatures (`carryThermal`), it now also keeps its battery, charge and acid included (`carryBattery`); a failed start just before no longer leaves a fresh battery.
+- **The gauges.** Coolant, oil and battery all come from the C++. Before the first start, the state at the start (`rf_start_thermal`: 0 coolant, 1 oil, 3 battery; `rf_rest_battery_v` for the open-circuit voltage of a full, rested battery, 12.7 V); engine off, sound suspended, the cooling since the last telemetry (`rf_rest_thermal`, which takes the battery, and `rf_rest_battery_v` from `rf_battery_state`: charge, depleted acid, temperature); running, the telemetry. Under its gauge, the battery shows its temperature; the panel shows the battery at the start.
+
+### The site's first start
+
+The site starts overnight: its first start goes through the cold catch. Measured with Playwright on the site's default engine (2 L four-cylinder, city car), from the key to the catch, lowest voltage read from the telemetry (30 times a second, which misses the inrush dip; on the same engine, the command line gives 261 rpm, 0.96 s and 9.47 V overnight at 20 °C, 119 rpm, 2.11 s and 7.76 V at −30 °C):
+
+| Start | Cranking | Catch | Voltage read |
+|---|---|---|---|
+| overnight, 20 °C | 257 rpm | 1.0 s | 9.9 V |
+| overnight, −30 °C | 115 rpm | 2.1 s | 8.3 V |
+| 2 h, −30 °C (battery −20.4 °C) | 270 rpm | 0.9 s | 10.7 V |
+| just driven, 20 °C | 280 rpm | 0.8 s | 11.7 V |
+
+### Every value of `StartTemp`
+
+Nothing in the starter reads the start label: the synchronisation in revolutions and the cranking law (oil below 80 °C), the certain catch (oil), the film left by an engine that has just run (coolant), the preheat (coolant below 20 °C) and the battery (its node) read temperatures. The model set running at idle still tested `startTemp != Warm` before reading the coolant: it now reads only the coolant, and started warm it is at 90 °C, without fast idle, bit for bit. Two readings of the label remain, outside the starter: the spec sheet is measured warm (`measurePerformance`), and the command-line report names the chosen stop.
+
+### Tests, fingerprints and parity
+
+- `tests/jonctions_test.cpp`: warm, the reference battery bit for bit, overnight the air; after 30 min and 2 h, colder than before, warmer than the bay air; step by step or at once, the same; the starter reads this node; a mid engine keeps its battery at the air; `rf_soak` lets acid return as step by step, and a rebuilt model keeps its battery. Counter-checks, all failing: a battery without inertia (at the bay air), a starter back on the coolant interpolation, `soakThermal` without the battery's rest, `carryBattery` without effect.
+- `web/tests/jonctions.spec.ts`: two hours at −30 °C, coolant, oil and battery read from the C++ before the start, and found again running; stop then restart, the battery cooled for two hours and read by the starter; a failed start then the stop, the voltage rising at rest. Counter-checks, all failing: the gauge without temperature, the battery engine off without cooling, the voltage without rest, the worklet without catching up.
+- **Fingerprints**: one more, `start_two_hours_minus30`; no other changes.
+- **Parity**: `check_wasm.mjs` compares the battery at the start (`start_battery_c`, added to the `raw` line of `--fuel 1`) and the start after two hours at −30 °C.
+- **`app.spec.ts:153`**, "the spec sheet follows the settings", waited 5 s for the worker's 0-100: it had failed four times out of four in a loaded pass on the start branch. Measured in Node on the requests the page sends (three settings, three passes), the WASM of `main` and that of the merged branch compute as fast (0-100 in 145 to 262 ms, acoustic sheet in 555 to 731 ms, on both sides, started warm or overnight); in the page, 250 to 390 ms then 1.0 to 1.2 s. This is no regression: it now waits with `CALCUL_A_PART`, like its neighbours.
+
+### What is missing
+
+- **The air around the battery** is the one the starter assumed: the bay 12 K above the air, warm engine, then by how far the coolant has come. Neither the heat that stagnates under the bonnet right after switching off (the bay air rises first), nor the airflow while driving (the battery keeps still air), nor the insulating sleeve of some cars, nor the heat the battery itself gives off under the starter.
+- **τ is checked against no measurement**; mass and area follow a single catalogue battery.
+- Changing the engine's placement on the site keeps the network's battery at its temperature, until the next change of air or start state.
+
+Listening remains to be done, on files, without playing them (rendered into `sons2/froid/ecoute`): the city car at −30 °C overnight, after 2 h, then warm (`--preset city_14 --ambient -30 --start cold|two_hours|warm --scenario start --seconds 12`), the diesel at −20 °C (`--preset diesel_four --ambient -20 --start cold --seconds 14`), the two-stroke at −30 °C (`--preset two_stroke_triple --ambient -30 --start cold --seconds 10`), the Cadillac at −20 °C that does not start (`--preset v16_cadillac --ambient -20 --start cold --seconds 14`), the Alfa on 20W-50 at −30 °C (`--preset carb_twin_cam --ambient -30 --start cold --seconds 12`), all with `--scenario start`.
