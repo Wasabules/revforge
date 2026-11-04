@@ -187,9 +187,18 @@ double coolerOutlet(double hotK, double flow, double rated, double ambientK) {
     return hotK - effect * (hotK - ambientK);
 }
 
-/** L'échangeur à l'équilibre : celui d'origine, ou celui du réglage (charge_air.cpp). */
+/**
+ * L'échangeur à l'équilibre : l'air-air ε-NTU devant la soufflerie du banc, dans l'air du jour (finitions), ou celui du réglage
+ * (charge_air.cpp). La loi d'origine ne sert plus qu'à un faisceau qui n'est pas encore dimensionné.
+ */
 double coolerOutletOf(const TurboSpec& spec, double hotK, double flow) {
-    if (spec.cooler.kind == Intercooler::AirToAir) return coolerOutlet(hotK, flow, spec.ratedFlow, spec.ambientK);
+    if (spec.cooler.kind == Intercooler::AirToAir) {
+        if (spec.cooler.faceM2 <= 0.0) return coolerOutlet(hotK, flow, spec.ratedFlow, spec.ambientK);
+        ChargeConditions air;
+        air.ambientK = spec.ambientK;
+        air.ambientPa = spec.ambientPa;
+        return benchCoolerOutletK(spec.cooler, hotK, flow, air);
+    }
     return chargeCoolerSteadyK(spec.cooler, hotK, flow);
 }
 
@@ -266,10 +275,9 @@ TurboSpec turboSpecFor(const EngineConfig& e, double breathingAtRated) {
     s.filterDrop = kRatedFilterPa / (flow * flow);
     s.coolerDrop = kRatedCoolerBar * 1e5 * chargeRho / (flow * flow);
     // Un autre échangeur, ou aucun : le turbo reste celui de l'air-air d'origine, seuls changent le chemin de l'air et ce qui le refroidit.
-    if (e.intercooler != Intercooler::AirToAir) {
-        applyChargePath(e.intercooler, true, area, s.chargeVolumeM3, s.coolerDrop);
-        s.cooler = chargeCoolerFor(e.intercooler, flow, outK);
-    }
+    if (e.intercooler != Intercooler::AirToAir) applyChargePath(e.intercooler, true, area, s.chargeVolumeM3, s.coolerDrop);
+    // Finitions : l'air-air aussi est un faisceau dimensionné, refroidi par l'air de route (charge_air.cpp).
+    s.cooler = chargeCoolerFor(e.intercooler, flow, outK);
 
     // La turbine : ce qu'il faut de détente pour tenir ce point, trois quarts du gaz passant par elle.
     const double fuel = fuelPerAir(s, 1.0, true);
@@ -462,6 +470,15 @@ TurboSteady turboSteady(const TurboSpec& spec, double rpm, double breathing) {
     return out;
 }
 
+double turboCoolerOutletK(const TurboSpec& spec, double hotK, double flow) { return coolerOutletOf(spec, hotK, flow); }
+
+double turboCoolerTorqueShare(const TurboSpec& spec, double hotK, double flow, double coolK) {
+    if (spec.cooler.kind != Intercooler::AirToAir || spec.cooler.faceM2 <= 0.0 || coolK <= 0.0) return 1.0;
+    // `kBoostEfficiency` a été calé sur la loi d'origine (0,86 − 0,14 × le débit en part du nominal) : à pression égale, l'air
+    // admis suit 1/T. Exactement 1 quand le faisceau rend la loi d'origine, au débit nominal devant la soufflerie du banc.
+    return coolerOutlet(hotK, flow, spec.ratedFlow, spec.ambientK) / coolK;
+}
+
 double turboBackPressureNm(const TurboSpec& spec, double chargePa, double turbineInPa, double flow, double fill) {
     // Le gaz qu'il faut pousser contre la turbine, moins celui que la pression d'admission pousse déjà sur le piston.
     // Les couples de référence viennent de vrais moteurs, bien appariés : ils comptent déjà ce que coûte un turbo de la bonne
@@ -629,6 +646,12 @@ void TurboCharger::step(double dt, const TurboInput& input) {
     if (input.cooledK > 0.0) {
         // L'air de charge tient la boucle d'eau, ou il n'y a pas d'échangeur : il rend la température.
         s.coolerOutK = input.cooledK;
+    } else if (spec.cooler.kind == Intercooler::AirToAir && spec.cooler.faceM2 > 0.0) {
+        // L'air-air : la charge traverse le faisceau, que l'air de route refroidit et dont l'aluminium garde la chaleur.
+        ChargeConditions air;
+        air.ambientK = spec.ambientK;
+        air.ambientPa = spec.ambientPa;
+        s.coolerOutK = core_.step(spec.cooler, dt, outK, flowNext, input.coolingAirMs, air);
     } else if (flowNext > 0.02 * spec.ratedFlow) {
         s.coolerOutK += (coolerOutlet(outK, flowNext, spec.ratedFlow, spec.ambientK) - s.coolerOutK) * dt / kCoolerMassS;
     } else {

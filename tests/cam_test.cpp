@@ -196,6 +196,33 @@ TEST_CASE("came : la fermeture de l'admission place le meilleur remplissage, et 
     CHECK(effectiveCompressionRatio(10.5, 0.0) == doctest::Approx(10.5));
 }
 
+TEST_CASE("came : le cycle respire l'air du jour, et l'accord du conduit suit la vitesse du son") {
+    // Finitions : le cycle de remplissage lit la pression et la température du jour (atmosphère). Le conduit, accordé dans l'air de
+    // référence, garde sa longueur : sa résonance suit la vitesse du son, en √T, et la bascule des deux profils avec elle.
+    const Powertrain base = withTiming(twoLitre(), ValveTiming::TwoStep);
+    const auto at = [&base](float celsius, int metres) {
+        Powertrain p = base;
+        p.engine.ambientC = celsius;
+        p.engine.altitudeM = metres;
+        return camSwitchRpm(p.engine);
+    };
+    const double reference = at(20.0f, 0);
+    const double hot = at(45.0f, 0);
+    const double cold = at(-20.0f, 0);
+    const double high = at(20.0f, 3000);
+    MESSAGE("bascule des deux profils : " << cold << " tr/min à -20 °C, " << reference << " à 20 °C, " << hot << " à 45 °C, " << high << " à 3000 m");
+    REQUIRE(reference > 0.0);
+    // Une dynamique des gaz réglée par la vitesse du son : l'ordre de √(T/T₀), +4 % à 45 °C et −7 % à −20 °C. La bascule est le
+    // croisement de deux courbes, qui se déplace un peu plus ou un peu moins que chacune : de 2 à 12 %.
+    CHECK(hot / reference > 1.02);
+    CHECK(hot / reference < 1.12);
+    CHECK(cold / reference < 0.98);
+    CHECK(cold / reference > 0.88);
+    // L'altitude seule change toutes les pressions ensemble, la perte de la ligne comprise (ρv²) : un écoulement compressible à même
+    // température ne dépend pas de la pression, la bascule ne bouge pas.
+    CHECK(high == doctest::Approx(reference).epsilon(0.002));
+}
+
 TEST_CASE("came : le croisement laisse des gaz brûlés, surtout au ralenti, et la flamme en devient irrégulière") {
     const Powertrain stock = twoLitre();
     const Powertrain race = withProfile(stock, 290, 12.5f, 106);

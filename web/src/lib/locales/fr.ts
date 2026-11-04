@@ -1066,7 +1066,7 @@ export const fr: Record<MessageKey, string> = {
   // ── Air de charge : échangeur, injection d'eau, protoxyde d'azote ──
   'builder.intercooler': 'Échangeur',
   'intercooler.air_to_air': 'Air-air',
-  'intercooler.air_to_air.help': "Refroidi par l'air de la calandre, tel qu'il est calibré : environ les trois quarts de la chaleur de compression retirés à pleine puissance.",
+  'intercooler.air_to_air.help': "Refroidi par l'air de la calandre, qui suit la vitesse : les trois quarts de la chaleur de compression retirés à pleine puissance à 100 km/h, bien moins à l'arrêt, et son faisceau garde la chaleur d'un départ. La fiche se mesure au banc, devant une soufflerie qui vaut 100 km/h.",
   'intercooler.air_to_water': 'Air-eau',
   'intercooler.air_to_water.help': "Une boucle d'eau avec sa pompe et son radiateur : un chemin d'air plus court, donc moins de retard. L'eau chauffe à chaque accélération et refroidit lentement à l'arrêt.",
   'intercooler.none': 'Aucun',
@@ -1100,9 +1100,9 @@ export const fr: Record<MessageKey, string> = {
   // ── Conditions : démarrage à froid ──
   'builder.startTemp': 'Moteur au démarrage',
   'startTemp.warm': 'Chaud',
-  'startTemp.warm.help': "L'eau et l'huile déjà à leur température de fonctionnement.",
+  'startTemp.warm.help': "L'eau et l'huile déjà à leur température de fonctionnement : le moteur s'équilibre près de la référence chaude, 90 °C d'eau et 100 °C d'huile.",
   'startTemp.cold': 'Froid',
-  'startTemp.cold.help': "Tout à la température extérieure : huile épaisse et plus de frottements, ralenti accéléré et essence en plus (le starter sur un carburateur) jusqu'à 70 °C d'eau. Parti chaud, le moteur reste celui de référence : ses températures ne servent qu'aux jauges.",
+  'startTemp.cold.help': "Tout à la température extérieure : huile épaisse et plus de frottements, ralenti accéléré et essence en plus (le starter sur un carburateur) jusqu'à 70 °C d'eau. Parti chaud ou froid, les températures agissent sur le moteur par leur écart à la référence chaude.",
   'summary.coldStart': 'départ à froid',
   'gauge.coolant': "Température d'eau",
   'gauge.coolant.note': "L'eau à la sortie du moteur, dans le réseau thermique : chaleur des parois, calorstat, radiateur et ventilateur, calculés à chaque pas du modèle. Repère : le moteur chaud de référence.",
@@ -1111,10 +1111,11 @@ export const fr: Record<MessageKey, string> = {
   'gauge.coolant.idle': ' · ralenti +{rpm}',
   'gauge.coolant.rich': ' · essence +{pct} %',
   'gauge.oil': "Température d'huile",
-  'gauge.oil.note': "L'huile et ce qu'elle mouille, dans le réseau thermique. Sa viscosité suit la loi de Vogel ; froide, elle ajoute des frottements hydrodynamiques. Repère : le moteur chaud de référence.",
+  'gauge.oil.note': "L'huile et ce qu'elle mouille, dans le réseau thermique. Sa viscosité suit la loi de Vogel ; froide, elle ajoute des frottements hydrodynamiques, au-delà de 100 °C elle en retire. Un échangeur eau-huile à plaques la tient près de l'eau. Repère : le moteur chaud de référence.",
   'gauge.oil.sub': '{mpas} mPa·s',
   'gauge.oil.idle': 'Viscosité —',
   'gauge.oil.friction': ' · frottements +{pct} %',
+  'gauge.oil.frictionLess': ' · frottements −{pct} %',
 };
 
 /** Les préréglages en français, par identifiant : l'anglais est dans `presets/presets.json`, qui reste la source unique. */

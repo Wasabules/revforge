@@ -82,6 +82,19 @@ constexpr double kDesignEffectiveness = 0.6;
 constexpr double kPumpLPerSPerLitreKrpm = 0.25;
 // L'huile passe sur le métal d'autant plus que la pompe tourne vite.
 constexpr double kOilFlowRefRpm = 3000.0;
+// L'échangeur eau-huile à plaques, monté sur le petit circuit d'eau (il est traversé calorstat fermé), comme sur la plupart des
+// moteurs de série depuis les années 1990. Sans lui, le réseau laissait l'huile à 111-126 °C sur le WLTC, quand un carter
+// mesure 90 à 110 °C (voir « La thermique » dans docs/modele.md). Dans un échangeur à plaques, l'huile reste laminaire : son
+// coefficient d'échange dépend peu du débit, et la conductance est tenue fixe. 150 W/K par litre de cylindrée (supposé :
+// 2 à 4 kW rejetés pour 20 à 30 K d'écart sur un 1,4 à 2 L, l'ordre de grandeur des échangeurs de 6 à 12 plaques).
+constexpr double kOilCoolerUaPerLitre = 150.0;
+// La pompe à huile, volumétrique : 0,12 L/s par litre et par 1000 tr/min (30 L/min à 3000 tr/min sur un 1,4 L), jusqu'à son
+// clapet de décharge, vers 3000 tr/min (ordres de grandeur). 0,85 kg/L, 2 kJ/(kg·K).
+constexpr double kOilPumpLPerSPerLitreKrpm = 0.12;
+constexpr double kOilReliefRpm = 3000.0;
+constexpr double kOilJLK = 1700.0;
+// La part de l'eau de la pompe qui passe dans l'échangeur, en dérivation (supposé).
+constexpr double kOilCoolerWaterShare = 0.15;
 
 double clamp(double v, double low, double high) { return v < low ? low : (v > high ? high : v); }
 
@@ -114,7 +127,8 @@ double hydrodynamicNmPerRpm(const EngineConfig& e) {
 }
 
 double coldViscosityExcess(double oilC) {
-    if (oilC >= kWarmOilC) return 0.0;
+    // La référence est exacte : aucun écart calculé à 100 °C. Au-delà, l'huile plus fluide retire sa part.
+    if (oilC == kWarmOilC) return 0.0;
     return std::sqrt(oilViscosityPaS(oilC) / oilViscosityPaS(kWarmOilC)) - 1.0;
 }
 
@@ -145,6 +159,13 @@ double wallHeatShare(double fuelShare, double metalC) {
     return clamp(kWallShareRef * scaling * wall, 0.0, kWallShareMax);
 }
 
+double counterFlowEffectiveness(double ntu, double capacityRatio) {
+    if (ntu <= 0.0) return 0.0;
+    if (capacityRatio > 0.999) return ntu / (1.0 + ntu);
+    const double e = portable::exp(-ntu * (1.0 - capacityRatio));
+    return (1.0 - e) / (1.0 - capacityRatio * e);
+}
+
 double crossFlowEffectiveness(double ntu, double capacityRatio) {
     if (ntu <= 0.0) return 0.0;
     if (capacityRatio < 1e-6) return 1.0 - portable::exp(-ntu);
@@ -172,6 +193,9 @@ ThermalSpec thermalSpecOf(const Powertrain& p, double ratedFuelW) {
     s.oilAirWK = 0.15 * area * 8.0;
     s.oilAirWKPerMs = 0.15 * area * 2.0;
     s.pumpWKPerRpm = kCoolantJLK * kPumpLPerSPerLitreKrpm * litres / 1000.0;
+    s.oilCoolerUaWK = kOilCoolerUaPerLitre * litres;
+    s.oilPumpWKPerRpm = kOilJLK * kOilPumpLPerSPerLitreKrpm * litres / 1000.0;
+    s.oilCoolerWaterShare = kOilCoolerWaterShare;
     s.ratedFuelW = std::max(ratedFuelW, 1000.0);
 
     // Le radiateur, dimensionné pour son cas le plus dur : le débit d'air vient de l'efficacité visée, la conductance de ε-NTU.
@@ -213,6 +237,7 @@ void ThermalNetwork::reset(StartTemp start, double ambientC) {
     fan_ = false;
     radiatorW_ = 0.0;
     wallW_ = 0.0;
+    oilCoolerW_ = 0.0;
 }
 
 void ThermalNetwork::step(const ThermalInput& in, double dt) {
@@ -256,11 +281,22 @@ void ThermalNetwork::step(const ThermalInput& in, double dt) {
     const double metalToAir = (s.metalAirWK + s.metalAirWKPerMs * speed) * (metalC_ - ambient);
     const double oilToAir = (s.oilAirWK + s.oilAirWKPerMs * speed) * (oilC_ - ambient);
     const double exchanged = flowWK * (coolantC_ - radiatorC_);
+    // L'échangeur eau-huile : à contre-courant, entre le débit de la pompe à huile et la dérivation de la pompe à eau. Il tient
+    // l'huile près de l'eau, et la réchauffe par elle au départ à froid.
+    double oilCooler = 0.0;
+    if (s.oilCoolerUaWK > 0.0 && rpm > 0.0) {
+        const double oilWK = s.oilPumpWKPerRpm * std::min(rpm, kOilReliefRpm);
+        const double waterWK = s.pumpWKPerRpm * rpm * s.oilCoolerWaterShare;
+        const double cMin = std::min(oilWK, waterWK);
+        const double cMax = std::max(oilWK, waterWK);
+        oilCooler = counterFlowEffectiveness(s.oilCoolerUaWK / cMin, cMin / cMax) * cMin * (oilC_ - coolantC_);
+    }
+    oilCoolerW_ = oilCooler;
 
     metalC_ += (wallW_ + toMetal - metalCoolant - metalToOil - metalToAir) / s.metalJK * dt;
-    coolantC_ = std::min(coolantC_ + (metalCoolant - exchanged) / s.coolantJK * dt, kBoilC);
+    coolantC_ = std::min(coolantC_ + (metalCoolant - exchanged + oilCooler) / s.coolantJK * dt, kBoilC);
     radiatorC_ += (exchanged - radiator) / s.radiatorJK * dt;
-    oilC_ += (toOil + metalToOil - oilToAir) / s.oilJK * dt;
+    oilC_ += (toOil + metalToOil - oilToAir - oilCooler) / s.oilJK * dt;
 }
 
 }  // namespace revforge

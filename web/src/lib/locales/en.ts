@@ -1067,7 +1067,7 @@ export const en = {
   // ── Charge air: intercooler, water injection, nitrous oxide ──
   'builder.intercooler': 'Intercooler',
   'intercooler.air_to_air': 'Air to air',
-  'intercooler.air_to_air.help': 'Cooled by the air through the grille, as calibrated: about three quarters of the compression heat removed at full power.',
+  'intercooler.air_to_air.help': 'Cooled by the air through the grille, which follows the road speed: three quarters of the compression heat removed at full power and 100 km/h, much less at a standstill, and its core keeps the heat of a pull. The spec sheet is measured on the dyno, in front of a fan worth 100 km/h.',
   'intercooler.air_to_water': 'Air to water',
   'intercooler.air_to_water.help': 'A water loop with its own pump and radiator: a shorter air path, so less lag. The water warms with each pull and cools slowly at a standstill.',
   'intercooler.none': 'None',
@@ -1101,9 +1101,9 @@ export const en = {
   // ── Conditions: cold start ──
   'builder.startTemp': 'Engine at start',
   'startTemp.warm': 'Warm',
-  'startTemp.warm.help': 'Coolant and oil already at working temperature.',
+  'startTemp.warm.help': 'Coolant and oil already at working temperature: the engine settles near the warm reference, 90 °C coolant and 100 °C oil.',
   'startTemp.cold': 'Cold',
-  'startTemp.cold.help': 'Everything at the outside temperature: thick oil and more friction, a faster idle and extra fuel (the choke on a carburettor) until the coolant reaches 70 °C. A warm start stays the reference engine: its temperatures only feed the gauges.',
+  'startTemp.cold.help': 'Everything at the outside temperature: thick oil and more friction, a faster idle and extra fuel (the choke on a carburettor) until the coolant reaches 70 °C. Warm or cold, the temperatures act on the engine through their gap to the warm reference.',
   'summary.coldStart': 'cold start',
   'gauge.coolant': 'Coolant temperature',
   'gauge.coolant.note': 'Water leaving the engine, from the thermal network: heat through the walls, thermostat, radiator and fan, computed at every step of the model. Mark: the warm reference.',
@@ -1112,10 +1112,11 @@ export const en = {
   'gauge.coolant.idle': ' · idle +{rpm}',
   'gauge.coolant.rich': ' · fuel +{pct} %',
   'gauge.oil': 'Oil temperature',
-  'gauge.oil.note': "Oil and what it wets, from the thermal network. Its viscosity follows Vogel's law; cold, it adds hydrodynamic friction. Mark: the warm reference.",
+  'gauge.oil.note': "Oil and what it wets, from the thermal network. Its viscosity follows Vogel's law; cold, it adds hydrodynamic friction, hotter than 100 °C it removes some. A plate oil cooler on the coolant circuit keeps it near the coolant. Mark: the warm reference.",
   'gauge.oil.sub': '{mpas} mPa·s',
   'gauge.oil.idle': 'Viscosity —',
   'gauge.oil.friction': ' · friction +{pct} %',
+  'gauge.oil.frictionLess': ' · friction −{pct} %',
 };
 
 export type MessageKey = keyof typeof en;

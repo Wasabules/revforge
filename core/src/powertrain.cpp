@@ -495,6 +495,8 @@ SuperchargerSpec superchargerSpecOf(const Powertrain& p) {
     spec.ambientPa = air.pressurePa;
     spec.ambientK = air.temperatureK;
     if (p.engine.intercooler != Intercooler::AirToAir) withChargeCooler(p, spec);
+    // Finitions : l'air-air est un faisceau ε-NTU, dimensionné sur le débit nominal. Sa température d'entrée n'y entre pas.
+    else spec.cooler = chargeCoolerFor(Intercooler::AirToAir, spec.ratedFlow, 0.0);
     return spec;
 }
 
@@ -642,7 +644,11 @@ double plainTorqueCurveNm(const Powertrain& p, double rpm) {
     }
     const TurboSpec spec = turboSpecOf(p);
     const TurboSteady steady = fullLoadTurboSteady(p, rpm);
-    const double torque = full(steady.boost) - turboBackPressureNm(spec, steady.chargePa, steady.turbineInPa, steady.flow, 1.0);
+    // Finitions : l'air-air ε-NTU, au banc, devant la soufflerie (`kChargeReferenceSpeedMs`). Le couple de base suppose la loi d'origine.
+    const double cooled = turboCoolerTorqueShare(spec, steady.outK, steady.flow, steady.coolK);
+    const double gross = full(steady.boost);
+    const double torque = (cooled == 1.0 ? gross : (gross + frictionTorqueNm(p, rpm)) * cooled - frictionTorqueNm(p, rpm)) -
+                          turboBackPressureNm(spec, steady.chargePa, steady.turbineInPa, steady.flow, 1.0);
     return injection ? torque - injectionLossNm(p, rpm, steady.boost) : torque;
 }
 

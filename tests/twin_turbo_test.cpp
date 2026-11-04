@@ -214,6 +214,45 @@ TEST_CASE("en parallèle, la pression établie est celle du turbo simple") {
     CHECK(twin.boost() == doctest::Approx(steadyBoost(parallel, 4500.0)).epsilon(0.03));
 }
 
+TEST_CASE("les arbres du biturbo lisent l'air du jour : en altitude, plus de rapport et des arbres plus rapides") {
+    // Finitions : comme le turbo simple (atmosphère), chaque arbre aspire l'air du jour et la soupape à ressort tient une pression
+    // relative. Dans l'air de référence, rien ne change au bit près (les empreintes du biturbo n'en bougent pas).
+    for (const TurboLayout layout : {TurboLayout::TwinParallel, TurboLayout::TwinSequential, TurboLayout::Twincharger}) {
+        CAPTURE(static_cast<int>(layout));
+        const Powertrain sea = layout == TurboLayout::Twincharger ? tsi() : six(layout);
+        Powertrain high = sea;
+        high.engine.altitudeM = 3000;
+        const double rpm = 5000.0;
+        const TwinTurboSpec low = twinTurboSpecOf(sea);
+        const TwinTurboSpec up = twinTurboSpecOf(high);
+        CHECK(up.unit[0].ambientPa < 0.75 * low.unit[0].ambientPa);
+        const TwinTurboSteady a = twinTurboSteady(low, rpm, breathingOf(sea, rpm));
+        const TwinTurboSteady b = twinTurboSteady(up, rpm, breathingOf(high, rpm));
+        MESSAGE("à 5000 tr/min, arbre " << a.shaftRpm[0] << " tr/min au niveau de la mer, " << b.shaftRpm[0] << " à 3000 m ; charge " << a.chargePa / 1e5 << " / "
+                                        << b.chargePa / 1e5 << " bar");
+        CHECK(b.shaftRpm[0] > 1.05 * a.shaftRpm[0]);
+        CHECK(b.chargePa < a.chargePa);
+        // Le modèle à pas fixes : la pression relative tenue, au-dessus de l'atmosphère de 3000 m.
+        TwinTurbo twin;
+        twin.setSpec(up);
+        run(twin, at(high, rpm, 1.0), 10.0);
+        TwinTurbo seaTwin;
+        seaTwin.setSpec(low);
+        run(seaTwin, at(sea, rpm, 1.0), 10.0);
+        MESSAGE("pas fixes : " << (seaTwin.state().unit[0].chargePa - low.reference.ambientPa) / 1e5 << " bar au niveau de la mer, "
+                               << (twin.state().unit[0].chargePa - up.reference.ambientPa) / 1e5 << " bar à 3000 m");
+        const double gauge = twin.state().unit[0].chargePa - up.reference.ambientPa;
+        if (layout != TurboLayout::Twincharger) {
+            CHECK(gauge == doctest::Approx(b.chargePa - up.reference.ambientPa).epsilon(0.05));
+        } else {
+            // L'équilibre du twincharger ignore la perte du volet, que le turbo seul traverse encore : à 3000 m, près de la vitesse
+            // limite de ses roues, le modèle à pas fixes tient un peu moins (approximation déjà notée dans twin_turbo.cpp).
+            CHECK(gauge < 1.02 * (b.chargePa - up.reference.ambientPa));
+            CHECK(gauge > 0.8 * (b.chargePa - up.reference.ambientPa));
+        }
+    }
+}
+
 TEST_CASE("les deux arbres d'un V ne tournent pas tout à fait à la même vitesse") {
     Powertrain v = six(TurboLayout::TwinParallel);
     v.engine.layout = Layout::V;

@@ -28,6 +28,10 @@ constexpr double kFanFaceMs = 1.0;
 // ── Air-air (ε-NTU) ──
 // Un faisceau de 600 × 300 mm pour 0,21 kg/s (2 L, 1,3 bar) : la face suit le débit nominal (ordre de grandeur des séries).
 constexpr double kFacePerFlow = 0.85;
+// Son aluminium : 4 kg pour 0,21 kg/s (un faisceau de série de cette face pèse 3 à 5 kg, réservoirs à part ; supposé), à
+// 900 J/(kg·K). Moins de 4 s de constante de temps au nominal, une minute à l'arrêt, le ventilateur seul soufflant.
+constexpr double kCoreKgPerFlow = 4.0 / 0.21;
+constexpr double kAluminiumCp = 900.0;
 
 // ── Air-eau ──
 // Une brique dessinée pour retirer 85 % de l'écart au débit nominal (supposé : une brique à eau est plus dense qu'un faisceau à air).
@@ -134,6 +138,39 @@ double roadSideHa(double haAtReference, double faceM2, double speedMs, const Cha
     return haAtReference * std::sqrt(roadAirFlowKgS(faceM2, speedMs, c.ambientK, c.ambientPa) / reference);
 }
 
+/** Ce que l'air-air fait, tranche par tranche : la part de l'écart que chaque côté échange avec la paroi. */
+struct Slices {
+    double charge = 0.0;    // ε du côté de la charge, contre une paroi à une seule température
+    double road = 0.0;      // ε du côté de la route, sur la part de l'air qui traverse cette tranche
+    double chargeWK = 0.0;  // débit de capacité de la charge (W/K)
+    double roadWK = 0.0;    // de l'air de route, par tranche
+};
+
+Slices slicesOf(double chargeHa, double roadHa, double chargeWK, double roadWK) {
+    Slices s;
+    constexpr double n = static_cast<double>(kCoolerSlices);
+    s.chargeWK = chargeWK;
+    s.roadWK = roadWK / n;
+    s.charge = chargeWK > 0.0 && chargeHa > 0.0 ? 1.0 - portable::exp(-chargeHa / (n * chargeWK)) : 0.0;
+    s.road = roadWK > 0.0 && roadHa > 0.0 ? 1.0 - portable::exp(-roadHa / roadWK) : 0.0;
+    return s;
+}
+
+/** L'efficacité de l'échangeur entier à l'équilibre : chaque tranche retire la même part e de l'écart à l'air, 1 − (1 − e)^N. */
+double slicesEffectiveness(const Slices& s) {
+    const double denominator = s.charge * s.chargeWK + s.road * s.roadWK;
+    if (denominator <= 0.0) return 0.0;
+    const double e = s.charge * s.road * s.roadWK / denominator;
+    double kept = 1.0;
+    for (int i = 0; i < kCoolerSlices; ++i) kept *= 1.0 - e;
+    return 1.0 - kept;
+}
+
+Slices coolerSlices(const ChargeCoolerSpec& spec, double flow, double speedMs, const ChargeConditions& c) {
+    return slicesOf(chargeSideHa(spec, flow), roadSideHa(spec.roadHaW, spec.faceM2, speedMs, c), flow * kAirCp,
+                    roadAirFlowKgS(spec.faceM2, speedMs, c.ambientK, c.ambientPa) * kAirCp);
+}
+
 /** Une dichotomie sur une conductance pour atteindre une efficacité qui croît avec elle. */
 template <typename F>
 double solveConductance(F effectivenessFor, double wanted, double high) {
@@ -185,11 +222,12 @@ ChargeCoolerSpec airToAirCoolerFor(double ratedFlow, double ratedHotK, const Cha
     s.ratedFlow = ratedFlow;
     s.ratedHotK = ratedHotK;
     s.faceM2 = kFacePerFlow * ratedFlow;
+    s.coreJK = kCoreKgPerFlow * ratedFlow * kAluminiumCp;
     // Deux faces d'air, de même conductance au point de calcul : celle qui rend l'efficacité d'origine au nominal, à la vitesse de référence.
     const double hot = ratedFlow * kAirCp;
     const double cold = roadAirFlowKgS(s.faceM2, kChargeReferenceSpeedMs, c.ambientK, c.ambientPa) * kAirCp;
     const double wanted = kCoolerEffectLow - kCoolerEffectFall;
-    const double ha = solveConductance([hot, cold](double side) { return hotSideEffectiveness(series(side, side), hot, cold); }, wanted, 1e5 * ratedFlow);
+    const double ha = solveConductance([hot, cold](double side) { return slicesEffectiveness(slicesOf(side, side, hot, cold)); }, wanted, 1e5 * ratedFlow);
     s.chargeHaW = ha;
     s.roadHaW = ha;
     return s;
@@ -197,9 +235,33 @@ ChargeCoolerSpec airToAirCoolerFor(double ratedFlow, double ratedHotK, const Cha
 
 double airToAirOutletK(const ChargeCoolerSpec& spec, double hotK, double flow, double speedMs, const ChargeConditions& c) {
     if (flow <= 0.0) return hotK;
-    const double road = roadAirFlowKgS(spec.faceM2, speedMs, c.ambientK, c.ambientPa);
-    const double ua = series(chargeSideHa(spec, flow), roadSideHa(spec.roadHaW, spec.faceM2, speedMs, c));
-    return hotK - hotSideEffectiveness(ua, flow * kAirCp, road * kAirCp) * (hotK - c.ambientK);
+    return hotK - slicesEffectiveness(coolerSlices(spec, flow, speedMs, c)) * (hotK - c.ambientK);
+}
+
+double benchCoolerOutletK(const ChargeCoolerSpec& spec, double hotK, double flow, const ChargeConditions& c) {
+    return airToAirOutletK(spec, hotK, flow, kChargeReferenceSpeedMs, c);
+}
+
+void AirCoolerCore::settle(double kelvin) {
+    for (double& wall : wallK) wall = kelvin;
+    ready = true;
+}
+
+double AirCoolerCore::step(const ChargeCoolerSpec& spec, double dt, double hotK, double flow, double speedMs, const ChargeConditions& c) {
+    if (!ready) settle(c.ambientK);
+    const double through = positive(flow);
+    const Slices s = coolerSlices(spec, through, speedMs, c);
+    const double wallJK = spec.coreJK / static_cast<double>(kCoolerSlices);
+    double air = hotK;
+    for (double& wall : wallK) {
+        // La charge cède à la paroi ce que permet son ε ; la paroi cède à l'air de route qui la traverse ; elle garde la différence.
+        const double fromCharge = s.charge * s.chargeWK * (air - wall);
+        const double toRoad = s.road * s.roadWK * (wall - c.ambientK);
+        air -= s.chargeWK > 0.0 ? fromCharge / s.chargeWK : 0.0;
+        wall += dt * (fromCharge - toRoad) / wallJK;
+    }
+    // Sans débit, l'air qui reste dans le faisceau est à la température de la dernière paroi ; avec un filet, il s'en approche.
+    return through > 0.0 ? air : wallK[kCoolerSlices - 1];
 }
 
 // ── Air-eau ──
@@ -244,6 +306,8 @@ CoolerMemo g_waterCooler;
 }  // namespace
 
 ChargeCoolerSpec chargeCoolerFor(Intercooler kind, double ratedFlow, double ratedHotK, const ChargeConditions& c) {
+    // Finitions : l'air-air est le faisceau ε-NTU, dimensionné ici comme les autres.
+    if (kind == Intercooler::AirToAir) return airToAirCoolerFor(ratedFlow, ratedHotK, c);
     ChargeCoolerSpec s;
     s.kind = kind;
     s.ratedFlow = ratedFlow;
@@ -291,6 +355,7 @@ double chargeCoolerSteadyK(const ChargeCoolerSpec& spec, double hotK, double flo
         }
         case Intercooler::AirToAir: break;
     }
+    if (spec.faceM2 > 0.0) return benchCoolerOutletK(spec, hotK, flow, c);
     return stockCoolerOutletK(hotK, flow / spec.ratedFlow, c.ambientK);
 }
 

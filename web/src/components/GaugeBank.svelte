@@ -137,7 +137,7 @@
         if (rich > 0) line += t('gauge.coolant.rich', { pct: whole(rich) });
         coolantNode.textContent = line;
       }),
-      // L'huile : sa viscosité, et les frottements qu'elle ajoute tant qu'elle est froide.
+      // L'huile : sa viscosité, et les frottements qu'elle ajoute froide, ou retire au-delà de 100 °C.
       clock.add((text) => {
         if (!text || !oilNode) return;
         const live = running() ? telemetry() : null;
@@ -147,7 +147,9 @@
         if (key === lastOil) return;
         lastOil = key;
         let line = viscosity > 0 ? t('gauge.oil.sub', { mpas: whole(viscosity) }) : t('gauge.oil.idle');
+        // Le réseau agit toujours : plus chaude que 100 °C, l'huile retire des frottements.
         if (extra > 0) line += t('gauge.oil.friction', { pct: whole(extra) });
+        else if (extra < 0) line += t('gauge.oil.frictionLess', { pct: whole(-extra) });
         oilNode.textContent = line;
       }),
       clock.add((text) => {

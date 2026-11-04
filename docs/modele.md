@@ -1311,13 +1311,13 @@ affiche la pression, la masse volumique et la vitesse du son qui en découlent.
 
 ## La thermique
 
-Les températures du moteur viennent d'un réseau de quatre capacités (`ThermalNetwork`, `core/src/thermal.cpp`), qu'intègre `DrivingModel` toutes les 10 ms : le métal (culasse, chemises, haut du bloc), l'eau côté moteur, l'eau du radiateur, et l'huile avec ce qu'elle mouille (vilebrequin, bielles, carter, bas du bloc).
+Les températures du moteur viennent d'un réseau de quatre capacités (`ThermalNetwork`, `core/src/thermal.cpp`), qu'intègre `DrivingModel` toutes les 10 ms : le métal (culasse, chemises, haut du bloc), l'eau côté moteur, l'eau du radiateur, et l'huile avec ce qu'elle mouille (vilebrequin, bielles, carter, bas du bloc). Un échangeur eau-huile relie l'huile à l'eau (finitions).
 
 ```
 C_m dT_m/dt = Q_parois + (1 − a)·P_f − G_me·(T_m − T_e) − G_mh·(T_m − T_h) − G_ma·(T_m − T_air)
-C_e dT_e/dt = G_me·(T_m − T_e) − ṁc·(T_e − T_r)
+C_e dT_e/dt = G_me·(T_m − T_e) − ṁc·(T_e − T_r) + Q_eh
 C_r dT_r/dt = ṁc·(T_e − T_r) − Q_radiateur
-C_h dT_h/dt = a·P_f + G_mh·(T_m − T_h) − G_ha·(T_h − T_air)
+C_h dT_h/dt = a·P_f + G_mh·(T_m − T_h) − G_ha·(T_h − T_air) − Q_eh
 ```
 
 - **Chaleur aux parois.** Q_parois = s·P_carburant, avec s = 0,28·(φ/0,25)^−0,25·(T_g − T_m)/(T_g − 100 °C), où φ est le débit de carburant rapporté à celui de la puissance maximale. La loi d'échelle est celle de Taylor et Toong (Nu ∝ Re^0,75, donc Q ∝ ṁ^0,75) ; le niveau est calé sur le bilan d'énergie de Heywood (*Internal Combustion Engine Fundamentals*, 17 à 26 % à l'eau à pleine charge sur un moteur à essence, de mémoire). s vaut 0,20 à pleine charge et jusqu'à 0,5 au ralenti ; une paroi froide reçoit un peu plus (gaz à 1100 °C en moyenne, supposé). L'énergie du carburant vient de la même fonction pure que le compteur (`ConsumptionModel::fuelGps`), pas du compteur ; l'enrichissement à froid, qui ne brûle pas, ne chauffe rien.
@@ -1325,6 +1325,7 @@ C_h dT_h/dt = a·P_f + G_mh·(T_m − T_h) − G_ha·(T_h − T_air)
 - **Calorstat à cire.** Il commence à s'ouvrir à 87 °C (l'une des trois valeurs courantes : 82, 87, 92 °C) et il lui faut 8 K pour s'ouvrir en grand, comme celui du Land Rover Freelander 2 (83 à 91 °C, manuel d'atelier, vu cité). Le jeu de la cire le referme 2 K plus bas : c'est l'hystérésis (supposée). L'orifice de purge laisse passer 0,5 % du débit (supposé). La pompe débite 0,25 L/s par litre de cylindrée et par 1000 tr/min (supposé : environ 2 L/s à 6000 tr/min sur un 1,4 L).
 - **Radiateur.** ε-NTU, courants croisés, les deux fluides non brassés : ε = 1 − exp(NTU^0,22/C_r·(exp(−C_r·NTU^0,78) − 1)). L'air traverse le faisceau à 30 % de la vitesse de la voiture, plus 3 m/s au ventilateur et 0,3 m/s de tirage naturel (supposés) ; UA ∝ ṁ_air^0,6 (ailettes à persiennes). Il est dimensionné comme un motoriste le ferait pour son cas le plus dur, ici supposé : 60 % de l'énergie maximale du carburant à 50 km/h, 40 °C dehors, eau à 110 °C en entrée, ε = 0,6. Le ventilateur suit un thermocontact au bas du radiateur : 95 °C en marche, 84 °C à l'arrêt (VW T3, contact simple, catalogue Mecatechnic).
 - **Masses.** Supposées, par litre de cylindrée : 30 kg de métal à 600 J/(kg·K) côté eau, 15 kg à 500 J/(kg·K) côté huile ; 1,2 L + 1 L/L d'eau dans le moteur, 1 L + 0,6 L/L dans le radiateur (eau glycolée, 3,64 kJ/(L·K)) ; 2,5 L + 0,8 L/L d'huile. L'eau ne dépasse pas 129 °C : elle bout sous le bouchon, et le réseau ne suit plus.
+- **Échangeur eau-huile** (finitions). Un échangeur à plaques sur le petit circuit d'eau, traversé calorstat fermé, comme sur la plupart des moteurs de série depuis les années 1990 : Q_eh = ε·C_min·(T_h − T_e), à contre-courant, ε = (1 − e^(−NTU·(1 − C_r)))/(1 − C_r·e^(−NTU·(1 − C_r))). Côté huile, la pompe volumétrique : 0,12 L/s par litre de cylindrée et par 1000 tr/min, jusqu'à son clapet de décharge vers 3000 tr/min (1,7 kJ/(L·K)) ; côté eau, 15 % du débit de la pompe à eau ; UA = 150 W/K par litre, tenue fixe, l'huile restant laminaire entre les plaques. Tout cela est supposé, de l'ordre d'un échangeur de 6 à 12 plaques (2 à 4 kW pour 20 à 30 K d'écart). Sans lui, l'huile finissait le WLTC entre 111 et 126 °C et tenait 130 °C à 130 km/h sur la citadine ; un carter mesure 90 à 110 °C sur route. Avec lui, voir le tableau plus bas. Au départ à froid, l'eau, qui chauffe plus vite, réchauffe l'huile par lui : la citadine atteint 80 °C d'huile en 354 s sur le WLTC, contre 371 s.
 
 ### L'huile et les frottements
 
@@ -1332,19 +1333,34 @@ C_h dT_h/dt = a·P_f + G_mh·(T_m − T_h) − G_ha·(T_h − T_air)
 
 **Frottements hydrodynamiques.** Ceux du modèle de Patton, Nitschke et Heywood (SAE 890836) : paliers 3,03·10⁻⁴·N·D³·L·n_b/(B²·S·n_c) et jupes 294·v̄_p/B, en kPa, mm, tr/min et m/s, avec des paliers de 0,67 × 0,25 alésage (ligne) et 0,56 × 0,22 alésage (bielles). Ces coefficients sont ceux que reproduisent les travaux qui en partent, pas relus dans l'article. Vérification : Petroff (couple = π·μ·ω·D³·L/(4c), jeu radial de 1 ‰ du rayon, huile à 100 °C) donne 5,7 kPa pour les paliers de la citadine à 2000 tr/min, la formule 5,9 kPa. Ils sont proportionnels au régime.
 
-**Mise à l'échelle.** Comme Sandoval et Heywood (SAE 2003-01-0725), les termes hydrodynamiques suivent la viscosité : ici (μ/μ₁₀₀)^0,5. L'exposant est cité de mémoire ; leur résumé, lu, dit que l'huile froide donne « environ deux fois » les frottements du moteur chaud. Ici : 1,57 fois à 20 °C et 2000 tr/min, 2,15 fois à 0 °C (`frictionFactor`). Au-dessus de 100 °C, rien ne change : le modèle de frottement d'origine est calé à chaud, et une huile plus fluide glisse vers le régime mixte (Stribeck), qui compenserait.
+**Mise à l'échelle.** Comme Sandoval et Heywood (SAE 2003-01-0725), les termes hydrodynamiques suivent la viscosité : ici (μ/μ₁₀₀)^0,5. L'exposant est cité de mémoire ; leur résumé, lu, dit que l'huile froide donne « environ deux fois » les frottements du moteur chaud. Ici : 1,57 fois à 20 °C et 2000 tr/min, 2,15 fois à 0 °C (`frictionFactor`). Finitions : au-delà de 100 °C, le même rapport retire des frottements, 10 % de leur part hydrodynamique à 110 °C, 26 % à 130 °C (`coldViscosityExcess`, négatif). Le glissement vers le régime mixte (Stribeck), qui en rendrait une part sur une huile très fluide, n'est pas modélisé.
 
-### Ce que change un départ à froid
+### Ce que change l'écart à la référence
 
-Après un départ à froid (`--start cold`, le réglage `startTemp`), tout part de l'air ambiant, et trois écarts à la référence chaude agissent, tous nuls une fois chaud :
+Finitions : le réseau agit toujours, parti chaud (`startTemp: warm` : eau à 90 °C, huile à 100 °C, métal à 95 °C) ou froid (`--start cold` : tout à l'air ambiant). Chaque effet passe par l'écart de l'eau ou de l'huile à la référence chaude, `kWarmCoolantC` et `kWarmOilC`, et vaut exactement zéro quand elle est atteinte :
 
-- **Frottements.** L'huile froide ajoute ses frottements au couple, au lancement et moteur calé compris : le démarreur tourne moins vite, le moteur cale plus facilement. La combustion, elle, reste celle du moteur chaud.
+- **Frottements.** L'huile ajoute ses frottements hydrodynamiques au couple, ou en retire au-delà de 100 °C, au lancement et moteur calé compris : froide, le démarreur tourne moins vite et le moteur cale plus facilement. La combustion, elle, reste celle du moteur chaud.
 - **Ralenti visé.** Le calculateur de la Saab 9-5 (Trionic, manuel d'atelier en ligne, lu) vise 1200 tr/min à −30 °C d'eau et 825 tr/min une fois chaud : +45 % à −30 °C, en ligne droite jusqu'à 70 °C (fin supposée), donc +23 % à 20 °C. Un carburateur fait la même chose par sa came de ralenti accéléré.
 - **Enrichissement.** Le carburant qui reste liquide sur les parois froides et repart imbrûlé. Supposé : λ ≈ 0,87 à 20 °C d'eau avec un calculateur, 0,77 avec un starter, qui n'a pas de sonde, en ligne droite jusqu'à 70 °C. Il se paie à la consommation, sans couple ni chaleur. Rien sur un diesel, qui n'a ni papillon ni starter.
+- **Film de carburant.** L'injection indirecte et le carburateur lisent l'eau du réseau (`portFilmParameters`, `coldFilmShare`) : froide, le film grossit et appauvrit la reprise ; le calculateur ne compense que celui d'un moteur à 90 °C.
+- **Air piégé.** La paroi qui réchauffe la charge est le conduit d'admission, dans la culasse, refroidi par l'eau : `T_piégé = T_air + 0,45·(T_paroi − T_air)`, `T_paroi = 363 K + (T_eau − 90 °C)` (`trappedAirK`, atmosphère). L'intégration lisait le métal du réseau, de 5 à 15 K plus chaud que l'eau sous charge : moteur chaud, il aurait retiré 1 à 2 % de couple à la référence elle-même.
+- **Cliquetis.** La carte est tabulée à 90 °C et à 20 °C d'eau, et le modèle de conduite y lit l'eau du réseau (« La combustion »).
+- **Ralenti accéléré.** Tant que l'eau n'a pas atteint 70 °C, la vanne de ralenti a l'autorité du démarrage (0,8 du remplissage), ensuite 0,45, comme moteur chaud : c'est l'eau que lit le calculateur.
 
-**Parti chaud, rien n'en revient.** Le réseau tourne quand même, pour les jauges, mais ni le couple, ni la conduite, ni le son ne le lisent, quelle que soit la température qu'il calcule : les 29 empreintes sont les mêmes au bit près, et un test fait diverger les températures (20 °C et −30 °C dehors) sans que rien d'autre ne bouge. La fiche (0 à 100 km/h, vitesse de pointe) se mesure moteur chaud, même après un départ à froid.
+**Parti chaud.** Le moteur s'équilibre près de la référence : l'eau vers 86 à 90 °C (le calorstat), l'huile vers 95 à 102 °C (l'échangeur). La consommation reste à moins de 0,5 % de celle d'avant, quand le réseau ne faisait que les jauges (`--fuel 1`, intégration puis finitions ; sur les deux suralimentés, l'air-air ε-NTU y est compris) :
 
-**Le son.** Rien n'a été ajouté au son : il suit le régime et la charge réels. Le ralenti part plus haut et redescend à mesure que l'eau chauffe, en une dizaine de minutes au ralenti par 20 °C, en quatre minutes et demie sur le WLTC. Par −10 °C, le ralenti du V8 respire davantage : son niveau varie de 2,4 dB (écart type sur 50 ms) contre 1,3 dB à chaud, la régulation ouvrant plus pour tenir des frottements presque doubles. L'écoute reste à faire.
+| Préréglage | WLTC | 90 km/h | 130 km/h | Huile, fin du WLTC | Huile à 90 et 130 km/h |
+|---|---|---|---|---|---|
+| `city_14` | +0,15 % | +0,12 % | −0,54 % | 116,8 → 100,7 °C | 111,0 → 98,2 ; 129,9 → 108,8 °C |
+| `hot_hatch_turbo` | +0,09 % | +0,09 % | −0,15 % | 113,8 → 97,9 °C | 115,4 → 98,8 ; 125,4 → 104,2 °C |
+| `v8_cross_plane` | +0,33 % | +0,34 % | +0,10 % | 110,9 → 95,2 °C | 112,7 → 95,4 ; 118,9 → 98,2 °C |
+| `diesel_four` | +0,14 % | +0,26 % | −0,15 % | 115,5 → 98,8 °C | 109,8 → 96,4 ; 127,8 → 105,4 °C |
+| `carb_twin_cam` | +0,20 % | | | 116,0 → 99,7 °C | |
+| `v16_cadillac` | +0,12 % | | | 125,8 → 100,7 °C | |
+
+À 130 km/h, la citadine dépense 0,54 % de moins : son huile, à 109 °C, freine moins. Un test compare dix minutes de ville au même moteur tenu à la référence (`holdThermalReference`) : +0,01 %. Au ralenti par 45 °C, l'eau tient vers 96 à 98 °C, le ventilateur tournant une à une minute et demie par demi-heure, et l'huile reste vers 100 °C : rien ne surchauffe tant que le ventilateur marche. La fiche (0 à 100 km/h, vitesse de pointe) se mesure moteur chaud, même après un départ à froid.
+
+**Le son.** Rien n'a été ajouté au son : il suit le régime et la charge réels. Parti chaud, le couple ne change que de quelques dixièmes de pour cent : le niveau des rendus bouge de 0,5 dB au plus, mais le régime se décale d'un rien et l'onde se déphase (60 empreintes changent, expliquées dans `CMakeLists.txt`). Le ralenti part plus haut et redescend à mesure que l'eau chauffe, en une dizaine de minutes au ralenti par 20 °C, en quatre minutes et demie sur le WLTC. Par −10 °C, le ralenti du V8 respire davantage : son niveau varie de 2,4 dB (écart type sur 50 ms) contre 1,3 dB à chaud, la régulation ouvrant plus pour tenir des frottements presque doubles. L'écoute reste à faire.
 
 **Sur l'électrique, rien de tout cela** : pas de réseau, pas de jauge, et les fonctions renvoient l'air ambiant ou zéro.
 
@@ -1354,11 +1370,11 @@ Mesuré avec `revforge-render --out none --preset X --scenario wltc|idle --start
 
 | Préréglage | Phase basse, chaud → froid (L/100 km) | WLTC complet, chaud → froid | Eau à 70 °C | Calorstat ouvert | Huile à 80 °C | Ralenti 15 min, chaud → froid (L/h) | Eau à 70 °C au ralenti |
 |---|---|---|---|---|---|---|---|
-| `city_14` | 8,69 → 9,66 (+11 %) | 6,76 → 6,89 (+3 g/km) | 264 s | 373 s | 371 s | 0,56 → 0,67 (+20 %) | 632 s |
-| `hot_hatch_turbo` | 12,80 → 14,09 (+10 %) | 8,90 → 9,08 (+4 g/km) | 219 s | 293 s | 317 s | 0,84 → 1,00 (+19 %) | 582 s |
-| `v8_cross_plane` | 23,98 → 26,83 (+12 %) | 13,90 → 14,28 (+9 g/km) | 277 s | 385 s | 401 s | 1,87 → 2,21 (+18 %) | 605 s |
-| `diesel_four` | 8,56 → 9,15 (+7 %) | 7,58 → 7,66 (+2 g/km) | 289 s | 427 s | 402 s | 0,46 → 0,56 (+20 %) | 725 s |
-| `carb_twin_cam` | 13,51 → 15,22 (+13 %) | 8,94 → 9,17 (+5 g/km) | 232 s | 337 s | 341 s | 0,85 → 1,05 (+23 %) | 573 s |
+| `city_14` | 8,72 → 9,75 (+12 %) | 6,77 → 6,90 (+3 g/km) | 270 s | 385 s | 354 s | 0,56 → 0,67 (+20 %) | 651 s |
+| `hot_hatch_turbo` | 12,84 → 14,23 (+11 %) | 8,91 → 9,10 (+5 g/km) | 225 s | 301 s | 297 s | 0,84 → 1,00 (+19 %) | 604 s |
+| `v8_cross_plane` | 24,08 → 26,97 (+12 %) | 13,95 → 14,33 (+10 g/km) | 290 s | 411 s | 370 s | 1,88 → 2,22 (+18 %) | 631 s |
+| `diesel_four` | 8,61 → 9,20 (+7 %) | 7,59 → 7,67 (+2 g/km) | 292 s | 430 s | 376 s | 0,47 → 0,56 (+19 %) | 733 s |
+| `carb_twin_cam` | 13,57 → 15,19 (+12 %) | 8,96 → 9,17 (+5 g/km) | 246 s | 346 s | 324 s | 0,87 → 1,06 (+21 %) | 594 s |
 
 Sur `diesel_four`, le conducteur relance le moteur une fois pendant le WLTC, à chaud comme à froid (voir « La consommation »). Par −20 °C, la citadine au ralenti met 17 minutes à atteindre 70 °C d'eau, et dépense 48 % de plus que chaude.
 
@@ -1367,10 +1383,10 @@ Sur `diesel_four`, le conducteur relance le moteur une fois pendant le WLTC, à 
 | Ralenti visé, eau à −30 °C | 1,45 fois le ralenti chaud | 1200 tr/min pour 825 | Saab 9-5, Trionic (lu) : le modèle est calé dessus |
 | Ralenti à 20 °C, `city_14` | 985 tr/min pour 815 à chaud (1,21), 1105 juste après le démarrage | 1100 pour 950 à 20 °C (1,16) dans un exemple de réglage ; « de 1200 à 1800 » au démarrage | HP Academy, engineerfix.com (vus cités) |
 | Durée du ralenti accéléré, au point mort par 20 °C | 9,5 à 12 min, le temps que l'eau atteigne 70 °C | « une à deux minutes » pour le pic ; chauffe du catalyseur pendant jusqu'à 5000 allumages, environ 2 min | engineerfix.com (vu cité), Saab WIS (lu) |
-| Eau à 70 °C, WLTC froid | 3,7 à 4,8 min | la période froide des essais en conduite réelle (RDE) finit à 70 °C d'eau, et dure 5 min au plus | règlement (UE) 2017/1151 (vu cité) |
-| Huile après l'eau | environ 6 K derrière l'eau pendant la mise en température du WLTC, puis au-dessus | « environ 10 °C de retard » sur un diesel de poids lourd | *Applied Sciences* 2020 (MDPI, vu cité) |
-| Surcoût, première phase | +7 % (diesel) à +13 % (carburateurs) sur 589 s | +20 % sur la phase froide de la FTP (505 s) face à la phase chaude, par 24 °C ; +40 à +80 % par −6,7 °C | Taylor et Stewart, SAE 2001-01-0221 (résumé lu) |
-| Surcoût, WLTC complet | +2 à +9 g/km de CO₂ (+1 à +3 %) | +6,1 g/km en moyenne sur 20 voitures | Tsokolis et al., *Applied Energy* 2016, JRC102610 (résumé lu) |
+| Eau à 70 °C, WLTC froid | 3,8 à 4,9 min | la période froide des essais en conduite réelle (RDE) finit à 70 °C d'eau, et dure 5 min au plus | règlement (UE) 2017/1151 (vu cité) |
+| Huile après l'eau | 4 à 5 K derrière l'eau pendant la mise en température du WLTC (l'échangeur la tire), puis au-dessus | « environ 10 °C de retard » sur un diesel de poids lourd | *Applied Sciences* 2020 (MDPI, vu cité) |
+| Surcoût, première phase | +7 % (diesel) à +12 % (V8, carburateurs) sur 589 s | +20 % sur la phase froide de la FTP (505 s) face à la phase chaude, par 24 °C ; +40 à +80 % par −6,7 °C | Taylor et Stewart, SAE 2001-01-0221 (résumé lu) |
+| Surcoût, WLTC complet | +2 à +10 g/km de CO₂ (+1 à +3 %) | +6,1 g/km en moyenne sur 20 voitures | Tsokolis et al., *Applied Energy* 2016, JRC102610 (résumé lu) |
 | Frottements à froid | ×1,57 à 20 °C, ×2,15 à 0 °C, à 2000 tr/min | « environ deux fois » | Sandoval et Heywood, SAE 2003-01-0725 (résumé vu cité) |
 
 « Lu » : la page ou le document lui-même. « Vu cité » : un extrait de recherche ou une reprise. Le ralenti accéléré du modèle dure plus que le pic que décrivent les conducteurs, qui est la chauffe du catalyseur : le modèle ne la simule pas, et garde le ralenti du calculateur selon l'eau, qui redescend avec elle.
@@ -1379,15 +1395,14 @@ Sur `diesel_four`, le conducteur relance le moteur une fois pendant le WLTC, à 
 
 - **Le surcoût d'un départ à froid lit environ moitié moins que les chiffres publiés.** Le modèle ne compte que le moteur : ni l'huile de boîte et de pont, ni les pneus froids, ni la chauffe du catalyseur (allumage retardé vers 10° après le point mort haut chez Saab, pendant jusqu'à 5000 allumages), ni la combustion moins bonne sur des parois froides (de l'ordre de 1 à 2 %), ni le chauffage. Rien n'a été réglé pour rattraper cet écart.
 - **Supposés** : la fin du ralenti accéléré et de l'enrichissement à 70 °C, l'enrichissement lui-même, les masses, les conductances, le cas de dimensionnement du radiateur, les vitesses d'air, la part des frottements qui va à l'huile, la température moyenne des gaz.
-- **Pas d'échangeur eau-huile** : l'huile monte à 115-120 °C sur la fin du WLTC, et vers 140 °C en tirant une remorque par 45 °C.
+- **L'échangeur eau-huile est sur tous les moteurs**, la Cadillac de 1930 comprise, qui n'en avait pas : son huile, dans un grand carter refroidi par l'air, se trouverait plus chaude que ce que montre le réseau.
+- **Le cliquetis en surchauffe.** La carte d'un moteur d'origine n'est pas calculée : au-delà de 94 à 100 °C d'eau selon le moteur, à pleine charge, il commencerait à cliqueter sur quelques cycles, et un vrai calculateur retarderait l'allumage. Le réseau n'y monte qu'au ralenti par grosse chaleur (97 °C) ou ventilateur en panne.
 - **La surchauffe** : avec un ventilateur qui marche, le ralenti par 45 °C ne surchauffe pas (l'eau tient vers 97 °C) ; ni le condenseur de climatisation, ni l'air chaud qui revient sous le capot ne sont simulés. Ventilateur en panne, l'eau dépasse 115 °C (test). Au-delà de 129 °C, l'eau bout : ni perte de liquide, ni protection du calculateur.
-- **Parti chaud, le réseau ne fait que les jauges** : un moteur chaud qui tourne une heure au ralenti par −30 °C refroidit à l'écran sans que ses frottements changent.
 - Le rotatif n'a que ses paliers dans les frottements hydrodynamiques (pas de jupes), au même quart de moins que ses frottements (supposé). Le gaz à l'écran et la chaleur de la page (`Motion.heat`) ne lisent pas ce réseau, et la vapeur d'un échappement froid n'est pas dessinée.
-- L'air du radiateur est à 101 325 Pa : l'altitude n'y est pas encore.
 
 ### Ce que lisent et exposent les autres sujets
 
-Lu : la température ambiante (`EngineConfig::ambientC`, 20 °C par défaut). Exposé, en fonctions pures : `oilViscosityPaS`, `hydrodynamicNmPerRpm`, `coldFrictionNm`, `frictionFactor`, `coldIdleRise`, `coldEnrichment`, `wallHeatShare` ; et dans `DrivingModel::thermal()` : `coolantC`, `oilC`, `metalC`, avec `coldIdleRpm`, `coldEnrichment`, `coldFrictionNm` de ce qui agit. Pour qu'un moteur parti chaud reste au bit près, un effet branché sur ces températures passe, comme ici, par un écart à la référence chaude (`kWarmCoolantC`, `kWarmOilC`) qui n'agit qu'après un départ à froid (`thermalCoupled()`).
+Lu : la température ambiante (`EngineConfig::ambientC`, 20 °C par défaut). Exposé, en fonctions pures : `oilViscosityPaS`, `hydrodynamicNmPerRpm`, `coldFrictionNm`, `frictionFactor`, `coldIdleRise`, `coldEnrichment`, `wallHeatShare` ; et dans `DrivingModel::thermal()` : `coolantC`, `oilC`, `metalC`, avec `coldIdleRpm`, `coldEnrichment`, `coldFrictionNm` de ce qui agit. Exposés aussi : `counterFlowEffectiveness`, `ThermalNetwork::oilCoolerW`. Un effet branché sur ces températures passe, comme ici, par un écart à la référence chaude (`kWarmCoolantC`, `kWarmOilC`), exactement nul quand elle est atteinte : le réseau agit toujours (`thermalCoupled()`), sauf pendant un essai qui le tient à la référence (`holdThermalReference`).
 
 ## La combustion
 
@@ -1590,6 +1605,8 @@ Un taux plus haut paie en bas, où le capteur retire l'avance (jusqu'à 7,4° su
 décalage d'avance du calculateur pourra prendre. L'E85 et le méthanol gagnent par leur énergie par kilogramme d'air et leur charge plus
 froide, et coûtent 40 % et 105 % de litres en plus, le rapport de leurs énergies par litre. Ces gains à avance égale sont un peu au-dessus
 de ce qu'on lit d'ordinaire pour l'E85 (3 à 5 %, sans source relue) : la part vaporisée dans l'air est supposée.
+
+**L'eau du moteur** (finitions). La charge à la fermeture de l'admission prend la chaleur du conduit et de la chemise, à l'eau plus 40 K (`kWallOverCoolantK`). La carte est tabulée à 90 °C et à 20 °C d'eau (`KnockMap::at(rpm, charge, eau)`), et le modèle de conduite y lit l'eau du réseau thermique : le logarithme de l'intégrale de Livengood-Wu suit 1/T des gaz frais, donc l'eau presque linéairement, et la lecture linéaire reste à un dixième de degré du calcul direct à 55 °C. La carte d'origine, réglée moteur chaud, ne bouge pas : un moteur froid y gagne de la marge, un moteur trop chaud en perd. Sur la citadine à 1500 tr/min, pleine charge, la limite vaut 29,5° par −20 °C d'eau, 20,6° à 20 °C, 16,4° à 90 °C et 14,5° à 129 °C, pour une carte d'origine à 14,4° : environ 0,5° pour 10 K autour de 90 °C. Le 1.4 à 13:1, plein gaz en quatrième juste après un départ à froid (eau vers 25 °C), voit le capteur retirer 4,7° au plus, contre 7,1° moteur chaud. Un moteur d'origine n'a pas de carte calculée : au-delà de 94 °C (birotor) à 100 °C d'eau selon le moteur, à pleine charge, il cliquetterait sur quelques cycles (limite connue, « La thermique »).
 
 ### Le son du cliquetis
 
@@ -1840,6 +1857,8 @@ Une came de course ne donne rien sans régime : à 6800 tr/min, elle perd 13 % d
 **Le calage variable.** Le déphaseur d'admission a ± 20° de vilebrequin autour du calage de base (40° en tout, de l'ordre d'un VVT-i, de mémoire). Son meilleur calage à pleine charge sort du même cycle : trois calages, puis le sommet de la parabole qui passe par eux. Il avance l'admission en bas (de + 16 à + 20° sous 4000 tr/min) et la retarde en haut (− 9° à 7000, − 18° à 8000). Pied levé et au ralenti, il reste en butée retard, le moins de croisement possible ; il tourne à 150°/s (supposé). Une came à deux profils encadre le profil réglé : 25° et 15 % de levée de moins pour le doux, autant de plus pour le pointu (supposé, de l'ordre d'un VTEC). La bascule a lieu là où leurs courbes de couple se croisent, calculé, avec ± 2 % d'hystérésis, et seulement au-dessus de 60 % de remplissage (supposé). Le couple de la fiche est le meilleur des deux ; dans la bande d'hystérésis, les deux diffèrent de moins de 1 %, et le modèle de conduite ne le compte pas. À la bascule, chaque cylindre verrouille son culbuteur à sa prochaine fermeture d'admission, revenu sur le cercle de base : un tic à 4,5 kHz, de la moitié de l'énergie du tic du siège (une goupille de 5 g à 1 m/s contre une soupape de 40 g à 0,5 m/s, supposés), à son propre générateur.
 
 **Ce que la came expose aux autres sujets**, en fonctions pures de `cam.hpp` : `intakeClosingAbdcDeg`, `effectiveCompressionRatio`, `valveOverlapDeg`, `overlapFactor` et `residualGasFraction` (qui reçoivent les pressions en paramètres), `combustionCov`, `camDurationAtLiftDeg`, `camProfileOf` (levée et durée effectives), `camNoseDecelerationMs2`. Elle lit le régime d'affolement des soupapes en paramètre de `camSwitchRpm` : un second profil qui ne servirait qu'au-delà ne bascule pas. Elle lit aussi `compressionRatio`.
+
+**L'air du jour** (finitions). Le cycle respire l'air du jour (atmosphère) : pression et température au plénum, vitesse du son de l'amortissement du conduit, et une perte de la ligne qui suit ρv², donc la pression où le gaz débouche. Le conduit, accordé dans l'air de référence, garde sa longueur. En altitude seule, toutes les pressions changent ensemble, et un écoulement compressible à même température n'en dépend pas : sur le 2 L à deux profils, la bascule reste à 5178 tr/min à 3000 m. La chaleur déplace l'accord comme la vitesse du son, en √T, et la bascule un peu plus : 4963 tr/min par −20 °C, 5555 par 45 °C (√T donnerait −7 % et +4 % ; le croisement de deux courbes se déplace plus ou moins que chacune). Dans l'air de référence, rien ne change au bit près.
 
 **Ce qui n'est pas modélisé.** Le tube primaire n'est pas accordé à la came : le balayage par l'onde d'échappement reste celui d'un tube amorti. Le cycle n'a qu'un γ et pas de transfert de chaleur. La consommation ne voit que le couple : une came de course y gagne 2,4 %, parce que son couple maximal plus bas fait travailler le moteur plus près de sa pleine charge, alors qu'en réel ses gaz résiduels la feraient plutôt perdre. Le gaz à l'écran et le dessin suivent le profil de base, sans le déphaseur ni la bascule en direct, et le gaz ne suit pas la levée. L'affolement n'a ici aucune conséquence : il appartient aux culbuteurs. **Rien n'a été écouté** : à faire, `revforge-render --out ralenti.wav --preset hot_hatch_na --scenario idle --seconds 8 --cam-duration 300 --cam-lift 13 --lsa 104`, la même chose sans les options de came, et `--vvt two_step --scenario launch --listener bay` pour la bascule.
 
@@ -2148,31 +2167,47 @@ Avec deux turbos, `GasNetwork` a deux collecteurs (un moteur en ligne coupé en 
 ### Ce qui vient d'ailleurs
 
 - La pression demandée et l'ouverture de la soupape sont des paramètres (`TwinTurboInput::targetBar`, `wastegate`) : négatifs, ce sont ceux d'aujourd'hui (le ressort). La régulation les donnera.
-- L'air ambiant passe par `turbo_laws::constants()` (`atmosphere`, `ambientK`), les mêmes que `turbo.cpp`.
+- L'air du jour (finitions) : chaque arbre aspire celui de la référence de `turboSpecOf` (`ambientPa`, `ambientK`), la ligne y débouche, et la soupape à ressort tient une pression relative, comme le turbo simple ; la cible de la régulation s'y compare. Le dimensionnement reste dans l'air de référence (`turbo_laws::constants()`). À 5000 tr/min et 3000 m : l'arbre d'un parallèle passe de 174 600 à 202 600 tr/min, pour 1,70 bar absolus (2,01 au niveau de la mer) ; le séquentiel, qui reste sur son primaire, plafonne à 1,18 bar, sa roue à sa vitesse limite (231 200 tr/min) ; le twincharger tient 2,20 bar à l'équilibre, mais 1,32 bar relatifs au lieu de 1,50 dans le modèle à pas fixes, où le turbo seul traverse encore la perte du volet que l'équilibre ignore. Dans l'air de référence, au bit près.
 - Les rangées et la longueur des collecteurs viennent de `EngineConfig::toProfile` (`bank`, `headerM`).
 - `DrivingModel::turboState()` et `turboStateB()` exposent chaque arbre, avec la pression et la température de charge communes ; `twinTurboSteady` l'équilibre.
 
 ## L'air de charge
 
-`core/src/charge_air.cpp` : l'échangeur (air-air, air-eau, aucun), l'injection d'eau et le protoxyde d'azote, en fonctions pures. Ce qui évolue en roulant (la boucle d'eau, la bouteille) est l'état `ChargeAir`, qu'avance `DrivingModel` à chaque pas de 1 ms, par `revforge::portable`. Au défaut (air-air, sans eau, sans protoxyde), `chargeAirActive` est faux et rien de cela ne s'exécute : les préréglages et les 29 empreintes d'origine ne bougent pas d'un bit. Sur un diesel, l'eau et le protoxyde restent sans effet (le réglage n'apparaît que sur un moteur à étincelle) ; sur un atmosphérique, l'échangeur n'existe pas.
+`core/src/charge_air.cpp` : l'échangeur (air-air, air-eau, aucun), l'injection d'eau et le protoxyde d'azote, en fonctions pures. Ce qui évolue en roulant (la boucle d'eau, la bouteille) est l'état `ChargeAir`, qu'avance `DrivingModel` à chaque pas de 1 ms, par `revforge::portable`. Au défaut (air-air, sans eau, sans protoxyde), `chargeAirActive` est faux et rien de l'état `ChargeAir` ne s'exécute ; l'air-air, lui, est depuis les finitions le faisceau ε-NTU, que tiennent le turbo, le biturbo et le compresseur eux-mêmes (`AirCoolerCore`). Sur un diesel, l'eau et le protoxyde restent sans effet (le réglage n'apparaît que sur un moteur à étincelle) ; sur un atmosphérique, l'échangeur n'existe pas.
 
-**Le principe, partout le même.** Le couple de base (`fullLoadTorqueNm`) suppose l'échangeur d'origine. Ce qui change la charge change la masse d'air admise à pression égale : `C = ((C₀ + f)·T_réf/T·part_air − f)`, où `f` est le frottement, qui ne suit pas la densité. Sur la fiche, `torqueCurveNm` l'applique à l'équilibre, à 100 km/h ; en conduite, `DrivingModel` multiplie le couple indiqué par le même rapport, lu dans l'état du moment. La boîte et l'embrayage restent ceux du moteur d'origine (`chargeAirStock`), comme pour le filtre : un échangeur ne redessine pas une boîte, et un embrayage ne se renforce pas pour du protoxyde.
+**Le principe, partout le même.** Le couple de base (`fullLoadTorqueNm`) suppose l'échangeur d'origine, la loi `ε = 0,86 − 0,14·ṁ/ṁ_nom` sur laquelle a été calé `kBoostEfficiency`. Ce qui change la charge change la masse d'air admise à pression égale : `C = ((C₀ + f)·T_réf/T·part_air − f)`, où `f` est le frottement, qui ne suit pas la densité. Sur la fiche, `torqueCurveNm` l'applique à l'équilibre, à 100 km/h ; en conduite, `DrivingModel` multiplie le couple indiqué par le même rapport, lu dans l'état du moment. La boîte et l'embrayage restent ceux du moteur d'origine (`chargeAirStock`), comme pour le filtre : un échangeur ne redessine pas une boîte, et un embrayage ne se renforce pas pour du protoxyde.
 
 ### L'échangeur
 
-- **Air-air d'origine.** Inchangé : `ε = 0,86 − 0,14·ṁ/ṁ_nom`, une masse de 1,5 s, l'air extérieur de l'autre côté, quelle que soit la vitesse.
-- **Air-air par ε-NTU, avec l'air de route** (`airToAirCoolerFor`, `airToAirOutletK`) : prêt à brancher, il ne remplace pas l'origine, car il ne la reproduit pas au bit près. `UA = 1/(1/hA_charge + 1/hA_route)`, `hA_charge ∝ ṁ^0,8` (Dittus-Boelter), `hA_route ∝ ṁ_route^0,5` (ailettes à persiennes, régime laminaire), `ṁ_route = ρ·A·(0,3·v + 1 m/s)` (une calandre ne laisse passer qu'une part de la vitesse ; le ventilateur, à l'arrêt ; deux valeurs supposées). Courants croisés, deux fluides non brassés : `ε = 1 − exp[(NTU^0,22/Cr)·(exp(−Cr·NTU^0,78) − 1)]` (Incropera). Face de 0,85 m² par kg/s (600 × 300 mm pour un 2 L), deux côtés de même conductance, calée pour rendre l'origine au nominal à 100 km/h. Ce qu'il changerait au couple à la puissance maximale, à pression égale :
+- **Air-air par ε-NTU, avec l'air de route : l'échangeur de série** (finitions). Il remplace, sur le turbo, le biturbo et le compresseur, la loi d'origine (`ε = 0,86 − 0,14·ṁ/ṁ_nom` et une masse de 1,5 s, l'air extérieur de l'autre côté, quelle que soit la vitesse). Le faisceau est découpé en quatre tranches le long du trajet de la charge (`kCoolerSlices`) ; dans chacune, la charge et l'air de route échangent avec une paroi à une seule température, chacun par `ε = 1 − e^−NTU`, et l'air de route ne traverse qu'une tranche : un échangeur à courants croisés en différences finies. À l'équilibre, chaque tranche retire la même part `e = ε_c·ε_r·(C_r/N)/(ε_c·C_c + ε_r·C_r/N)` de l'écart à l'air, et l'échangeur `1 − (1 − e)^N` (`airToAirOutletK`). `hA_charge ∝ ṁ^0,8` (Dittus-Boelter), `hA_route ∝ ṁ_route^0,5` (ailettes à persiennes, régime laminaire), `ṁ_route = ρ·A·(0,3·v + 1 m/s)` (une calandre ne laisse passer qu'une part de la vitesse ; le ventilateur, à l'arrêt ; deux valeurs supposées). Face de 0,85 m² par kg/s (600 × 300 mm pour un 2 L), deux côtés de même conductance, calée pour rendre l'origine au nominal à 100 km/h. **La masse du faisceau** : 4 kg d'aluminium pour 0,21 kg/s (supposé : un faisceau de série de cette face pèse 3 à 5 kg, réservoirs à part), à 900 J/(kg·K), répartis entre les tranches : `C_paroi·dT_paroi/dt = ε_c·C_c·(T_entrée − T_paroi) − ε_r·(C_r/N)·(T_paroi − T_air)` (`AirCoolerCore`, `revforge::portable`, à chaque pas de 1 ms). À débit nul, l'air qui dort dans le faisceau est à la dernière paroi ; à l'arrêt, le ventilateur seul le refroidit, en une trentaine de secondes de constante de temps.
+
+  **La fiche se mesure au banc**, devant une soufflerie qui donne au faisceau l'air de 100 km/h (`kChargeReferenceSpeedMs`, `benchCoolerOutletK`) : l'équilibre du turbo, du biturbo et du compresseur, donc leurs courbes, voient ce faisceau, et un compresseur volumétrique est dimensionné avec lui. Sur un banc à rouleaux, le ventilateur suit la vitesse des rouleaux, à ±6,5 mi/h près au-delà de 30 mi/h, et peut plafonner à 70 mi/h, 113 km/h (40 CFR 1066.105(c)(2), lu) : 100 km/h est sous ce plafond. Pour la puissance nette au banc moteur, le règlement ONU n° 85 et SAE J1349 demandent un refroidissement de la charge qui rende celui du véhicule (vu cité), sans fixer de vitesse. Le couple de base d'un turbo reste calé sur la loi d'origine : la fiche le corrige de `T_origine/T` à pression égale (`turboCoolerTorqueShare`), exactement 1 au débit nominal ; en conduite, `DrivingModel::airCoolerShare` fait de même avec la charge du moment, faisceau et vitesse compris. Un compresseur lisait déjà la température de son échangeur (`superchargerAirShare`) : en conduite, il ne reçoit que l'écart au banc.
+
+  À la puissance maximale, à l'équilibre et à pression égale, face à l'origine :
 
 | Préréglage | Origine | 0 km/h | 50 km/h | 100 km/h | 150 km/h |
 |---|---|---|---|---|---|
-| three_cyl_turbo | 52,4 °C | 92,0 °C, −10,8 % | 60,6 °C, −2,4 % | 52,2 °C, +0,1 % | 48,0 °C, +1,4 % |
-| hot_hatch_turbo | 53,6 °C | 94,5 °C, −11,1 % | 62,0 °C, −2,5 % | 53,4 °C, +0,1 % | 49,0 °C, +1,4 % |
-| five_cyl_turbo | 56,8 °C | 101,7 °C, −12,0 % | 66,1 °C, −2,7 % | 56,6 °C, +0,1 % | 51,8 °C, +1,6 % |
-| boxer_four_turbo | 51,9 °C | 90,7 °C, −10,7 % | 59,9 °C, −2,4 % | 51,7 °C, 0,0 % | 47,5 °C, +1,4 % |
-| diesel_four | 61,3 °C | 111,6 °C, −13,1 % | 71,6 °C, −3,0 % | 61,0 °C, +0,1 % | 55,6 °C, +1,7 % |
-| v8_supercharged | 40,1 °C | 64,8 °C, −7,3 % | 45,3 °C, −1,6 % | 40,1 °C, 0,0 % | 37,4 °C, +0,9 % |
+| three_cyl_turbo | 52,4 °C | 91,0 °C, −10,6 % | 60,5 °C, −2,4 % | 52,1 °C, +0,1 % | 47,8 °C, +1,4 % |
+| hot_hatch_turbo | 53,5 °C | 93,5 °C, −10,9 % | 61,9 °C, −2,5 % | 53,3 °C, +0,1 % | 48,8 °C, +1,4 % |
+| five_cyl_turbo | 56,7 °C | 100,6 °C, −11,7 % | 65,9 °C, −2,7 % | 56,5 °C, +0,1 % | 51,6 °C, +1,6 % |
+| boxer_four_turbo | 51,8 °C | 89,8 °C, −10,5 % | 59,8 °C, −2,4 % | 51,6 °C, +0,1 % | 47,4 °C, +1,4 % |
+| diesel_four | 61,2 °C | 110,3 °C, −12,8 % | 71,4 °C, −3,0 % | 60,8 °C, +0,1 % | 55,4 °C, +1,8 % |
+| v8_supercharged | 39,9 °C | 63,8 °C, −7,1 % | 44,9 °C, −1,6 % | 39,8 °C, +0,1 % | 37,1 °C, +0,9 % |
 
-  L'écart ne compte vraiment qu'à l'arrêt, plein gaz : sur un banc sans soufflerie, ou au départ d'un feu. Le brancher changerait le 0-100 km/h des préréglages turbo, donc leurs empreintes : c'est un choix à faire à part.
+  Ces écarts sont ceux de l'équilibre. Un départ arrêté ne dure que quelques secondes, et le faisceau froid boit la chaleur : la charge reste vers 21 °C la première seconde et demie, et le 0 à 100 km/h gagne (table). Au banc, à bas régime, le faisceau rend plus que l'ancienne loi, plafonnée à 0,86 : quelques pour cent de couple en bas, rien en haut.
+
+  | Préréglage | Fiche avant → après | 0-100 km/h |
+  |---|---|---|
+  | three_cyl_turbo | 192,3 → 195,9 Nm ; 94,6 → 94,7 kW | 10,05 → 9,84 s |
+  | hot_hatch_turbo | 357,0 → 363,9 Nm ; 194,4 → 194,6 kW | 6,86 → 6,60 s |
+  | five_cyl_turbo | 505,9 → 516,8 Nm ; 296,9 → 297,2 kW | 5,29 → 5,12 s |
+  | boxer_four_turbo | 444,2 → 452,5 Nm ; 253,1 → 253,3 kW | 5,45 → 5,26 s |
+  | diesel_four | 315,1 → 319,8 Nm ; 113,5 → 113,7 kW | 12,94 → 12,55 s |
+  | v8_supercharged | 767,3 → 772,6 Nm ; 393,6 → 393,6 kW | 6,99 → 6,95 s |
+  | w12_continental | 778,0 → 777,9 Nm ; 405,9 → 405,8 kW | 5,38 → 5,28 s |
+  | w16_hypercar | 1306,0 → 1305,5 Nm ; 670,8 → 670,9 kW | 3,61 → 3,60 s |
+
+  **L'échauffement à l'arrêt (« heat soak »).** Vingt secondes après un premier départ arrêté jusqu'à 100 km/h et un freinage, le faisceau a gardé de sa chaleur : à 1,5 s du départ suivant, la charge est à 24,6 °C au lieu de 21,0 sur `hot_hatch_turbo` (−1,2 % de couple à pression égale, 0 à 100 km/h en 6,91 s au lieu de 6,85), à 30,9 au lieu de 21,3 °C sur `diesel_four` (−3,2 %, 13,07 s au lieu de 12,83), à 25,6 au lieu de 22,4 °C sur `v8_supercharged` (−1,1 %, 7,31 s au lieu de 7,28). Le compartiment moteur ne chauffe pas l'air-air, posé à l'avant dans l'air extérieur ; la chaleur des conduits et du collecteur, qui fait l'essentiel d'un échauffement réel, n'est pas modélisée.
 - **Air-eau.** Une brique refroidie par une boucle d'eau glycolée, sa pompe électrique et son radiateur basse température à la calandre :
 
   ```
@@ -2186,24 +2221,25 @@ Avec deux turbos, `GasNetwork` a deux collecteurs (un moteur en ligne coupé en 
 
   | | Arrêt (60 s) | Fin du départ 1 | 2 | 3 | Eau au départ 1/2/3 |
   |---|---|---|---|---|---|
-  | Air-air | 19,9 °C | 48,6 °C | 48,6 °C | 48,7 °C | — |
+  | Air-air, intégration | 19,9 °C | 48,6 °C | 48,6 °C | 48,7 °C | — |
+  | Air-air ε-NTU | 19,9 °C | 41,2 °C | 42,9 °C | 43,1 °C | — |
   | Air-eau | 21,3 °C | 43,9 °C | 45,6 °C | 46,2 °C | 21,3/24,9/26,2 °C |
 
-  La masse de la boucle fait le premier départ plus frais que l'air-air ; elle garde ensuite ce qu'elle a pris, et le radiateur, sans vitesse, ne le rend qu'en 90 s environ. À l'arrêt seul, la boucle ne prend que 1,4 K en une minute (3 K à l'équilibre) : ce qu'on lit d'un capteur dans un collecteur chaud, à très faible débit, vient surtout du collecteur, qui n'est pas modélisé, pour aucun échangeur. Ordre de grandeur publié : un échangeur air-air à l'avant tient la charge à environ 15 K au-dessus de l'air à pleine puissance (Behr, brevet US 7 779 791 B2), 20 à 30 K selon d'autres brevets du même fabricant ; ici, 28,6 K à la fin d'un départ et 33,6 K à l'équilibre à la puissance maximale.
+  La masse de la boucle fait le premier départ plus frais que l'ancien air-air ; le faisceau ε-NTU, refroidi par l'air de route dès que la voiture roule et froid au départ, fait mieux encore. La boucle garde ensuite ce qu'elle a pris, et le radiateur, sans vitesse, ne le rend qu'en 90 s environ. À l'arrêt seul, la boucle ne prend que 1,4 K en une minute (3 K à l'équilibre) : ce qu'on lit d'un capteur dans un collecteur chaud, à très faible débit, vient surtout du collecteur, qui n'est pas modélisé, pour aucun échangeur. Ordre de grandeur publié : un échangeur air-air à l'avant tient la charge à environ 15 K au-dessus de l'air à pleine puissance (Behr, brevet US 7 779 791 B2), 20 à 30 K selon d'autres brevets du même fabricant ; ici, 21,2 K à la fin d'un départ (28,6 avec l'ancienne loi) et 33,3 K à l'équilibre à la puissance maximale, à 100 km/h.
 - **Aucun.** La sortie du compresseur va droit au papillon : `T3 = T2`. Le chemin de l'air (`ChargePath`, recopié par `fluidGas.ts`) : tube chaud 0,45 m, faisceau 0,45 m de quatre fois la section, tube froid 0,5 m pour l'air-air d'un turbo ; brique de 0,25 m et tube froid de 0,2 m pour l'air-eau ; un seul tube de 0,8 m sans échangeur. Le volume suit : 6,5, 3,9 et 1,9 L sur un 2 L. La perte suit `ρv²` : Darcy (`f = 0,02`) et 0,3 par coude ; le faisceau porte environ 80 % des 0,12 bar d'origine, une brique la moitié (supposé). Le retard ne gagne presque rien : 90 % de la pression à 3000 tr/min en 0,85, 0,80 et 0,76 s, car l'inertie de l'arbre domine. Le turbo et le compresseur restent ceux de l'échangeur d'origine.
 
 | | Couple max | Puissance | 0-100 km/h | Charge à la puissance max. |
 |---|---|---|---|---|
-| hot_hatch_turbo, air-air | 357 Nm à 2850 | 194,4 kW | 6,86 s | 53,6 °C |
-| air-eau | 363 Nm à 2850 | 195,0 kW | 6,60 s | 52,6 °C |
-| aucun | 274 Nm à 4350 | 150,4 kW | 7,79 s | 131,7 °C |
-| injection d'eau | 378 Nm à 2850 | 209,5 kW | 6,59 s | 27,8 °C |
-| protoxyde 75 kW | 598 Nm à 3000 | 271,5 kW | 5,57 s | 18,4 °C |
-| v8_supercharged, d'origine | 767 Nm à 3650 | 393,6 kW | 6,99 s | 40,1 °C |
-| air-eau | 772 Nm à 3550 | 393,7 kW | 6,96 s | 40,1 °C |
-| aucun | 651 Nm à 3850 | 338,7 kW | 7,16 s | 87,4 °C |
-| hot_hatch_na | 194 Nm à 4500 | 117,8 kW | 8,72 s | 19,9 °C |
-| injection d'eau | 203 Nm à 4550 | 123,7 kW | 8,42 s | 6,4 °C |
+| hot_hatch_turbo, air-air ε-NTU | 364 Nm à 2850 | 194,6 kW | 6,60 s | 53,3 °C |
+| air-eau | 363 Nm à 2850 | 195,0 kW | 6,63 s | 52,6 °C |
+| aucun | 258 Nm à 4850 | 144,4 kW | 8,20 s | 131,7 °C |
+| injection d'eau | 383 Nm à 2850 | 209,6 kW | 6,39 s | 27,7 °C |
+| protoxyde 75 kW | 603 Nm à 3000 | 271,6 kW | 5,47 s | 18,1 °C |
+| v8_supercharged, air-air ε-NTU | 773 Nm à 3550 | 393,6 kW | 6,95 s | 39,8 °C |
+| air-eau | 771 Nm à 3600 | 393,5 kW | 6,97 s | 39,8 °C |
+| aucun | 634 Nm à 3950 | 338,3 kW | 7,18 s | 87,2 °C |
+| hot_hatch_na | 194 Nm à 4500 | 117,8 kW | 8,68 s | 19,9 °C |
+| injection d'eau | 203 Nm à 4550 | 123,7 kW | 8,38 s | 6,4 °C |
 | protoxyde 75 kW | 417 Nm à 3000 | 192,3 kW | 7,18 s | −27,5 °C |
 
 Sans échangeur, le moteur perd 23 % de puissance par la seule densité : la détonation, qu'un calculateur éviterait en retirant de l'avance, n'est pas dans ce calcul (voir ce que lit le cliquetis, plus bas).
@@ -2231,7 +2267,7 @@ Clausius-Clapeyron intégrée avec une chaleur latente linéaire (Kirchhoff) : `
 
 ### Ce qui se lit, ce qui s'expose
 
-Lu en paramètres, aux valeurs de référence tant que les sujets concernés ne sont pas branchés : `ChargeConditions` (`ambientK`, `ambientPa` de l'atmosphère, `engineCoolantK` de la thermique) et `ChargeFuel` (`latentJPerKg`, `stoichiometricAfr`, `lowerHeatingJPerKg` de la combustion, `fullLoadLambda` du calculateur). Exposé pour le cliquetis : `ManifoldCharge` (pression et température au collecteur, eau injectée et encore liquide, protoxyde, oxygène du comburant, part d'air), par `DrivingModel::manifoldCharge()` en roulant et `steadyManifoldCharge(p, rpm)` sur la fiche ; et les fonctions pures `mixCharge`, `waterSpray`, `waterSaturationPa`, `nitrousSaturation`, `chargeCoolerSteadyK`. Sur le site : `rf_charge_c`, `rf_charge_water_c`, `rf_water_gps`, `rf_nitrous_bar`, `rf_nitrous_kg`, `rf_nitrous_flow`, `rf_nitrous_refill`, `rf_nitrous_activation_rpm` ; la jauge de la bouteille et la charge sous celle du collecteur. Tests : `tests/charge_air_test.cpp`, `web/tests/air-de-charge.spec.ts` ; empreintes `golden_charge_*`.
+Lu en paramètres, aux valeurs de référence tant que les sujets concernés ne sont pas branchés : `ChargeConditions` (`ambientK`, `ambientPa` de l'atmosphère, `engineCoolantK` de la thermique) et `ChargeFuel` (`latentJPerKg`, `stoichiometricAfr`, `lowerHeatingJPerKg` de la combustion, `fullLoadLambda` du calculateur). Exposé pour le cliquetis : `ManifoldCharge` (pression et température au collecteur, eau injectée et encore liquide, protoxyde, oxygène du comburant, part d'air), par `DrivingModel::manifoldCharge()` en roulant et `steadyManifoldCharge(p, rpm)` sur la fiche ; et les fonctions pures `mixCharge`, `waterSpray`, `waterSaturationPa`, `nitrousSaturation`, `chargeCoolerSteadyK`. L'air-air de série (finitions) : `airToAirCoolerFor`, `airToAirOutletK`, `benchCoolerOutletK`, `AirCoolerCore` (tenu par `TurboCharger`, `Supercharger` et `TwinTurbo`, qui reçoivent la vitesse par `coolingAirMs`), `turboCoolerTorqueShare`, `turboCoolerOutletK`, `superchargerCoolerOutletK`, et `DrivingModel::airCoolerShare` en roulant. Sur le site : `rf_charge_c`, `rf_charge_water_c`, `rf_water_gps`, `rf_nitrous_bar`, `rf_nitrous_kg`, `rf_nitrous_flow`, `rf_nitrous_refill`, `rf_nitrous_activation_rpm` ; la jauge de la bouteille et la charge sous celle du collecteur. Tests : `tests/charge_air_test.cpp`, `web/tests/air-de-charge.spec.ts` ; empreintes `golden_charge_*`.
 
 ## Le deux-temps
 
@@ -2300,17 +2336,17 @@ Les douze sujets du moteur réunis : architectures, atmosphère, thermique, comb
 
 ### Ce qui est branché
 
-**L'air du jour.** Le radiateur est dimensionné dans l'air de référence, et traversé par celui du jour (`ThermalSpec::airPressureRatio`). Une wastegate à ressort tient une pression relative, le calculateur une pression absolue, plafonnée par la vitesse des roues en rapport de pression (`boostTargetPa`, `BoostControlInput::ambientPa`) : à 3000 m, le ressort vise 2,0 bar absolus, l'électronique 2,31 jusqu'à 4100 tr/min, puis 2,03 à 5900, l'arbre à sa vitesse limite. L'échangeur air-air refroidit vers l'air du jour (`coolerOutlet`). La carte du cliquetis lit la pression d'un atmosphérique ; la température lui arrive déjà par l'air d'admission. Tout ce qui se dimensionne une fois (turbo, compresseur, boîte, embrayage, carte de passage, étalonnage de la pression) l'est dans l'air de référence (`withReferenceAir`).
+**L'air du jour.** Le radiateur est dimensionné dans l'air de référence, et traversé par celui du jour (`ThermalSpec::airPressureRatio`). Une wastegate à ressort tient une pression relative, le calculateur une pression absolue, plafonnée par la vitesse des roues en rapport de pression (`boostTargetPa`, `BoostControlInput::ambientPa`) : à 3000 m, le ressort vise 2,0 bar absolus, l'électronique 2,31 jusqu'à 4100 tr/min, puis 2,03 à 5900, l'arbre à sa vitesse limite. L'échangeur air-air refroidit vers l'air du jour (le faisceau ε-NTU, `AirCoolerCore`). Le cycle de la came et les arbres du biturbo le lisent aussi (finitions). La carte du cliquetis lit la pression d'un atmosphérique ; la température lui arrive déjà par l'air d'admission. Tout ce qui se dimensionne une fois (turbo, compresseur, boîte, embrayage, carte de passage, étalonnage de la pression) l'est dans l'air de référence (`withReferenceAir`).
 
-**La carte du cliquetis** se construit dès que change ce qu'elle lit (`knockConditionsStock`), plus seulement la combustion : l'air, la came (la fermeture de l'admission), l'injection directe (ce que sa vaporisation refroidit de plus qu'une injection indirecte), l'avance du calculateur et l'air de charge (la charge au collecteur). Un jour à 45 °C la rapproche de sa limite ; la carte d'origine, réglée dans l'air de référence, ne bouge pas.
+**La carte du cliquetis** se construit dès que change ce qu'elle lit (`knockConditionsStock`), plus seulement la combustion : l'air, la came (la fermeture de l'admission), l'injection directe (ce que sa vaporisation refroidit de plus qu'une injection indirecte), l'avance du calculateur et l'air de charge (la charge au collecteur). Un jour à 45 °C la rapproche de sa limite ; la carte d'origine, réglée dans l'air de référence, ne bouge pas. Finitions : elle est tabulée à 90 et à 20 °C d'eau, et le modèle de conduite y lit l'eau du réseau thermique.
 
 **L'avance du calculateur.** Sur un quatre-temps à étincelle, la part de couple que change le décalage d'avance vient de la carte du cliquetis seule (`ecuAdvanceInKnockMap`) : elle part de la carte d'origine réelle, en retard sur le meilleur couple là où le cliquetis la borne, là où le calculateur supposait le meilleur couple. Finitions : le cycle de cette carte rendait son meilleur travail environ 9° plus tôt que son critère de meilleur couple, et le calculateur coûtait l'écart par une parabole de 68° : +6° gagnaient 1,6 %. Un seul modèle dit maintenant les deux, le cycle avec ses pertes aux parois (voir « Le meilleur couple, et ce que coûte un écart ») ; le calculateur prend la corrélation publiée qu'il retrouve (Ayala, Gerty et Heywood). Au-dessus de 3500 tr/min, la carte d'origine est au meilleur couple : ±6° y coûtent 1,5 % de puissance (2.0 atmosphérique : 194,1 → 191,4 Nm à +6°, 191,5 à −6° ; 117,8 → 116,0 et 116,1 kW). Plus bas, elle est bornée par le cliquetis : la marge tombe à −4,0° à +6° (−2,3° en SP98), et le capteur reprend de l'avance en reprise. Le carburant suit l'air, et ne compte plus l'avance une seconde fois au rendement. Ce que le capteur retire, `ecuAdvanceDeg` le lit. La fiche (`rf_knock_margin_deg`, `--knock`) lit cette même carte.
 
-**La thermique.** Après un départ à froid, l'eau du réseau fait le film de l'injection indirecte et l'enrichissement du calculateur (une seule loi, `coldEnrichment`) ; la paroi froide, à la température du métal, réchauffe moins l'air piégé (`trappedAirK`). Le ralenti accéléré garde l'autorité du démarrage (0,8 du remplissage, contre 0,45 moteur chaud) : limité comme moteur chaud, il ne tenait pas l'huile froide de la Cadillac peu comprimée. Parti chaud, rien de tout cela, au bit près.
+**La thermique.** Finitions : le réseau agit toujours, parti chaud ou froid, par l'écart à 90 °C d'eau et 100 °C d'huile. L'eau fait le film de l'injection indirecte et du carburateur, l'enrichissement du calculateur (une seule loi, `coldEnrichment`), la carte du cliquetis et la paroi qui réchauffe l'air piégé (`trappedAirK`, l'eau et non plus le métal) ; l'huile, les frottements. Tant que l'eau est sous 70 °C, le ralenti accéléré garde l'autorité du démarrage (0,8 du remplissage, contre 0,45 moteur chaud) : limité comme moteur chaud, il ne tenait pas l'huile froide de la Cadillac peu comprimée. Parti chaud, la consommation reste à moins de 0,5 % de celle du moteur tenu à la référence.
 
 **La vaporisation** n'est comptée qu'une fois : le carburant choisi en donne la chaleur latente (`fuelPropertiesOf`), l'alimentation la part prise à l'air (`mixtureAirShare` : 0,5 au carburateur, 0,2 en injection indirecte ; l'injection directe a son calcul de gouttes). La combustion, l'injection directe (`injectedFuelOf`), l'air de charge et la carte du cliquetis lisent les mêmes chiffres. Avant, la combustion prenait 0,15 pour toute alimentation, et l'injection 305 kJ/kg pour toute essence, éthanol compris.
 
-**Le biturbo.** Une turbine par culasse : un W en compte deux (`architectureOf`). L'échangeur commun refroidit vers l'air du jour. La régulation électronique et selon le rapport pilotent les deux soupapes (ou les aubes) par une seule électrovanne, étalonnée sur le banc des deux turbos (voir « Deux turbos : une électrovanne » dans « La régulation de pression ») ; un twincharger ne lit que la cible. Selon le rapport, la cible du W12 baisse en première de 0,29 bar, et ses deux arbres la suivent.
+**Le biturbo.** Une turbine par culasse : un W en compte deux (`architectureOf`). L'échangeur commun est le faisceau ε-NTU, et les arbres aspirent l'air du jour (finitions). La régulation électronique et selon le rapport pilotent les deux soupapes (ou les aubes) par une seule électrovanne, étalonnée sur le banc des deux turbos (voir « Deux turbos : une électrovanne » dans « La régulation de pression ») ; un twincharger ne lit que la cible. Selon le rapport, la cible du W12 baisse en première de 0,29 bar, et ses deux arbres la suivent.
 
 **Le deux-temps.** Le taux réglé est son taux géométrique (7,5 d'origine) : il change le taux réel que laisse la lumière d'échappement, et la combustion ne le compte pas une seconde fois (`compressionEfficiencyShare` vaut 1). La carte du cliquetis comprime depuis la fermeture de la lumière. À 9:1, le couple gagne plus de 3 %. Au plus six cylindres, et ni VR, ni W, ni vilebrequin croisé : ils reviennent au V.
 
@@ -2327,9 +2363,8 @@ Les douze sujets du moteur réunis : architectures, atmosphère, thermique, comb
 
 ### Ce qui n'est pas branché, et pourquoi
 
-- L'air du cycle de la came reste à 20 °C et 101 325 Pa : elle donne un rapport entre deux cycles dans le même air, d'ordre deux.
-- La carte du cliquetis et la chaleur du compartiment que lit l'air de charge restent celles d'un moteur chaud : elles se construisent une fois par réglage, et un moteur froid cliquette moins.
-- Les arbres du biturbo comptent dans l'air de référence (`turbo_laws::constants().atmosphere`) : seuls l'échangeur et la cible le voient.
+- La chaleur du compartiment que lit l'air de charge (la boucle d'eau) reste celle d'un moteur chaud.
+- La carte du cliquetis d'un moteur d'origine n'est pas calculée : la surchauffe ne le fait pas cliqueter (« La thermique »).
 - La chaleur du gaz lit l'avance par la corrélation du calculateur, que le cycle de la carte du cliquetis retrouve à un point près ; la fiche du carburant prend la part de la carte à pleine charge, à toute charge.
 - La volatilité du carburant dans le film d'une injection indirecte reste celle de l'essence.
 
@@ -2338,7 +2373,10 @@ Les douze sujets du moteur réunis : architectures, atmosphère, thermique, comb
 | Rencontre | Mesure |
 |---|---|
 | E85 et injection directe, 2.0 turbo à 11:1 | SP95 : 349 Nm, 192 kW, marge −6,4° ; E85 : 396 Nm, +2,9° ; SP95 directe : 382 Nm, −4,0° ; E85 directe : 455 Nm, 252 kW, +12,7°. La directe gagne 2,4° en SP95 et 9,8° en E85 : trois fois plus de chaleur latente, une fois et demie plus de carburant. |
-| Départ à froid en altitude (citadine, WLTC) | Au niveau de la mer, 6,76 → 6,90 L/100 (+2,1 %) ; à 2500 m et −10 °C, 6,16 → 6,54 (+6,2 %), avec une relance après un calage. |
+| Départ à froid en altitude (citadine, WLTC) | Au niveau de la mer, 6,77 → 6,90 L/100 (+1,9 %) ; à 2500 m et −10 °C, 6,17 → 6,53 (+5,8 %), avec une relance après un calage. |
+| Thermique et cliquetis (citadine à 13:1, plein gaz en quatrième) | Le capteur retire 7,1° moteur chaud, 4,7° juste après un départ à froid (eau vers 25 °C). La carte d'origine commencerait à cliqueter entre 94 et 100 °C d'eau, à pleine charge. |
+| Air-air et vitesse (2.0 turbo, puissance maximale) | −10,9 % de couple à l'arrêt, −2,5 % à 50 km/h, +0,1 % à 100, +1,4 % à 150 à l'équilibre ; départ arrêté, faisceau froid : 0 à 100 km/h en 6,60 s au lieu de 6,86 ; 20 s après un premier départ, la charge a 3,6 K de plus. |
+| Came et air du jour (2.0 à deux profils) | La bascule passe de 5178 tr/min à 5555 par 45 °C et à 4963 par −20 °C ; à 3000 m, elle ne bouge pas. |
 | Came pointue et ressorts d'origine (2.0, zone rouge 7300) | Affolement à 8140 tr/min d'origine ; 12,5 mm sur 200° : 6490 (−11 %), sous le rupteur ; ressorts durs : 7394 (+1,3 %) ; deux profils : 8752. |
 | Biturbo séquentiel et électronique (V6 3 L, 1 bar, reprise depuis 2000) | 90 % de la pression en 1,75 s sur un turbo, 0,72 s en séquentiel, 0,43 s en twincharger, 1,41 s en parallèle ; avec l'électrovanne étalonnée sur les deux turbos, le séquentiel dépasse de 0,155 bar à l'étagement (0,24 avec la loi des soupapes, 0,49 avec le PID d'un turbo seul), le parallèle de 0,11 bar. |
 | W16 en biturbo parallèle | Même équilibre (1306 Nm) ; 0 à 100 km/h en 3,61 s contre 3,82 sur un turbo ; 90 % de la pression en 1,13 s contre 1,38 depuis 2500 tr/min. |

@@ -34,8 +34,14 @@ struct ChargeFuel {
 double crossflowEffectiveness(double ntu, double capacityRatio);
 /** L'air de route qui traverse une face à la calandre (kg/s) : une part de la vitesse, plus le ventilateur à l'arrêt. */
 double roadAirFlowKgS(double faceM2, double speedMs, double ambientK, double ambientPa);
-/** La vitesse à laquelle les courbes de la fiche supposent l'échangeur : 100 km/h. */
+/**
+ * La vitesse à laquelle les courbes de la fiche supposent l'échangeur : 100 km/h. La fiche se mesure au banc, devant une
+ * soufflerie qui donne au faisceau l'air de cette vitesse : sur un banc à rouleaux, le ventilateur suit la vitesse des rouleaux
+ * et peut plafonner à 70 mi/h, 113 km/h (40 CFR 1066.105(c)(2)). Voir « L'air de charge » dans docs/modele.md.
+ */
 inline constexpr double kChargeReferenceSpeedMs = 100.0 / 3.6;
+/** Le faisceau d'un air-air, en tranches le long du trajet de la charge : chacune a sa paroi et l'air de route qui la traverse. */
+inline constexpr int kCoolerSlices = 4;
 
 /** La sortie de l'échangeur d'origine (air-air), telle que `coolerOutlet` la calcule dans turbo.cpp et supercharger.cpp. */
 double stockCoolerOutletK(double hotK, double flowShare, double ambientK = 293.0);
@@ -62,14 +68,36 @@ struct ChargeCoolerSpec {
     double radiatorWaterHaW = 0.0;
     double loopHeatJK = 0.0;         // liquide et aluminium de la boucle
     double soakWK = 0.0;             // conductance du compartiment moteur vers la boucle
+    double coreJK = 0.0;             // air-air : l'aluminium du faisceau (J/K)
 };
 
-/** Air-air par ε-NTU, avec l'air de route : prêt à brancher, il ne remplace pas l'échangeur d'origine (voir docs/modele.md). */
+/**
+ * Air-air par ε-NTU, avec l'air de route, l'échangeur de toutes les suralimentations par défaut (finitions). Le faisceau est
+ * découpé en `kCoolerSlices` tranches le long du trajet de la charge ; dans chacune, la charge et l'air de route échangent avec la
+ * paroi, chacun par ε = 1 − e^−NTU (une paroi à une seule température), et l'air de route ne traverse qu'une tranche : un échangeur
+ * à courants croisés en différences finies. Dimensionné pour rendre l'échangeur d'origine au débit nominal, à la vitesse de référence.
+ */
 ChargeCoolerSpec airToAirCoolerFor(double ratedFlow, double ratedHotK, const ChargeConditions& conditions = {});
-/** Sortie de l'air-air ε-NTU pour ce débit de charge et cette vitesse de la voiture. */
+/** Sortie de l'air-air à l'équilibre pour ce débit de charge et cette vitesse de la voiture : la forme fermée des tranches. */
 double airToAirOutletK(const ChargeCoolerSpec& spec, double hotK, double flow, double speedMs, const ChargeConditions& conditions = {});
+/** L'air-air à l'équilibre sur le banc de la fiche : la soufflerie à la vitesse de référence. */
+double benchCoolerOutletK(const ChargeCoolerSpec& spec, double hotK, double flow, const ChargeConditions& conditions = {});
 
-/** L'échangeur choisi : air-eau dimensionné comme ci-dessus, ou aucun. L'air-air d'origine n'a besoin de rien. */
+/**
+ * Le faisceau en conduite : la paroi de chaque tranche a sa masse, et garde la chaleur d'une charge chaude passée (l'échauffement
+ * à l'arrêt, « heat soak »). Ce qui sort est la charge qui a traversé les tranches ; à débit nul, l'air qui y dort a la
+ * température de la dernière paroi. Pas d'allocation, et `revforge::portable` : il avance avec `DrivingModel`.
+ */
+struct AirCoolerCore {
+    bool ready = false;
+    double wallK[kCoolerSlices] = {};
+    /** Les parois à cette température : l'air ambiant, au premier pas. */
+    void settle(double kelvin);
+    /** Un pas : rend la sortie de l'échangeur. `hotK` et `flow` : la charge qui y entre ; `speedMs` : la voiture. */
+    double step(const ChargeCoolerSpec& spec, double dt, double hotK, double flow, double speedMs, const ChargeConditions& conditions);
+};
+
+/** L'échangeur choisi : l'air-air ε-NTU, l'air-eau dimensionné comme ci-dessus, ou aucun. */
 ChargeCoolerSpec chargeCoolerFor(Intercooler kind, double ratedFlow, double ratedHotK, const ChargeConditions& conditions = {});
 
 /** Ce que la brique air-eau retire à l'air de charge, rapporté à ṁ·cp·(T2 − Teau). */
@@ -82,7 +110,8 @@ double bayAirK(double speedMs, const ChargeConditions& conditions = {});
 double waterLoopSteadyK(const ChargeCoolerSpec& spec, double hotK, double flow, double speedMs, const ChargeConditions& conditions = {});
 /**
  * La sortie de l'échangeur à l'équilibre, à la vitesse de référence : c'est ce que voient les courbes de la fiche. Aucun
- * échangeur : la sortie du compresseur. Air-air : l'échangeur d'origine.
+ * échangeur : la sortie du compresseur. Air-air : le faisceau ε-NTU devant la soufflerie du banc (l'ancienne loi d'origine
+ * s'il n'est pas dimensionné).
  */
 double chargeCoolerSteadyK(const ChargeCoolerSpec& spec, double hotK, double flow, const ChargeConditions& conditions = {});
 

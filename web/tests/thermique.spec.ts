@@ -72,10 +72,11 @@ test.describe('la thermique', () => {
     expect(t.coolantC).toBeGreaterThan(80);
     expect(t.coldIdleRpm).toBe(0);
     expect(t.coldEnrichment).toBe(0);
-    expect(t.coldFrictionNm).toBe(0);
+    // Finitions : le réseau agit aussi parti chaud, mais l'huile reste près de 100 °C : à peine un écart de frottements.
+    expect(Math.abs(t.coldFrictionNm)).toBeLessThan(0.05 * t.warmFrictionNm);
     await expect(page.getByTestId('gauge-coolant-sub')).toContainText('Calorstat');
     await expect(page.getByTestId('gauge-coolant-sub')).not.toContainText('ralenti');
-    await expect(page.getByTestId('gauge-oil-sub')).not.toContainText('frottements');
+    await expect(page.getByTestId('gauge-oil-sub')).not.toContainText('frottements +');
     expect(errors).toEqual([]);
   });
 

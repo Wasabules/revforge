@@ -220,6 +220,7 @@ struct WarmUp {
     double peakOilC = -1000.0;
     double fanS = 0.0;
     bool active = false;  // rien de tout cela sur l'électrique
+    bool cold = false;    // parti à froid : la mise en température se mesure
 
     void track(const DrivingModel& model, double t, double dt) {
         if (!active) return;
@@ -227,7 +228,7 @@ struct WarmUp {
         if (thermostatS < 0.0 && th.thermostat() > 0.01) thermostatS = t;
         if (coolant70S < 0.0 && th.coolantC() >= 70.0) coolant70S = t;
         if (oil80S < 0.0 && th.oilC() >= 80.0) oil80S = t;
-        if (idleWarmS < 0.0 && model.thermalCoupled() && model.coldIdleRpm() <= 0.0) idleWarmS = t;
+        if (idleWarmS < 0.0 && cold && model.coldIdleRpm() <= 0.0) idleWarmS = t;
         peakCoolantC = std::max(peakCoolantC, th.coolantC());
         peakOilC = std::max(peakOilC, th.oilC());
         if (th.fan()) fanS += dt;
@@ -638,8 +639,8 @@ void printFuel(const DrivingModel& model, const Powertrain& powertrain, double s
         const ThermalNetwork& th = model.thermal();
         const WarmUp& w = g_warmUp;
         std::printf("Temperatures (%s start): coolant %.1f C (peak %.1f), oil %.1f C (peak %.1f), metal %.1f C, thermostat %.0f %%, fan %.0f s\n",
-                    model.thermalCoupled() ? "cold" : "warm", th.coolantC(), w.peakCoolantC, th.oilC(), w.peakOilC, th.metalC(), th.thermostat() * 100.0, w.fanS);
-        if (model.thermalCoupled()) {
+                    w.cold ? "cold" : "warm", th.coolantC(), w.peakCoolantC, th.oilC(), w.peakOilC, th.metalC(), th.thermostat() * 100.0, w.fanS);
+        if (w.cold) {
             std::printf("Warm-up: thermostat opens at %.0f s, coolant 70 C at %.0f s, oil 80 C at %.0f s, fast idle over at %.0f s (-1: not reached)\n", w.thermostatS, w.coolant70S, w.oil80S, w.idleWarmS);
         }
     }
@@ -965,6 +966,7 @@ int main(int argc, char** argv) {
     const EngineProfile profile = powertrain.profile();
     DrivingModel model(powertrain);
     g_warmUp.active = !powertrain.electric;
+    g_warmUp.cold = powertrain.engine.startTemp == StartTemp::Cold;
     model.setShiftMode(shiftMode);
     model.setDriveScenario(driveScenario);
 

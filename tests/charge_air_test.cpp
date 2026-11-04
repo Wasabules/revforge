@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <string>
 
 #include "doctest.h"
 #include "revforge/charge_air.hpp"
@@ -137,7 +138,7 @@ TEST_CASE("air de charge : l'air-air par ε-NTU rend l'échangeur d'origine au p
     CHECK(airToAirOutletK(spec, 330.0, 0.02, kChargeReferenceSpeedMs, c) < stockCoolerOutletK(330.0, 0.02 / 0.21));
 }
 
-TEST_CASE("air de charge : l'air-air ε-NTU, prêt à brancher, chiffré face à l'échangeur d'origine") {
+TEST_CASE("air de charge : l'air-air ε-NTU, branché par défaut, chiffré face à l'échangeur d'origine") {
     // L'écart qu'il donnerait au couple à la puissance maximale, à pression égale : la densité de la charge, Tstock/Tε-NTU.
     for (const char* id : {"three_cyl_turbo", "hot_hatch_turbo", "five_cyl_turbo", "boxer_four_turbo", "diesel_four", "v8_supercharged"}) {
         const Powertrain p = preset(id);
@@ -225,10 +226,10 @@ TEST_CASE("air de charge : l'air-eau chauffe à l'arrêt, puis à chaque départ
     CHECK(s.startsWater[1] > s.startsWater[0] + 2.0);
     CHECK(s.startsWater[2] > s.startsWater[1]);
     CHECK(s.ends[2] > s.ends[0] + 1.5);
-    // Le premier départ profite de la masse de la boucle : plus frais que l'air-air, qui n'en a presque pas.
-    CHECK(s.ends[0] < stock.ends[0]);
-    // L'air-air d'origine ne garde rien d'un départ à l'autre.
-    CHECK(std::fabs(stock.ends[2] - stock.ends[0]) < 1.0);
+    // Finitions : l'air-air a maintenant la masse de son faisceau, 4 kg d'aluminium, et l'air de route le refroidit dès que la
+    // voiture roule : il garde lui aussi un peu de chaleur d'un départ à l'autre, moins que la boucle d'eau, de quatre fois sa capacité.
+    CHECK(stock.ends[2] > stock.ends[0] + 0.5);
+    CHECK(s.ends[2] - s.ends[0] > stock.ends[2] - stock.ends[0]);
 }
 
 TEST_CASE("air de charge : sur un compresseur, l'échangeur change aussi") {
@@ -383,4 +384,107 @@ TEST_CASE("air de charge : la charge au collecteur se lit aussi au défaut") {
     CHECK(m.waterPerAir == 0.0);
     CHECK(m.oxygenShare == doctest::Approx(0.2314));
     CHECK(model.chargeFill() == 0.0);
+}
+
+// ── Finitions : l'air-air ε-NTU de série ──
+
+TEST_CASE("air de charge : le faisceau par tranches retrouve à l'équilibre sa forme fermée, et la fiche le voit au banc") {
+    const ChargeConditions c;
+    const ChargeCoolerSpec spec = airToAirCoolerFor(0.21, 408.0, c);
+    REQUIRE(spec.coreJK > 0.0);
+    for (const double kmh : {0.0, 50.0, 100.0, 150.0}) {
+        CAPTURE(kmh);
+        AirCoolerCore core;
+        double out = 0.0;
+        for (int i = 0; i < 300000; ++i) out = core.step(spec, kStep, 400.0, 0.18, kmh / 3.6, c);
+        CHECK(out == doctest::Approx(airToAirOutletK(spec, 400.0, 0.18, kmh / 3.6, c)).epsilon(1e-6));
+    }
+    // La fiche : l'équilibre du turbo voit le faisceau devant la soufflerie du banc, et au débit nominal le couple de base est retrouvé.
+    const Powertrain p = preset("hot_hatch_turbo");
+    const TurboSpec t = turboSpecOf(p);
+    REQUIRE(t.cooler.faceM2 > 0.0);
+    const double rpm = ratedRpm(p);
+    const TurboSteady steady = turboSteady(t, rpm, breathingOf(p, rpm));
+    CHECK(steady.coolK == doctest::Approx(benchCoolerOutletK(t.cooler, steady.outK, steady.flow)).epsilon(1e-9));
+    CHECK(turboCoolerTorqueShare(t, steady.outK, t.ratedFlow, benchCoolerOutletK(t.cooler, steady.outK, t.ratedFlow)) == doctest::Approx(1.0).epsilon(1e-6));
+    // Le compresseur aussi.
+    const SuperchargerSpec s = superchargerSpecOf(preset("v8_supercharged"));
+    CHECK(s.cooler.kind == Intercooler::AirToAir);
+    CHECK(s.cooler.faceM2 > 0.0);
+}
+
+TEST_CASE("air de charge : le faisceau garde la chaleur d'un départ, et l'arrêt la lui laisse") {
+    // Un faisceau chauffé par une charge chaude à l'arrêt, puis le moteur au ralenti : la masse rend la chaleur à l'air qui repart.
+    const ChargeConditions c;
+    const ChargeCoolerSpec spec = airToAirCoolerFor(0.21, 408.0, c);
+    ChargeCoolerSpec light = spec;
+    light.coreJK = 0.01 * spec.coreJK;
+    AirCoolerCore heavy, bare;
+    for (int i = 0; i < 8000; ++i) {
+        heavy.step(spec, kStep, 400.0, 0.2, 5.0, c);
+        bare.step(light, kStep, 400.0, 0.2, 5.0, c);
+    }
+    double heavyOut = 0.0, bareOut = 0.0;
+    for (int i = 0; i < 20000; ++i) {
+        heavyOut = heavy.step(spec, kStep, 296.0, 0.01, 0.0, c);
+        bareOut = bare.step(light, kStep, 296.0, 0.01, 0.0, c);
+    }
+    MESSAGE("après 8 s à 400 K et 20 s de ralenti : sortie " << heavyOut - 273.15 << " °C (4 kg d'aluminium), " << bareOut - 273.15 << " °C (40 g)");
+    CHECK(heavyOut > bareOut + 3.0);
+}
+
+namespace {
+
+/** Un départ arrêté pied au plancher : le temps jusqu'à 100 km/h, et la charge à 1,5 s, quand la voiture roule encore à peine. */
+struct Start {
+    double zeroTo100 = 0.0;
+    double chargeC = 0.0;
+    double share = 1.0;  // le couple de pleine charge que laisse l'air-air, face au banc
+};
+
+Start start(DrivingModel& m) {
+    Start out;
+    for (int i = 0; i < 30000; ++i) {
+        m.stepPedal(kStep, 1.0, 0.0);
+        if (i == 1500) {
+            out.chargeC = m.manifoldCharge().temperatureK - 273.15;
+            out.share = m.airCoolerShare();
+        }
+        if (m.speedKmh() >= 100.0) {
+            out.zeroTo100 = i * kStep;
+            break;
+        }
+    }
+    return out;
+}
+
+void stop(DrivingModel& m, double idleS) {
+    for (int i = 0; i < 60000 && m.speedKmh() > 0.5; ++i) m.stepPedal(kStep, 0.0, 0.6);
+    for (int i = 0; i < static_cast<int>(idleS / kStep); ++i) m.stepPedal(kStep, 0.0, 0.3);
+}
+
+}  // namespace
+
+TEST_CASE("air de charge : départ arrêté, faisceau froid ou chauffé par le départ d'avant (« heat soak »)") {
+    for (const char* name : {"hot_hatch_turbo", "diesel_four", "v8_supercharged"}) {
+        const std::string id = name;
+        CAPTURE(id);
+        const Powertrain p = preset(name);
+        DrivingModel fresh(p);
+        stop(fresh, 60.0);
+        const Start cold = start(fresh);
+        // Le même départ, 20 s après un premier départ arrêté jusqu'à 100 km/h et un freinage.
+        DrivingModel again(p);
+        stop(again, 60.0);
+        start(again);
+        stop(again, 20.0);
+        const Start soaked = start(again);
+        // À pression égale, l'air admis, donc le couple des gaz, suit 1/T de la charge.
+        const double atEqualPressure = (cold.chargeC + 273.15) / (soaked.chargeC + 273.15) - 1.0;
+        MESSAGE(id << " : 0-100 km/h " << cold.zeroTo100 << " s faisceau froid, " << soaked.zeroTo100 << " s 20 s après un départ ; à 1,5 s, charge " << cold.chargeC
+                   << " / " << soaked.chargeC << " °C, soit " << atEqualPressure * 100.0 << " % de couple à pression égale ; face au banc " << (cold.share - 1.0) * 100.0
+                   << " / " << (soaked.share - 1.0) * 100.0 << " %");
+        CHECK(soaked.chargeC > cold.chargeC + 2.0);
+        CHECK(soaked.zeroTo100 >= cold.zeroTo100);
+    }
 }

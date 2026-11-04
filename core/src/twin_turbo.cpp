@@ -105,6 +105,10 @@ TurboSpec halfTurbo(const EngineConfig& e, double breathingAtRated, const TurboS
     TurboSpec unit = turboSpecFor(half, breathingAtRated);
     unit.displacementM3 = 0.5 * reference.displacementM3;
     withFilter(unit, reference, e.airFilter);
+    // Finitions : chaque arbre aspire l'air du jour, comme le turbo simple (`turboSpecOf`) ; il reste dimensionné dans celui de référence.
+    unit.ambientPa = reference.ambientPa;
+    unit.ambientK = reference.ambientK;
+    unit.pipe.ambientK = reference.pipe.ambientK;
     return unit;
 }
 
@@ -118,6 +122,8 @@ TurboSpec primaryAlone(const TwinTurboSpec& spec) {
     t.coolerDrop = r.coolerDrop;
     t.lineDrop = r.lineDrop;
     t.ratedBackPa = r.ratedBackPa;
+    // L'échangeur est commun : celui du moteur entier.
+    t.cooler = r.cooler;
     return t;
 }
 
@@ -309,7 +315,9 @@ TwinTurboSpec twinTurboSpecOf(const Powertrain& p) {
 
 TwinTurboSteady twinTurboSteady(const TwinTurboSpec& spec, double rpm, double breathing) {
     TwinTurboSteady out;
-    const auto& k = turbo_laws::constants();
+    // Finitions : l'air du jour, comme le turbo simple ; exactement l'air de référence au défaut.
+    const double airPa = spec.reference.ambientPa;
+    const double airK = spec.reference.ambientK;
     if (rpm <= 0.0 || breathing <= 0.0) return out;
     const auto fill = [&out](const TurboSteady& t, int unit, double vane) {
         const std::size_t u = static_cast<std::size_t>(unit);
@@ -317,6 +325,8 @@ TwinTurboSteady twinTurboSteady(const TwinTurboSpec& spec, double rpm, double br
         out.turbineInPa[u] = t.turbineInPa;
         out.vane[u] = vane;
     };
+    // L'air-air ε-NTU au banc : chaque arbre a la part de l'échangeur que lui donne son débit (`turboCoolerTorqueShare`).
+    const auto cooled = [&out](const TurboSpec& unit, const TurboSteady& t) { out.coolShare = turboCoolerTorqueShare(unit, t.outK, t.flow, t.coolK); };
     switch (spec.layout) {
         case TurboLayout::TwinParallel: {
             // Deux moitiés symétriques : chacune est le turbo de sa moitié de moteur, à la même pression.
@@ -325,6 +335,7 @@ TwinTurboSteady twinTurboSteady(const TwinTurboSpec& spec, double rpm, double br
             const TurboSteady t = vaneSteady(spec, unit, rpm, breathing, &vane);
             fill(t, 0, vane);
             fill(t, 1, vane);
+            cooled(unit, t);
             out.boost = t.boost;
             out.chargePa = t.chargePa;
             out.flow = 2.0 * t.flow;
@@ -339,6 +350,7 @@ TwinTurboSteady twinTurboSteady(const TwinTurboSpec& spec, double rpm, double br
             const TurboSteady first = vaneSteady(spec, alone, rpm, breathing, &vane);
             if (first.flow < spec.switchFlow) {
                 fill(first, 0, vane);
+                cooled(alone, first);
                 out.boost = first.boost;
                 out.chargePa = first.chargePa;
                 out.flow = first.flow;
@@ -350,6 +362,7 @@ TwinTurboSteady twinTurboSteady(const TwinTurboSpec& spec, double rpm, double br
             const TurboSteady both = vaneSteady(spec, unit, rpm, breathing, &vane);
             fill(both, 0, vane);
             fill(both, 1, vane);
+            cooled(unit, both);
             out.boost = both.boost;
             out.chargePa = both.chargePa;
             out.flow = 2.0 * both.flow;
@@ -362,6 +375,8 @@ TwinTurboSteady twinTurboSteady(const TwinTurboSpec& spec, double rpm, double br
             const TurboSpec& unit = spec.unit[0];
             const TurboSteady t = vaneSteady(spec, unit, rpm, breathing, &vane);
             fill(t, 0, vane);
+            // Approché comme le reste : l'échangeur au débit et à la température du turbo seul.
+            cooled(unit, t);
             out.flow = t.flow;
             out.backPressureNm = turboBackPressureNm(spec.variableGeometry ? withVanes(spec, unit, vane) : unit, t.chargePa, t.turbineInPa, t.flow, 1.0);
             out.boost = t.boost;
@@ -371,18 +386,18 @@ TwinTurboSteady twinTurboSteady(const TwinTurboSpec& spec, double rpm, double br
             // Approché : le turbo garde le rapport qu'il aurait seul, alors que l'air plus dense lui donne en vrai un peu plus de gaz.
             const SuperchargerSpec& c = spec.charger;
             const SuperchargerSteady alone = superchargerSteady(c, rpm, breathing);
-            const double turboRatio = t.chargePa / k.atmosphere;
-            const double wanted = (k.atmosphere + spec.targetBar * 1e5) / (k.atmosphere * turboRatio);
-            const double ratio = clamp(wanted, 1.0, alone.chargePa / k.atmosphere);
-            const double interstagePa = k.atmosphere * ratio;
+            const double turboRatio = t.chargePa / airPa;
+            const double wanted = (airPa + spec.targetBar * 1e5) / (airPa * turboRatio);
+            const double ratio = clamp(wanted, 1.0, alone.chargePa / airPa);
+            const double interstagePa = airPa * ratio;
             out.chargePa = interstagePa * turboRatio;
-            out.boost = clamp((out.chargePa - k.atmosphere) / (spec.targetBar * 1e5), 0.0, 1.0);
+            out.boost = clamp((out.chargePa - airPa) / (spec.targetBar * 1e5), 0.0, 1.0);
             const double omega = rpm * 2.0 * kPi / 60.0;
             const double rotor = omega * c.driveRatio;
-            const double inletPa = k.atmosphere - c.filterDrop * t.flow * t.flow;
-            const double flow = supercharger_laws::compressorFlow(c, rotor, inletPa, k.ambientK, interstagePa);
-            double outK = k.ambientK;
-            out.chargerNm = supercharger_laws::shaftPower(c, rotor, inletPa, k.ambientK, interstagePa, flow, &outK) / c.driveEfficiency / omega;
+            const double inletPa = airPa - c.filterDrop * t.flow * t.flow;
+            const double flow = supercharger_laws::compressorFlow(c, rotor, inletPa, airK, interstagePa);
+            double outK = airK;
+            out.chargerNm = supercharger_laws::shaftPower(c, rotor, inletPa, airK, interstagePa, flow, &outK) / c.driveEfficiency / omega;
             out.clutch = true;
             out.flow = t.flow * ratio;
             return out;
@@ -393,6 +408,7 @@ TwinTurboSteady twinTurboSteady(const TwinTurboSpec& spec, double rpm, double br
     const TurboSpec& unit = spec.unit[0];
     const TurboSteady t = vaneSteady(spec, unit, rpm, breathing, &vane);
     fill(t, 0, vane);
+    cooled(unit, t);
     out.boost = t.boost;
     out.chargePa = t.chargePa;
     out.flow = t.flow;
@@ -402,7 +418,10 @@ TwinTurboSteady twinTurboSteady(const TwinTurboSpec& spec, double rpm, double br
 
 double twinTorqueCurveNm(const Powertrain& p, double rpm) {
     const TwinTurboSteady steady = twinTurboSteady(twinTurboSpecOf(p), rpm, breathingOf(p, rpm));
-    return fullLoadTorqueNm(p, rpm, steady.boost) - steady.backPressureNm - steady.chargerNm;
+    const double gross = fullLoadTorqueNm(p, rpm, steady.boost);
+    const double friction = frictionTorqueNm(p, rpm);
+    const double cooled = steady.coolShare == 1.0 ? gross : (gross + friction) * steady.coolShare - friction;
+    return cooled - steady.backPressureNm - steady.chargerNm;
 }
 
 double twinSteadyBoost(const Powertrain& p, double rpm) { return twinTurboSteady(twinTurboSpecOf(p), rpm, breathingOf(p, rpm)).boost; }
@@ -470,7 +489,7 @@ void TwinTurbo::setSpec(const TwinTurboSpec& spec) {
     }
 }
 
-double TwinTurbo::boost() const { return (state_.unit[0].chargePa - turbo_laws::constants().atmosphere) / (spec_.targetBar * 1e5); }
+double TwinTurbo::boost() const { return (state_.unit[0].chargePa - spec_.reference.ambientPa) / (spec_.targetBar * 1e5); }
 
 double TwinTurbo::backPressureNm(double fill) const {
     const TwinTurboState& s = state_;
@@ -491,14 +510,14 @@ TurboDrive TwinTurbo::drive(int unit) const {
     TurboDrive d;
     if (unit < 0 || unit >= spec_.units) return d;
     const std::size_t u = static_cast<std::size_t>(unit);
-    const auto& k = turbo_laws::constants();
+    const double airPa = spec_.reference.ambientPa;
     const TurboState& s = state_.unit[u];
     const TurboSpec& spec = spec_.unit[u];
     const double rated = spec.ratedFlow;
     d.shaftHz = static_cast<float>(s.shaftOmega / (2.0 * kPi));
     d.shaftShare = static_cast<float>(s.shaftShare);
     d.flowShare = static_cast<float>(s.compressorFlow > 0.0 ? s.compressorFlow / rated : 0.0);
-    const double gauge = (s.chargePa - k.atmosphere) / (spec_.targetBar * 1e5);
+    const double gauge = (s.chargePa - airPa) / (spec_.targetBar * 1e5);
     const double pressure = std::sqrt(gauge > 0.0 ? gauge : 0.0);
     // La soupape de décharge est commune : elle sort avec le premier arbre.
     if (unit == 0) d.blowOffShare = static_cast<float>(s.blowOffFlow / spec_.reference.ratedFlow * pressure);
@@ -554,17 +573,18 @@ void TwinTurbo::stepCharger(double dt, double rpm, double fill, double targetPa)
     const auto& k = turbo_laws::constants();
     const SuperchargerSpec& c = spec_.charger;
     const TurboSpec& ref = spec_.reference;
+    const double airPa = ref.ambientPa;
     const double crank = rpm * 2.0 * kPi / 60.0;
     const double driven = crank * c.driveRatio;
     const double chargePa = s.unit[0].chargePa;
-    const double targetBar = (targetPa - k.atmosphere) / 1e5;
+    const double targetBar = (targetPa - airPa) / 1e5;
 
     // L'embrayage, comme le 1.4 TSI : toujours fermé sous pression demandée en dessous du régime où le turbo tient seul ;
     // au-dessus, seulement s'il manque de la pression, et rouvert dès que le volet n'a plus rien à retenir ; jamais au-delà
     // du régime de coupure, où les rotors atteindraient leur vitesse maximale.
     const bool below = rpm < spec_.turboAloneRpm;
     if (!s.clutch) {
-        const bool lacking = below || chargePa < k.atmosphere + kEngageShare * targetBar * 1e5;
+        const bool lacking = below || chargePa < airPa + kEngageShare * targetBar * 1e5;
         if (fill > kDemandFill && rpm < spec_.clutchOffRpm * (1.0 - kClutchHysteresis) && lacking && rpm > 300.0) {
             s.clutch = true;
             s.clutchLocked = false;
@@ -578,13 +598,13 @@ void TwinTurbo::stepCharger(double dt, double rpm, double fill, double targetPa)
 
     // L'air : le filtre, commun, puis le compresseur ou le volet qui le court-circuite, jusqu'au volume avant le turbo.
     const double drawn = s.unit[0].compressorFlow;
-    const double inletPa = k.atmosphere - ref.filterDrop * drawn * drawn;
+    const double inletPa = airPa - ref.filterDrop * drawn * drawn;
     const double inletK = turbo_laws::inletTemperature(spec_.unit[0], rpm);
     lastInletPa_ = inletPa;
     lastRpm_ = rpm;
 
     // Le volet : il rend à l'entrée ce qui dépasse la pression demandée. Embrayage ouvert, il laisse l'air contourner les rotors.
-    const double over = (chargePa - (k.atmosphere + (1.0 - 0.2 * k.wastegateBand) * targetBar * 1e5)) / (k.wastegateBand * targetBar * 1e5);
+    const double over = (chargePa - (airPa + (1.0 - 0.2 * k.wastegateBand) * targetBar * 1e5)) / (k.wastegateBand * targetBar * 1e5);
     const double flapGoal = s.clutch ? clamp(over, 0.0, 1.0) : 1.0;
     s.flap += (flapGoal - s.flap) * clamp(dt / kFlapS, 0.0, 1.0);
     s.flapOpenFor = s.clutch && s.flap > 0.97 ? s.flapOpenFor + dt : 0.0;
@@ -608,7 +628,7 @@ void TwinTurbo::stepCharger(double dt, double rpm, double fill, double targetPa)
     const double now = surplus(s.interstagePa);
     const double slope = (surplus(s.interstagePa + 200.0) - now) / 200.0;
     s.interstagePa += dt * gain * now / (1.0 - dt * gain * (slope < 0.0 ? slope : 0.0));
-    if (s.interstagePa < 0.5 * k.atmosphere) s.interstagePa = 0.5 * k.atmosphere;
+    if (s.interstagePa < 0.5 * airPa) s.interstagePa = 0.5 * airPa;
     const double flowSc = supercharger_laws::compressorFlow(c, rotor, inletPa, inletK, s.interstagePa);
     const double flapFlow = flapAt(s.interstagePa);
     double outK = inletK;
@@ -650,10 +670,13 @@ void TwinTurbo::step(double dt, const TwinTurboInput& input) {
     TwinTurboState& s = state_;
     const TwinTurboSpec& spec = spec_;
     const TurboSpec& ref = spec.reference;
+    // Finitions : les arbres aspirent l'air du jour, et la ligne y débouche ; exactement l'air de référence au défaut.
+    const double airPa = ref.ambientPa;
+    const double airK = ref.ambientK;
     const double rpm = input.rpm > 0.0 ? input.rpm : 0.0;
     const double fill = clamp(input.fill, 0.0, 1.0);
     const double targetBar = input.targetBar >= 0.0 ? input.targetBar : spec.targetBar;
-    const double targetPa = k.atmosphere + targetBar * 1e5;
+    const double targetPa = airPa + targetBar * 1e5;
     const bool sequential = spec.layout == TurboLayout::TwinSequential;
     const bool charger = spec.layout == TurboLayout::Twincharger;
     const int units = spec.units;
@@ -673,7 +696,7 @@ void TwinTurbo::step(double dt, const TwinTurboInput& input) {
         drawn += s.unit[1].compressorFlow - (secondaryFeeds ? 0.0 : s.recirculationFlow);
         if (secondaryFeeds) into += s.unit[1].compressorFlow;
     }
-    const double commonInletPa = k.atmosphere - ref.filterDrop * drawn * drawn;
+    const double commonInletPa = airPa - ref.filterDrop * drawn * drawn;
     const double inletK = inletTemperature(spec.unit[0], rpm);
     const double outletPa = chargePa + ref.coolerDrop * into * magnitude(into) / chargeRho;
     std::array<double, 2> flowNext{0.0, 0.0};
@@ -715,7 +738,7 @@ void TwinTurbo::step(double dt, const TwinTurboInput& input) {
             const double rho = (across > 0.0 ? s.secondaryPa : b.inletPa) / (k.airR * (across > 0.0 ? b.compressorOutK : inletK));
             s.recirculationFlow = supercharger_laws::discharge() * spec.recirculationArea * recirculation_ * rho * supercharger_laws::orificeSpeed(across, rho);
             s.secondaryPa += k.airR * b.compressorOutK / spec.secondaryVolumeM3 * (flowNext[1] - s.recirculationFlow) * dt;
-            if (s.secondaryPa < 0.5 * k.atmosphere) s.secondaryPa = 0.5 * k.atmosphere;
+            if (s.secondaryPa < 0.5 * airPa) s.secondaryPa = 0.5 * airPa;
             // Le clapet s'ouvre de lui-même quand le secondaire pousse plus fort que la charge, une fois la vanne d'échappement ouverte.
             if (s.stage == 2 && s.secondaryPa >= chargePa) s.secondaryOnline = true;
         } else {
@@ -734,19 +757,19 @@ void TwinTurbo::step(double dt, const TwinTurboInput& input) {
     double wantedValve = 0.0;
     if (spec.blowOffValve && !spec.diesel) {
         const double vacuum = clamp((k.blowOffVacuumPa - a.plenumPa) / k.blowOffVacuumSpanPa, 0.0, 1.0);
-        const double gauge = chargePa - k.atmosphere;
+        const double gauge = chargePa - airPa;
         if (vacuum > 0.0 && gauge > k.blowOffOpensAbovePa) valveHeld_ = true;
         if (vacuum <= 0.0 || (a.blowOff > 0.5 && a.blowOffFlow < 0.05 * ref.ratedFlow)) valveHeld_ = false;
         if (valveHeld_) wantedValve = vacuum;
     }
     a.blowOff += (wantedValve - a.blowOff) * (dt / k.blowOffS < 1.0 ? dt / k.blowOffS : 1.0);
     double valveFlow = 0.0;
-    const double across = chargePa - k.atmosphere;
+    const double across = chargePa - airPa;
     if (a.blowOff > 1e-4 && across > 0.0) valveFlow = k.blowOffDischarge * spec.blowOffArea * a.blowOff * std::sqrt(2.0 * chargeRho) * across / std::sqrt(across + 500.0);
     a.blowOffFlow = valveFlow;
     const double gain = k.airR * coolK / spec.chargeVolumeM3;
     a.chargePa += gain * (feeding - engine - valveFlow) * dt;
-    if (a.chargePa < 0.5 * k.atmosphere) a.chargePa = 0.5 * k.atmosphere;
+    if (a.chargePa < 0.5 * airPa) a.chargePa = 0.5 * airPa;
 
     // ── Les températures : chaque sortie de compresseur, puis l'échangeur commun ──
     std::array<double, 2> heads{0.0, 0.0};
@@ -769,22 +792,30 @@ void TwinTurbo::step(double dt, const TwinTurboInput& input) {
             mixHeat += flowNext[u] * t.compressorOutK;
         }
     }
-    if (mixFlow > 0.02 * ref.ratedFlow) {
+    s.coolerInK = mixFlow > 0.0 ? mixHeat / mixFlow : a.compressorOutK;
+    s.coolerFlow = mixFlow;
+    if (ref.cooler.kind == Intercooler::AirToAir && ref.cooler.faceM2 > 0.0) {
+        // Finitions : l'échangeur commun est le faisceau ε-NTU, refroidi par l'air de route, avec sa masse.
+        ChargeConditions air;
+        air.ambientK = airK;
+        air.ambientPa = airPa;
+        a.coolerOutK = core_.step(ref.cooler, dt, s.coolerInK, mixFlow, input.coolingAirMs, air);
+    } else if (mixFlow > 0.02 * ref.ratedFlow) {
         a.coolerOutK += (coolerOutlet(mixHeat / mixFlow, mixFlow, ref.ratedFlow, ref.ambientK) - a.coolerOutK) * dt / k.coolerMassS;
     } else {
-        a.coolerOutK += (k.ambientK - a.coolerOutK) * dt / k.coolerRestS;
+        a.coolerOutK += (airK - a.coolerOutK) * dt / k.coolerRestS;
     }
 
     // ── L'échappement ──
     const double fuel = fuelPerAir(ref, fill, input.burning);
     const double gas = engine * (1.0 + fuel);
-    const double hotTarget = rpm > 50.0 ? exhaustTemperature(ref, coolK, rpm, fill, fuel) : k.ambientK;
-    const double outPa = k.atmosphere + ref.lineDrop * gas * gas;
+    const double hotTarget = rpm > 50.0 ? exhaustTemperature(ref, coolK, rpm, fill, fuel) : airK;
+    const double outPa = airPa + ref.lineDrop * gas * gas;
     // Les soupapes et les aubes : la même loi que le turbo simple, sur la pression commune.
     const double anticipated = a.chargePa + k.wastegateLeadS * (a.chargePa - chargePa) / dt;
-    double overBar = (anticipated - (k.atmosphere + (1.0 - 0.2 * k.wastegateBand) * targetBar * 1e5)) / (k.wastegateBand * targetBar * 1e5);
+    double overBar = (anticipated - (airPa + (1.0 - 0.2 * k.wastegateBand) * targetBar * 1e5)) / (k.wastegateBand * targetBar * 1e5);
     // Compresseur embrayé : le volet règle la pression, la soupape du turbo reste fermée pour le lancer, sauf 10 % de trop.
-    if (charger && s.clutch) overBar = (a.chargePa - (k.atmosphere + 1.1 * targetBar * 1e5)) / (k.wastegateBand * targetBar * 1e5);
+    if (charger && s.clutch) overBar = (a.chargePa - (airPa + 1.1 * targetBar * 1e5)) / (k.wastegateBand * targetBar * 1e5);
     std::array<double, 2> passage{0.0, 0.0};
     for (int i = 0; i < units; ++i) {
         const std::size_t u = static_cast<std::size_t>(i);
@@ -836,7 +867,7 @@ void TwinTurbo::step(double dt, const TwinTurboInput& input) {
         TurboSpec& unit = spec_.unit[u];
         // Chaque collecteur chauffe à son rythme ; la rangée aux tubes plus longs envoie un gaz un peu moins chaud.
         const double heat = units == 2 && !sequential ? spec.heatShare[u] : 1.0;
-        const double target = gas_[u] > 0.01 * unit.ratedFlow ? k.ambientK + (hotTarget - k.ambientK) * heat : k.ambientK;
+        const double target = gas_[u] > 0.01 * unit.ratedFlow ? airK + (hotTarget - airK) * heat : airK;
         const double hotTau = target > t.turbineInK ? k.heatUpS : k.coolDownS;
         t.turbineInK += (target - t.turbineInK) * dt / hotTau;
         unit.turbineEtaShare = vaneEta(spec, s.vane[u]);

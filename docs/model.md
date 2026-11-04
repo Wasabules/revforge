@@ -1288,13 +1288,13 @@ speed of sound.
 
 ## Engine temperatures
 
-Engine temperatures come from a network of four heat capacities (`ThermalNetwork`, `core/src/thermal.cpp`), integrated by `DrivingModel` every 10 ms: the metal (head, liners, upper block), the coolant on the engine side, the coolant in the radiator, and the oil with what it wets (crankshaft, rods, sump, lower block).
+Engine temperatures come from a network of four heat capacities (`ThermalNetwork`, `core/src/thermal.cpp`), integrated by `DrivingModel` every 10 ms: the metal (head, liners, upper block), the coolant on the engine side, the coolant in the radiator, and the oil with what it wets (crankshaft, rods, sump, lower block). An oil-to-coolant heat exchanger links the oil to the coolant (finishing work).
 
 ```
 C_m dT_m/dt = Q_walls + (1 − a)·P_f − G_mc·(T_m − T_c) − G_mo·(T_m − T_o) − G_ma·(T_m − T_air)
-C_c dT_c/dt = G_mc·(T_m − T_c) − ṁc·(T_c − T_r)
+C_c dT_c/dt = G_mc·(T_m − T_c) − ṁc·(T_c − T_r) + Q_oc
 C_r dT_r/dt = ṁc·(T_c − T_r) − Q_radiator
-C_o dT_o/dt = a·P_f + G_mo·(T_m − T_o) − G_oa·(T_o − T_air)
+C_o dT_o/dt = a·P_f + G_mo·(T_m − T_o) − G_oa·(T_o − T_air) − Q_oc
 ```
 
 - **Heat to the walls.** Q_walls = s·P_fuel, with s = 0.28·(φ/0.25)^−0.25·(T_g − T_m)/(T_g − 100 °C), where φ is the fuel flow relative to that at peak power. The scaling law is Taylor and Toong's (Nu ∝ Re^0.75, so Q ∝ ṁ^0.75); the level is set on Heywood's energy balance (*Internal Combustion Engine Fundamentals*, 17 to 26% to the coolant at full load on a petrol engine, from memory). s is 0.20 at full load and up to 0.5 at idle; a cold wall takes a little more (mean gas at 1100 °C, assumed). The fuel energy comes from the same pure function as the meter (`ConsumptionModel::fuelGps`), not from the meter; cold enrichment, which does not burn, heats nothing.
@@ -1302,6 +1302,7 @@ C_o dT_o/dt = a·P_f + G_mo·(T_m − T_o) − G_oa·(T_o − T_air)
 - **Wax thermostat.** It starts opening at 87 °C (one of the three usual values: 82, 87, 92 °C) and needs 8 K to open fully, like the Land Rover Freelander 2's (83 to 91 °C, workshop manual, seen quoted). The play in the wax closes it 2 K lower: this is the hysteresis (assumed). Its bleed hole passes 0.5% of the flow (assumed). The pump delivers 0.25 L/s per litre of displacement and per 1000 rpm (assumed: about 2 L/s at 6000 rpm on a 1.4 L).
 - **Radiator.** ε-NTU, cross-flow, both fluids unmixed: ε = 1 − exp(NTU^0.22/C_r·(exp(−C_r·NTU^0.78) − 1)). Air crosses the core at 30% of the car's speed, plus 3 m/s from the fan and 0.3 m/s of natural draft (assumed); UA ∝ ṁ_air^0.6 (louvred fins). It is sized the way an engine designer would for its hardest case, assumed here: 60% of the maximum fuel energy at 50 km/h, 40 °C outside, coolant at 110 °C inlet, ε = 0.6. The fan follows a thermoswitch at the bottom of the radiator: on at 95 °C, off at 84 °C (VW T3, single stage, Mecatechnic catalogue).
 - **Masses.** Assumed, per litre of displacement: 30 kg of metal at 600 J/(kg·K) on the coolant side, 15 kg at 500 J/(kg·K) on the oil side; 1.2 L + 1 L/L of coolant in the engine, 1 L + 0.6 L/L in the radiator (glycol mix, 3.64 kJ/(L·K)); 2.5 L + 0.8 L/L of oil. The coolant stops at 129 °C: it boils under the cap, and the network no longer follows.
+- **Oil-to-coolant heat exchanger** (finishing work). A plate exchanger on the small coolant circuit, flowing with the thermostat shut, as on most production engines since the 1990s: Q_oc = ε·C_min·(T_o − T_c), counter-flow, ε = (1 − e^(−NTU·(1 − C_r)))/(1 − C_r·e^(−NTU·(1 − C_r))). On the oil side, the positive-displacement pump: 0.12 L/s per litre of displacement and per 1000 rpm, up to its relief valve around 3000 rpm (1.7 kJ/(L·K)); on the coolant side, 15% of the water pump's flow; UA = 150 W/K per litre, held constant since the oil stays laminar between the plates. All assumed, of the order of a 6 to 12 plate exchanger (2 to 4 kW for a 20 to 30 K difference). Without it, the oil ended the WLTC between 111 and 126 °C and held 130 °C at 130 km/h on the city car, where a sump measures 90 to 110 °C on the road. With it, see the table below. After a cold start the coolant, which warms faster, heats the oil through it: the city car reaches 80 °C oil in 354 s on the WLTC, against 371 s.
 
 ### Oil and friction
 
@@ -1309,19 +1310,34 @@ C_o dT_o/dt = a·P_f + G_mo·(T_m − T_o) − G_oa·(T_o − T_air)
 
 **Hydrodynamic friction.** That of the Patton, Nitschke and Heywood model (SAE 890836): bearings 3.03·10⁻⁴·N·D³·L·n_b/(B²·S·n_c) and skirts 294·v̄_p/B, in kPa, mm, rpm and m/s, with bearings of 0.67 × 0.25 bore (mains) and 0.56 × 0.22 bore (rods). These coefficients are those reproduced by the work that builds on it, not re-read in the paper. Check: Petroff (torque = π·μ·ω·D³·L/(4c), radial clearance of 1‰ of the radius, oil at 100 °C) gives 5.7 kPa for the city car's bearings at 2000 rpm, the formula 5.9 kPa. They are proportional to engine speed.
 
-**Scaling.** As in Sandoval and Heywood (SAE 2003-01-0725), the hydrodynamic terms follow the viscosity: here (μ/μ₁₀₀)^0.5. The exponent is quoted from memory; their abstract says cold oil gives "about twice" the friction of a warm engine. Here: 1.57 times at 20 °C and 2000 rpm, 2.15 times at 0 °C (`frictionFactor`). Above 100 °C nothing changes: the original friction model is calibrated warm, and thinner oil slides towards the mixed regime (Stribeck), which would compensate.
+**Scaling.** As in Sandoval and Heywood (SAE 2003-01-0725), the hydrodynamic terms follow the viscosity: here (μ/μ₁₀₀)^0.5. The exponent is quoted from memory; their abstract says cold oil gives "about twice" the friction of a warm engine. Here: 1.57 times at 20 °C and 2000 rpm, 2.15 times at 0 °C (`frictionFactor`). Finishing work: above 100 °C the same ratio removes friction, 10% of the hydrodynamic part at 110 °C, 26% at 130 °C (`coldViscosityExcess`, negative). The slide towards the mixed regime (Stribeck), which would give some back on very thin oil, is not modelled.
 
-### What a cold start changes
+### What the gap to the reference changes
 
-After a cold start (`--start cold`, the `startTemp` setting), everything starts at the ambient air temperature, and three deviations from the warm reference act, all zero once warm:
+Finishing work: the network always acts, after a warm start (`startTemp: warm`: coolant at 90 °C, oil at 100 °C, metal at 95 °C) or a cold one (`--start cold`: everything at the ambient air). Each effect goes through the gap between the coolant or the oil and the warm reference, `kWarmCoolantC` and `kWarmOilC`, and is exactly zero when it is reached:
 
-- **Friction.** Cold oil adds its friction to the torque, cranking and stalled included: the starter turns more slowly, the engine stalls more easily. Combustion itself stays that of the warm engine.
+- **Friction.** The oil adds its hydrodynamic friction to the torque, or removes some above 100 °C, cranking and stalled included: cold, the starter turns more slowly and the engine stalls more easily. Combustion itself stays that of the warm engine.
 - **Idle target.** The Saab 9-5's ECU (Trionic, online workshop manual, read) targets 1200 rpm at −30 °C coolant and 825 rpm once warm: +45% at −30 °C, in a straight line up to 70 °C (end assumed), so +23% at 20 °C. A carburettor does the same with its fast-idle cam.
 - **Enrichment.** The fuel that stays liquid on cold walls and leaves unburnt. Assumed: λ ≈ 0.87 at 20 °C coolant with an ECU, 0.77 with a choke, which has no sensor, in a straight line up to 70 °C. It is paid for in consumption, with no torque or heat. Nothing on a diesel, which has neither throttle nor choke.
+- **Fuel film.** Port injection and the carburettor read the network's coolant (`portFilmParameters`, `coldFilmShare`): cold, the film grows and leans the tip-in; the ECU only compensates the film of an engine at 90 °C.
+- **Trapped air.** The wall that heats the charge is the intake port, in the head, cooled by the coolant: `T_trapped = T_air + 0.45·(T_wall − T_air)`, `T_wall = 363 K + (T_coolant − 90 °C)` (`trappedAirK`, ambient air). The integration read the network's metal, 5 to 15 K hotter than the coolant under load: warm, it would have taken 1 to 2% of torque at the reference itself.
+- **Knock.** The map is tabulated at 90 °C and at 20 °C coolant, and the driving model reads the network's coolant in it ("Combustion").
+- **Fast idle.** Until the coolant reaches 70 °C, the idle valve has the authority it has while catching (0.8 of the filling), then 0.45, as warm: the ECU reads the coolant.
 
-**After a warm start, nothing feeds back.** The network still runs, for the gauges, but neither torque, driving nor sound reads it, whatever temperature it computes: the 29 fingerprints are bit-identical, and a test makes the temperatures diverge (20 °C and −30 °C outside) without anything else moving. The spec sheet (0–100 km/h, top speed) is measured warm, even after a cold start.
+**After a warm start.** The engine settles near the reference: coolant around 86 to 90 °C (the thermostat), oil around 95 to 102 °C (the exchanger). Fuel use stays within 0.5% of what it was when the network only drove the gauges (`--fuel 1`, integration then finishing work; on the two boosted engines the ε-NTU intercooler is included):
 
-**The sound.** Nothing was added to the sound: it follows the real engine speed and load. The idle starts higher and comes down as the coolant warms, in about ten minutes at idle at 20 °C, in four and a half minutes on the WLTC. At −10 °C the V8's idle breathes more: its level varies by 2.4 dB (standard deviation, 50 ms windows) against 1.3 dB warm, since the idle control opens further to hold nearly twice the friction. Listening remains to be done.
+| Preset | WLTC | 90 km/h | 130 km/h | Oil, end of the WLTC | Oil at 90 and 130 km/h |
+|---|---|---|---|---|---|
+| `city_14` | +0.15% | +0.12% | −0.54% | 116.8 → 100.7 °C | 111.0 → 98.2; 129.9 → 108.8 °C |
+| `hot_hatch_turbo` | +0.09% | +0.09% | −0.15% | 113.8 → 97.9 °C | 115.4 → 98.8; 125.4 → 104.2 °C |
+| `v8_cross_plane` | +0.33% | +0.34% | +0.10% | 110.9 → 95.2 °C | 112.7 → 95.4; 118.9 → 98.2 °C |
+| `diesel_four` | +0.14% | +0.26% | −0.15% | 115.5 → 98.8 °C | 109.8 → 96.4; 127.8 → 105.4 °C |
+| `carb_twin_cam` | +0.20% | | | 116.0 → 99.7 °C | |
+| `v16_cadillac` | +0.12% | | | 125.8 → 100.7 °C | |
+
+At 130 km/h the city car burns 0.54% less: its oil, at 109 °C, brakes less. A test compares ten minutes of town driving with the same engine held at the reference (`holdThermalReference`): +0.01%. Idling at 45 °C, the coolant holds around 96 to 98 °C with the fan running one to one and a half minutes per half hour, and the oil stays around 100 °C: nothing overheats while the fan works. The spec sheet (0–100 km/h, top speed) is measured warm, even after a cold start.
+
+**The sound.** Nothing was added to the sound: it follows the real engine speed and load. After a warm start the torque only changes by a few tenths of a percent: the level of the renders moves by 0.5 dB at most, but the engine speed shifts a little and the waveform drifts out of phase (60 fingerprints change, explained in `CMakeLists.txt`). The idle starts higher and comes down as the coolant warms, in about ten minutes at idle at 20 °C, in four and a half minutes on the WLTC. At −10 °C the V8's idle breathes more: its level varies by 2.4 dB (standard deviation, 50 ms windows) against 1.3 dB warm, since the idle control opens further to hold nearly twice the friction. Listening remains to be done.
 
 **On the electric car, none of this applies**: no network, no gauge, and the functions return the ambient air or zero.
 
@@ -1331,11 +1347,11 @@ Measured with `revforge-render --out none --preset X --scenario wltc|idle --star
 
 | Preset | Low phase, warm → cold (L/100 km) | Full WLTC, warm → cold | Coolant at 70 °C | Thermostat open | Oil at 80 °C | 15 min idle, warm → cold (L/h) | Coolant at 70 °C at idle |
 |---|---|---|---|---|---|---|---|
-| `city_14` | 8.69 → 9.66 (+11%) | 6.76 → 6.89 (+3 g/km) | 264 s | 373 s | 371 s | 0.56 → 0.67 (+20%) | 632 s |
-| `hot_hatch_turbo` | 12.80 → 14.09 (+10%) | 8.90 → 9.08 (+4 g/km) | 219 s | 293 s | 317 s | 0.84 → 1.00 (+19%) | 582 s |
-| `v8_cross_plane` | 23.98 → 26.83 (+12%) | 13.90 → 14.28 (+9 g/km) | 277 s | 385 s | 401 s | 1.87 → 2.21 (+18%) | 605 s |
-| `diesel_four` | 8.56 → 9.15 (+7%) | 7.58 → 7.66 (+2 g/km) | 289 s | 427 s | 402 s | 0.46 → 0.56 (+20%) | 725 s |
-| `carb_twin_cam` | 13.51 → 15.22 (+13%) | 8.94 → 9.17 (+5 g/km) | 232 s | 337 s | 341 s | 0.85 → 1.05 (+23%) | 573 s |
+| `city_14` | 8.72 → 9.75 (+12%) | 6.77 → 6.90 (+3 g/km) | 270 s | 385 s | 354 s | 0.56 → 0.67 (+20%) | 651 s |
+| `hot_hatch_turbo` | 12.84 → 14.23 (+11%) | 8.91 → 9.10 (+5 g/km) | 225 s | 301 s | 297 s | 0.84 → 1.00 (+19%) | 604 s |
+| `v8_cross_plane` | 24.08 → 26.97 (+12%) | 13.95 → 14.33 (+10 g/km) | 290 s | 411 s | 370 s | 1.88 → 2.22 (+18%) | 631 s |
+| `diesel_four` | 8.61 → 9.20 (+7%) | 7.59 → 7.67 (+2 g/km) | 292 s | 430 s | 376 s | 0.47 → 0.56 (+19%) | 733 s |
+| `carb_twin_cam` | 13.57 → 15.19 (+12%) | 8.96 → 9.17 (+5 g/km) | 246 s | 346 s | 324 s | 0.87 → 1.06 (+21%) | 594 s |
 
 On `diesel_four`, the driver restarts the engine once during the WLTC, warm and cold alike (see "Consumption"). At −20 °C, the city car idling takes 17 minutes to reach 70 °C coolant, and burns 48% more than warm.
 
@@ -1344,10 +1360,10 @@ On `diesel_four`, the driver restarts the engine once during the WLTC, warm and 
 | Idle target, coolant at −30 °C | 1.45 times the warm idle | 1200 rpm for 825 | Saab 9-5, Trionic (read): the model is set on it |
 | Idle at 20 °C, `city_14` | 985 rpm for 815 warm (1.21), 1105 just after starting | 1100 for 950 at 20 °C (1.16) in a tuning example; "1200 to 1800" at start-up | HP Academy, engineerfix.com (seen quoted) |
 | Fast idle duration, in neutral at 20 °C | 9.5 to 12 min, until the coolant reaches 70 °C | "a minute or two" for the peak; catalyst heating for up to 5000 ignitions, about 2 min | engineerfix.com (seen quoted), Saab WIS (read) |
-| Coolant at 70 °C, cold WLTC | 3.7 to 4.8 min | the cold period of real-driving tests (RDE) ends at 70 °C coolant, and lasts 5 min at most | Regulation (EU) 2017/1151 (seen quoted) |
-| Oil behind coolant | about 6 K behind the coolant during the WLTC warm-up, then above | "about 10 °C behind" on a heavy-duty diesel | *Applied Sciences* 2020 (MDPI, seen quoted) |
-| Penalty, first phase | +7% (diesel) to +13% (carburettors) over 589 s | +20% in the cold FTP phase (505 s) against the hot one, at 24 °C; +40 to +80% at −6.7 °C | Taylor and Stewart, SAE 2001-01-0221 (abstract read) |
-| Penalty, full WLTC | +2 to +9 g/km of CO₂ (+1 to +3%) | +6.1 g/km on average over 20 cars | Tsokolis et al., *Applied Energy* 2016, JRC102610 (abstract read) |
+| Coolant at 70 °C, cold WLTC | 3.8 to 4.9 min | the cold period of real-driving tests (RDE) ends at 70 °C coolant, and lasts 5 min at most | Regulation (EU) 2017/1151 (seen quoted) |
+| Oil behind coolant | 4 to 5 K behind the coolant during the WLTC warm-up (the exchanger pulls it), then above | "about 10 °C behind" on a heavy-duty diesel | *Applied Sciences* 2020 (MDPI, seen quoted) |
+| Penalty, first phase | +7% (diesel) to +12% (V8, carburettors) over 589 s | +20% in the cold FTP phase (505 s) against the hot one, at 24 °C; +40 to +80% at −6.7 °C | Taylor and Stewart, SAE 2001-01-0221 (abstract read) |
+| Penalty, full WLTC | +2 to +10 g/km of CO₂ (+1 to +3%) | +6.1 g/km on average over 20 cars | Tsokolis et al., *Applied Energy* 2016, JRC102610 (abstract read) |
 | Cold friction | ×1.57 at 20 °C, ×2.15 at 0 °C, at 2000 rpm | "about twice" | Sandoval and Heywood, SAE 2003-01-0725 (abstract seen quoted) |
 
 "Read": the page or document itself. "Seen quoted": a search excerpt or a reprint. The model's fast idle lasts longer than the peak drivers describe, which is catalyst heating: the model does not simulate it, and keeps the ECU's coolant-based idle, which comes down with it.
@@ -1356,15 +1372,14 @@ On `diesel_four`, the driver restarts the engine once during the WLTC, warm and 
 
 - **The cold-start penalty reads about half the published figures.** The model counts only the engine: no gearbox and axle oil, no cold tyres, no catalyst heating (spark retarded to about 10° after top dead centre at Saab, for up to 5000 ignitions), no poorer combustion on cold walls (of the order of 1 to 2%), no cabin heater. Nothing was tuned to close this gap.
 - **Assumed**: the end of fast idle and enrichment at 70 °C, the enrichment itself, the masses, the conductances, the radiator's design case, the air speeds, the share of friction going to the oil, the mean gas temperature.
-- **No oil-to-coolant heat exchanger**: the oil reaches 115–120 °C at the end of the WLTC, and about 140 °C towing a trailer at 45 °C.
+- **Every engine has the oil-to-coolant exchanger**, the 1930 Cadillac included, which had none: its oil, in a large air-cooled sump, would run hotter than the network shows.
+- **Knock when overheating.** A stock engine's knock map is not computed: above 94 to 100 °C coolant depending on the engine, at full load, it would start knocking on a few cycles, and a real ECU would retard the spark. The network only gets there idling in great heat (97 °C) or with a failed fan.
 - **Overheating**: with a working fan, idling at 45 °C does not overheat (the coolant holds around 97 °C); neither the air-conditioning condenser nor hot air recirculating under the bonnet is simulated. With a failed fan the coolant exceeds 115 °C (test). Beyond 129 °C the coolant boils: no coolant loss, no ECU protection.
-- **After a warm start, the network only drives the gauges**: a warm engine idling for an hour at −30 °C cools on screen without its friction changing.
 - The rotary has only its bearings in the hydrodynamic friction (no skirts), with the same quarter less as its friction (assumed). The on-screen gas and the page's heat (`Motion.heat`) do not read this network, and the steam of a cold exhaust is not drawn.
-- The radiator air is at 101,325 Pa: altitude is not in it yet.
 
 ### What other subjects read and are given
 
-Read: the ambient temperature (`EngineConfig::ambientC`, 20 °C by default). Exposed, as pure functions: `oilViscosityPaS`, `hydrodynamicNmPerRpm`, `coldFrictionNm`, `frictionFactor`, `coldIdleRise`, `coldEnrichment`, `wallHeatShare`; and in `DrivingModel::thermal()`: `coolantC`, `oilC`, `metalC`, with `coldIdleRpm`, `coldEnrichment`, `coldFrictionNm` for what acts. For an engine started warm to stay bit-exact, an effect plugged into these temperatures goes, as here, through a deviation from the warm reference (`kWarmCoolantC`, `kWarmOilC`) that acts only after a cold start (`thermalCoupled()`).
+Read: the ambient temperature (`EngineConfig::ambientC`, 20 °C by default). Exposed, as pure functions: `oilViscosityPaS`, `hydrodynamicNmPerRpm`, `coldFrictionNm`, `frictionFactor`, `coldIdleRise`, `coldEnrichment`, `wallHeatShare`; and in `DrivingModel::thermal()`: `coolantC`, `oilC`, `metalC`, with `coldIdleRpm`, `coldEnrichment`, `coldFrictionNm` for what acts. Also exposed: `counterFlowEffectiveness`, `ThermalNetwork::oilCoolerW`. An effect plugged into these temperatures goes, as here, through a gap to the warm reference (`kWarmCoolantC`, `kWarmOilC`), exactly zero when it is reached: the network always acts (`thermalCoupled()`), except during a test that holds it at the reference (`holdThermalReference`).
 
 ## Combustion
 
@@ -1561,6 +1576,8 @@ and gains up high. A better octane changes nothing while the map stays stock: it
 E85 and methanol gain by their energy per kilogram of air and their colder charge, and cost 40% and 105% more litres, the ratio of their
 energy per litre. These gains at equal advance are a little above what is usually read for E85 (3 to 5%, no source re-read): the share
 evaporated into the air is assumed.
+
+**The engine's coolant** (finishing work). At intake closing the charge takes heat from the port and the liner, at the coolant plus 40 K (`kWallOverCoolantK`). The map is tabulated at 90 °C and at 20 °C coolant (`KnockMap::at(rpm, charge, coolant)`), and the driving model reads the thermal network's coolant in it: the logarithm of the Livengood-Wu integral follows 1/T of the fresh gas, so the coolant almost linearly, and the linear reading stays within a tenth of a degree of the direct calculation at 55 °C. The stock map, set warm, does not move: a cold engine gains margin, an overheated one loses some. On the city car at 1500 rpm, full load, the limit is 29.5° at −20 °C coolant, 20.6° at 20 °C, 16.4° at 90 °C and 14.5° at 129 °C, for a stock map at 14.4°: about 0.5° per 10 K around 90 °C. The 1.4 at 13:1, flat out in fourth right after a cold start (coolant around 25 °C), has its sensor take 4.7° at most, against 7.1° warm. A stock engine has no computed map: above 94 °C (twin rotor) to 100 °C coolant depending on the engine, at full load, it would knock on a few cycles (known limit, "Engine temperatures").
 
 ### The sound of knock
 
@@ -1807,6 +1824,8 @@ A race cam gives nothing without revs: at 6800 rpm it loses 13 % of torque and 5
 **Variable valve timing.** The intake phaser has ± 20 crank degrees around the base timing (40° in all, of the order of a VVT-i, from memory). Its best full-load timing comes from the same cycle: three timings, then the top of the parabola through them. It advances the intake low down (+ 16 to + 20° below 4000 rpm) and retards it up high (− 9° at 7000, − 18° at 8000). Off throttle and at idle, it stays against the retard stop, the least overlap possible; it turns at 150°/s (assumed). A two-step cam brackets the chosen profile: 25° and 15 % of lift less for the mild one, as much more for the wild one (assumed, of the order of a VTEC). The switch happens where their torque curves cross, calculated, with ± 2 % of hysteresis, and only above 60 % filling (assumed). The data-sheet torque is the better of the two; within the hysteresis band they differ by less than 1 %, and the driving model does not count it. At the switch, each cylinder locks its rocker at its next intake closing, back on the base circle: a 4.5 kHz tick, with half the energy of the seat's (a 5 g pin at 1 m/s against a 40 g valve at 0.5 m/s, assumed), from its own generator.
 
 **What the cam exposes to other topics**, as pure functions of `cam.hpp`: `intakeClosingAbdcDeg`, `effectiveCompressionRatio`, `valveOverlapDeg`, `overlapFactor` and `residualGasFraction` (which take the pressures as parameters), `combustionCov`, `camDurationAtLiftDeg`, `camProfileOf` (effective lift and duration), `camNoseDecelerationMs2`. It reads the valve float speed as a parameter of `camSwitchRpm`: a second profile that would only help beyond it does not switch. It also reads `compressionRatio`.
+
+**The day's air** (finishing work). The cycle breathes the day's air (ambient air): pressure and temperature in the plenum, the speed of sound in the runner's damping, and a line loss that follows ρv², hence the pressure the gas exhausts into. The runner, tuned in reference air, keeps its length. Altitude alone changes every pressure together, and a compressible flow at the same temperature does not depend on it: on the two-step 2 L, the switch stays at 5178 rpm at 3000 m. Heat moves the tuning like the speed of sound, as √T, and the switch a little more: 4963 rpm at −20 °C, 5555 at 45 °C (√T would give −7% and +4%; the crossing of two curves moves more or less than each of them). In reference air nothing changes, bit for bit.
 
 **What is not modelled.** The primary is not tuned to the cam: scavenging by the exhaust wave stays that of a damped pipe. The cycle has a single γ and no heat transfer. Consumption only sees the torque: a race cam gains 2.4 % there, because its lower peak torque makes the engine work closer to full load, whereas in reality its residuals would rather make it lose. The on-screen gas and the drawing follow the base profile, without the phaser or the switch live, and the gas does not follow the lift. Valve float has no consequence here: it belongs to the pushrods topic. **Nothing has been listened to**: to do, `revforge-render --out idle.wav --preset hot_hatch_na --scenario idle --seconds 8 --cam-duration 300 --cam-lift 13 --lsa 104`, the same without the cam options, and `--vvt two_step --scenario launch --listener bay` for the switch.
 
@@ -2115,31 +2134,47 @@ With two turbos, `GasNetwork` has two headers (an inline engine split front and 
 ### From elsewhere
 
 - Target boost and wastegate opening are parameters (`TwinTurboInput::targetBar`, `wastegate`): negative, they are today's (the spring). Boost control will provide them.
-- Ambient air goes through `turbo_laws::constants()` (`atmosphere`, `ambientK`), the same as `turbo.cpp`.
+- The day's air (finishing work): each shaft draws that of the reference from `turboSpecOf` (`ambientPa`, `ambientK`), the line exhausts into it, and the spring wastegate holds a relative pressure, as on the single turbo; the boost control target is compared with it. Sizing stays in reference air (`turbo_laws::constants()`). At 5000 rpm and 3000 m: a parallel pair's shaft goes from 174,600 to 202,600 rpm, for 1.70 bar absolute (2.01 at sea level); the sequential pair, which stays on its primary, tops out at 1.18 bar, its wheel at its speed limit (231,200 rpm); the twincharger holds 2.20 bar at equilibrium, but 1.32 bar gauge instead of 1.50 in the fixed-step model, where the turbo alone still crosses the flap loss that the equilibrium ignores. In reference air, bit for bit.
 - Banks and header lengths come from `EngineConfig::toProfile` (`bank`, `headerM`).
 - `DrivingModel::turboState()` and `turboStateB()` expose each shaft, with the shared charge pressure and temperature; `twinTurboSteady` the equilibrium.
 
 ## Charge air
 
-`core/src/charge_air.cpp`: the intercooler (air-to-air, air-to-water, none), water injection and nitrous oxide, as pure functions. What changes while driving (the water loop, the bottle) is the `ChargeAir` state, advanced by `DrivingModel` at each 1 ms step through `revforge::portable`. At the defaults (air-to-air, no water, no nitrous), `chargeAirActive` is false and none of this runs: the presets and the 29 original fingerprints do not move by a bit. On a diesel, water and nitrous have no effect (the setting only appears on a spark-ignition engine); on a naturally aspirated engine, there is no intercooler.
+`core/src/charge_air.cpp`: the intercooler (air-to-air, air-to-water, none), water injection and nitrous oxide, as pure functions. What changes while driving (the water loop, the bottle) is the `ChargeAir` state, advanced by `DrivingModel` at each 1 ms step through `revforge::portable`. At the defaults (air-to-air, no water, no nitrous), `chargeAirActive` is false and none of the `ChargeAir` state runs; the air-to-air cooler itself is, since the finishing work, the ε-NTU core held by the turbo, the twin turbos and the supercharger themselves (`AirCoolerCore`). On a diesel, water and nitrous have no effect (the setting only appears on a spark-ignition engine); on a naturally aspirated engine, there is no intercooler.
 
-**One principle throughout.** The base torque (`fullLoadTorqueNm`) assumes the original intercooler. Whatever changes the charge changes the mass of air admitted at equal pressure: `C = ((C₀ + f)·T_ref/T·air_share − f)`, where `f` is friction, which does not follow density. On the sheet, `torqueCurveNm` applies it at equilibrium, at 100 km/h; while driving, `DrivingModel` multiplies the indicated torque by the same ratio, read from the current state. The gearbox and clutch remain those of the original engine (`chargeAirStock`), as for the air filter: an intercooler does not redesign a gearbox, and a clutch does not grow stronger for nitrous.
+**One principle throughout.** The base torque (`fullLoadTorqueNm`) assumes the original intercooler, the law `ε = 0.86 − 0.14·ṁ/ṁ_rated` on which `kBoostEfficiency` was set. Whatever changes the charge changes the mass of air admitted at equal pressure: `C = ((C₀ + f)·T_ref/T·air_share − f)`, where `f` is friction, which does not follow density. On the sheet, `torqueCurveNm` applies it at equilibrium, at 100 km/h; while driving, `DrivingModel` multiplies the indicated torque by the same ratio, read from the current state. The gearbox and clutch remain those of the original engine (`chargeAirStock`), as for the air filter: an intercooler does not redesign a gearbox, and a clutch does not grow stronger for nitrous.
 
 ### The intercooler
 
-- **Original air-to-air.** Unchanged: `ε = 0.86 − 0.14·ṁ/ṁ_rated`, a 1.5 s mass, outside air on the other side, whatever the speed.
-- **Air-to-air by ε-NTU, with road air** (`airToAirCoolerFor`, `airToAirOutletK`): ready to plug in, it does not replace the original, because it cannot reproduce it to the bit. `UA = 1/(1/hA_charge + 1/hA_road)`, `hA_charge ∝ ṁ^0.8` (Dittus-Boelter), `hA_road ∝ ṁ_road^0.5` (louvered fins, laminar), `ṁ_road = ρ·A·(0.3·v + 1 m/s)` (a grille lets through only part of the speed; the fan, at a standstill; both assumed). Cross-flow, both fluids unmixed: `ε = 1 − exp[(NTU^0.22/Cr)·(exp(−Cr·NTU^0.78) − 1)]` (Incropera). Face of 0.85 m² per kg/s (600 × 300 mm for a 2 L), both sides of equal conductance, fitted to give the original at the rated point at 100 km/h. What it would change to torque at peak power, at equal pressure:
+- **Air-to-air by ε-NTU, with road air: the production intercooler** (finishing work). On the turbo, the twin turbos and the supercharger it replaces the original law (`ε = 0.86 − 0.14·ṁ/ṁ_rated` and a 1.5 s mass, outside air on the other side, whatever the speed). The core is cut into four slices along the charge path (`kCoolerSlices`); in each, the charge and the road air exchange with a wall at a single temperature, each through `ε = 1 − e^−NTU`, and the road air only crosses one slice: a cross-flow exchanger in finite differences. At equilibrium each slice removes the same share `e = ε_c·ε_r·(C_r/N)/(ε_c·C_c + ε_r·C_r/N)` of the gap to the air, and the exchanger `1 − (1 − e)^N` (`airToAirOutletK`). `hA_charge ∝ ṁ^0.8` (Dittus-Boelter), `hA_road ∝ ṁ_road^0.5` (louvered fins, laminar), `ṁ_road = ρ·A·(0.3·v + 1 m/s)` (a grille lets through only part of the speed; the fan, at a standstill; both assumed). Face of 0.85 m² per kg/s (600 × 300 mm for a 2 L), both sides of equal conductance, fitted to give the original at the rated point at 100 km/h. **The core's mass**: 4 kg of aluminium for 0.21 kg/s (assumed: a production core of this face weighs 3 to 5 kg, tanks apart), at 900 J/(kg·K), shared between the slices: `C_wall·dT_wall/dt = ε_c·C_c·(T_in − T_wall) − ε_r·(C_r/N)·(T_wall − T_air)` (`AirCoolerCore`, `revforge::portable`, at every 1 ms step). With no flow, the air sleeping in the core is at the last wall; at a standstill the fan alone cools it, with a time constant of about thirty seconds.
+
+  **The spec sheet is measured on the dyno**, in front of a fan that gives the core the air of 100 km/h (`kChargeReferenceSpeedMs`, `benchCoolerOutletK`): the equilibrium of the turbo, twin turbos and supercharger, hence their curves, see this core, and a positive-displacement supercharger is sized with it. On a chassis dyno the fan follows the roll speed, within ±6.5 mi/h above 30 mi/h, and may be capped at 70 mi/h, 113 km/h (40 CFR 1066.105(c)(2), read): 100 km/h is below that cap. For net power on an engine dyno, UN Regulation No. 85 and SAE J1349 ask for charge cooling that reproduces the vehicle's (seen quoted), without setting a speed. A turbo's base torque stays set on the original law: the sheet corrects it by `T_original/T` at equal pressure (`turboCoolerTorqueShare`), exactly 1 at the rated flow; while driving, `DrivingModel::airCoolerShare` does the same with the current charge, core and speed included. A supercharger already read its intercooler's temperature (`superchargerAirShare`): while driving it only gets the gap to the dyno.
+
+  At peak power, at equilibrium and equal pressure, against the original:
 
 | Preset | Original | 0 km/h | 50 km/h | 100 km/h | 150 km/h |
 |---|---|---|---|---|---|
-| three_cyl_turbo | 52.4 °C | 92.0 °C, −10.8 % | 60.6 °C, −2.4 % | 52.2 °C, +0.1 % | 48.0 °C, +1.4 % |
-| hot_hatch_turbo | 53.6 °C | 94.5 °C, −11.1 % | 62.0 °C, −2.5 % | 53.4 °C, +0.1 % | 49.0 °C, +1.4 % |
-| five_cyl_turbo | 56.8 °C | 101.7 °C, −12.0 % | 66.1 °C, −2.7 % | 56.6 °C, +0.1 % | 51.8 °C, +1.6 % |
-| boxer_four_turbo | 51.9 °C | 90.7 °C, −10.7 % | 59.9 °C, −2.4 % | 51.7 °C, 0.0 % | 47.5 °C, +1.4 % |
-| diesel_four | 61.3 °C | 111.6 °C, −13.1 % | 71.6 °C, −3.0 % | 61.0 °C, +0.1 % | 55.6 °C, +1.7 % |
-| v8_supercharged | 40.1 °C | 64.8 °C, −7.3 % | 45.3 °C, −1.6 % | 40.1 °C, 0.0 % | 37.4 °C, +0.9 % |
+| three_cyl_turbo | 52.4 °C | 91.0 °C, −10.6 % | 60.5 °C, −2.4 % | 52.1 °C, +0.1 % | 47.8 °C, +1.4 % |
+| hot_hatch_turbo | 53.5 °C | 93.5 °C, −10.9 % | 61.9 °C, −2.5 % | 53.3 °C, +0.1 % | 48.8 °C, +1.4 % |
+| five_cyl_turbo | 56.7 °C | 100.6 °C, −11.7 % | 65.9 °C, −2.7 % | 56.5 °C, +0.1 % | 51.6 °C, +1.6 % |
+| boxer_four_turbo | 51.8 °C | 89.8 °C, −10.5 % | 59.8 °C, −2.4 % | 51.6 °C, +0.1 % | 47.4 °C, +1.4 % |
+| diesel_four | 61.2 °C | 110.3 °C, −12.8 % | 71.4 °C, −3.0 % | 60.8 °C, +0.1 % | 55.4 °C, +1.8 % |
+| v8_supercharged | 39.9 °C | 63.8 °C, −7.1 % | 44.9 °C, −1.6 % | 39.8 °C, +0.1 % | 37.1 °C, +0.9 % |
 
-  The gap only really matters at a standstill, flat out: on a dyno without a fan, or pulling away from a light. Plugging it in would change the 0–100 km/h of the turbo presets, hence their fingerprints: that is a separate decision.
+  These gaps are equilibrium ones. A standing start lasts only a few seconds and the cold core soaks up the heat: the charge stays around 21 °C for the first second and a half, and the 0–100 km/h gains (table). On the dyno, low down, the core gives more than the old law, capped at 0.86: a few percent of torque low down, nothing up high.
+
+  | Preset | Sheet before → after | 0–100 km/h |
+  |---|---|---|
+  | three_cyl_turbo | 192.3 → 195.9 Nm; 94.6 → 94.7 kW | 10.05 → 9.84 s |
+  | hot_hatch_turbo | 357.0 → 363.9 Nm; 194.4 → 194.6 kW | 6.86 → 6.60 s |
+  | five_cyl_turbo | 505.9 → 516.8 Nm; 296.9 → 297.2 kW | 5.29 → 5.12 s |
+  | boxer_four_turbo | 444.2 → 452.5 Nm; 253.1 → 253.3 kW | 5.45 → 5.26 s |
+  | diesel_four | 315.1 → 319.8 Nm; 113.5 → 113.7 kW | 12.94 → 12.55 s |
+  | v8_supercharged | 767.3 → 772.6 Nm; 393.6 → 393.6 kW | 6.99 → 6.95 s |
+  | w12_continental | 778.0 → 777.9 Nm; 405.9 → 405.8 kW | 5.38 → 5.28 s |
+  | w16_hypercar | 1306.0 → 1305.5 Nm; 670.8 → 670.9 kW | 3.61 → 3.60 s |
+
+  **Heat soak.** Twenty seconds after a first standing start to 100 km/h and a stop, the core has kept some of its heat: 1.5 s into the next start, the charge is at 24.6 °C instead of 21.0 on `hot_hatch_turbo` (−1.2% torque at equal pressure, 0–100 km/h in 6.91 s instead of 6.85), at 30.9 instead of 21.3 °C on `diesel_four` (−3.2%, 13.07 s instead of 12.83), at 25.6 instead of 22.4 °C on `v8_supercharged` (−1.1%, 7.31 s instead of 7.28). The engine bay does not heat the air-to-air cooler, mounted in front in the outside air; the heat of the pipes and the manifold, which makes most of a real soak, is not modelled.
 - **Air-to-water.** A brick cooled by a glycol-water loop, its electric pump and its low-temperature radiator at the grille:
 
   ```
@@ -2153,24 +2188,25 @@ With two turbos, `GasNetwork` has two headers (an inline engine split front and 
 
   | | Standstill (60 s) | End of start 1 | 2 | 3 | Water at start 1/2/3 |
   |---|---|---|---|---|---|
-  | Air-to-air | 19.9 °C | 48.6 °C | 48.6 °C | 48.7 °C | — |
+  | Air-to-air, integration | 19.9 °C | 48.6 °C | 48.6 °C | 48.7 °C | — |
+  | Air-to-air ε-NTU | 19.9 °C | 41.2 °C | 42.9 °C | 43.1 °C | — |
   | Air-to-water | 21.3 °C | 43.9 °C | 45.6 °C | 46.2 °C | 21.3/24.9/26.2 °C |
 
-  The loop's mass makes the first start cooler than the air-to-air; it then keeps what it took, and the radiator, without speed, only gives it back in about 90 s. At a standstill alone, the loop gains only 1.4 K in a minute (3 K at equilibrium): what a sensor in a hot manifold reads at very low flow comes mostly from the manifold, which is not modelled, for any intercooler. Published order of magnitude: a front-mounted air-to-air cooler holds the charge about 15 K above ambient at full power (Behr, patent US 7,779,791 B2), 20 to 30 K according to other patents from the same maker; here, 28.6 K at the end of a start and 33.6 K at equilibrium at peak power.
+  The loop's mass makes the first start cooler than the old air-to-air; the ε-NTU core, cooled by road air as soon as the car moves and cold at the start, does better still. The loop then keeps what it took, and the radiator, without speed, only gives it back in about 90 s. At a standstill alone, the loop gains only 1.4 K in a minute (3 K at equilibrium): what a sensor in a hot manifold reads at very low flow comes mostly from the manifold, which is not modelled, for any intercooler. Published order of magnitude: a front-mounted air-to-air cooler holds the charge about 15 K above ambient at full power (Behr, patent US 7,779,791 B2), 20 to 30 K according to other patents from the same maker; here, 21.2 K at the end of a start (28.6 with the old law) and 33.3 K at equilibrium at peak power, at 100 km/h.
 - **None.** The compressor outlet goes straight to the throttle: `T3 = T2`. The air path (`ChargePath`, copied by `fluidGas.ts`): hot pipe 0.45 m, core 0.45 m at four times the section, cold pipe 0.5 m for a turbo's air-to-air; a 0.25 m brick and a 0.2 m cold pipe for air-to-water; a single 0.8 m pipe without intercooler. The volume follows: 6.5, 3.9 and 1.9 L on a 2 L. The loss follows `ρv²`: Darcy (`f = 0.02`) and 0.3 per bend; the core carries about 80 % of the original 0.12 bar, a brick half that (assumed). Lag hardly improves: 90 % of the boost at 3000 rpm in 0.85, 0.80 and 0.76 s, because shaft inertia dominates. The turbo and supercharger stay those of the original intercooler.
 
 | | Peak torque | Power | 0–100 km/h | Charge at peak power |
 |---|---|---|---|---|
-| hot_hatch_turbo, air-to-air | 357 Nm at 2850 | 194.4 kW | 6.86 s | 53.6 °C |
-| air-to-water | 363 Nm at 2850 | 195.0 kW | 6.60 s | 52.6 °C |
-| none | 274 Nm at 4350 | 150.4 kW | 7.79 s | 131.7 °C |
-| water injection | 378 Nm at 2850 | 209.5 kW | 6.59 s | 27.8 °C |
-| nitrous 75 kW | 598 Nm at 3000 | 271.5 kW | 5.57 s | 18.4 °C |
-| v8_supercharged, original | 767 Nm at 3650 | 393.6 kW | 6.99 s | 40.1 °C |
-| air-to-water | 772 Nm at 3550 | 393.7 kW | 6.96 s | 40.1 °C |
-| none | 651 Nm at 3850 | 338.7 kW | 7.16 s | 87.4 °C |
-| hot_hatch_na | 194 Nm at 4500 | 117.8 kW | 8.72 s | 19.9 °C |
-| water injection | 203 Nm at 4550 | 123.7 kW | 8.42 s | 6.4 °C |
+| hot_hatch_turbo, ε-NTU air-to-air | 364 Nm at 2850 | 194.6 kW | 6.60 s | 53.3 °C |
+| air-to-water | 363 Nm at 2850 | 195.0 kW | 6.63 s | 52.6 °C |
+| none | 258 Nm at 4850 | 144.4 kW | 8.20 s | 131.7 °C |
+| water injection | 383 Nm at 2850 | 209.6 kW | 6.39 s | 27.7 °C |
+| nitrous 75 kW | 603 Nm at 3000 | 271.6 kW | 5.47 s | 18.1 °C |
+| v8_supercharged, ε-NTU air-to-air | 773 Nm at 3550 | 393.6 kW | 6.95 s | 39.8 °C |
+| air-to-water | 771 Nm at 3600 | 393.5 kW | 6.97 s | 39.8 °C |
+| none | 634 Nm at 3950 | 338.3 kW | 7.18 s | 87.2 °C |
+| hot_hatch_na | 194 Nm at 4500 | 117.8 kW | 8.68 s | 19.9 °C |
+| water injection | 203 Nm at 4550 | 123.7 kW | 8.38 s | 6.4 °C |
 | nitrous 75 kW | 417 Nm at 3000 | 192.3 kW | 7.18 s | −27.5 °C |
 
 Without an intercooler, the engine loses 23 % of its power from density alone: knock, which an ECU would avoid by pulling timing, is not in this calculation (see what knock reads, below).
@@ -2198,7 +2234,7 @@ Clausius-Clapeyron integrated with a linear latent heat (Kirchhoff): `a = 3.1615
 
 ### What is read, what is exposed
 
-Read as parameters, at the reference values while the other subjects are not plugged in: `ChargeConditions` (`ambientK`, `ambientPa` from the atmosphere, `engineCoolantK` from the thermal model) and `ChargeFuel` (`latentJPerKg`, `stoichiometricAfr`, `lowerHeatingJPerKg` from combustion, `fullLoadLambda` from the ECU). Exposed for knock: `ManifoldCharge` (pressure and temperature at the manifold, water injected and still liquid, nitrous, oxygen in the oxidiser, air share), through `DrivingModel::manifoldCharge()` while driving and `steadyManifoldCharge(p, rpm)` on the sheet; and the pure functions `mixCharge`, `waterSpray`, `waterSaturationPa`, `nitrousSaturation`, `chargeCoolerSteadyK`. On the site: `rf_charge_c`, `rf_charge_water_c`, `rf_water_gps`, `rf_nitrous_bar`, `rf_nitrous_kg`, `rf_nitrous_flow`, `rf_nitrous_refill`, `rf_nitrous_activation_rpm`; the bottle gauge and the charge under the manifold gauge. Tests: `tests/charge_air_test.cpp`, `web/tests/air-de-charge.spec.ts`; fingerprints `golden_charge_*`.
+Read as parameters, at the reference values while the other subjects are not plugged in: `ChargeConditions` (`ambientK`, `ambientPa` from the atmosphere, `engineCoolantK` from the thermal model) and `ChargeFuel` (`latentJPerKg`, `stoichiometricAfr`, `lowerHeatingJPerKg` from combustion, `fullLoadLambda` from the ECU). Exposed for knock: `ManifoldCharge` (pressure and temperature at the manifold, water injected and still liquid, nitrous, oxygen in the oxidiser, air share), through `DrivingModel::manifoldCharge()` while driving and `steadyManifoldCharge(p, rpm)` on the sheet; and the pure functions `mixCharge`, `waterSpray`, `waterSaturationPa`, `nitrousSaturation`, `chargeCoolerSteadyK`. The production air-to-air cooler (finishing work): `airToAirCoolerFor`, `airToAirOutletK`, `benchCoolerOutletK`, `AirCoolerCore` (held by `TurboCharger`, `Supercharger` and `TwinTurbo`, which get the speed through `coolingAirMs`), `turboCoolerTorqueShare`, `turboCoolerOutletK`, `superchargerCoolerOutletK`, and `DrivingModel::airCoolerShare` while driving. On the site: `rf_charge_c`, `rf_charge_water_c`, `rf_water_gps`, `rf_nitrous_bar`, `rf_nitrous_kg`, `rf_nitrous_flow`, `rf_nitrous_refill`, `rf_nitrous_activation_rpm`; the bottle gauge and the charge under the manifold gauge. Tests: `tests/charge_air_test.cpp`, `web/tests/air-de-charge.spec.ts`; fingerprints `golden_charge_*`.
 
 ## The two-stroke
 
@@ -2267,17 +2303,17 @@ The twelve engine topics together: architectures, atmosphere, thermal, combustio
 
 ### What is connected
 
-**The day's air.** The radiator is sized in reference air and crossed by the day's (`ThermalSpec::airPressureRatio`). A spring wastegate holds a relative pressure, the ECU an absolute one, capped by the wheels' speed as a pressure ratio (`boostTargetPa`, `BoostControlInput::ambientPa`): at 3000 m, the spring aims at 2.0 bar absolute, electronic control at 2.31 up to 4100 rpm, then 2.03 at 5900, the shaft at its speed limit. The air-to-air intercooler cools towards the day's air (`coolerOutlet`). The knock map reads a naturally aspirated engine's pressure; temperature already reaches it through the intake air. Everything sized once (turbo, supercharger, gearbox, clutch, shift map, boost calibration) is sized in reference air (`withReferenceAir`).
+**The day's air.** The radiator is sized in reference air and crossed by the day's (`ThermalSpec::airPressureRatio`). A spring wastegate holds a relative pressure, the ECU an absolute one, capped by the wheels' speed as a pressure ratio (`boostTargetPa`, `BoostControlInput::ambientPa`): at 3000 m, the spring aims at 2.0 bar absolute, electronic control at 2.31 up to 4100 rpm, then 2.03 at 5900, the shaft at its speed limit. The air-to-air intercooler cools towards the day's air (the ε-NTU core, `AirCoolerCore`). The cam cycle and the twin turbo's shafts read it too (finishing work). The knock map reads a naturally aspirated engine's pressure; temperature already reaches it through the intake air. Everything sized once (turbo, supercharger, gearbox, clutch, shift map, boost calibration) is sized in reference air (`withReferenceAir`).
 
-**The knock map** is built as soon as anything it reads changes (`knockConditionsStock`), not only the combustion: the air, the cam (intake closing), direct injection (how much more its vaporisation cools than port injection), the ECU's advance and the charge air (the manifold charge). A 45 °C day brings it closer to its limit; the stock map, set in reference air, does not move.
+**The knock map** is built as soon as anything it reads changes (`knockConditionsStock`), not only the combustion: the air, the cam (intake closing), direct injection (how much more its vaporisation cools than port injection), the ECU's advance and the charge air (the manifold charge). A 45 °C day brings it closer to its limit; the stock map, set in reference air, does not move. Finishing work: it is tabulated at 90 and 20 °C coolant, and the driving model reads the thermal network's coolant in it.
 
 **The ECU's advance.** On a four-stroke spark engine, the torque the advance offset changes comes from the knock map alone (`ecuAdvanceInKnockMap`): it starts from the real stock map, retarded from best torque where knock bounds it, where the ECU assumed best torque. Finishing: that map's cycle gave its best work about 9° earlier than its best-torque criterion, and the ECU costed the offset by a 68° parabola: +6° gained 1.6%. A single model now says both, the cycle with its wall losses (see "Best torque, and what a deviation costs"); the ECU takes the published correlation it matches (Ayala, Gerty and Heywood). Above 3500 rpm the stock map sits at best torque: ±6° cost 1.5% of power there (naturally aspirated 2.0: 194.1 → 191.4 Nm at +6°, 191.5 at −6°; 117.8 → 116.0 and 116.1 kW). Lower, it is bounded by knock: the margin drops to −4.0° at +6° (−2.3° on RON 98), and the sensor takes advance back under load. Fuel follows the air, and no longer counts the advance a second time in the efficiency. What the sensor takes away, `ecuAdvanceDeg` reads. The spec sheet (`rf_knock_margin_deg`, `--knock`) reads that same map.
 
-**Thermal.** After a cold start, the network's coolant drives the port-injection film and the ECU's enrichment (one law, `coldEnrichment`); the cold wall, at the metal's temperature, warms the trapped air less (`trappedAirK`). Fast idle keeps the starting authority (0.8 of the fill, against 0.45 when warm): capped as when warm, it could not hold the low-compression Cadillac's cold oil. After a warm start, none of this, bit-exact.
+**Thermal.** Finishing work: the network always acts, warm or cold, through the gap to 90 °C coolant and 100 °C oil. The coolant drives the film of port injection and carburettors, the ECU's enrichment (one law, `coldEnrichment`), the knock map and the wall that warms the trapped air (`trappedAirK`, now the coolant rather than the metal); the oil, friction. While the coolant is below 70 °C, fast idle keeps the starting authority (0.8 of the fill, against 0.45 when warm): capped as when warm, it could not hold the low-compression Cadillac's cold oil. After a warm start, fuel use stays within 0.5% of the engine held at the reference.
 
 **Vaporisation** is counted once: the chosen fuel gives the latent heat (`fuelPropertiesOf`), the fuel system the share taken from the air (`mixtureAirShare`: 0.5 for a carburetor, 0.2 for port injection; direct injection has its droplet calculation). Combustion, direct injection (`injectedFuelOf`), charge air and the knock map read the same figures. Before, combustion took 0.15 for every fuel system, and injection 305 kJ/kg for every petrol, ethanol included.
 
-**Twin turbo.** One turbine per head: a W counts two (`architectureOf`). The shared intercooler cools towards the day's air. Electronic and by-gear boost control drive both wastegates (or the vanes) through a single solenoid, calibrated on the twin-turbo bench (see "Two turbos: one solenoid" in "Boost control"); a twincharger only reads the target. By gear, the W12's target drops by 0.29 bar in first, and its two shafts follow it.
+**Twin turbo.** One turbine per head: a W counts two (`architectureOf`). The shared intercooler is the ε-NTU core, and the shafts draw the day's air (finishing work). Electronic and by-gear boost control drive both wastegates (or the vanes) through a single solenoid, calibrated on the twin-turbo bench (see "Two turbos: one solenoid" in "Boost control"); a twincharger only reads the target. By gear, the W12's target drops by 0.29 bar in first, and its two shafts follow it.
 
 **The two-stroke.** The set ratio is its geometric ratio (7.5 stock): it changes the trapped ratio the exhaust port leaves, and combustion does not count it a second time (`compressionEfficiencyShare` is 1). The knock map compresses from port closing. At 9:1, torque gains more than 3 %. Six cylinders at most, and no VR, W or cross-plane crank: they fall back to a V.
 
@@ -2294,9 +2330,8 @@ The twelve engine topics together: architectures, atmosphere, thermal, combustio
 
 ### What is not connected, and why
 
-- The cam cycle's air stays at 20 °C and 101,325 Pa: it gives a ratio between two cycles in the same air, a second-order effect.
-- The knock map and the under-bonnet heat read by the charge air stay those of a warm engine: they are built once per setting, and a cold engine knocks less.
-- The twin turbo's shafts work in reference air (`turbo_laws::constants().atmosphere`): only the intercooler and the target see the day's air.
+- The under-bonnet heat read by the charge air (air-to-water loop) stays that of a warm engine.
+- A stock engine's knock map is not computed, so overheating does not make it knock ("Engine temperatures").
 - Gas heat reads the advance through the ECU's correlation, which the knock map's cycle matches within a point; the fuel spec sheet takes the map's full-load share at every load.
 - The fuel's volatility in the port-injection film stays that of petrol.
 
@@ -2305,7 +2340,10 @@ The twelve engine topics together: architectures, atmosphere, thermal, combustio
 | Meeting | Measurement |
 |---|---|
 | E85 and direct injection, turbo 2.0 at 11:1 | RON 95: 349 Nm, 192 kW, margin −6.4°; E85: 396 Nm, +2.9°; RON 95 direct: 382 Nm, −4.0°; E85 direct: 455 Nm, 252 kW, +12.7°. Direct injection gains 2.4° on RON 95 and 9.8° on E85: three times the latent heat, one and a half times the fuel. |
-| Cold start at altitude (city car, WLTC) | At sea level, 6.76 → 6.90 L/100 (+2.1 %); at 2500 m and −10 °C, 6.16 → 6.54 (+6.2 %), with one restart after a stall. |
+| Cold start at altitude (city car, WLTC) | At sea level, 6.77 → 6.90 L/100 (+1.9 %); at 2500 m and −10 °C, 6.17 → 6.53 (+5.8 %), with one restart after a stall. |
+| Thermal and knock (city car at 13:1, flat out in fourth) | The sensor takes 7.1° warm, 4.7° right after a cold start (coolant around 25 °C). The stock map would start knocking from 94 to 100 °C coolant at full load. |
+| Air-to-air and speed (turbo 2.0, peak power) | −10.9 % torque at a standstill, −2.5 % at 50 km/h, +0.1 % at 100, +1.4 % at 150 at equilibrium; a standing start with a cold core: 0-100 km/h in 6.60 s instead of 6.86; 20 s after a first start, the charge is 3.6 K warmer. |
+| Cam and day's air (two-step 2.0) | The switch moves from 5178 rpm to 5555 at 45 °C and 4963 at −20 °C; at 3000 m, it stays put. |
 | Wild cam and stock springs (2.0, redline 7300) | Float at 8140 rpm stock; 12.5 mm over 200°: 6490 (−11 %), below the limiter; stiff springs: 7394 (+1.3 %); two-step: 8752. |
 | Sequential twin and electronic control (3 L V6, 1 bar, tip-in from 2000) | 90% of boost in 1.75 s on one turbo, 0.72 s sequential, 0.43 s twincharger, 1.41 s parallel; with the solenoid calibrated on both turbos, the sequential pair overshoots by 0.155 bar at staging (0.24 with the wastegate law, 0.49 with a single turbo's PID), the parallel pair by 0.11 bar. |
 | W16 with parallel twins | Same equilibrium (1306 Nm); 0-100 km/h in 3.61 s against 3.82 on one turbo; 90 % of boost in 1.13 s against 1.38 from 2500 rpm. |

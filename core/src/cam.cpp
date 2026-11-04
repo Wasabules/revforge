@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "portable_math.hpp"
+#include "revforge/atmosphere.hpp"
 #include "revforge/powertrain.hpp"
 #include "revforge/valvetrain.hpp"
 
@@ -159,6 +160,11 @@ struct Geometry {
     double runnerArea = 0.0, runnerM = 0.0;
     double headerArea = 0.0;
     double ratedRpm = 6000.0;
+    // Finitions : l'air du jour où respire le cycle (atmosphère), exactement l'air de référence au défaut. Le conduit, lui, est
+    // une pièce accordée dans l'air de référence : sa longueur ne change pas, c'est sa résonance qui se déplace avec la vitesse du son.
+    double airPa = kAmbientPa;
+    double airK = kAmbientK;
+    double soundMs = kSoundMs;
 };
 
 double compressionOf(const EngineConfig& e) {
@@ -186,6 +192,12 @@ Geometry geometryOf(const EngineConfig& e) {
     const double midVolume = g.vd / 2.0 * (compressionOf(e) + 1.0) / (compressionOf(e) - 1.0);
     const double reach = kSoundMs / (2.0 * kPi * kTuningIndex * tunedRpm / 60.0);
     g.runnerM = clamp(g.runnerArea / midVolume * reach * reach, 0.1, 1.2);
+    if (!referenceAirOf(e)) {
+        const AmbientAir air = ambientAirOf(e);
+        g.airPa = air.pressurePa;
+        g.airK = air.temperatureK;
+        g.soundMs = kSoundMs * air.soundSpeedRatio;
+    }
     return g;
 }
 
@@ -236,8 +248,8 @@ Cycle runCycle(const Geometry& g, const CamProfile& cam, double rpm, double plen
     double t = 1200.0;
     double y = 1.0;
     const double portV = kPortShare * g.vd;
-    const double rho0 = plenumPa / (kGasR * kAmbientK);
-    double mr = rho0 * portV, tr = kAmbientK, ur = 0.0, slug = 0.0;
+    const double rho0 = plenumPa / (kGasR * g.airK);
+    double mr = rho0 * portV, tr = g.airK, ur = 0.0, slug = 0.0;
     const double headerV = kHeaderShare * g.vd;
     double te = 900.0;
     double me = backPa * headerV / (kGasR * te);
@@ -299,18 +311,18 @@ Cycle runCycle(const Geometry& g, const CamProfile& cam, double rpm, double plen
 
             if (!(m > 1e-9) || !(t > 150.0)) {
                 // Garde-fou : un état aberrant repart de l'air du plénum.
-                m = std::fmax(plenumPa, 1e4) * v / (kGasR * kAmbientK);
-                t = kAmbientK;
+                m = std::fmax(plenumPa, 1e4) * v / (kGasR * g.airK);
+                t = g.airK;
             }
             t = std::fmin(t, 4000.0);
 
             // Le conduit : la colonne apporte de l'air du plénum, la soupape le prend.
             const double column = std::fmax(rho0 * g.runnerArea * ur * dt, -0.5 * (mr - dmi));
-            const double portEnergy = mr * kCv * tr + column * kCp * (column > 0.0 ? kAmbientK : tr) - dmi * kCp * ti;
+            const double portEnergy = mr * kCv * tr + column * kCp * (column > 0.0 ? g.airK : tr) - dmi * kCp * ti;
             mr += column - dmi;
             tr = portEnergy / (mr * kCv);
             const double prNext = mr * kGasR * tr / portV;
-            ur += dt / (rho0 * g.runnerM) * (plenumPa - prNext - 0.5 * rho0 * kRunnerLoss * ur * std::fabs(ur) - kRunnerDamping * rho0 * kSoundMs * ur);
+            ur += dt / (rho0 * g.runnerM) * (plenumPa - prNext - 0.5 * rho0 * kRunnerLoss * ur * std::fabs(ur) - kRunnerDamping * rho0 * g.soundMs * ur);
 
             // Le tube primaire : la soupape apporte, la colonne emporte vers la ligne.
             const double rhoE = pe / (kGasR * te);
@@ -325,7 +337,7 @@ Cycle runCycle(const Geometry& g, const CamProfile& cam, double rpm, double plen
         }
     }
     if (warm != nullptr) *warm = Warm{true, m, t, y, mr, tr, ur, slug, te, me, ue};
-    out.fill = m * (1.0 - y) / (kAmbientPa / (kGasR * kAmbientK) * g.vd);
+    out.fill = m * (1.0 - y) / (g.airPa / (kGasR * g.airK) * g.vd);
     out.residual = y;
     out.imepBar = work / g.vd / 1e5;
     return out;
@@ -333,7 +345,8 @@ Cycle runCycle(const Geometry& g, const CamProfile& cam, double rpm, double plen
 
 double backPressurePa(const Geometry& g, double rpm) {
     const double share = rpm / g.ratedRpm;
-    return kAmbientPa + kBackPressureRatedPa * share * share;
+    // La perte de la ligne suit ρv² : au même débit en volume, la densité du gaz, donc la pression où il débouche.
+    return g.airPa + kBackPressureRatedPa * share * share * (g.airPa == kAmbientPa ? 1.0 : g.airPa / kAmbientPa);
 }
 
 /** Les cycles d'un profil, régime par régime, et le meilleur calage du déphaseur s'il y en a un. */
@@ -356,6 +369,8 @@ struct Tables {
     float camLiftMm = 0.0f;
     int lobeSeparationDeg = 0;
     ValveTiming valveTiming = ValveTiming::Fixed;
+    float ambientC = 20.0f;
+    int altitudeM = 0;
 
     double firstRpm = kFirstRpm;
     double stepRpm = 100.0;
@@ -369,7 +384,8 @@ struct Tables {
     bool matches(const EngineConfig& e) const {
         return valid && boreMm == e.boreMm && displacementCc == e.displacementCc && cylinders == e.cylinders && redlineRpm == e.redlineRpm &&
                valvetrain == e.valvetrain() && aspiration == e.aspiration && diesel == e.burnsDiesel() && compressionRatio == e.compressionRatio &&
-               camDurationDeg == e.camDurationDeg && camLiftMm == e.camLiftMm && lobeSeparationDeg == e.lobeSeparationDeg && valveTiming == e.valveTiming;
+               camDurationDeg == e.camDurationDeg && camLiftMm == e.camLiftMm && lobeSeparationDeg == e.lobeSeparationDeg && valveTiming == e.valveTiming &&
+               ambientC == e.ambientC && altitudeM == e.altitudeM;
     }
 };
 
@@ -383,7 +399,7 @@ void fillCurve(const Geometry& g, const Tables& t, const CamProfile& cam, bool p
         const double back = backPressurePa(g, rpm);
         const std::size_t at = static_cast<std::size_t>(i);
         if (!phased) {
-            const Cycle cycle = runCycle(g, cam, rpm, kAmbientPa, back, 1.0, &warm[0]);
+            const Cycle cycle = runCycle(g, cam, rpm, g.airPa, back, 1.0, &warm[0]);
             c.imep[at] = cycle.imepBar;
             c.fill[at] = cycle.fill;
             c.open[at] = cycle.openPa;
@@ -393,7 +409,7 @@ void fillCurve(const Geometry& g, const Tables& t, const CamProfile& cam, bool p
         std::array<Cycle, kPhases> tried{};
         int best = 0;
         for (int k = 0; k < kPhases; ++k) {
-            tried[static_cast<std::size_t>(k)] = runCycle(g, advancedIntake(cam, kPhaseStepDeg * static_cast<double>(k - kPhases / 2)), rpm, kAmbientPa, back, 1.0, &warm[static_cast<std::size_t>(k)]);
+            tried[static_cast<std::size_t>(k)] = runCycle(g, advancedIntake(cam, kPhaseStepDeg * static_cast<double>(k - kPhases / 2)), rpm, g.airPa, back, 1.0, &warm[static_cast<std::size_t>(k)]);
             if (tried[static_cast<std::size_t>(k)].imepBar > tried[static_cast<std::size_t>(best)].imepBar) best = k;
         }
         const int middle = best == 0 ? 1 : (best == kPhases - 1 ? kPhases - 2 : best);
@@ -450,6 +466,8 @@ const Tables& tablesOf(const EngineConfig& e) {
     t.camLiftMm = e.camLiftMm;
     t.lobeSeparationDeg = e.lobeSeparationDeg;
     t.valveTiming = e.valveTiming;
+    t.ambientC = e.ambientC;
+    t.altitudeM = e.altitudeM;
     t.age = ++gAge;
     t.idleKnown = false;
     t.firstRpm = kFirstRpm;
@@ -512,7 +530,7 @@ CamIdle idleOf(const EngineConfig& e, const CamProfile& cam, double idleRpm) {
     const double litres = e.sweptCcPerTwoTurns() / 1000.0;
     const double needBar = frictionTorqueNm(powertrain, idle.rpm) * 4.0 * kPi / (litres * 1e-3) / 1e5 + kIdleAccessoryBar;
     const double back = backPressurePa(g, idle.rpm);
-    double low = 0.12 * kAmbientPa, high = kAmbientPa;
+    double low = 0.12 * g.airPa, high = g.airPa;
     for (int i = 0; i < 12; ++i) {
         const double middle = 0.5 * (low + high);
         (runCycle(g, cam, idle.rpm, middle, back, kIdleHeatShare).imepBar < needBar ? low : high) = middle;

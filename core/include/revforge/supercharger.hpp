@@ -88,7 +88,9 @@ struct SuperchargerInput {
     double rpm = 0.0;
     double fill = 0.0;       // remplissage 0-1 : le papillon, ou le carburant d'un diesel
     double breathing = 1.0;  // respiration du moteur à ce régime, 1 au pic de couple
-    double cooledK = 0.0;    // la sortie de l'échangeur, quand l'air de charge la calcule (air-eau, aucun). 0 : celui d'origine.
+    double cooledK = 0.0;    // la sortie de l'échangeur, quand l'air de charge la calcule (air-eau, aucun). 0 : l'air-air.
+    /** La vitesse de la voiture (m/s), dont l'air traverse le faisceau air-air. Par défaut, la soufflerie du banc de la fiche. */
+    double coolingAirMs = kChargeReferenceSpeedMs;
 };
 
 /**
@@ -109,11 +111,17 @@ public:
     /** Couple pris au vilebrequin (Nm). */
     double driveNm(double rpm) const;
     SuperchargerDrive drive() const;
+    /** Le faisceau de l'air-air (finitions). */
+    const AirCoolerCore& cooler() const { return core_; }
 
 private:
     SuperchargerSpec spec_;
     SuperchargerState state_;
+    AirCoolerCore core_;
 };
+
+/** L'échangeur à l'équilibre au banc : l'air-air ε-NTU devant la soufflerie, ou celui du réglage (charge_air.cpp). */
+double superchargerCoolerOutletK(const SuperchargerSpec& spec, double hotK, double flow);
 
 /** La part du régime maximal où un compresseur volumétrique atteint la pression demandée : c'est là qu'on le dimensionne. */
 inline constexpr double kVolumetricSizingShare = 0.4;
