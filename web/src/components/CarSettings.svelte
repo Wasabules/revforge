@@ -44,7 +44,7 @@
   <p class="help" data-testid="gearing">{t('builder.gearing', { ratios: spec.ratios.map((ratio) => fixed(ratio, 2)).join(' · ') })}{config.boxFinal > 0 ? '' : ` ${t('builder.gearing.auto')}`}</p>
 {/if}
 <!-- Les conditions du trajet : l'air, l'altitude, le moteur au démarrage. Dans son fichier, pour les sujets qui s'en servent. -->
-<SettingsConditions {config} {shown} {onapply} {onlive} />
+<SettingsConditions {config} {shown} {spec} {onapply} {onlive} />
 
 <style>
   .help { margin: 6px 0 0; color: var(--text-dim); font-size: var(--type-small); }

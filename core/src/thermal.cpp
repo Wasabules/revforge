@@ -223,6 +223,16 @@ ThermalSpec thermalSpecOf(const Powertrain& p, double ratedFuelW) {
     return s;
 }
 
+double parkedSeconds(StartTemp start) {
+    switch (start) {
+        case StartTemp::Warm: return 0.0;
+        case StartTemp::HalfHour: return 1800.0;
+        case StartTemp::TwoHours: return 7200.0;
+        case StartTemp::Cold: break;
+    }
+    return -1.0;
+}
+
 void ThermalNetwork::reset(StartTemp start, double ambientC) {
     if (start == StartTemp::Cold) {
         metalC_ = coolantC_ = radiatorC_ = oilC_ = ambientC;
@@ -238,6 +248,34 @@ void ThermalNetwork::reset(StartTemp start, double ambientC) {
     radiatorW_ = 0.0;
     wallW_ = 0.0;
     oilCoolerW_ = 0.0;
+    // Un arrêt d'une durée donnée : le moteur chaud, puis le refroidissement moteur coupé du même réseau. Aucune courbe saisie.
+    if (start == StartTemp::HalfHour || start == StartTemp::TwoHours) soak(parkedSeconds(start), ambientC);
+}
+
+void ThermalNetwork::soak(double seconds, double ambientC) {
+    // Le pas le plus court du réseau moteur coupé est l'échange du métal et de l'eau : 8 à 11 s selon la cylindrée. Un pas de
+    // 1 s le suit sans osciller, et l'écart au pas de 10 ms du modèle de conduite reste sous le centième de degré (test).
+    constexpr double kSoakStepS = 1.0;
+    if (!(seconds > 0.0)) return;
+    ThermalInput still;
+    still.ambientC = ambientC;
+    double left = seconds;
+    while (left > kSoakStepS) {
+        step(still, kSoakStepS);
+        left -= kSoakStepS;
+    }
+    step(still, left);
+    // Arrêté, rien ne passe au radiateur ni aux parois : ce que le réseau montre est ce qu'il vient de rendre à l'air.
+    wallW_ = 0.0;
+    oilCoolerW_ = 0.0;
+}
+
+void ThermalNetwork::place(double coolantC, double oilC, double metalC) {
+    coolantC_ = coolantC;
+    oilC_ = oilC;
+    metalC_ = metalC;
+    radiatorC_ = coolantC;
+    lift_ = thermostatCurve(coolantC);
 }
 
 void ThermalNetwork::step(const ThermalInput& in, double dt) {

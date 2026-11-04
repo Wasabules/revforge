@@ -102,12 +102,33 @@ struct ThermalInput {
     double ambientC = 20.0;
 };
 
+/**
+ * Combien de temps le moteur est resté arrêté avant ce départ (s) : 0 s parti chaud, 1800 et 7200 s pour les arrêts d'une
+ * demi-heure et de deux heures. Une nuit (`Cold`) n'a pas de durée : le moteur y est à l'air ambiant, comme après les 6 à 36 h
+ * d'attente des essais d'homologation (−1).
+ */
+double parkedSeconds(StartTemp start);
+
 class ThermalNetwork {
 public:
     void configure(const ThermalSpec& spec) { spec_ = spec; }
-    /** Moteur chaud (eau 90 °C, huile 100 °C) ou froid, tout à l'air ambiant. */
+    /**
+     * Moteur chaud (eau 90 °C, huile 100 °C), froid (tout à l'air ambiant), ou chaud puis arrêté une demi-heure ou deux heures,
+     * refroidi par le réseau lui-même (`soak`). Le réseau doit être configuré avant : le refroidissement dépend de ses capacités.
+     */
     void reset(StartTemp start, double ambientC);
     void step(const ThermalInput& in, double dt);
+    /**
+     * Le moteur reste arrêté `seconds` secondes, voiture immobile, à l'air du jour : le même réseau, ni carburant, ni
+     * frottements, ni pompe, ni vent. Ce qui reste : le métal qui réchauffe l'eau immobile, puis le bloc, le carter et le
+     * faisceau qui rendent leur chaleur à l'air par convection naturelle. Pas de 1 s, sans allocation.
+     */
+    void soak(double seconds, double ambientC);
+    /**
+     * Pose l'eau, l'huile et le métal, lus sur un moteur arrêté (les jauges, sur le site). Le faisceau prend la température de
+     * l'eau : moteur arrêté, la pompe ne tourne pas, et il ne change rien à l'eau, à l'huile ni au métal.
+     */
+    void place(double coolantC, double oilC, double metalC);
 
     double coolantC() const { return coolantC_; }
     double oilC() const { return oilC_; }

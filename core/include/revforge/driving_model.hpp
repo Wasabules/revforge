@@ -229,6 +229,18 @@ public:
     /** Pour les essais : tenir le moteur à la référence chaude, comme avant que le réseau n'agisse moteur chaud. */
     void holdThermalReference(bool held);
     /**
+     * Le moteur tel qu'on l'a choisi au départ (`EngineConfig::startTemp`, à l'air du jour), quoi qu'il ait fait depuis : ce que
+     * montrent les jauges avant le premier démarrage. Le même réseau, remis à cet état ; rien ne change dans le modèle.
+     */
+    ThermalNetwork startThermal() const;
+    /**
+     * Le temps passé moteur arrêté sans que le modèle avance (le son suspendu, sur le site) : le réseau refroidit d'autant,
+     * comme il l'aurait fait pas à pas moteur coupé (`ThermalNetwork::soak`). Sans effet sur un électrique.
+     */
+    void soakThermal(double seconds);
+    /** Un modèle reconstruit pour la même voiture (changer de mode sur le site) reprend les températures de l'ancien. */
+    void carryThermal(const ThermalNetwork& from);
+    /**
      * Ce que l'écart à la référence change en ce moment : frottements en plus (Nm, négatifs quand l'huile dépasse 100 °C), ralenti
      * visé en plus (tr/min), carburant en plus (part).
      */

@@ -24,7 +24,8 @@ export type Camshaft = 'dohc' | 'sohc' | 'ohv';
 export type AirFilter = 'stock' | 'panel' | 'cone' | 'stacks';
 export type FuelSystem = 'injection' | 'single' | 'multi' | 'direct';
 // Les réglages du socle moteur : mêmes valeurs que les énumérations C++, dans le même ordre.
-export type StartTemp = 'warm' | 'cold';
+/** Le temps d'arrêt avant le départ : `cold` est la nuit dehors, tout à l'air ; les arrêts intermédiaires sont en fin. */
+export type StartTemp = 'warm' | 'cold' | 'half_hour' | 'two_hours';
 export type FuelGrade = 'ron95' | 'ron98' | 'race102' | 'e85' | 'methanol';
 export type RevLimiter = 'stock' | 'soft' | 'ignition_cut';
 export type TractionControl = 'off' | 'sport' | 'full';
@@ -236,9 +237,12 @@ export const FUEL_SYSTEMS: { value: FuelSystem; label: string; help: string }[] 
   { value: 'direct', get label() { return t('fuelSystem.direct'); }, get help() { return t('fuelSystem.direct.help'); } },
 ];
 // ── Les réglages du socle moteur. La position dans chaque tableau donne la valeur envoyée au C++. ──
-export const START_TEMPS: { value: StartTemp; label: string; help: string }[] = [
-  { value: 'warm', get label() { return t('startTemp.warm'); }, get help() { return t('startTemp.warm.help'); } },
-  { value: 'cold', get label() { return t('startTemp.cold'); }, get help() { return t('startTemp.cold.help'); } },
+/** La position est la valeur de `StartTemp` en C++ : les arrêts intermédiaires sont venus en fin. `parkedHours` range l'affichage. */
+export const START_TEMPS: { value: StartTemp; label: string; help: string; parkedHours: number }[] = [
+  { value: 'warm', get label() { return t('startTemp.warm'); }, get help() { return t('startTemp.warm.help'); }, parkedHours: 0 },
+  { value: 'cold', get label() { return t('startTemp.cold'); }, get help() { return t('startTemp.cold.help'); }, parkedHours: 12 },
+  { value: 'half_hour', get label() { return t('startTemp.half_hour'); }, get help() { return t('startTemp.half_hour.help'); }, parkedHours: 0.5 },
+  { value: 'two_hours', get label() { return t('startTemp.two_hours'); }, get help() { return t('startTemp.two_hours.help'); }, parkedHours: 2 },
 ];
 export const FUEL_GRADES: { value: FuelGrade; label: string; help: string }[] = [
   { value: 'ron95', get label() { return t('fuelGrade.ron95'); }, get help() { return t('fuelGrade.ron95.help'); } },
@@ -426,7 +430,9 @@ const DEFAULTS: EngineConfig = {
   fuelSystem: 'injection',
   ambientC: 20,
   altitudeM: 0,
-  startTemp: 'warm',
+  // Le site part d'une voiture garée dehors depuis la nuit : tout à l'air ambiant. Le C++, la CLI et gen_presets.py gardent
+  // `warm`, la référence de banc des empreintes et des tests (CLAUDE.md, « valeurs par défaut d'un moteur »).
+  startTemp: 'cold',
   compressionRatio: 0,
   fuelGrade: 'ron95',
   ignitionOffsetDeg: 0,
@@ -469,6 +475,9 @@ const DEFAULTS: EngineConfig = {
   placement: 'front',
   insulation: 'standard',
 };
+
+/** L'état au départ du site, une nuit dehors : le résumé ne dit que ce qui en diffère. */
+export const SITE_START_TEMP: StartTemp = DEFAULTS.startTemp;
 
 export const PRESETS: Preset[] = (presetData as Record<string, unknown>[]).map((entry) => {
   const { id, name, description, ...config } = entry;

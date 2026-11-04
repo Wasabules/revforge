@@ -29,9 +29,11 @@ async function start(page: Page) {
 
 test.describe('la thermique', () => {
   test('un départ à froid part de l’air ambiant, avec ralenti accéléré, essence et frottements en plus', async ({ page }) => {
+    // Le départ à froid est désormais celui du site : une nuit dehors. Le choisir ne change rien, et le dit.
     const errors = await open(page);
     await ouvrir(page, 'car');
-    await page.getByTestId('panel-car').getByTestId('start-temp').getByRole('button', { name: 'Froid' }).click();
+    await page.getByTestId('panel-car').getByTestId('start-temp').getByRole('button', { name: 'Une nuit' }).click();
+    await expect(page.getByTestId('panel-car').getByTestId('start-temp').getByRole('button', { name: 'Une nuit' })).toHaveAttribute('aria-pressed', 'true');
     await page.keyboard.press('Escape');
     await expect(page.getByTestId('panel-car')).toBeHidden();
     // Avant le premier son, la jauge dit l'air ambiant : rien n'a chauffé.
@@ -63,7 +65,11 @@ test.describe('la thermique', () => {
   });
 
   test('un départ à chaud : les jauges à la référence, et rien du moteur froid', async ({ page }) => {
+    // Le site part d'une nuit dehors : le moteur qui vient de rouler se choisit.
     const errors = await open(page);
+    await ouvrir(page, 'car');
+    await page.getByTestId('panel-car').getByTestId('start-temp').getByRole('button', { name: 'Vient de rouler' }).click();
+    await page.keyboard.press('Escape');
     await expect.poll(() => shown(page, 'gauge-coolant-value')).toBe(90);
     await expect.poll(() => shown(page, 'gauge-oil-value')).toBe(100);
     await start(page);

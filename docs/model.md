@@ -2495,3 +2495,81 @@ The sizing of a supercharger, which the driving model asks for at every step, we
 - The autopilot does not lift off when the wheels spin: without slip control, it keeps the foot to the floor. The spec sheet's tester only modulates the pedal: the clutch stays with the robot, the gears go in at the full-load shift speed. His bandwidth, his delay and his four start pedals are assumed; since the spec sheet is the best of nine starts, it keeps a little of a start's luck, a few hundredths to a few tenths depending on the pedal. It also costs more to compute: in the WASM (measured under headless Chromium), from 0.05 s (`hot_hatch_turbo`, which does not spin) to 0.64 s (`two_stroke_triple`), 0.19 s for `v8_cross_plane` and 0.30 s for `city_14`. Recomputed at every slider movement on the page thread, it froze the page as long: the site now computes it in a worker, once the setting is placed ("…" meanwhile; see "The spec sheet, off the page thread").
 - **Some tests changed conditions, not thresholds.** Three checked, while driving, a claim that assumed unlimited grip: Sport is never slower than Eco and Eco shifts before Normal (`shift_modes_test`), a blown carburetor's film (`jonctions_test`). Without slip control the peaked tyre contradicts them for a physical reason (the car spins); they are now measured with sport slip control, thresholds unchanged. Three others, on the spec sheet (mass decides the 0-100, `powertrain_test`; nitrous gains 0.5 s, `charge_air_test`; the light retro body beats the compact, `retro_body_test`), had moved to sport slip control with the peaked tyre: the tester makes them pass again as they were written. Two gearbox tests also changed their measurement: the driveline oscillation is read at its spectral peak, no longer by counting zero crossings, which the slow drift skewed once the oscillation had died out (3.45 Hz in second for 3.56 expected, 1.66 with the former count); the "under load" gear waits for the clutch to be closed. To be checked in review.
 - Listening remains to be done: the tyre squeal follows the slip in m/s, now louder and longer on rear-wheel drives without slip control (`--preset v8_cross_plane --scenario launch`, then `--traction sport`), and the set cold start (`--preset city_14 --start cold --ambient -20 --scenario lap --seconds 30`).
+
+## The start: how long the engine was parked
+
+The site used to start from a warm engine (`startTemp: warm`): at −30 °C, coolant and oil were at 90 and 100 °C on the first start. It now starts as a car parked outside overnight: coolant, oil, metal and radiator at the outside air. The choice becomes a parking time: **just driven** (`warm`, the warm reference), **30 min** (`half_hour`), **2 h** (`two_hours`), **overnight** (`cold`, everything at the air). The two intermediate stops were added at the end of `StartTemp`, which keeps `Warm` = 0 and `Cold` = 1.
+
+### The calculation: the same network, engine off
+
+Half an hour or two hours parked start from the warm state (coolant 90 °C, oil 100 °C, metal 95 °C, radiator halfway to the air) and integrate the network of "Engine temperatures" engine off, in the day's air (`ThermalNetwork::soak`): no fuel, no friction, no pump, no wind. What remains of the equations, the pump stopped:
+
+```
+C_m dT_m/dt = − G_mc·(T_m − T_c) − 0.3·G_mo·(T_m − T_o) − G_ma·(T_m − T_air)
+C_c dT_c/dt =   G_mc·(T_m − T_c)
+C_o dT_o/dt =   0.3·G_mo·(T_m − T_o) − G_oa·(T_o − T_air)
+C_r dT_r/dt = − G_r,still·(T_r − T_air)
+```
+
+No curve is entered: the heat capacities, conductances and natural convection (8 W/(m²·K) on the block and sump, the radiator's draft) are those the driving model uses at a standstill. The step is 1 s, against 10 ms in the driving model: the shortest time constant of the network engine off is the exchange between metal and coolant (8 to 11 s). The gap stays below 0.002 K after 30 min at −30 °C (test). What comes out:
+
+- **The rise after shutdown.** The still coolant first warms from the hotter metal and oil: 93.5 °C after one minute, from 90. The oil joins the coolant within about ten minutes, as Ford's patent US 6,393,357 describes it (the oil decays toward the coolant, which decays toward the air; on a short soak, the oil can rise toward a hotter coolant, read).
+- **One time constant.** Then everything cools together: τ ≈ (C_m + C_c + C_o)/(G_ma + G_oa), 2.2 h for the 1.4 L city car, 2.9 h for the 5 L V8, 3.4 h for the W16. Capacities follow the displacement, surfaces its 2/3 power: τ grows as the cube root of the displacement.
+- **The radiator** reaches the air within minutes: with the pump stopped, it no longer gets the engine's coolant.
+
+**No node for the under-bonnet air.** The block and sump give their heat straight to the outside air, through one still-air coefficient. That is the published identification method: the Chalmers thesis on a Volvo ECU coolant model (*Modelisation of the engine coolant warming-up behavior*, read) derives the product h·S from a cool-down curve measured between the coolant and the outside air, the under-bonnet air being unknown to the ECU. A compartment node would need two conductances and a capacity with no data to set them, and would change the network with the engine running, hence every warm fingerprint.
+
+### The figures
+
+Coolant and oil at the start (°C), from warm; `--fuel 1` prints them ("At the start"):
+
+| Preset | 30 min, 20 °C | 2 h, 20 °C | Overnight, 20 °C | 30 min, −30 °C | 2 h, −30 °C | Overnight, −30 °C |
+|---|---|---|---|---|---|---|
+| `city_14` | 80.1 / 80.6 | 50.2 / 50.5 | 20 / 20 | 69.7 / 70.7 | 20.2 / 20.6 | −30 / −30 |
+| `hot_hatch_turbo` | 81.1 / 81.6 | 52.2 / 52.4 | 20 / 20 | 71.4 / 72.2 | 23.4 / 23.9 | −30 / −30 |
+| `diesel_four` | 81.1 / 81.6 | 52.2 / 52.5 | 20 / 20 | 71.4 / 72.3 | 23.5 / 23.9 | −30 / −30 |
+| `v8_cross_plane` | 83.9 / 84.3 | 58.4 / 58.7 | 20 / 20 | 76.0 / 76.8 | 33.7 / 34.2 | −30 / −30 |
+| `v16_cadillac` | 85.1 / 85.5 | 61.3 / 61.6 | 20 / 20 | 78.0 / 78.7 | 38.5 / 39.0 | −30 / −30 |
+| `w16_hypercar` | 85.3 / 85.7 | 61.9 / 62.1 | 20 / 20 | 78.3 / 79.1 | 39.5 / 39.9 | −30 / −30 |
+
+Overnight stays exactly the outside air, the former `cold` to the bit: left 12 h, the network would end 0.3 K (city car) to 2.2 K (W16) above it, within the ±2 K asked of force-cooled tests.
+
+| Measurement | Model | Published | Source |
+|---|---|---|---|
+| Coolant of an engine shut down at 93 °C, at 26.7 °C, after 7 h | 2.8 K above the air (city car) | "the ECT will equal AAT" in about 7 hours, on curves recorded at 4.4, 15.6, 26.7 and 37.8 °C | patent US 9,790,842 B2, cooling system diagnostic (read) |
+| "Cold" start: engine within 5.6 K (10 °F) of the air | 5.7 h (city car) to 8.8 h (W16) at 20 °C | EPA definition (1993); the FTP waits 12 to 36 h | EPA 1993 and CFR, quoted by Kockelman et al., TRB 2015 (read) |
+| Pace of the cooling | 57 % of the gap lost in 2 h, 99.6 % in 12 h (city car) | "up to 12 hours to fully cool an engine, but heat loss is most significant in the first two hours" | Kockelman et al., TRB 2015 (read) |
+| A test night | 9 h at 14 °C: coolant at 15.3 °C (city car, +1.3 K) | at least 9 h at 14 °C for the ATCT, meant as a night; force-cooled, the engine must be within ±2 °C of the set point | Regulation (EU) 2017/1151, Sub-Annex 6a (read) |
+| What an insulated bonnet keeps | without insulation, the city car is still 12 K above the air after 4 h | under-bonnet encapsulation keeps 9 K more coolant and 11 K more oil after 4 h; 6 and 10 K after 9 h | Jaguar Land Rover and Autoneum, quoted by Yuan et al., *Applied Thermal Engineering* 164 (2020); SAE 2020-01-0158 (read, absolute values confidential) |
+
+The model cools a little more slowly than the patent's car: a time constant of 1.7 to 2 h, not 2.2, would bring the coolant within 1 or 2 K of the air after 7 h. Nothing was refitted: the still-air coefficient is the network's own, assumed, and refitting it would change the driving.
+
+**Fuel** (`city_14`, full WLTC, `--fuel 1`): at 20 °C, 6.76 L/100 km from warm, 6.76 after 30 min (the coolant is already above 70 °C, the end of warm-up), 6.79 after 2 h, 6.90 overnight; at −30 °C, 7.15, 7.16, 7.31 and 7.70. The coolant reaches 70 °C in 143 s after 2 h parked at 20 °C, in 271 s after a night.
+
+### On the site
+
+- **The default.** `DEFAULTS.startTemp` is `cold`, overnight; the C++, the CLI and `gen_presets.py` keep `warm`, the bench reference of the fingerprints, the spec sheet and the tests: this is the exception to "an engine's default values" in `CLAUDE.md`. The car button's summary says what differs from overnight ("start: 2 h"). **An old link without the `start` code now starts cold**: it did not write `warm`, which was the default; a `start=cold` link stays overnight.
+- **Gauges before the first start.** They wrote 90 and 100 °C, or the outside air. They now read the chosen state, computed by the page's C++ (`rf_start_thermal`, `Spec.startCoolantC`), which the panel shows too.
+- **Engine off.** The model cools step by step while the sound runs. But 2.2 s after switching off, the sound is suspended, and the model with it: the engine used to stay frozen at its temperature, and the gauges fell back to the chosen start state. The gauges now read the cooling computed from the last telemetry (`rf_rest_thermal`), and the worklet catches up the suspended time when it resumes (`rf_soak`), before cranking. Changing the air or the start state resets the engine to the chosen state.
+- **The ride.** Switching to the ride, or back, rebuilds the driving model: it restarted from the chosen state, and a warm engine went cold again. It now keeps its temperatures (`carryThermal`).
+- **The model set running at idle** (ride, journeys, tests) starts with the air of an established idle as long as the coolant has not finished warming up (the ECU still holds a fast idle), as after a night ("The cold start"); beyond, like a warm engine. Starting from a warm engine's empty manifold, the speed dips in the first tenth: down to 530 rpm for 777 on `carb_twin_cam`'s carburettors at −30 °C. On the two-stroke, the air of an established idle at 80 °C coolant made it dip further (551 rpm against 762): hence the limit at warm-up.
+
+### Tests, fingerprints and parity
+
+`tests/depart_test.cpp`: the stops fall between the warm engine and the night for every preset, at 20 and −30 °C; the stop is the cooling of the driving model engine off within 0.01 K; the coolant rises first, and the night leaves less than 2.5 K; the model set running after 2 h does not dip; a rebuilt model takes the temperatures back. Each fails when what it protects is removed: the cooling at the start, the same path as the model (wind in the parking step), the metal hotter than the coolant, a tripled convection, the manifold of an established idle, `carryThermal`, `soakThermal`. `web/tests/depart.spec.ts`: by default, the gauges read the air at −30 °C, then the computed state of 2 h and 30 min; engine off, sound suspended, the gauges cool down and the engine restarts from there; changing the start state resets it to the chosen state. Counter-tests: gauges written in, warm default, no catch-up on resuming, state kept after a change. The specs that measure a warm engine ask for one; `socle.spec.ts` follows the new default.
+
+No fingerprint changes: `Warm` and `Cold` take the same path as before, to the bit. `check_wasm.mjs` compares a 2 h stop cranked at −20 °C (sound, fuel, temperatures, and the start state: `start_coolant_c` and `start_oil_c`, added to the `raw` line) and half an hour set running at idle at 10 °C.
+
+### What is missing
+
+- **No under-bonnet air**: neither the heat that lingers under the bonnet after shutdown, nor the bonnet radiating, nor any encapsulation. The still-air coefficient is assumed, and constant: natural convection would grow as (ΔT)^1/4, radiation would drop in deep cold; no wind, rain or snow on a car parked outside.
+- **The radiator at rest** gets nothing more from the engine: no thermosiphon, no fan running on after shutdown.
+- **Overnight is exactly the outside air**, like the former cold start; a car parked in a garage is not offered.
+- **The battery**: its temperature, and what it gives the starter, belong to the starter; this network has none.
+- Both intermediate stops apply to every engine, rotary and two-stroke included: the network is the same, with masses assumed per litre.
+
+### What is read, what is exposed
+
+Exposed: `parkedSeconds(StartTemp)`, `ThermalNetwork::soak(seconds, air)` and `place(coolant, oil, metal)`, `DrivingModel::startThermal()` (the chosen state, without changing the model), `soakThermal(seconds)` and `carryThermal(network)`; `rf_start_thermal`, `rf_soak`, `rf_rest_thermal`. The starter can read the coolant and oil at the start from `DrivingModel::thermal()` right after construction, and the parking time from `parkedSeconds` (−1 overnight) for its battery temperature.
+
+Listening remains to be done, where the fast idle changes with the stop: `revforge-render --out start_2h.wav --preset city_14 --start two_hours --ambient -30 --scenario start --seconds 20`, against `--start cold` and `--start half_hour`.

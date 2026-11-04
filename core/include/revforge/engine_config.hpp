@@ -48,8 +48,12 @@ enum class AirFilter { Stock, Panel, Cone, Stacks };
 enum class FuelSystem { Injection, Carburetor, MultiCarb, Direct };
 
 // ── Les réglages du socle moteur : posés de bout en bout, sans effet sur le calcul. Voir CLAUDE.md. ──
-/** Moteur chaud au démarrage, ou à la température de l'air ambiant. */
-enum class StartTemp { Warm, Cold };
+/**
+ * Le moteur au démarrage, selon le temps qu'il est resté arrêté : il vient de rouler (chaud, à la référence), il a passé la
+ * nuit dehors (`Cold`, tout à l'air ambiant), ou entre les deux, une demi-heure ou deux heures d'arrêt, dont le réseau
+ * thermique calcule le refroidissement (`ThermalNetwork::soak`). Les valeurs ajoutées vont en fin : la position est la valeur.
+ */
+enum class StartTemp { Warm, Cold, HalfHour, TwoHours };
 /** Le carburant d'un moteur à essence : indice d'octane recherche, éthanol E85, méthanol. */
 enum class FuelGrade { Ron95, Ron98, Race102, E85, Methanol };
 /** Le rupteur : celui d'aujourd'hui, un retard puis une coupure partielle, ou une coupure d'allumage qui laisse passer l'essence. */

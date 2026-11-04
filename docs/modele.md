@@ -2528,3 +2528,81 @@ Le dimensionnement d'un compresseur mécanique, que le modèle de conduite redem
 - Le pilote automatique ne lève pas le pied quand les roues patinent : sans antipatinage, il garde le pied au plancher. L'essayeur de la fiche ne dose que la pédale : l'embrayage reste au robot, les rapports passent au régime de pleine charge. Sa bande passante, son retard et ses quatre pédales de départ sont supposés ; la fiche étant le meilleur de neuf départs, elle garde un peu du hasard d'un départ, quelques centièmes à quelques dixièmes selon la pédale. Elle coûte aussi plus cher à calculer : dans le WASM (mesuré sous Chromium sans fenêtre), de 0,05 s (`hot_hatch_turbo`, qui ne patine pas) à 0,64 s (`two_stroke_triple`), 0,19 s pour `v8_cross_plane` et 0,30 s pour `city_14`. Recalculée à chaque mouvement d'un curseur sur le thread de la page, elle le figeait autant : le site la calcule maintenant dans un worker, une fois le réglage posé (« … » en attendant ; voir « La fiche, hors du thread de la page »).
 - **Des tests ont changé de conditions, pas de seuils.** Trois vérifiaient en conduite une affirmation qui supposait l'adhérence illimitée : le sport n'est jamais plus lent que l'éco et l'éco monte avant le normal (`shift_modes_test`), le film d'un carburateur soufflé (`jonctions_test`). Sans antipatinage, le pneu à sommet les contredit pour une raison physique (la voiture patine) ; ils se mesurent maintenant antipatinage sport, à seuils inchangés. Trois autres, sur la fiche (la masse décide du 0 à 100, `powertrain_test` ; le protoxyde fait gagner 0,5 s, `charge_air_test` ; la caisse rétro légère bat la compacte, `retro_body_test`), étaient passés à l'antipatinage sport avec le pneu à sommet : l'essayeur les fait passer de nouveau tels qu'ils étaient écrits. Deux tests de la boîte ont aussi changé de mesure : l'oscillation de la chaîne se lit au sommet de son spectre, et non plus au compte des passages à zéro, que la dérive lente faussait une fois l'oscillation amortie (3,45 Hz en deuxième pour 3,56 attendus, 1,66 avec l'ancien compte) ; le rapport « sous charge » attend que l'embrayage soit serré. À vérifier par la relecture.
 - L'écoute reste à faire : le crissement des pneus suit le glissement en m/s, désormais plus fort et plus long sur les propulsions sans antipatinage (`--preset v8_cross_plane --scenario launch`, puis `--traction sport`), et le départ à froid posé (`--preset city_14 --start cold --ambient -20 --scenario lap --seconds 30`).
+
+## Le départ : le temps d'arrêt avant le démarrage
+
+Le site partait d'un moteur chaud (`startTemp: warm`) : par −30 °C, l'eau et l'huile étaient à 90 et 100 °C au premier démarrage. Il part maintenant comme une voiture garée dehors depuis la nuit : eau, huile, métal et radiateur à l'air ambiant. Le choix devient un temps d'arrêt : **vient de rouler** (`warm`, la référence chaude), **30 min** (`half_hour`), **2 h** (`two_hours`), **une nuit** (`cold`, tout à l'air). Les deux arrêts intermédiaires sont venus en fin de `StartTemp`, qui garde `Warm` = 0 et `Cold` = 1.
+
+### Le calcul : le même réseau, moteur coupé
+
+Une demi-heure ou deux heures d'arrêt partent de l'état chaud (eau 90 °C, huile 100 °C, métal 95 °C, faisceau à mi-chemin de l'air) et intègrent le réseau de « La thermique » moteur coupé, à l'air du jour (`ThermalNetwork::soak`) : ni carburant, ni frottements, ni pompe, ni vent. Ce qui reste des équations, la pompe arrêtée :
+
+```
+C_m dT_m/dt = − G_me·(T_m − T_e) − 0,3·G_mh·(T_m − T_h) − G_ma·(T_m − T_air)
+C_e dT_e/dt =   G_me·(T_m − T_e)
+C_h dT_h/dt =   0,3·G_mh·(T_m − T_h) − G_ha·(T_h − T_air)
+C_r dT_r/dt = − G_r,calme·(T_r − T_air)
+```
+
+Aucune courbe saisie : les capacités, les conductances et la convection naturelle (8 W/(m²·K) sur le bloc et le carter, le tirage du faisceau) sont celles qu'utilise le modèle de conduite à l'arrêt. Le pas est de 1 s, contre 10 ms dans le modèle de conduite : le plus court du réseau moteur coupé est l'échange du métal et de l'eau (8 à 11 s). L'écart reste sous 0,002 K après 30 min par −30 °C (test). Il en sort :
+
+- **La remontée à l'arrêt.** L'eau, immobile, se réchauffe d'abord au métal et à l'huile plus chauds : 93,5 °C au bout d'une minute, partie de 90. L'huile rejoint l'eau en une dizaine de minutes, comme le décrit le brevet Ford US 6 393 357 (l'huile tend vers l'eau, qui tend vers l'air ; sur un arrêt court, l'huile peut monter vers une eau plus chaude, lu).
+- **Une constante de temps.** Ensuite, tout refroidit ensemble : τ ≈ (C_m + C_e + C_h)/(G_ma + G_ha), 2,2 h pour la citadine de 1,4 L, 2,9 h pour le V8 de 5 L, 3,4 h pour le W16. Les capacités suivent la cylindrée, les surfaces sa puissance 2/3 : τ croît comme la racine cubique de la cylindrée.
+- **Le faisceau** rejoint l'air en quelques minutes : la pompe arrêtée, il ne reçoit plus l'eau du moteur.
+
+**Pas de nœud pour l'air du compartiment.** Le bloc et le carter rendent leur chaleur directement à l'air extérieur, par un coefficient global d'air calme. C'est la méthode d'identification publiée : le mémoire de Chalmers sur le modèle d'eau d'un calculateur Volvo (*Modelisation of the engine coolant warming-up behavior*, lu) tire le produit h·S d'une courbe de refroidissement mesurée entre l'eau et l'air extérieur, l'air sous le capot n'étant pas connu du calculateur. Un nœud de compartiment demanderait deux conductances et une capacité sans donnée pour les caler, et changerait le réseau moteur tournant, donc toutes les empreintes chaudes.
+
+### Les chiffres
+
+Eau et huile au départ (°C), parties chaudes ; `--fuel 1` les écrit (« At the start ») :
+
+| Préréglage | 30 min, 20 °C | 2 h, 20 °C | Une nuit, 20 °C | 30 min, −30 °C | 2 h, −30 °C | Une nuit, −30 °C |
+|---|---|---|---|---|---|---|
+| `city_14` | 80,1 / 80,6 | 50,2 / 50,5 | 20 / 20 | 69,7 / 70,7 | 20,2 / 20,6 | −30 / −30 |
+| `hot_hatch_turbo` | 81,1 / 81,6 | 52,2 / 52,4 | 20 / 20 | 71,4 / 72,2 | 23,4 / 23,9 | −30 / −30 |
+| `diesel_four` | 81,1 / 81,6 | 52,2 / 52,5 | 20 / 20 | 71,4 / 72,3 | 23,5 / 23,9 | −30 / −30 |
+| `v8_cross_plane` | 83,9 / 84,3 | 58,4 / 58,7 | 20 / 20 | 76,0 / 76,8 | 33,7 / 34,2 | −30 / −30 |
+| `v16_cadillac` | 85,1 / 85,5 | 61,3 / 61,6 | 20 / 20 | 78,0 / 78,7 | 38,5 / 39,0 | −30 / −30 |
+| `w16_hypercar` | 85,3 / 85,7 | 61,9 / 62,1 | 20 / 20 | 78,3 / 79,1 | 39,5 / 39,9 | −30 / −30 |
+
+La nuit reste exactement l'air ambiant, l'ancien `cold` au bit près : laissé 12 h, le réseau finirait de 0,3 K (citadine) à 2,2 K (W16) au-dessus, dans les ±2 K que demandent les essais refroidis de force.
+
+| Mesure | Modèle | Publié | Source |
+|---|---|---|---|
+| Eau d'un moteur coupé à 93 °C par 26,7 °C, au bout de 7 h | 2,8 K au-dessus de l'air (citadine) | « égale à l'air en 7 heures environ », sur des courbes relevées par 4,4, 15,6, 26,7 et 37,8 °C | brevet US 9 790 842 B2, diagnostic du circuit de refroidissement (lu) |
+| Départ « froid » : moteur à 5,6 K (10 °F) de l'air | 5,7 h (citadine) à 8,8 h (W16) par 20 °C | définition de l'EPA (1993) ; l'essai FTP attend 12 à 36 h | EPA 1993 et CFR, cités par Kockelman et al., TRB 2015 (lu) |
+| Rythme du refroidissement | 57 % de l'écart perdu en 2 h, 99,6 % en 12 h (citadine) | « jusqu'à 12 heures pour refroidir entièrement, l'essentiel des pertes dans les deux premières » | Kockelman et al., TRB 2015 (lu) |
+| Une nuit d'essai | 9 h à 14 °C : eau à 15,3 °C (citadine, +1,3 K) | 9 h au moins à 14 °C pour l'essai ATCT, qui représente une nuit ; refroidi de force, le moteur doit être à ±2 °C de la consigne | règlement (UE) 2017/1151, sous-annexe 6a (lu) |
+| Ce que retient un capot isolé | sans isolation, la citadine est encore à 12 K de l'air au bout de 4 h | une isolation sous le capot garde 9 K d'eau et 11 K d'huile de plus au bout de 4 h ; 6 et 10 K au bout de 9 h | Jaguar Land Rover et Autoneum, cités par Yuan et al., *Applied Thermal Engineering* 164 (2020) ; SAE 2020-01-0158 (lus, valeurs absolues confidentielles) |
+
+Le modèle refroidit un peu plus lentement que la voiture du brevet : il faudrait une constante de temps de 1,7 à 2 h, et non 2,2, pour que l'eau soit à 1 ou 2 K de l'air au bout de 7 h. Rien n'a été recalé : le coefficient d'air calme est celui du réseau, supposé, et le recaler changerait la conduite.
+
+**La consommation** (`city_14`, WLTC complet, `--fuel 1`) : par 20 °C, 6,76 L/100 km parti chaud, 6,76 après 30 min (l'eau est déjà au-dessus de 70 °C, la fin de la mise en température), 6,79 après 2 h, 6,90 après une nuit ; par −30 °C, 7,15, 7,16, 7,31 et 7,70. L'eau atteint 70 °C en 143 s après 2 h d'arrêt par 20 °C, en 271 s après une nuit.
+
+### Sur le site
+
+- **Le défaut.** `DEFAULTS.startTemp` vaut `cold`, une nuit ; le C++, la CLI et `gen_presets.py` gardent `warm`, la référence de banc des empreintes, de la fiche et des tests : c'est l'exception à « valeurs par défaut d'un moteur » dans `CLAUDE.md`. Le résumé du bouton de la voiture dit ce qui diffère d'une nuit (« départ : 2 h »). **Un ancien lien sans le code `start` part désormais froid** : il n'écrivait pas `warm`, qui était le défaut ; un lien `start=cold` reste une nuit.
+- **Les jauges avant le premier démarrage.** Elles écrivaient 90 et 100 °C, ou l'air ambiant. Elles lisent maintenant l'état choisi, calculé par le C++ de la page (`rf_start_thermal`, `Spec.startCoolantC`), que le volet affiche aussi.
+- **Moteur coupé.** Le modèle refroidit pas à pas tant que le son tourne. Mais 2,2 s après la coupure, le son se suspend, et le modèle avec lui : avant, le moteur restait figé à sa température, et les jauges retombaient à l'état choisi au départ. Les jauges lisent maintenant le refroidissement calculé depuis la dernière télémétrie (`rf_rest_thermal`), et le worklet rattrape le temps suspendu en reprenant (`rf_soak`), avant de relancer le démarreur. Changer l'air ou l'état au départ remet le moteur à l'état choisi.
+- **La balade.** Passer en balade, ou en revenir, reconstruit le modèle de conduite : il repartait de l'état choisi, et un moteur chaud redevenait froid. Il garde maintenant ses températures (`carryThermal`).
+- **Le modèle posé au ralenti** (balade, trajets, tests) part avec l'air d'un ralenti établi tant que l'eau n'a pas fini sa mise en température (le calculateur tient encore un ralenti accéléré), comme après une nuit (« Le démarrage à froid ») ; au-delà, comme un moteur chaud. Parti du collecteur vide d'un moteur chaud, le régime creuse au premier dixième : jusqu'à 530 tr/min pour 777 sur les carburateurs de `carb_twin_cam` par −30 °C. Sur le deux-temps, l'air d'un ralenti établi à 80 °C d'eau le faisait creuser plus (551 tr/min contre 762) : d'où la limite à la mise en température.
+
+### Les tests, les empreintes et la parité
+
+`tests/depart_test.cpp` : les arrêts se rangent entre le moteur chaud et la nuit pour chaque préréglage, à 20 et −30 °C ; l'arrêt est le refroidissement du modèle de conduite moteur coupé à 0,01 K près ; l'eau remonte d'abord, et la nuit laisse moins de 2,5 K ; le modèle posé après 2 h ne creuse pas ; un modèle reconstruit reprend les températures. Chacun échoue quand on retire ce qu'il protège : le refroidissement au départ, le même chemin que le modèle (du vent dans le pas d'arrêt), le métal plus chaud que l'eau, une convection triplée, le collecteur d'un ralenti établi, `carryThermal`, `soakThermal`. `web/tests/depart.spec.ts` : par défaut, les jauges lisent l'air par −30 °C, puis l'état calculé de 2 h et de 30 min ; moteur coupé, son suspendu, les jauges refroidissent et le moteur repart de là ; changer l'état au départ le remet à l'état choisi. Contre-épreuves : jauges écrites en dur, défaut chaud, pas de rattrapage en reprenant, état gardé après un changement. Les specs qui mesurent un moteur chaud le demandent ; `socle.spec.ts` suit le nouveau défaut.
+
+Aucune empreinte ne change : `Warm` et `Cold` suivent le même chemin qu'avant, au bit près. `check_wasm.mjs` compare un arrêt de 2 h au démarreur par −20 °C (son, consommation, températures, et l'état au départ : `start_coolant_c` et `start_oil_c`, ajoutés à la ligne `raw`) et une demi-heure posée au ralenti par 10 °C.
+
+### Ce qui manque
+
+- **Pas d'air du compartiment** : ni la chaleur qui stagne sous le capot à l'arrêt, ni le capot qui rayonne, ni une isolation. Le coefficient d'air calme est supposé, et fixe : la convection naturelle croîtrait comme (ΔT)^1/4, le rayonnement baisserait par grand froid ; ni vent, ni pluie, ni neige sur une voiture garée dehors.
+- **Le faisceau à l'arrêt** ne reçoit plus rien du moteur : pas de thermosiphon, pas de ventilateur qui tourne après la coupure.
+- **La nuit est l'air ambiant exact**, comme l'ancien départ à froid ; une voiture rentrée au garage n'est pas proposée.
+- **La batterie** : sa température, et ce qu'elle donne au démarreur, sont le sujet du démarreur ; ce réseau n'en a pas.
+- Les deux arrêts intermédiaires valent pour tous les moteurs, rotatif et deux-temps compris : le réseau est le même, aux masses supposées par litre.
+
+### Ce qui se lit, ce qui s'expose
+
+Exposé : `parkedSeconds(StartTemp)`, `ThermalNetwork::soak(secondes, air)` et `place(eau, huile, métal)`, `DrivingModel::startThermal()` (l'état choisi, sans rien changer au modèle), `soakThermal(secondes)` et `carryThermal(réseau)` ; `rf_start_thermal`, `rf_soak`, `rf_rest_thermal`. Le démarreur peut lire l'eau et l'huile au départ dans `DrivingModel::thermal()` dès la construction, et le temps d'arrêt dans `parkedSeconds` (−1 pour une nuit) pour la température de sa batterie.
+
+L'écoute reste à faire, là où le ralenti accéléré change avec l'arrêt : `revforge-render --out depart_2h.wav --preset city_14 --start two_hours --ambient -30 --scenario start --seconds 20`, face à `--start cold` et `--start half_hour`.

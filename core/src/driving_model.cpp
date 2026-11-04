@@ -120,7 +120,10 @@ DrivingModel::DrivingModel(const Powertrain& powertrain) {
     // indirecte par −20 °C, la Cadillac dès 0 °C (docs/modele.md, « Le démarrage à froid »). Le démarreur, lui, passe par
     // `crank`, qui pose le film au moment où le moteur prend. Parti chaud, le collecteur part vide, comme à l'origine, au bit près.
     // Fusion des finitions : le réseau thermique agit aussi moteur chaud (`coldCoupled_`), d'où le départ à froid écrit en entier.
-    if (coldCoupled_ && startTemp_ == StartTemp::Cold) {
+    // Un moteur arrêté une demi-heure ou deux heures est entre les deux : tant que son eau n'a pas fini la mise en température
+    // (le calculateur tient encore un ralenti accéléré), il part de même ; au-delà, comme un moteur chaud. Une nuit dehors, l'eau
+    // est à l'air (50 °C au plus) : toujours en mise en température, comme à l'origine.
+    if (coldCoupled_ && startTemp_ != StartTemp::Warm && coldIdleRise_ > 0.0) {
         const double friction = frictionTorqueNm(powertrain_, idle_) + hydroNmPerRpm_ * idle_ * viscosityExcess_;
         manifold_ = clamp(friction / std::max(fullLoadTorqueNm(powertrain_, idle_, 0.0) + frictionTorqueNm(powertrain_, idle_), 1.0), 0.0, 1.0);
     }
@@ -535,6 +538,24 @@ void DrivingModel::holdThermalReference(bool held) {
     } else {
         updateColdEffects();
     }
+}
+
+ThermalNetwork DrivingModel::startThermal() const {
+    ThermalNetwork start = thermal_;
+    if (thermalEngine_) start.reset(startTemp_, static_cast<double>(ambientC_));
+    return start;
+}
+
+void DrivingModel::soakThermal(double seconds) {
+    if (!thermalEngine_ || !(seconds > 0.0)) return;
+    thermal_.soak(seconds, static_cast<double>(ambientC_));
+    updateColdEffects();
+}
+
+void DrivingModel::carryThermal(const ThermalNetwork& from) {
+    if (!thermalEngine_) return;
+    thermal_ = from;
+    updateColdEffects();
 }
 
 void DrivingModel::updateColdEffects() {

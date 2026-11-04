@@ -39,7 +39,7 @@ const SHIFT = { normal: 0, eco: 1, sport: 2, track: 3, paddles: 4 };
 const SCENARIO = { city: 0, stop_go: 1, country: 2, motorway: 3, mountain: 4, drag: 5, track: 6, hill_start: 7, towing: 8 };
 
 // ── Les réglages du socle moteur : même ordre que les énumérations C++ et les tableaux de config.ts ──
-const START = { warm: 0, cold: 1 };
+const START = { warm: 0, cold: 1, half_hour: 2, two_hours: 3 };
 const GRADE = { ron95: 0, ron98: 1, race102: 2, e85: 3, methanol: 4 };
 const LIMITER = { stock: 0, soft: 1, ignition_cut: 2 };
 const TRACTION = { off: 0, sport: 1, full: 2 };
@@ -1001,5 +1001,34 @@ for (const [name, code] of [['electronic', BOOST_CONTROL.electronic], ['by_gear'
   const rf = twoStroke(EXHAUST.stock);
   driveLikeNative(rf, 30);
   checkFigures('deux-temps, consommation et huile', rf, nativeFigures('--preset', 'two_stroke_triple', '--scenario', 'lap', '--seconds', '30'));
+}
+// L'arrêt avant le départ : deux heures par -20 °C au démarreur, une demi-heure posée au ralenti par 10 °C. Le refroidissement
+// moteur coupé (`ThermalNetwork::soak`) se compare aussi seul : l'état au départ, que lisent les jauges du site.
+{
+  const parkedCity = (start, ambientC) => {
+    const rf = load();
+    rf.rf_set_car(BODY.city, 1100, 15, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+    tune(rf, { ambientC, startTemp: start });
+    rf.rf_set_config(4, LAYOUT.inline, 1360, 75, 6200, EXHAUST.stock, 0, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+    return rf;
+  };
+  const crankArgs = ['--preset', 'city_14', '--ambient', '-20', '--start', 'two_hours', '--scenario', 'start', '--seconds', '10'];
+  const cranked = () => {
+    const rf = parkedCity(START.two_hours, -20);
+    rf.rf_set_mode(1);
+    rf.rf_crank();
+    return rf;
+  };
+  check('arrêt de 2 h, démarrage par -20 °C', render(cranked(), 10, 128), native(...crankArgs));
+  const rf = cranked();
+  const atStart = [rf.rf_start_thermal(0), rf.rf_start_thermal(1)];
+  driveLikeNative(rf, 10);
+  const figures = nativeFigures(...crankArgs);
+  checkFigures('arrêt de 2 h, démarrage par -20 °C', rf, figures);
+  check('arrêt de 2 h, eau au départ', String(atStart[0]), String(figures.start_coolant_c));
+  check('arrêt de 2 h, huile au départ', String(atStart[1]), String(figures.start_oil_c));
+  const posed = parkedCity(START.half_hour, 10);
+  posed.rf_set_mode(FRESH);
+  check('arrêt de 30 min, posé au ralenti', render(posed, 20, 128), native('--preset', 'city_14', '--ambient', '10', '--start', 'half_hour', '--scenario', 'lap', '--seconds', '20'));
 }
 process.exit(failed ? 1 : 0);
