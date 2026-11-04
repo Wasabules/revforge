@@ -2502,7 +2502,7 @@ Before, at −30 °C, the city car cranked at 250-290 rpm, as when warm, and cau
 
 ### Warm, nothing changes
 
-The original starter is calibrated on its reference battery: full, in the bay of a warm engine on a 20 °C day (32 °C). The real battery acts only through the gap between its current and that reference's at the same speed, `ΔT_pinion = k·(I − I_ref)`, both integrated step by step: warm at 20 °C, the gap is exactly zero, and torque, speed and sound are the original ones, bit for bit (the 77 warm fingerprints do not move). Above 80 °C oil, cranking also keeps its friction law and its synchronisation time, in seconds; and if every cycle fires for sure, spread included, the engine catches at the first firing, as before.
+The original starter is calibrated on its reference battery: full, in the bay of a warm engine on a 20 °C day (32 °C). The real battery acts only through the gap between its current and that reference's at the same speed, `ΔT_pinion = k·(I − I_ref)`, both integrated step by step: warm at 20 °C, the gap is exactly zero, and torque, speed and sound are the original ones, bit for bit (of the 77 former fingerprints, only the two cold starts change). Above 80 °C oil, cranking also keeps its friction law and its synchronisation time, in seconds; and if every cycle fires for sure, spread included, the engine catches at the first firing, as before.
 
 ### The battery
 

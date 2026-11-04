@@ -2535,7 +2535,7 @@ Avant, par −30 °C, la citadine se lançait à 250-290 tr/min, comme chaude, e
 
 ### Moteur chaud, rien ne change
 
-Le démarreur d'origine est calé sur sa batterie de référence : pleine, au compartiment d'un moteur chaud par 20 °C (32 °C). La batterie réelle n'agit que par l'écart de son courant à celui de cette référence au même régime, `ΔT_pignon = k·(I − I_réf)`, intégrées toutes deux pas à pas : moteur chaud par 20 °C, l'écart vaut exactement zéro, et le couple, le régime et le son sont ceux d'origine, au bit près (les 77 empreintes moteur chaud ne bougent pas). Au-dessus de 80 °C d'huile, le lancement garde aussi sa loi de frottements et son heure de synchronisation, en secondes ; et si chaque cycle allume à coup sûr, dispersion comprise, le moteur prend à la première explosion, comme à l'origine.
+Le démarreur d'origine est calé sur sa batterie de référence : pleine, au compartiment d'un moteur chaud par 20 °C (32 °C). La batterie réelle n'agit que par l'écart de son courant à celui de cette référence au même régime, `ΔT_pignon = k·(I − I_réf)`, intégrées toutes deux pas à pas : moteur chaud par 20 °C, l'écart vaut exactement zéro, et le couple, le régime et le son sont ceux d'origine, au bit près (des 77 empreintes d'avant, seuls les deux départs à froid changent). Au-dessus de 80 °C d'huile, le lancement garde aussi sa loi de frottements et son heure de synchronisation, en secondes ; et si chaque cycle allume à coup sûr, dispersion comprise, le moteur prend à la première explosion, comme à l'origine.
 
 ### La batterie
 

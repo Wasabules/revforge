@@ -49,7 +49,7 @@ def oils():
         "20W-50": (165.0, 18.5, 0.885, (-15.0, 9500.0)),
         "SAE 30": (100.0, 11.0, 0.885, None),
     }
-    print("Vogel μ = a·exp(b/(T + c)), Pa·s et °C")
+    print("Vogel mu = a*exp(b/(T + c)), Pa.s et degC")
     for name, (kv40, kv100, rho15, ccs) in grades.items():
         p40 = (40.0, kv40 * 1e-6 * density(rho15, 40.0) * 1e3)
         p100 = (100.0, kv100 * 1e-6 * density(rho15, 100.0) * 1e3)
@@ -103,7 +103,7 @@ def fuel():
         for i, s in enumerate(SPECIES):
             take = min(left[i], left[i] / tot * psat_bar(s[2], t) / 1.01325 * step)
             left[i] -= take
-            gone += take * s[1] / 100.0
+            gone += take * s[1]  # grammes sur 100 g : des pour cent
     print("Essence d'hiver : E70 %.0f %%, E100 %.0f %%, E150 %.0f %%, tension de vapeur vraie à 37,8 °C %.0f kPa" % (marks[70.0], marks[100.0], marks[150.0], tvp))
 
 
@@ -136,7 +136,11 @@ def battery():
             t3 += dt
         return v10, t3, q / (s * max(charge, 0.05))
 
-    a, vk, s = fsolve(lambda v: [run(*v)[0] - 7.5, run(*v)[1] - 73.0, run(*v)[2] - x_end], [5.1, 0.15, 30.0])
+    def residual(v):
+        v10, t3, x = run(*v)
+        return [v10 - 7.5, t3 - 73.0, x - x_end]
+
+    a, vk, s = fsolve(residual, [5.06, 0.14, 33.0])
     print("Batterie (EN 50342-1) : I·R(-18 °C) = %.3f V, V_K = %.3f V, charge à fort débit = %.2f s × I" % (a, vk, s))
 
 
