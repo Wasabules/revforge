@@ -6,6 +6,7 @@
 #include "revforge/carburetor.hpp"
 #include "revforge/thermal.hpp"
 #include "revforge/turbo.hpp"
+#include "revforge/tyre.hpp"
 
 namespace revforge {
 
@@ -204,8 +205,8 @@ double tractionSlipTarget(TractionControl mode) {
         case TractionControl::Full: grip = kTractionFullGrip; break;
         case TractionControl::Off: return 0.0;
     }
-    // L'inverse de s/√(1+s²) : le glissement où le pneu donne cette part de son adhérence (m/s, pour 1 m/s de référence).
-    return grip / std::sqrt(1.0 - grip * grip);
+    // Sur la montée de la courbe du pneu : le glissement où il donne cette part de son sommet.
+    return tyreSlipForShare(grip);
 }
 
 void tractionActuation(double torqueShare, double maxRetardDeg, double& retardDeg, double& firedShare) {

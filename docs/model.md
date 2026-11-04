@@ -625,7 +625,7 @@ At the same pedal, Eco < Normal < Sport ≤ Track at every demand and in every g
 
 **Torque-converter lock-up** depends on the mode: from an 84% turbine/pump speed ratio in Eco (90% elsewhere), and up to full load in Sport and Track, from first gear in Track.
 
-**Consequences:** 0-100 is always at least as good in Sport as in Eco (checked on every preset and gearbox); on a city journey, Eco uses less fuel than Sport (`consumption()`).
+**Consequences:** with grip held (sport slip control), 0-100 is always at least as good in Sport as in Eco (checked on every preset and gearbox). Without slip control, the peaked tyre proves Eco right in eight cases out of a hundred and fifteen, the most powerful rear- and all-wheel drives, which spin past the peak: shifting up earlier takes torque off the wheels, and Eco gains up to 0.7 s (`v12`, synchro box); on a city journey, Eco uses less fuel than Sport (`consumption()`).
 
 ## The autopilot's journeys
 
@@ -1638,8 +1638,8 @@ It arms flat out (90 %), car stopped, engine decoupled: clutch pedal down, or an
 
 | Spec-sheet 0-100 km/h, timed from the brake release | Without | Launch control |
 |---|---|---|
-| `hot_hatch_turbo` (2.0 L turbo, front drive), at 4500 rpm | 6.86 s | 6.13 s |
-| 7.0 L naturally aspirated V8, rear drive, 1700 kg, at 3500 rpm | 6.18 s | 6.03 s |
+| `hot_hatch_turbo` (2.0 L turbo, all-wheel drive), at 4500 rpm | 6.86 s (peaked tyre: 6.82) | 6.13 s (6.16) |
+| 7.0 L naturally aspirated V8, rear drive, 1700 kg, at 3500 rpm | 6.18 s (peaked tyre: 8.55; 6.25 with sport slip control) | 6.03 s (8.40; 6.08) |
 
 At a standstill, `hot_hatch_turbo` at 4500 rpm: 4406 rpm and 1.03 of the target boost at the brake release, the gas before the turbine up to 1129 °C (899 without launch control), 27 bangs in three seconds.
 
@@ -1651,17 +1651,17 @@ On upshifts, foot above 80 %, on a synchro or dog box driven by the robot: the f
 
 ### The slip control
 
-A proportional-integral control of the driven-wheel slip that `DrivingModel` already computes (m/s), towards the share of torque to remove: `u = 0.1 e + ∫ 1.0 e dt`, gains tuned by trial so that the control does not beat against the wind-up of the drive shafts (2 to 3 Hz in first), hence assumed. The integral takes at most 1 m/s of error, and does not grow in the direction where the command saturates (anti-windup): without that, once the wheels gripped again, it held the engine cut down to 550 rpm. Retard first, up to 25° (13.5 % torque), then cut cylinders, at the injectors. On an electric car, the motor torque directly. It only acts with the wheels held by the engine: a slipping clutch only transmits its capacity, and cutting the spark would only stall the engine.
+A proportional-integral control of the driven-wheel slip that `DrivingModel` already computes (m/s), towards the share of torque to remove: `u = kp e + ∫ ki e dt`, its gains placed on the driveline of the engaged gear ("The tyre, slip control and the start", below; before the finishing work, 0.1 and 1.0 tuned by trial). The integral does not grow in the direction where the command saturates (anti-windup): without that, once the wheels gripped again, it held the engine cut down to 550 rpm. Retard first, up to 25° (13.5 % torque), then cut cylinders, at the injectors. On an electric car, the motor torque directly. It only acts with the wheels held by the engine, or at the start, when the robot only closes the clutch up to the announced torque: a slipping clutch only transmits its capacity, and cutting the spark would otherwise only stall the engine.
 
-**The target, and what the tyre makes of it.** The model's tyre, `F = μN s/√(1+s²)`, s in m/s, **has no peak**: the more it slips, the more it pushes. The target is therefore read on its curve, as the share of grip the mode keeps in reserve for cornering: 90 % in sport (2.1 m/s), 80 % in full (1.3 m/s), assumed. The mean slip in first, once the clutch is closed, holds these targets within 15 % (tested). A real tyre peaks around 10 % slip and loses grip beyond, and slip control gains time there; here it can only hold the wheelspin back, and pay for it. Changing the tyre would change the defaults: it is not done.
+**The target, and what the tyre makes of it.** Since the finishing work, the tyre has a grip peak (Pacejka, near 11 % slip): the target is a slip ratio κ, the peak in sport, 90 % of the peak in full, and the gains are placed on the driveline of the engaged gear. See "The tyre, slip control and the start", below, which replaces what follows. The mean slip, once the clutch is closed, holds these targets within 25 % (tested).
 
 | Spec-sheet 0-100 km/h | Off | Sport | Full |
 |---|---|---|---|
-| 7.0 L V8, rear drive, the model's tyre | 6.18 s | 6.20 s | 6.86 s |
-| The same, tyre with a peak (trial on a copy, not shipped) | 6.38 s | 5.86 s | 6.10 s |
-| `hot_hatch_turbo`, front drive | 6.86 s | 6.86 s | 6.86 s |
+| 7.0 L V8, rear drive, former tyre without a peak | 6.18 s | 6.20 s | 6.86 s |
+| The same, peaked tyre | 8.55 s | 6.25 s | 6.48 s |
+| `hot_hatch_turbo`, all-wheel drive | 6.82 s | 6.82 s | 6.82 s |
 
-The trial's peaked tyre follows the Pacejka shape, `sin(1.4 atan(0.92 s))`: its peak at 2.25 m/s, 81 % when fully sliding. With it, sport slip control gains half a second, and full three tenths: that is what wiring a real tyre would change, to be done for all cars at once. The front-drive 2.0 L turbo never slips up to its targets in an ordinary start.
+The integration's trial peaked tyre (`sin(1.4 atan(0.92 s))`, s in m/s) gave 6.38, 5.86 and 6.10 s. The all-wheel-drive 2.0 L turbo never slips up to its targets in an ordinary start.
 
 ### The sound, and what is left to listen to
 
@@ -1908,7 +1908,7 @@ The same control, with each gear's target bounded by the torque it can pass, tak
 - the crankshaft torque that gives it, C = F·r/(i·η), bounded by the gearbox's admissible torque;
 - the pressure that gives this torque, by inverting `fullLoadTorqueNm` by bisection: the filling model run backwards, like a torque-structured ECU.
 
-The engaged gear is read in `DrivingModel`; in neutral, first gear. On `three_cyl_turbo` (front drive, 1150 kg), first gear passes 137 Nm, against 192 Nm at the engine: the target falls there from 2.21 to 1.46-1.71 bar absolute depending on rpm, second gear (260 Nm) is not bounded. From a standing start, the peak slip in first falls from 5.6 to 1.9 m/s. But 0-100 km/h goes from 10.03 to 10.22 s: the model's tyre has no grip peak, more slip always gives a little more force, and limiting torque can only reduce it. On all-wheel drives (`hot_hatch_turbo`, 388 Nm in first for 357 Nm), nothing changes.
+The engaged gear is read in `DrivingModel`; in neutral, first gear. On `three_cyl_turbo` (front drive, 1150 kg), first gear passes 137 Nm, against 192 Nm at the engine: the target falls there from 2.21 to 1.46-1.71 bar absolute depending on rpm, second gear (260 Nm) is not bounded. From a standing start, the peak slip in first falls from 5.6 to 1.9 m/s. With the former tyre, without a peak, 0-100 km/h still went from 10.03 to 10.22 s: more slip always gave a little more force there. With the finishing work's peaked tyre, it goes from 10.48 s (spring) to 10.19 s: capping the torque keeps the tyre near its peak. On all-wheel drives (`hot_hatch_turbo`, 388 Nm in first for 357 Nm), nothing changes.
 
 **What does not change.** The spec sheet (`torqueCurveNm`) stays the spring's: at sea level, electronic control holds `turboSteady`'s equilibrium exactly, and the gearbox stays designed for this engine. WLTC consumption does not move: 8.90 L/100 km in both cases on `hot_hatch_turbo`, 6.34 and 6.32 on `three_cyl_turbo` by gear.
 
@@ -2216,9 +2216,123 @@ The twelve engine topics together: architectures, atmosphere, thermal, combustio
 
 ### The rest
 
-- **Cadillac**: its published ratio (5.35) was outside the range; the range now goes down to 4:1, and the preset takes it. 456 Nm and 138 kW, against 367 to 432 Nm and 123 to 138 kW published (578 Nm and 179 kW at 10.5). After a cold start it holds its idle at 5 °C, not at 0 °C.
+- **Cadillac**: its published ratio (5.35) was outside the range; the range now goes down to 4:1, and the preset takes it. 456 Nm and 138 kW, against 367 to 432 Nm and 123 to 138 kW published (578 Nm and 179 kW at 10.5). After a cold start it held its idle at 5 °C, not at 0 °C; since the finishing work, it holds it at −30 °C ("The cold start").
 - **`decideShift`**, changed by the two-stroke: the fingerprints of the journeys, launch control, flat shift and `by_gear` stay bit-exact.
 - **Twin turbo and anti-lag**: the C++ ignores anti-lag and the remote pipe on twin turbos, a twincharger or vanes; `coherentConfig` brings them back to their defaults, and the panel says so, along with boost control's target-only role.
 - **On screen**, the knock row (`Dynamics`) shows as soon as the map is built, with the same conditions as `knockConditionsStock`.
 
 Listening remains to be done: the knock of +6° of advance (`--preset hot_hatch_na --advance 6 --scenario turbo`), E85 with direct injection (`--preset hot_hatch_turbo --compression 11 --grade e85 --fuel-system direct --scenario turbo`), the Cadillac at its ratio (`--preset v16_cadillac --scenario lap`) and the cold start at altitude (`--preset city_14 --start cold --altitude 2500 --ambient -10 --scenario start`).
+
+## The tyre, slip control and the start
+
+The tyre now has a grip peak, beyond which it loses force: slip control, launch control, by-gear boost and the shift logic draw their meaning from it. The 0-100 km/h figures quoted earlier in this document were measured with the former tyre, without a peak; this section's table is authoritative. Code: `core/src/tyre.cpp`, `DrivingModel::integrate`; tests: `tests/tyre_test.cpp`, `tests/cold_start_test.cpp`.
+
+### The tyre law
+
+Pacejka's "magic formula", in pure longitudinal slip:
+
+```
+F = D·sin(C·atan(φ)),   φ = B·κ − E·(B·κ − atan(B·κ)),   D = μ·N,   B·C·D = K
+κ = (ωr − v) / max(v, 1 m/s)        (SAE J670)
+```
+
+N is the driven axle's load, load transfer included, as before. B, C and E come from three published characteristics, not from a tyre test:
+
+| Characteristic | Value used | Source |
+|---|---|---|
+| Peak μ = D/N | 1.05 (`kTyreGrip`, unchanged) | pDx1 ≈ 1.04 to 1.21 for a 205/60R15 (Pacejka, *Tyre and Vehicle Dynamics*, from memory) |
+| Stiffness K/N | 21.5 | pKx1 ≈ 21.5 for the same tyre (Pacejka, from memory) |
+| Full slide, κ = 1 | 0.76 of the peak (C = 1.5) | Bosch, *Automotive Handbook*: dry concrete, new tyre, 50 km/h, μ 0.85 at the peak and 0.65 locked (from memory). Other sources give 0.65 (Burckhardt, dry asphalt) to 0.88 (Wong: 0.75 for 0.85); Bakker, Nyborg and Pacejka's C = 1.65 (SAE 870421) would give 0.63 |
+| Peak | κ* = 11.0 % (E = −0.45) | 8 to 12 % asked for; about 12 % for Pacejka's 205/60R15 |
+
+Hence B = K/(C·μ) = 13.65; 90 % of the peak at κ = 6.5 %, 76 % at κ = 1, 71 % for a wheel spinning freely. Everything goes through `revforge::portable` (a portable arctangent joins `portable_math.hpp`, within 2·10⁻¹⁶ of the library's): the tyre comes back at every step.
+
+**Integration.** At low speed the tyre's stiffness runs to tens of kN per m/s: on an 8 kN axle at 1 m/s, dF/dv ≈ 180 kN·s/m, and the wheel (1.6 kg·m² with the axle) would beat from one 1 ms step to the next (dt·r²·dF/dv/I ≈ 10). The wheel is therefore integrated implicitly, the force linearised over the step (`TyreContact::perWheelMs`), and the body receives the same force, the wheel's at the end of the step (`tyreForceN`). Beyond the peak the slope is negative: nothing is linearised there, and the wheel runs away, like a real one. On a flat-out start of the 7 L V8, the slip changes direction 38 times in 6000 steps (driveline shunt and the limiter); without the implicit term, it beats at every step (test).
+
+**Assumed:** the 1 m/s reference speed below which slip is measured against it (at a standstill, ωr − v has no speed to divide by); one dry grip for every car, the two wheels of an axle merged; no load sensitivity (pDx2, pKx2), no combined slip with cornering, no relaxation length, no tyre temperature. The brake still acts on the body, at μ·N at most, like an ABS at the peak.
+
+### What the settings draw from it
+
+**Slip control** targets a slip ratio κ: the peak in sport (11.0 %), 90 % of the peak in full (6.5 %), which keeps √(1 − 0.9²) = 44 % of the lateral grip by Kamm's circle (assumed). The error is counted in m/s, `ωr − v − κ_target·max(v, 1 m/s)`: the speed the wheel's inertia integrates, which the same torque cut corrects at any speed. Its gains are no longer tuned by trial: they are placed on the driveline of the engaged gear. All the engine's torque gives the slip an acceleration `a = r·T_max·g·η/J`, J the inertia seen from the wheel (wheels, input shaft and engine reflected through the ratio); the loop has its poles at ω = 6 rad/s (1 Hz, below the drive shafts' wind-up, 2 to 3 Hz in first) and ζ = 0.7 (assumed): `kp = 2ζω/a`, `ki = ω²/a`. At the start it also acts while the clutch slips: the robot only closes it up to the torque the engine announces, the engine management's cut included (below). Before, it only acted with the clutch closed, and its target was read in m/s on a tyre without a peak: it could only hold wheelspin back.
+
+**The start robot** (the start branch of `updateClutch`) used to close the clutch on engine speed alone, up to 1.6 times the engine's torque: the flywheel, spun above the start speed, emptied itself into the wheels. The peakless tyre absorbed that surplus; with a peak, it spins the wheels, and slip control, which only acts on the spark, could do nothing about it while the clutch slipped. While the engine drives, the robot no longer closes beyond the announced torque, `engine-management share × filling × full-load torque`, plus what brings the engine back to its start speed in 0.3 s (`J·(ω − ω_start)/0.3 s`, assumed): the wheels receive its torque, and its momentum gradually rather than all at once. Once the plates are within 150 rpm of each other (assumed), there is no momentum left to empty: it closes, and the clutch locks. Without this last rule, it stayed half open up to 25 km/h, and Eco and Normal took second gear at the same speed. Since the announced torque counts what the engine management takes off, slip control acts from the start: without this cap, sport 0-100 lost 0.05 to 0.5 s (`v8_supercharged`: 6.27 → 6.74 s; measured without the return to the start speed), full up to 0.4 s; without slip control, 0.02 s at most. Without the return to the start speed, the engine stayed where it had flared, and the clutch slipped up to 25 km/h. Counter-check: without this cap, the wheels spin at half pedal, the gearbox waits (below), and Eco takes second gear higher than Normal (`inline_six`, 60 % pedal: 7985 against 4734 rpm): the shift-point test fails.
+
+| Spec-sheet 0-100 km/h | Peakless tyre: off / sport / full | Peaked tyre: off / sport / full |
+|---|---|---|
+| 7 L V8, rear drive, 1700 kg | 6.18 / 6.20 / 6.86 s | 8.55 / 6.25 / 6.48 s |
+| The same, launch control at 3500 rpm (off; sport) | 6.03; 6.05 s | 8.40; 6.08 s |
+| `hot_hatch_turbo`, all-wheel drive | 6.86 s throughout | 6.82 s throughout |
+
+Without slip control, the rear-wheel drive spins well past the peak in first and second (κ from 1 to 10): it loses 2.4 s. With it, it gets back to the former figure within 0.05 s: the former tyre only gave its full force while slipping by several m/s.
+
+**Launch control** is unchanged: it holds the speed and lets go at 1 m/s. Without slip control it often only spins harder (below, "off, launch" column); with it, it gains up to 0.7 s, except on `three_cyl_turbo`, `v10_open` and `v12`, where it costs up to 0.17 s. `hot_hatch_turbo` at 4500 rpm: 6.13 → 6.16 s; with the flat shift: 6.54 → 6.51 s.
+
+**By-gear boost (`by_gear`)** caps the torque at what the tyres pass at their peak, load transfer included (`gearTorqueCapNm`, unchanged). It now gains time: `three_cyl_turbo`, 0-100 km/h in 10.48 s on the spring, 10.47 electronic, 10.19 by gear (10.05, 10.04 and 10.26 with the former tyre).
+
+**The shift logic** (`decideShift`) said "the tyres are at their limit" beyond 0.8 m/s of slip: it is now beyond the peak, κ > κ* (`ShiftView::slipRatio`). It no longer shifts up while the wheels spin past the peak: engine speed then no longer tells the car's speed, as a gearbox reading the speed at the undriven wheels knows; only engine protection, at the maximum speed, still shifts up. Without this, the 3 L rear-wheel drive of the hill start (12 %, 55 % pedal, Eco mode) spun, took second gear at 4 km/h, and stalled. Normal mode on a flat road, which does not go through it, stays the original logic.
+
+### 0-100 km/h of every preset
+
+Measured by `measurePerformance` (the spec sheet, foot to the floor, the preset's gearbox driven by the robot): `revforge-render --out none --preset X --scenario idle --seconds 1 --fuel 1 [--traction sport|full] [--launch RPM]`. Launch control is set at 60 % of the maximum speed (2000 to 7000 rpm, assumed). The published figures are those of a comparable car (maker or press tests, from memory): an order of magnitude, never a target; no preset was touched.
+
+| Preset | Before, off | Off | Sport | Full | Off, launch | Sport, launch | Published (comparable car) |
+|---|---|---|---|---|---|---|---|
+| `city_14` (57 kW, 1100 kg, front) | 13.34 | 13.49 | 13.46 | 13.58 | 13.34 | 13.35 | 12 to 14 s (1.4 city cars of 55 to 70 kW) |
+| `four_cyl_sport` (115 kW, 1300 kg, front) | 9.09 | 9.42 | 8.94 | 9.28 | 9.27 | 8.85 | 8 to 9 s (2.0 compacts of 110 to 120 kW) |
+| `three_cyl_turbo` (95 kW, 1150 kg, front) | 10.05 | 10.48 | 9.66 | 9.82 | 10.79 | 9.83 | 9.4 s (Fiesta 1.0 EcoBoost 125 PS) |
+| `hot_hatch_turbo` (194 kW, 1400 kg, AWD) | 6.86 | 6.82 | 6.82 | 6.82 | 6.16 | 6.40 | 5.7 to 6.1 s (Golf R VI) |
+| `hot_hatch_na` (118 kW, 1250 kg, front) | 8.72 | 9.23 | 8.67 | 8.97 | 9.09 | 8.59 | ≈ 8 s (Focus ST170) |
+| `five_cyl_turbo` (297 kW, 1500 kg, AWD) | 5.29 | 5.25 | 5.25 | 5.25 | 6.73 | 4.89 | 4.1 s (RS3 8V, launch) |
+| `inline_six` (223 kW, 1500 kg, rear) | 6.48 | 8.47 | 6.37 | 6.60 | 6.96 | 6.20 | 5.2 s (M3 E46, 252 kW) |
+| `v6_gt` (146 kW, 1650 kg, rear) | 8.33 | 9.65 | 8.83 | 8.81 | 9.44 | 8.62 | ≈ 8 s |
+| `flat_six` (250 kW, 1450 kg, rear) | 4.83 | 6.15 | 5.42 | 5.61 | 6.10 | 5.19 | 4.8 s (911 Carrera S 997) |
+| `boxer_four_turbo` (253 kW, 1450 kg, AWD) | 5.45 | 5.41 | 5.41 | 5.41 | 5.60 | 5.09 | ≈ 5 s (Impreza WRX STI) |
+| `v8_cross_plane` (214 kW, 1700 kg, rear) | 6.95 | 9.33 | 6.98 | 7.10 | 7.48 | 6.57 | ≈ 5.5 s (Mustang GT 2005) |
+| `v10_open` (410 kW, 1500 kg, AWD) | 3.49 | 4.01 | 3.69 | 3.87 | 3.96 | 3.73 | 3.7 s (Gallardo LP560-4) |
+| `v12` (544 kW, 1650 kg, AWD) | 3.32 | 4.00 | 3.52 | 3.79 | 3.94 | 3.63 | 2.9 s (Aventador LP700-4) |
+| `diesel_four` (114 kW, 1950 kg, front) | 12.94 | 12.70 | 12.68 | 12.73 | 13.87 | 12.01 | 11 to 12.5 s (Transporter 2.0 TDI) |
+| `electric` (190 kW, 1800 kg, rear) | 7.74 | 7.74 | 7.74 | 7.74 | — | — | 6.1 s (Model 3 RWD) |
+| `retro_coupe` (101 kW, 1150 kg, rear) | 8.75 | 9.75 | 9.11 | 9.36 | 9.64 | 8.98 | 8.3 s (325i E30, 125 kW) |
+| `v8_supercharged` (394 kW, 1850 kg, rear) | 6.99 | 8.71 | 6.28 | 6.72 | 8.47 | 6.25 | 4.0 to 4.3 s (Camaro ZL1, CTS-V) |
+| `carb_twin_cam` (90 kW, 1040 kg, rear) | 8.65 | 9.35 | 9.06 | 9.13 | 9.14 | 8.85 | ≈ 9 s (Alfa Romeo 2000 GTV) |
+| `twin_rotor_13` (167 kW, 1300 kg, rear) | 7.13 | 7.68 | 7.07 | 7.20 | 7.55 | 6.83 | 6.4 s (RX-8 231 PS) |
+| `vr6_golf` (110 kW, 1285 kg, front) | 9.06 | 9.56 | 9.09 | 9.43 | 9.50 | 9.03 | 7.8 s (Golf III VR6) |
+| `w12_continental` (406 kW, 2385 kg, AWD) | 5.38 | 5.39 | 5.39 | 5.39 | 5.32 | 4.93 | 4.8 s (Continental GT 2003) |
+| `w16_hypercar` (671 kW, 1888 kg, AWD) | 3.61 | 4.16 | 3.66 | 3.84 | 4.02 | 3.49 | 2.5 s (Veyron 16.4) |
+| `v16_cadillac` (138 kW, 2400 kg, rear) | 12.37 | 12.88 | 12.48 | 12.60 | 15.27 | 12.41 | — |
+| `two_stroke_triple` (20 kW, 813 kg, front) | 33.26 | 33.21 | 33.21 | 33.21 | 33.00 | 33.00 | 25.6 s to 97 km/h (Saab 96, 28 kW) |
+
+What it shows:
+- **Without slip control**, rear-wheel drives spin past the peak and lose from 0.5 s (`twin_rotor_13`) to 2.4 s (`v8_cross_plane`); front-wheel drives, 0.1 to 0.5 s; the turbo all-wheel drives, nothing, and the most powerful ones (V10, V12, W16) 0.5 to 0.7 s. Launch control without slip control spins harder still on torquey engines (`five_cyl_turbo`, `diesel_four`, `v16_cadillac`).
+- **With slip control**, sport is never slower than off (up to 2.4 s better), nor than full, within 0.02 s (`v6_gt`); where the wheels do not spin (the turbo all-wheel drives, the electric car), nothing changes. The best start (sport and launch) gets back to the former figure within 0.4 s (`flat_six`), and beats it on 15 presets out of 23.
+- **Against the published cars**, the model stays slow on the most powerful ones (V12, W16, supercharged V8: one grip, stock tyres, no torque split between the axles), and on the electric car, whose motor does not spin its wheels and which slip control therefore does not change: its gap comes from its torque curve, not from the tyre. Nothing was tuned to close in on them.
+
+### The cold start
+
+**What stalled.** After a cold start, the model set running at idle (built with the engine turning: that is how journeys, tests and the site, when it changes mode, begin) stalled within a second: every port-injected engine at −20 °C, the Cadillac from 0 °C. With the starter, every preset already held its idle at −30 °C. Neither cold-oil friction, nor the advance, nor the idle valve's authority were the cause: the set engine's manifold started empty, and the port-injection fuel film (Aquino's x-τ, see "Injection") settled at the equilibrium of that zero flow. The idle control opened up, the cold wall drank half the fuel while it wetted (richness 0.49 to 0.52, 10 to 17 % of the torque), and friction won. With the starter, on the contrary, the film settles when the engine catches (`catching_`), at its real flow.
+
+**The fix.** With a cold engine, the model set at idle starts with what a settled idle has in its manifold: the air that balances its friction, cold oil included, `friction / indicated torque` at idle, the same balance as the idle control. The film and the carburetor then settle on a real flow. Started warm, the manifold starts empty, as originally, bit for bit: a dip of about a hundred rpm in the first tenth, harmless. Nothing of the cold physics was touched: friction, enrichment, film and fast idle are those of the thermal and injection topics.
+
+| Set at idle, then 10 s in neutral and 5 s at 30 % pedal | Before | After |
+|---|---|---|
+| Port-injected engines, −20 °C | stall within 0.34 to 0.72 s | idle never below 970 rpm |
+| Cadillac, 0 °C; −30 °C | stalls within 1.3 s; within 0.4 s | 1009 rpm; 1121 rpm at the lowest |
+| Every preset, −30 °C, set or with the starter | the Cadillac and the two-stroke stalled when set | none stalls |
+
+The test (`cold_start_test.cpp`) starts every preset at −20 °C, with the starter and set, holds 10 s of idle above 95 % of the warm idle, then sets off without stalling; a second one, at −30 °C, set. Counter-check: without the fix, the first fails on the 19 set port-injected presets, and the second on 20; without the enrichment of an engine catching (`catching_`), the first fails with the starter on the diesel, the Cadillac, the W12 and the W16. The `blips_cold_carb` fingerprint (carburetors at −10 °C, set) changes, the only one of its kind.
+
+### The tip-in (`--scenario tipin`)
+
+This measuring journey shifted gears on engine speed, while the clutch was still slipping at the start: second went in around 3 km/h, third around 2.5 km/h, and with `--advance 6` the engine stalled ("Tip-in from 0 rpm"). It now reads the speed the next gear would impose at the car's speed, as a speedometer does: neither the engine, which turns faster than the car rolls while the clutch slips, nor the wheels, which can spin. `hot_hatch_na` from 1500 rpm: 145.1 Nm over the first second with `--advance 6`, 142.5 without (143.7 before, second gear lugging at 870 rpm); the single carburetor's dip stays at 23 % (81.4 Nm). A `ctest` test (`tipin_advance`) holds it.
+
+### The fingerprints
+
+The tyre changes every fingerprint where the car moves: each is explained in `CMakeLists.txt`, with the measured gap (speed at the end of the journey, peak slip). Those where it stays still do not move: held speed, neutral blips, starts, idles. `blips_cold_carb` changes through the cold-start fix.
+
+### What is missing
+
+- One dry grip; no rain, snow, or sport tyre. The two wheels of an axle, and the four of an all-wheel drive, are a single wheel: no differential, no torque split.
+- The coefficients are quoted from memory; the published full-slide grip ranges from 0.65 to 0.88 of the peak depending on the source, and rear-wheel drives' 0-100 without slip control depends directly on it.
+- The autopilot and the spec sheet do not lift off when the wheels spin: without slip control, they keep the foot to the floor.
+- **Some tests changed conditions, not thresholds.** Five checked a claim that assumed unlimited grip: mass decides the 0-100 (`powertrain_test`), Sport is never slower than Eco (`shift_modes_test`), nitrous gains 0.5 s (`charge_air_test`), the light retro body beats the compact (`retro_body_test`), a blown carburetor's film (`jonctions_test`). Without slip control the peaked tyre contradicts them for a physical reason (the car spins); they are now measured with sport slip control, thresholds unchanged. Two gearbox tests also changed their measurement: the driveline oscillation is read at its spectral peak, no longer by counting zero crossings, which the slow drift skewed once the oscillation had died out (3.45 Hz in second for 3.56 expected, 1.66 with the former count); the "under load" gear waits for the clutch to be closed. To be checked in review.
+- Listening remains to be done: the tyre squeal follows the slip in m/s, now louder and longer on rear-wheel drives without slip control (`--preset v8_cross_plane --scenario launch`, then `--traction sport`), and the set cold start (`--preset city_14 --start cold --ambient -20 --scenario lap --seconds 30`).

@@ -46,4 +46,21 @@ inline double exp(double x) {
 
 inline double pow(double x, double y) { return exp(y * log(x)); }
 
+/** Arc tangente : réduite sous 1, puis sous tan(π/12) par atan(a) = π/6 + atan((a√3 − 1)/(a + √3)), puis la série. */
+inline double atan(double x) {
+    constexpr double kSqrt3 = 1.7320508075688772;
+    constexpr double kTanPi12 = 0.2679491924311227;
+    const bool negative = x < 0.0;
+    double a = negative ? -x : x;
+    const bool inverted = a > 1.0;
+    if (inverted) a = 1.0 / a;
+    const bool shifted = a > kTanPi12;
+    if (shifted) a = (a * kSqrt3 - 1.0) / (a + kSqrt3);
+    const double s = a * a;
+    double r = a * (1.0 + s * (-1.0 / 3.0 + s * (1.0 / 5.0 + s * (-1.0 / 7.0 + s * (1.0 / 9.0 + s * (-1.0 / 11.0 + s * (1.0 / 13.0 + s * (-1.0 / 15.0 + s * (1.0 / 17.0 + s * (-1.0 / 19.0 + s * (1.0 / 21.0 + s * (-1.0 / 23.0 + s * (1.0 / 25.0)))))))))))));
+    if (shifted) r += kPi / 6.0;
+    if (inverted) r = kPi / 2.0 - r;
+    return negative ? -r : r;
+}
+
 }  // namespace revforge::portable

@@ -163,6 +163,9 @@ TEST_CASE("jonction carburateur et suralimentation : une seule perte, la même p
         Powertrain p = findPreset("v8_supercharged")->powertrain();
         p.engine.aspiration = aspiration;
         p.engine.fuelSystem = system;
+        // À adhérence tenue : sans antipatinage, cette propulsion de 767 Nm patine au-delà du sommet du pneu, et le film à
+        // 4000 tr/min dirait la dynamique du patinage plutôt que la densité au col.
+        p.engine.tractionControl = TractionControl::Sport;
         return p;
     };
     for (const FuelSystem system : {FuelSystem::Carburetor, FuelSystem::MultiCarb}) {

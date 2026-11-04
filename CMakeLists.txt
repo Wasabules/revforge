@@ -59,6 +59,7 @@ add_library(revforge_core STATIC
   core/src/boost_control.cpp
   core/src/charge_air.cpp
   core/src/two_stroke.cpp
+  core/src/tyre.cpp
   ${GENERATED_DIR}/presets_data.inc
 )
 target_include_directories(revforge_core PUBLIC core/include PRIVATE core/src ${GENERATED_DIR})
@@ -84,12 +85,16 @@ else()
   target_link_libraries(revforge-render PRIVATE revforge_core)
 
   enable_testing()
-  add_executable(revforge_tests tests/main.cpp tests/engine_sound_test.cpp tests/engine_config_test.cpp tests/driving_model_test.cpp tests/powertrain_test.cpp tests/gearbox_test.cpp tests/acoustics_test.cpp tests/starter_test.cpp tests/shift_modes_test.cpp tests/turbo_test.cpp tests/consumption_test.cpp tests/retro_body_test.cpp tests/air_filter_test.cpp tests/turbo_pipe_test.cpp tests/anti_lag_test.cpp tests/valvetrain_test.cpp tests/supercharger_test.cpp tests/carburetor_test.cpp tests/rotary_test.cpp tests/jonctions_test.cpp tests/architecture_test.cpp tests/atmosphere_test.cpp tests/thermal_test.cpp tests/combustion_test.cpp tests/ecu_test.cpp tests/injection_test.cpp tests/cam_test.cpp tests/valve_float_test.cpp tests/boost_control_test.cpp tests/twin_turbo_test.cpp tests/charge_air_test.cpp tests/two_stroke_test.cpp)
+  add_executable(revforge_tests tests/main.cpp tests/engine_sound_test.cpp tests/engine_config_test.cpp tests/driving_model_test.cpp tests/powertrain_test.cpp tests/gearbox_test.cpp tests/acoustics_test.cpp tests/starter_test.cpp tests/shift_modes_test.cpp tests/turbo_test.cpp tests/consumption_test.cpp tests/retro_body_test.cpp tests/air_filter_test.cpp tests/turbo_pipe_test.cpp tests/anti_lag_test.cpp tests/valvetrain_test.cpp tests/supercharger_test.cpp tests/carburetor_test.cpp tests/rotary_test.cpp tests/jonctions_test.cpp tests/architecture_test.cpp tests/atmosphere_test.cpp tests/thermal_test.cpp tests/combustion_test.cpp tests/ecu_test.cpp tests/injection_test.cpp tests/cam_test.cpp tests/valve_float_test.cpp tests/boost_control_test.cpp tests/twin_turbo_test.cpp tests/charge_air_test.cpp tests/two_stroke_test.cpp tests/tyre_test.cpp tests/cold_start_test.cpp)
   target_include_directories(revforge_tests PRIVATE tests/vendor core/src)
   target_link_libraries(revforge_tests PRIVATE revforge_core)
   # Avertissement d'un en-tête de la bibliothèque standard inclus par doctest.
   target_compile_options(revforge_tests PRIVATE $<$<CXX_COMPILER_ID:Clang>:-Wno-\#warnings> $<$<CXX_COMPILER_ID:GNU>:-Wno-cpp>)
   add_test(NAME revforge_tests COMMAND revforge_tests)
+  # La reprise de la CLI : elle passait la troisième pendant que l'embrayage patinait encore au départ, et le moteur calait
+  # (« Tip-in from 0 rpm ») avec --advance 6. Elle lit maintenant la vitesse de la voiture : le moteur tient ses 1500 tr/min.
+  add_test(NAME tipin_advance COMMAND revforge-render --out none --preset hot_hatch_na --scenario tipin --rpm 1500 --advance 6)
+  set_tests_properties(tipin_advance PROPERTIES PASS_REGULAR_EXPRESSION "Tip-in from 1[45][0-9][0-9] rpm")
 
   # Empreintes du rendu 16 bits : changer le son doit être un choix, et se voit ici.
   # L'empreinte commence une ligne, pas forcément la sortie : un avertissement sur stderr peut la précéder (sous Linux, il passe avant).
@@ -98,14 +103,19 @@ else()
     set_tests_properties(golden_${name} PROPERTIES PASS_REGULAR_EXPRESSION "(^|\n)${hash}")
   endfunction()
   golden(steady_city 05db5790 --preset city_14 --scenario steady --rpm 5000)
-  golden(launch_v8 078d8bf0 --cylinders 8 --layout cross_plane --cc 7000 --bore 99 --redline 6000 --exhaust sport --body coupe --mass 1700 --rim 19 --drive rear --scenario launch)
+  # Finitions, pneu à sommet : sans antipatinage, la propulsion de 7 L patine au-delà du sommet en première et en deuxième : 078d8bf0 -> 4fc85653. Vitesse en fin de trajet 208,3 -> 195,0 km/h, au plus haut 208,8 -> 195,0 ; glissement maximal 14,32 -> 20,50 m/s ; régime moyen 4437 -> 4221 tr/min.
+  golden(launch_v8 4fc85653 --cylinders 8 --layout cross_plane --cc 7000 --bore 99 --redline 6000 --exhaust sport --body coupe --mass 1700 --rim 19 --drive rear --scenario launch)
   golden(start_v8 c25701f7 --preset v8_cross_plane --scenario start)
   golden(blips_stock e34a6e54 --cylinders 4 --cc 2000 --bore 86 --redline 7200 --pops strong --exhaust stock --scenario blips)
   golden(blips_straight ff222b09 --cylinders 4 --cc 2000 --bore 86 --redline 7200 --pops strong --exhaust straight --scenario blips)
-  golden(lap_v10 00779fce --preset v10_open --scenario lap)
-  golden(lap_boxer_turbo 555e6153 --preset boxer_four_turbo --scenario lap)
-  golden(lap_diesel 524d49e4 --preset diesel_four --scenario lap)
-  golden(lap_electric 9542ce3b --preset electric --scenario lap)
+  # Finitions, pneu à sommet : 00779fce -> 4099e508. Vitesse en fin de trajet 111,8 -> 111,8 km/h, au plus haut 112,8 -> 112,2 ; glissement maximal 12,09 -> 25,35 m/s ; régime moyen 2841 -> 2819 tr/min.
+  golden(lap_v10 4099e508 --preset v10_open --scenario lap)
+  # Finitions, pneu à sommet : 555e6153 -> e89e3c84. Vitesse en fin de trajet 113,1 -> 113,1 km/h, au plus haut 113,1 -> 113,1 ; glissement maximal 1,60 -> 0,72 m/s ; régime moyen 2357 -> 2355 tr/min.
+  golden(lap_boxer_turbo e89e3c84 --preset boxer_four_turbo --scenario lap)
+  # Finitions, pneu à sommet : 524d49e4 -> c5771b90. Vitesse en fin de trajet 113,2 -> 113,3 km/h, au plus haut 113,2 -> 113,3 ; glissement maximal 2,94 -> 1,67 m/s ; régime moyen 2200 -> 2204 tr/min.
+  golden(lap_diesel c5771b90 --preset diesel_four --scenario lap)
+  # Finitions, pneu à sommet : 9542ce3b -> 5cfa8cab. Vitesse en fin de trajet 111,9 -> 111,9 km/h, au plus haut 111,9 -> 111,9 ; glissement maximal 1,03 -> 0,99 m/s ; régime moyen 3072 -> 3058 tr/min.
+  golden(lap_electric 5cfa8cab --preset electric --scenario lap)
   # `--stroke` ne fait que calculer `--cc` : mêmes empreintes que la cylindrée écrite en entier, quel que soit l'ordre.
   golden(stroke_cc 56bd11c4 --cylinders 4 --bore 96 --cc 1999 --redline 6800 --scenario steady --seconds 1)
   golden(stroke_args 56bd11c4 --stroke 69.05 --redline 6800 --bore 96 --cylinders 4 --cc 3000 --scenario steady --seconds 1)
@@ -113,25 +123,39 @@ else()
   golden(stroke_preset 7f3a02ce --preset v10_open --stroke 95 --scenario steady --seconds 1)
   golden(stroke_preset_bore 7f3a02ce --preset v10_open --stroke 95 --bore 70 --cylinders 4 --scenario steady --seconds 1)
   # Le rotatif : son calage, ses rangs, et le débit de deux fois sa cylindrée.
-  golden(lap_twin_rotor 5174c427 --preset twin_rotor_13 --scenario lap --seconds 20)
+  # Finitions, pneu à sommet : 5174c427 -> 4c5904b0. Vitesse en fin de trajet 49,2 -> 49,2 km/h, au plus haut 49,2 -> 49,2 ; glissement maximal 4,81 -> 6,12 m/s ; régime moyen 2651 -> 3006 tr/min.
+  golden(lap_twin_rotor 4c5904b0 --preset twin_rotor_13 --scenario lap --seconds 20)
   # Un rotatif n'a pas de course : l'option ne change rien, même empreinte que sans elle.
-  golden(lap_twin_rotor_stroke 5174c427 --preset twin_rotor_13 --scenario lap --seconds 20 --stroke 95)
+  # Finitions, pneu à sommet : 5174c427 -> 4c5904b0. Vitesse en fin de trajet 49,2 -> 49,2 km/h, au plus haut 49,2 -> 49,2 ; glissement maximal 4,81 -> 6,12 m/s ; régime moyen 2651 -> 3006 tr/min.
+  golden(lap_twin_rotor_stroke 4c5904b0 --preset twin_rotor_13 --scenario lap --seconds 20 --stroke 95)
   golden(steady_three_rotor_turbo a454f216 --layout rotary --cylinders 3 --cc 1962 --redline 8000 --exhaust sport --aspiration turbo --boost 0.8 --scenario steady --rpm 5000)
   # Les trajets et les modes de boîte : un moteur sans turbo, sur 40 s.
-  golden(drive_stop_go_eco 40a3403c --preset inline_six --scenario lap --seconds 40 --drive-scenario stop_go --shift-mode eco)
-  golden(drive_country_sport 3bd2f6e2 --preset inline_six --scenario lap --seconds 40 --drive-scenario country --shift-mode sport)
-  golden(drive_motorway_normal 9b590593 --preset inline_six --scenario lap --seconds 40 --drive-scenario motorway --shift-mode normal)
-  golden(drive_mountain_sport b582784f --preset inline_six --scenario lap --seconds 40 --drive-scenario mountain --shift-mode sport)
-  golden(drive_drag_track c3666b07 --preset inline_six --scenario lap --seconds 40 --drive-scenario drag --shift-mode track)
-  golden(drive_track_track 35997d21 --preset inline_six --scenario lap --seconds 40 --drive-scenario track --shift-mode track)
-  golden(drive_hill_start_eco 67cec9e3 --preset inline_six --scenario lap --seconds 40 --drive-scenario hill_start --shift-mode eco)
-  golden(drive_towing_normal f7acef8f --preset inline_six --scenario lap --seconds 40 --drive-scenario towing --shift-mode normal)
+  # Finitions, pneu à sommet, et la logique de passage ne monte plus de rapport tant que les roues patinent au-delà du sommet : 40a3403c -> 399081b9. Vitesse en fin de trajet 0,0 -> 0,0 km/h, au plus haut 28,4 -> 28,6 ; glissement maximal 1,94 -> 0,23 m/s ; régime moyen 1100 -> 1104 tr/min.
+  golden(drive_stop_go_eco 399081b9 --preset inline_six --scenario lap --seconds 40 --drive-scenario stop_go --shift-mode eco)
+  # Finitions, pneu à sommet, et la logique de passage ne monte plus de rapport tant que les roues patinent au-delà du sommet : 3bd2f6e2 -> 1096373d. Vitesse en fin de trajet 86,0 -> 86,0 km/h, au plus haut 89,9 -> 89,9 ; glissement maximal 4,50 -> 10,63 m/s ; régime moyen 4152 -> 4151 tr/min.
+  golden(drive_country_sport 1096373d --preset inline_six --scenario lap --seconds 40 --drive-scenario country --shift-mode sport)
+  # Finitions, pneu à sommet, et la logique de passage ne monte plus de rapport tant que les roues patinent au-delà du sommet : 9b590593 -> e1ba076a. Vitesse en fin de trajet 130,6 -> 130,6 km/h, au plus haut 130,6 -> 130,6 ; glissement maximal 10,48 -> 13,53 m/s ; régime moyen 3823 -> 3779 tr/min.
+  golden(drive_motorway_normal e1ba076a --preset inline_six --scenario lap --seconds 40 --drive-scenario motorway --shift-mode normal)
+  # Finitions, pneu à sommet, et la logique de passage ne monte plus de rapport tant que les roues patinent au-delà du sommet : b582784f -> 9031844e. Vitesse en fin de trajet 50,0 -> 49,9 km/h, au plus haut 70,4 -> 70,4 ; glissement maximal 6,50 -> 12,95 m/s ; régime moyen 3773 -> 3682 tr/min.
+  golden(drive_mountain_sport 9031844e --preset inline_six --scenario lap --seconds 40 --drive-scenario mountain --shift-mode sport)
+  # Finitions, pneu à sommet, et la logique de passage ne monte plus de rapport tant que les roues patinent au-delà du sommet : c3666b07 -> c0d7084c. Vitesse en fin de trajet 40,1 -> 40,8 km/h, au plus haut 180,5 -> 174,6 ; glissement maximal 12,73 -> 17,32 m/s ; régime moyen 4392 -> 4537 tr/min.
+  golden(drive_drag_track c0d7084c --preset inline_six --scenario lap --seconds 40 --drive-scenario drag --shift-mode track)
+  # Finitions, pneu à sommet, et la logique de passage ne monte plus de rapport tant que les roues patinent au-delà du sommet : 35997d21 -> 735199fd. Vitesse en fin de trajet 82,1 -> 81,9 km/h, au plus haut 149,9 -> 148,3 ; glissement maximal 12,72 -> 16,73 m/s ; régime moyen 5480 -> 5664 tr/min.
+  golden(drive_track_track 735199fd --preset inline_six --scenario lap --seconds 40 --drive-scenario track --shift-mode track)
+  # Finitions, pneu à sommet, et la logique de passage ne monte plus de rapport tant que les roues patinent au-delà du sommet : 67cec9e3 -> f6a09301. Vitesse en fin de trajet 0,0 -> 0,0 km/h, au plus haut 36,7 -> 36,7 ; glissement maximal 7,94 -> 14,90 m/s ; régime moyen 1478 -> 1809 tr/min.
+  golden(drive_hill_start_eco f6a09301 --preset inline_six --scenario lap --seconds 40 --drive-scenario hill_start --shift-mode eco)
+  # Finitions, pneu à sommet, et la logique de passage ne monte plus de rapport tant que les roues patinent au-delà du sommet : f7acef8f -> b7e5105f. Vitesse en fin de trajet 91,1 -> 91,1 km/h, au plus haut 91,1 -> 91,1 ; glissement maximal 14,46 -> 22,83 m/s ; régime moyen 3057 -> 3156 tr/min.
+  golden(drive_towing_normal b7e5105f --preset inline_six --scenario lap --seconds 40 --drive-scenario towing --shift-mode normal)
   # La carrosserie des années 80, sur un moteur aux réglages neutres : sa ligne, son plan et sa caisse.
-  golden(lap_retro fe72a187 --cylinders 6 --cc 2500 --bore 84 --redline 6400 --exhaust stock --body retro --mass 1150 --rim 14 --drive rear --insulation light --scenario lap)
-  golden(turbo_pipe_long a0889b48 --preset hot_hatch_turbo --scenario turbo --turbo-pipe 2500)
-  golden(turbo_pipe_short 3898802e --preset hot_hatch_turbo --scenario turbo --turbo-pipe 150)
+  # Finitions, pneu à sommet : fe72a187 -> d1e123b0. Vitesse en fin de trajet 112,4 -> 112,4 km/h, au plus haut 112,4 -> 112,4 ; glissement maximal 5,67 -> 9,44 m/s ; régime moyen 2566 -> 2518 tr/min.
+  golden(lap_retro d1e123b0 --cylinders 6 --cc 2500 --bore 84 --redline 6400 --exhaust stock --body retro --mass 1150 --rim 14 --drive rear --insulation light --scenario lap)
+  # Finitions, pneu à sommet : a0889b48 -> b3e0341c. Vitesse en fin de trajet 121,9 -> 121,4 km/h, au plus haut 125,8 -> 125,6 ; glissement maximal 0,50 -> 0,49 m/s ; régime moyen 2587 -> 2588 tr/min.
+  golden(turbo_pipe_long b3e0341c --preset hot_hatch_turbo --scenario turbo --turbo-pipe 2500)
+  # Finitions, pneu à sommet : 3898802e -> 173fdbb6. Vitesse en fin de trajet 82,5 -> 81,4 km/h, au plus haut 126,2 -> 125,7 ; glissement maximal 0,50 -> 0,49 m/s ; régime moyen 2816 -> 2812 tr/min.
+  golden(turbo_pipe_short 173fdbb6 --preset hot_hatch_turbo --scenario turbo --turbo-pipe 150)
   golden(carb_multi 463a064f --preset carb_twin_cam --scenario blips)
-  golden(carb_single 4d1f365e --preset hot_hatch_na --carb single --scenario launch --seconds 10)
+  # Finitions, pneu à sommet : 4d1f365e -> d5f214bd. Vitesse en fin de trajet 97,1 -> 93,6 km/h, au plus haut 97,1 -> 93,6 ; glissement maximal 8,46 -> 10,53 m/s ; régime moyen 4595 -> 4767 tr/min.
+  golden(carb_single d5f214bd --preset hot_hatch_na --carb single --scenario launch --seconds 10)
   # Les architectures : un VR6 (une culasse), un W16 et un V14 en deux lignes (culasses, intervalles inégaux), un W12 au démarreur.
   golden(steady_vr6 dc6c1925 --preset vr6_golf --scenario steady --rpm 4000 --seconds 2)
   golden(steady_w16 ff905d02 --cylinders 16 --layout w --cc 7993 --bore 86 --redline 6400 --exhaust sport --routing dual --scenario steady --rpm 4000 --seconds 2)
@@ -142,67 +166,95 @@ else()
   golden(layout_preset 14b15d69 --preset v12 --layout w --scenario steady --seconds 1)
   golden(layout_explicit 14b15d69 --cylinders 12 --layout w --cc 6496 --bore 94 --redline 8900 --exhaust no_muffler --routing dual --body supercar --mass 1650 --rim 21 --drive all --placement mid --insulation light --gearbox dual_clutch --scenario steady --seconds 1)
   # L'air du jour : un turbo à 3000 m, une citadine par grand froid, un carburateur qui s'enrichit en altitude, l'électrique.
-  golden(altitude_turbo 31d03535 --preset hot_hatch_turbo --scenario turbo --altitude 3000)
-  golden(ambient_cold_lap 054e6de4 --preset city_14 --scenario lap --seconds 20 --ambient -20)
+  # Finitions, pneu à sommet : 31d03535 -> 61d130a2. Vitesse en fin de trajet 124,1 -> 123,1 km/h, au plus haut 124,4 -> 123,9 ; glissement maximal 0,31 -> 0,40 m/s ; régime moyen 2535 -> 2541 tr/min.
+  golden(altitude_turbo 61d130a2 --preset hot_hatch_turbo --scenario turbo --altitude 3000)
+  # Finitions, pneu à sommet : 054e6de4 -> 5d76f051. Vitesse en fin de trajet 50,0 -> 50,0 km/h, au plus haut 50,0 -> 50,0 ; glissement maximal 2,23 -> 0,20 m/s ; régime moyen 1939 -> 1936 tr/min.
+  golden(ambient_cold_lap 5d76f051 --preset city_14 --scenario lap --seconds 20 --ambient -20)
   golden(altitude_carb d84f8e06 --preset carb_twin_cam --scenario blips --altitude 2500)
-  golden(ambient_electric d0299648 --preset electric --scenario lap --seconds 20 --ambient 45 --altitude 1500)
+  # Finitions, pneu à sommet : d0299648 -> f923ce33. Vitesse en fin de trajet 50,0 -> 50,0 km/h, au plus haut 50,0 -> 50,0 ; glissement maximal 0,47 -> 0,26 m/s ; régime moyen 1717 -> 1695 tr/min.
+  golden(ambient_electric f923ce33 --preset electric --scenario lap --seconds 20 --ambient 45 --altitude 1500)
   # Départ à froid : ralenti accéléré, frottements de l'huile froide ; et le starter d'un carburateur par -10 °C.
   # Intégration : b3a7b95a -> 25dc320d. Après un départ à froid, le film de l'injection indirecte lit l'eau du réseau thermique, et la paroi froide réchauffe moins l'air piégé.
   golden(start_cold_city 25dc320d --preset city_14 --start cold --scenario start --seconds 8)
   # Intégration : par -10 °C, l'air est aussi plus dense (atmosphère) ; avec l'air de référence, l'empreinte redevient d3a95f44.
   # Intégration : fdd3932c -> 558e94b7. Après un départ à froid, la paroi froide réchauffe moins l'air piégé (thermique et atmosphère),
   # et le ralenti accéléré garde l'autorité du démarrage (0,8 du remplissage), et non 0,45 comme moteur chaud.
-  golden(blips_cold_carb 558e94b7 --preset carb_twin_cam --start cold --ambient -10 --scenario blips --seconds 8)
+  # Finitions, départ à froid : 558e94b7 -> bce8cfa8. Moteur froid, le modèle posé au ralenti part avec son collecteur au remplissage du ralenti, et non vide (régime moyen 2486 -> 2507 tr/min) ; la voiture ne roule pas.
+  golden(blips_cold_carb bce8cfa8 --preset carb_twin_cam --start cold --ambient -10 --scenario blips --seconds 8)
   # La combustion : des carburateurs à 12:1 qui cliquettent sans capteur, l'E85 sur un turbo, un diesel moins comprimé au démarrage, un rotor plus creusé.
   # Intégration : cd653d6e -> 854924ae. La vaporisation prend à l'air la part d'un carburateur (0,5, injection), non plus 0,15 pour toute alimentation.
-  golden(knock_carb 854924ae --preset carb_twin_cam --compression 12 --scenario turbo --seconds 16)
+  # Finitions, pneu à sommet : 854924ae -> 737c830d. Vitesse en fin de trajet 77,4 -> 78,4 km/h, au plus haut 77,4 -> 78,4 ; glissement maximal 2,32 -> 0,51 m/s ; régime moyen 2296 -> 2305 tr/min.
+  golden(knock_carb 737c830d --preset carb_twin_cam --compression 12 --scenario turbo --seconds 16)
   # Intégration : 8c6eee0c -> 98ff3f12. La vaporisation prend à l'air la part d'une injection indirecte (0,2, injection), non plus 0,15.
-  golden(compression_e85_turbo 98ff3f12 --preset hot_hatch_turbo --compression 10.5 --grade e85 --scenario launch --seconds 6)
+  # Finitions, pneu à sommet : 98ff3f12 -> a568d2fb. Vitesse en fin de trajet 83,8 -> 84,5 km/h, au plus haut 83,8 -> 84,5 ; glissement maximal 1,46 -> 0,62 m/s ; régime moyen 3183 -> 3171 tr/min.
+  golden(compression_e85_turbo a568d2fb --preset hot_hatch_turbo --compression 10.5 --grade e85 --scenario launch --seconds 6)
   golden(compression_diesel_start a48c481b --preset diesel_four --compression 15 --scenario start)
-  golden(compression_rotary f21ca74c --preset twin_rotor_13 --compression 11 --scenario lap --seconds 10)
+  # Finitions, pneu à sommet : f21ca74c -> ded4c397. Vitesse en fin de trajet 48,1 -> 48,3 km/h, au plus haut 49,0 -> 48,3 ; glissement maximal 4,86 -> 6,51 m/s ; régime moyen 2148 -> 2572 tr/min.
+  golden(compression_rotary ded4c397 --preset twin_rotor_13 --compression 11 --scenario lap --seconds 10)
   # Le calculateur, actif : la coupure d'allumage et ses détonations, le rupteur progressif avec une carte réglée, le
   # launch control au frein (le 0-100 s'écrit avant l'empreinte), le passage à fond, l'antipatinage.
   golden(ecu_ignition_cut 2af90e2c --cylinders 4 --cc 2000 --bore 86 --redline 7200 --pops strong --exhaust sport --limiter ignition_cut --scenario blips)
   # Intégration : 99069727 -> 6b783b4b. La part de couple de l'avance passe par la carte du cliquetis, qui part de la carte d'origine réelle ; le calculateur garde carburant et chaleur.
   golden(ecu_soft_map 6b783b4b --cylinders 4 --cc 2000 --bore 86 --redline 7200 --exhaust sport --limiter soft --advance 6 --lambda 0.95 --scenario blips)
-  golden(ecu_launch_control 7fd42b07 --preset hot_hatch_turbo --launch 4500 --scenario launch_control)
-  golden(ecu_flat_shift 7d3dc773 --preset hot_hatch_turbo --flat-shift 1 --scenario launch --seconds 12)
-  golden(ecu_traction 0bc683ee --cylinders 8 --layout cross_plane --cc 7000 --bore 99 --redline 6000 --exhaust sport --body coupe --mass 1700 --rim 19 --drive rear --traction sport --scenario launch --seconds 10)
+  # Finitions, pneu à sommet, et le robot du départ ne serre plus que le couple annoncé par le moteur : 7fd42b07 -> 3b1e682a. Vitesse en fin de trajet 151,2 -> 150,5 km/h, au plus haut 151,2 -> 150,5 ; glissement maximal 8,02 -> 9,36 m/s ; régime moyen 4591 -> 4682 tr/min.
+  golden(ecu_launch_control 3b1e682a --preset hot_hatch_turbo --launch 4500 --scenario launch_control)
+  # Finitions, pneu à sommet : 7d3dc773 -> dabffb84. Vitesse en fin de trajet 139,8 -> 139,7 km/h, au plus haut 139,8 -> 139,7 ; glissement maximal 1,16 -> 0,63 m/s ; régime moyen 4242 -> 4230 tr/min.
+  golden(ecu_flat_shift dabffb84 --preset hot_hatch_turbo --flat-shift 1 --scenario launch --seconds 12)
+  # Finitions, pneu à sommet, l'antipatinage vise un glissement κ (le sommet en sport) avec des gains placés sur la transmission : 0bc683ee -> ab878efe. Vitesse en fin de trajet 128,7 -> 127,8 km/h, au plus haut 128,7 -> 127,8 ; glissement maximal 11,69 -> 5,80 m/s ; régime moyen 3726 -> 3688 tr/min.
+  golden(ecu_traction ab878efe --cylinders 8 --layout cross_plane --cc 7000 --bore 99 --redline 6000 --exhaust sport --body coupe --mass 1700 --rim 19 --drive rear --traction sport --scenario launch --seconds 10)
   # L'injection : le tic d'une injection directe (sous le capot, au ralenti), la rampe commune, la recirculation et le filtre.
   # Intégration : 19ac1ec5 -> 038cacdf. La chaleur latente vient du carburant (350 kJ/kg, combustion), et la carte du cliquetis lit le refroidissement de l'injection directe.
   golden(injection_direct_blips 038cacdf --preset hot_hatch_na --fuel-system direct --scenario blips)
   # Intégration : 29fbf825 -> be119bb8. La chaleur latente vient du carburant (350 kJ/kg, combustion), et la carte du cliquetis lit le refroidissement de l'injection directe.
   golden(injection_direct_bay be119bb8 --preset hot_hatch_na --fuel-system direct --scenario idle --seconds 4 --listener bay)
-  golden(injection_common_rail 4781fcd4 --preset diesel_four --diesel-injection common_rail --scenario lap --seconds 20)
-  golden(injection_diesel_egr_dpf 089dcc16 --preset diesel_four --egr 1 --dpf 1 --scenario lap --seconds 20)
-  golden(injection_petrol_egr db5318c3 --preset city_14 --egr 1 --scenario lap --seconds 20)
+  # Finitions, pneu à sommet : 4781fcd4 -> 7c496c84. Vitesse en fin de trajet 50,0 -> 50,0 km/h, au plus haut 50,0 -> 50,0 ; glissement maximal 0,81 -> 0,37 m/s ; régime moyen 1881 -> 1880 tr/min.
+  golden(injection_common_rail 7c496c84 --preset diesel_four --diesel-injection common_rail --scenario lap --seconds 20)
+  # Finitions, pneu à sommet : 089dcc16 -> 1add563c. Vitesse en fin de trajet 49,9 -> 49,9 km/h, au plus haut 49,9 -> 49,9 ; glissement maximal 0,74 -> 0,32 m/s ; régime moyen 1902 -> 1897 tr/min.
+  golden(injection_diesel_egr_dpf 1add563c --preset diesel_four --egr 1 --dpf 1 --scenario lap --seconds 20)
+  # Finitions, pneu à sommet : db5318c3 -> d7df350e. Vitesse en fin de trajet 50,0 -> 50,0 km/h, au plus haut 50,0 -> 50,0 ; glissement maximal 1,91 -> 0,19 m/s ; régime moyen 1950 -> 1946 tr/min.
+  golden(injection_petrol_egr d7df350e --preset city_14 --egr 1 --scenario lap --seconds 20)
   # La came : ralenti d'une came pointue, bascule de deux profils, déphaseur sur un tour.
   golden(cam_race_idle 84564533 --preset hot_hatch_na --scenario idle --seconds 6 --cam-duration 300 --cam-lift 13 --lsa 104)
-  golden(cam_two_step_launch 8f78b11d --preset hot_hatch_na --vvt two_step --scenario launch --seconds 10)
-  golden(cam_phased_lap 6b59c2ee --preset hot_hatch_na --vvt phased --scenario lap --seconds 20)
+  # Finitions, pneu à sommet : 8f78b11d -> 276bdaff. Vitesse en fin de trajet 101,4 -> 90,4 km/h, au plus haut 101,4 -> 90,4 ; glissement maximal 9,38 -> 11,25 m/s ; régime moyen 4630 -> 4406 tr/min.
+  golden(cam_two_step_launch 276bdaff --preset hot_hatch_na --vvt two_step --scenario launch --seconds 10)
+  # Finitions, pneu à sommet : 6b59c2ee -> 7beb8533. Vitesse en fin de trajet 49,5 -> 49,5 km/h, au plus haut 49,5 -> 49,5 ; glissement maximal 2,63 -> 4,75 m/s ; régime moyen 2139 -> 2596 tr/min.
+  golden(cam_phased_lap 7beb8533 --preset hot_hatch_na --vvt phased --scenario lap --seconds 20)
   # Les culbuteurs : le choc des poussoirs au ralenti sous le capot, puis un tour avec des ressorts raides. L'affolement :
   # le son seul, tenu au-delà (8140 tr/min sur ce moteur), là où aucun rupteur ne l'arrête.
   golden(ohv_idle_bay 8a51c3c3 --preset v8_cross_plane --cam ohv --scenario steady --rpm 900 --listener bay --seconds 2)
-  golden(ohv_lap_stiff bd8fba88 --preset v8_cross_plane --cam ohv --springs stiff --scenario lap --seconds 20)
+  # Finitions, pneu à sommet : bd8fba88 -> 1bc23a3b. Vitesse en fin de trajet 49,3 -> 49,3 km/h, au plus haut 49,3 -> 49,3 ; glissement maximal 2,63 -> 0,43 m/s ; régime moyen 1755 -> 1752 tr/min.
+  golden(ohv_lap_stiff 1bc23a3b --preset v8_cross_plane --cam ohv --springs stiff --scenario lap --seconds 20)
   golden(valve_float_bay 73732eab --preset hot_hatch_na --scenario steady --rpm 9000 --listener bay --seconds 2)
   # La régulation de pression : l'électrovanne et son PID sur le coup de gaz en quatrième ; selon le rapport, une traction qui part.
-  golden(boost_electronic 6b201abd --preset hot_hatch_turbo --scenario turbo --boost-control electronic)
-  golden(boost_by_gear 64bde81c --preset three_cyl_turbo --scenario launch --seconds 10 --boost-control by_gear)
+  # Finitions, pneu à sommet : 6b201abd -> 4226bb9d. Vitesse en fin de trajet 85,7 -> 84,7 km/h, au plus haut 126,2 -> 125,7 ; glissement maximal 0,50 -> 0,48 m/s ; régime moyen 2804 -> 2801 tr/min.
+  golden(boost_electronic 4226bb9d --preset hot_hatch_turbo --scenario turbo --boost-control electronic)
+  # Finitions, pneu à sommet : la cible selon le rapport le tient près de son sommet : 64bde81c -> 1a28ffc7. Vitesse en fin de trajet 93,3 -> 92,9 km/h, au plus haut 93,3 -> 93,0 ; glissement maximal 1,88 -> 0,69 m/s ; régime moyen 3598 -> 3571 tr/min.
+  golden(boost_by_gear 1a28ffc7 --preset three_cyl_turbo --scenario launch --seconds 10 --boost-control by_gear)
   # Deux turbos, twincharger, aubes : twin_turbo.cpp, et le second sifflement.
-  golden(twin_parallel_v6 4a3f8582 --cylinders 6 --layout v --cc 3000 --bore 86 --redline 6800 --aspiration turbo --boost 1 --exhaust sport --body coupe --mass 1500 --rim 18 --drive rear --scenario turbo --seconds 12 --turbo-layout twin_parallel)
-  golden(twin_sequential 32336632 --preset hot_hatch_turbo --turbo-layout twin_sequential --scenario turbo --seconds 12)
-  golden(twincharger 48a5fa18 --preset hot_hatch_turbo --turbo-layout twincharger --scenario launch --seconds 10)
-  golden(vgt_diesel c1df8a8e --preset diesel_four --vgt 1 --scenario turbo --seconds 12)
+  # Finitions, pneu à sommet : 4a3f8582 -> 28699387. Vitesse en fin de trajet 56,1 -> 55,7 km/h, au plus haut 70,6 -> 71,1 ; glissement maximal 2,10 -> 0,54 m/s ; régime moyen 1986 -> 2009 tr/min.
+  golden(twin_parallel_v6 28699387 --cylinders 6 --layout v --cc 3000 --bore 86 --redline 6800 --aspiration turbo --boost 1 --exhaust sport --body coupe --mass 1500 --rim 18 --drive rear --scenario turbo --seconds 12 --turbo-layout twin_parallel)
+  # Finitions, pneu à sommet : 32336632 -> 9174d471. Vitesse en fin de trajet 51,7 -> 51,9 km/h, au plus haut 65,1 -> 65,3 ; glissement maximal 0,93 -> 0,24 m/s ; régime moyen 2195 -> 2202 tr/min.
+  golden(twin_sequential 9174d471 --preset hot_hatch_turbo --turbo-layout twin_sequential --scenario turbo --seconds 12)
+  # Finitions, pneu à sommet : 48a5fa18 -> 5b2a431a. Vitesse en fin de trajet 126,7 -> 126,8 km/h, au plus haut 126,7 -> 126,8 ; glissement maximal 1,37 -> 0,55 m/s ; régime moyen 4179 -> 4165 tr/min.
+  golden(twincharger 5b2a431a --preset hot_hatch_turbo --turbo-layout twincharger --scenario launch --seconds 10)
+  # Finitions, pneu à sommet : c1df8a8e -> 1b2d8873. Vitesse en fin de trajet 69,5 -> 71,0 km/h, au plus haut 69,5 -> 71,0 ; glissement maximal 1,34 -> 0,46 m/s ; régime moyen 2077 -> 2108 tr/min.
+  golden(vgt_diesel 1b2d8873 --preset diesel_four --vgt 1 --scenario turbo --seconds 12)
   # L'air de charge : sans échangeur, air-eau, injection d'eau, protoxyde.
   # Intégration : 07dfbb8d -> 34de3f5e. La carte du cliquetis lit la charge sans échangeur (air de charge), plus chaude.
-  golden(charge_none_turbo 34de3f5e --preset hot_hatch_turbo --intercooler none --scenario turbo)
-  golden(charge_water_cooler efc2c12e --preset v8_supercharged --intercooler water --scenario launch --seconds 10)
-  golden(charge_water_injection 59ac8a9c --preset hot_hatch_turbo --water 1 --scenario launch --seconds 10)
-  golden(charge_nitrous bedbec6d --preset hot_hatch_na --nitrous 75 --scenario launch --seconds 10)
+  # Finitions, pneu à sommet : 34de3f5e -> 48b33a4c. Vitesse en fin de trajet 118,7 -> 118,9 km/h, au plus haut 118,7 -> 118,9 ; glissement maximal 0,51 -> 0,33 m/s ; régime moyen 2631 -> 2636 tr/min.
+  golden(charge_none_turbo 48b33a4c --preset hot_hatch_turbo --intercooler none --scenario turbo)
+  # Finitions, pneu à sommet : efc2c12e -> 17a85901. Vitesse en fin de trajet 124,7 -> 93,7 km/h, au plus haut 124,7 -> 93,7 ; glissement maximal 17,46 -> 19,32 m/s ; régime moyen 4139 -> 3801 tr/min.
+  golden(charge_water_cooler 17a85901 --preset v8_supercharged --intercooler water --scenario launch --seconds 10)
+  # Finitions, pneu à sommet : 59ac8a9c -> 926d64f1. Vitesse en fin de trajet 126,2 -> 126,9 km/h, au plus haut 126,2 -> 126,9 ; glissement maximal 1,25 -> 0,60 m/s ; régime moyen 4032 -> 4056 tr/min.
+  golden(charge_water_injection 926d64f1 --preset hot_hatch_turbo --water 1 --scenario launch --seconds 10)
+  # Finitions, pneu à sommet : bedbec6d -> c2bc8a01. Vitesse en fin de trajet 116,3 -> 96,8 km/h, au plus haut 116,3 -> 96,8 ; glissement maximal 18,09 -> 19,76 m/s ; régime moyen 5445 -> 5311 tr/min.
+  golden(charge_nitrous c2bc8a01 --preset hot_hatch_na --nitrous 75 --scenario launch --seconds 10)
   # Le deux-temps : son cycle intégré, ses lumières, ses ratés (à leur propre générateur), puis sa chambre de détente.
-  golden(lap_two_stroke 6d847fab --preset two_stroke_triple --scenario lap --seconds 20)
+  # Finitions, pneu à sommet : 6d847fab -> 771409ff. Vitesse en fin de trajet 48,6 -> 48,7 km/h, au plus haut 48,7 -> 48,8 ; glissement maximal 0,53 -> 0,16 m/s ; régime moyen 1796 -> 1793 tr/min.
+  golden(lap_two_stroke 771409ff --preset two_stroke_triple --scenario lap --seconds 20)
   golden(idle_two_stroke fc2d68ae --preset two_stroke_triple --scenario idle --seconds 10)
-  golden(lap_two_stroke_expansion fde00d9e --preset two_stroke_triple --exhaust expansion --scenario lap --seconds 20)
+  # Finitions, pneu à sommet : fde00d9e -> ba1424ff. Vitesse en fin de trajet 50,4 -> 50,4 km/h, au plus haut 50,4 -> 50,4 ; glissement maximal 0,76 -> 0,18 m/s ; régime moyen 1781 -> 1775 tr/min.
+  golden(lap_two_stroke_expansion ba1424ff --preset two_stroke_triple --exhaust expansion --scenario lap --seconds 20)
   # Un bicylindre comme la Trabant, sans modèle de conduite : la charge déduite du régime, et ses ratés.
   golden(steady_two_stroke_twin 38e43381 --cylinders 2 --cc 595 --bore 72 --redline 4500 --cycle two_stroke --carb single --scenario steady --rpm 900 --seconds 3)
 endif()

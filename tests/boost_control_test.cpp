@@ -18,7 +18,7 @@ namespace {
 
 constexpr double kStep = 0.001;
 constexpr double kAtmosphere = 101325.0;
-constexpr double kTyreGrip = 1.05;  // celui de DrivingModel
+// `kTyreGrip` : celui de DrivingModel, le sommet du pneu (tyre.hpp).
 
 Powertrain controlled(const char* id, BoostControl kind) {
     Powertrain p = findPreset(id)->powertrain();

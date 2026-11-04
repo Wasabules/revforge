@@ -2,6 +2,7 @@
 
 #include "revforge/architecture.hpp"
 #include "revforge/two_stroke.hpp"
+#include "revforge/tyre.hpp"
 #include "revforge/valve_float.hpp"
 
 #include "portable_math.hpp"
@@ -18,8 +19,7 @@ namespace {
 constexpr double kPi = 3.141592653589793;
 constexpr double kStep = 0.001;
 constexpr double kGravity = 9.81;
-constexpr double kTyreGrip = 1.05;
-constexpr double kTyreSlipMs = 1.0;
+// Le pneu, `kTyreGrip` compris : tyre.hpp.
 constexpr double kWheelInertia = 1.6;  // deux roues et le pont
 constexpr double kPedalUpPerS = 6.0;
 constexpr double kPedalDownPerS = 12.0;
@@ -77,13 +77,17 @@ constexpr double kLaunchPedal = 0.9;
 constexpr double kLaunchArmMs = 1.0;
 constexpr double kLaunchCaughtShare = 0.97;
 constexpr double kLaunchBrake = 0.05;
+// Le robot du départ ramène le moteur à son régime de départ en ce temps, en serrant un peu plus que son couple ; à 150 tr/min
+// près, les disques tournent ensemble, et il serre (supposés : l'ordre de grandeur d'une boîte pilotée).
+constexpr double kLaunchSettleS = 0.3;
+constexpr double kLaunchSyncRpm = 150.0;
 // Passage à fond : pied au-delà de 80 % à la montée.
 constexpr double kFlatPedal = 0.8;
-// Antipatinage : une régulation proportionnelle et intégrale du glissement (m/s) vers la part du couple retirée.
-// Réglée à l'essai pour ne pas battre avec la torsion des arbres de roue (2 à 3 Hz en première) : elle s'établit en
-// moins d'une seconde (supposé, voir docs/modele.md).
-constexpr double kTractionKp = 0.1;
-constexpr double kTractionKi = 1.0;
+// Antipatinage : une régulation proportionnelle et intégrale du glissement (m/s) vers la part du couple retirée, ses gains
+// placés sur la transmission du rapport engagé (`tractionGains`) : 6 rad/s (1 Hz), sous la torsion des arbres de roue (2 à
+// 3 Hz en première), amortie à 0,7 (supposé, voir docs/modele.md).
+constexpr double kTractionOmega = 6.0;
+constexpr double kTractionDamping = 0.7;
 // Le gaz à la sortie des cylindres : le modèle de la turbine (turbo.cpp), à l'air de référence.
 constexpr double kPortIntakeK = 293.0;
 constexpr double kPortHeatS = 0.35;
@@ -101,9 +105,6 @@ double clamp(double v, double low, double high) { return v < low ? low : (v > hi
 double toOmega(double rpm) { return rpm * 2.0 * kPi / 60.0; }
 double toRpm(double omega) { return omega * 60.0 / (2.0 * kPi); }
 
-/** Comme une tangente hyperbolique, sans dépendre de la bibliothèque mathématique. */
-double saturate(double x) { return x / std::sqrt(1.0 + x * x); }
-
 }  // namespace
 
 DrivingModel::DrivingModel() : DrivingModel(referencePowertrain()) {}
@@ -112,6 +113,16 @@ DrivingModel::DrivingModel(const Powertrain& powertrain) {
     setPowertrain(powertrain);
     omega_ = powertrain.electric ? 0.0 : toOmega(idle_);
     inputOmega_ = omega_;
+    // Le modèle part moteur tournant, au ralenti. Moteur froid, il part aussi avec ce qu'un ralenti établi a dans son collecteur :
+    // juste l'air qui équilibre ses frottements, huile froide comprise (la régulation de ralenti, `updateEngine`). Partant d'un
+    // collecteur vide, le film d'une injection ou d'un carburateur se posait sur un débit nul ; la paroi froide buvait ensuite
+    // la moitié de l'essence le temps de se mouiller, et le moteur calait en moins d'une seconde : tous les moteurs à injection
+    // indirecte par −20 °C, la Cadillac dès 0 °C (docs/modele.md, « Le démarrage à froid »). Le démarreur, lui, passe par
+    // `crank`, qui pose le film au moment où le moteur prend. Parti chaud, le collecteur part vide, comme à l'origine, au bit près.
+    if (coldCoupled_) {
+        const double friction = frictionTorqueNm(powertrain_, idle_) + hydroNmPerRpm_ * idle_ * viscosityExcess_;
+        manifold_ = clamp(friction / std::max(fullLoadTorqueNm(powertrain_, idle_, 0.0) + frictionTorqueNm(powertrain_, idle_), 1.0), 0.0, 1.0);
+    }
 }
 
 void DrivingModel::setPowertrain(const Powertrain& powertrain) {
@@ -231,6 +242,8 @@ void DrivingModel::setPowertrain(const Powertrain& powertrain) {
         launchRpm_ = !powertrain.electric && e.launchRpm > 0 ? std::min(static_cast<double>(e.launchRpm), 0.95 * redline_) : 0.0;
         flatShift_ = !powertrain.electric && e.flatShift;
         tractionTarget_ = tractionSlipTarget(e.tractionControl);
+        // Les gains de l'antipatinage se placent sur le couple maximal : une calibration, faite dans l'air de référence.
+        tractionTorqueNm_ = peak.peakTorqueNm;
         ecuEngine_ = limiterKind_ != RevLimiter::Stock || launchRpm_ > 0.0 || flatShift_ || tractionTarget_ > 0.0;
         ecu_ = EcuAction{};
         ecuShare_ = 1.0;
@@ -597,7 +610,7 @@ void DrivingModel::chooseGear() {
     view.demand = demand_;
     view.speedKmh = speedKmh();
     view.sinceShift = sinceShift_;
-    view.slipMs = wheelSlip();
+    view.slipRatio = wheelSlipRatio();
     view.accelMs2 = acceleration_;
     const Drive drive = powertrain_.car.drive;
     const double frontShare = frontShareOf(powertrain_.car);
@@ -917,6 +930,17 @@ void DrivingModel::updateClutch(bool wantsToMove) {
             if (!wantsToMove && speedMs_ < 0.5) wanted = 0.0;
             // Pied sur le frein, la boîte pilotée garde l'embrayage ouvert : on le lâche, elle part.
             if (launchHold_ && !manual_ && brake_ > kLaunchBrake) wanted = 0.0;
+            // Tant que le moteur entraîne, le robot ne serre pas au-delà du couple qu'il annonce (celui de l'air admis, moins ce
+            // que le calculateur retire : l'antipatinage, le launch control), plus de quoi ramener le moteur à son régime de départ
+            // en `kLaunchSettleS`. Serré selon le seul régime, l'embrayage montait d'un coup à 1,6 fois le couple du moteur, et le
+            // volant se vidait dans les roues : un pneu sans sommet l'absorbait ; avec un sommet, ce surplus fait patiner, et
+            // l'antipatinage n'y pouvait rien (docs/modele.md, « Le pneu, l'antipatinage et le départ »). Une fois les disques
+            // presque à la même vitesse, il n'y a plus d'élan à vider : il serre, et l'embrayage colle.
+            if (omega_ - inputOmega_ > toOmega(kLaunchSyncRpm)) {
+                const double announced = ecuShare_ * manifold_ * fullLoadTorqueNm(powertrain_, toRpm(omega_), boost_);
+                const double settle = inertia_ * std::max(omega_ - toOmega(launch), 0.0) / kLaunchSettleS;
+                wanted = std::min(wanted, std::max(announced + settle, 0.0) / clutchCapacity_);
+            }
             rate = 2.5;
         } else if (gear_ < 0 && speedKmh() < 15.0) {
             // Marche arrière : même démarrage, plus doux.
@@ -1544,7 +1568,7 @@ void DrivingModel::trackOverload(double torque) {
  * arbres de roue se tordent entre la sortie et les roues. Ce ressort, chargé de l'inertie du moteur vue par le
  * rapport, donne les à-coups : de 2 à 3 Hz en première, jusqu'à 10 Hz sur les hauts rapports.
  */
-void DrivingModel::drivenStep(double tyre, double wheelInertia) {
+void DrivingModel::drivenStep(const TyreContact& tyre, double wheelInertia) {
     const double g = ratio(gear_);
     const double J = gearing_.box.inputInertia;
     const double drag = inputDrag();
@@ -1585,17 +1609,19 @@ void DrivingModel::drivenStep(double tyre, double wheelInertia) {
         }
         clutchSlipKw_ = std::fabs(difference * transmitted) / 1000.0;
     }
-    wheelOmega_ = std::max(wheelOmega_ + (shaft - tyre * radius_) / wheelInertia * kStep, 0.0);
+    const double soft = tyre.perWheelMs * radius_ * radius_;
+    wheelOmega_ = std::max(wheelOmega_ + (shaft - tyre.forceN * radius_) * kStep / (wheelInertia + kStep * soft), 0.0);
     twist_ += (inputOmega_ / g - wheelOmega_) * kStep;
     trackOverload(transmitted - drag);
 }
 
 /** Aucun rapport en prise : le primaire ne dépend que de l'embrayage, et des cônes s'il y en a. */
-void DrivingModel::freeStep(double tyre, double wheelInertia) {
+void DrivingModel::freeStep(const TyreContact& tyre, double wheelInertia) {
     const GearboxSpec& box = gearing_.box;
     const double J = box.inputInertia;
     const double drag = inputDrag();
     double cone = 0.0;
+    double coneOnWheels = 0.0;
     coneTorque_ = 0.0;
     if (step_ == ShiftStep::Sync && pendingGear_ != 0) {
         const double g = ratio(pendingGear_);
@@ -1606,7 +1632,7 @@ void DrivingModel::freeStep(double tyre, double wheelInertia) {
         cone = clamp(difference * J / kStep, -available, available);
         coneTorque_ = std::fabs(cone);
         // La réaction sur les roues, négligeable, mais physique.
-        wheelOmega_ = std::max(wheelOmega_ - cone * g * efficiency_ / wheelInertia * kStep, 0.0);
+        coneOnWheels = cone * g * efficiency_;
     }
     if (crankLeft_ > 0.0) {
         // Le démarreur fixe seul le régime pendant le lancement : le primaire suit s'il est embrayé, sans rien changer.
@@ -1647,7 +1673,8 @@ void DrivingModel::freeStep(double tyre, double wheelInertia) {
         gearTorque_ = 0.0;
         overload_ = 0.0;
     }
-    wheelOmega_ = std::max(wheelOmega_ - tyre * radius_ / wheelInertia * kStep, 0.0);
+    const double soft = tyre.perWheelMs * radius_ * radius_;
+    wheelOmega_ = std::max(wheelOmega_ - (coneOnWheels + tyre.forceN * radius_) * kStep / (wheelInertia + kStep * soft), 0.0);
 }
 
 /**
@@ -1666,18 +1693,19 @@ void DrivingModel::converterTorque(double& pump, double& turbine) const {
     turbine = std::min(pump * multiply, torqueCap);
 }
 
-void DrivingModel::converterStep(double tyre, double wheelInertia) {
+void DrivingModel::converterStep(const TyreContact& tyre, double wheelInertia) {
     const double J = gearing_.box.inputInertia;
     const double drag = inputDrag();
     double pump = 0.0, turbine = 0.0;
     converterTorque(pump, turbine);
     const bool driving = meshed_ && gear_ != 0;
     const double g = driving ? ratio(gear_) : 1.0;
+    const double soft = tyre.perWheelMs * radius_ * radius_;
     double transmitted = turbine;
     if (locked_) {
         const double wheelSide = wheelInertia / (g * g * efficiency_) + J;
-        const double loadOnEngine = tyre * radius_ / (g * efficiency_) + drag;
-        const double alpha = (torque_ - loadOnEngine) / (inertia_ + wheelSide);
+        const double loadOnEngine = tyre.forceN * radius_ / (g * efficiency_) + drag;
+        const double alpha = (torque_ - loadOnEngine) / (inertia_ + wheelSide + kStep * soft / (g * g * efficiency_));
         transmitted = torque_ - inertia_ * alpha;
         if (driving && std::fabs(transmitted) <= clutchCapacity_ * clutch_) {
             omega_ = std::max(omega_ + alpha * kStep, 0.0);
@@ -1690,7 +1718,7 @@ void DrivingModel::converterStep(double tyre, double wheelInertia) {
     }
     omega_ = std::max(omega_ + (torque_ - pump) / inertia_ * kStep, 0.0);
     if (driving) {
-        const double wheelNext = wheelOmega_ + ((turbine - drag) * g * efficiency_ - tyre * radius_) / (wheelInertia + J * g * g * efficiency_) * kStep;
+        const double wheelNext = wheelOmega_ + ((turbine - drag) * g * efficiency_ - tyre.forceN * radius_) * kStep / (wheelInertia + J * g * g * efficiency_ + kStep * soft);
         wheelOmega_ = std::max(wheelNext, 0.0);
         inputOmega_ = wheelOmega_ * g;
         trackOverload(turbine - drag);
@@ -1706,7 +1734,7 @@ void DrivingModel::converterStep(double tyre, double wheelInertia) {
         }
     } else {
         inputOmega_ = std::max(inputOmega_ + (turbine - drag) / J * kStep, 0.0);
-        wheelOmega_ = std::max(wheelOmega_ - tyre * radius_ / wheelInertia * kStep, 0.0);
+        wheelOmega_ = std::max(wheelOmega_ - tyre.forceN * radius_ * kStep / (wheelInertia + kStep * soft), 0.0);
         gearTorque_ = 0.0;
     }
 }
@@ -1767,14 +1795,18 @@ void DrivingModel::integrate(double brakePedal) {
     double drivenLoad = mass * kGravity;
     if (car.drive == Drive::Front) drivenLoad = frontLoad;
     else if (car.drive == Drive::Rear) drivenLoad = rearLoad;
-    const double slip = wheelSpeedMs() - speedMs_;
-    const double tyre = kTyreGrip * std::max(drivenLoad, 0.0) * saturate(slip / kTyreSlipMs);
+    // Le pneu (tyre.hpp) : sa force à ce glissement, avec son sommet, et sa raideur. À basse vitesse, elle se compte en dizaines
+    // de kN par m/s : la roue l'intègre implicitement (linéarisée à ce pas), sans quoi elle oscillerait d'un pas à l'autre.
+    const TyreContact tyre = tyreContact(kTyreGrip * std::max(drivenLoad, 0.0), wheelSpeedMs(), speedMs_);
+    const double wheelBefore = wheelOmega_;
 
     if (powertrain_.electric) {
         const double g = ratio(1);
-        const double wheelSide = wheelInertia / (g * g * efficiency_);
-        const double loadOnEngine = tyre * radius_ / (g * efficiency_);
-        const double alpha = (torque_ - loadOnEngine) / (inertia_ + wheelSide);
+        const double reflected = g * g * efficiency_;
+        const double wheelSide = wheelInertia / reflected;
+        const double loadOnEngine = tyre.forceN * radius_ / (g * efficiency_);
+        const double soft = tyre.perWheelMs * radius_ * radius_ / reflected;
+        const double alpha = (torque_ - loadOnEngine) / (inertia_ + wheelSide + kStep * soft);
         omega_ = std::max(omega_ + alpha * kStep, 0.0);
         wheelOmega_ = omega_ / g;
         inputOmega_ = omega_;
@@ -1803,10 +1835,12 @@ void DrivingModel::integrate(double brakePedal) {
     if (!powertrain_.electric && !stalled_ && !cut_ && crankLeft_ <= 0.0 && toRpm(omega_) < 2.0 * kStopRpm) stalled_ = true;
     if (toRpm(omega_) < kStopRpm && cut_ && crankLeft_ <= 0.0 && !powertrain_.electric) omega_ = 0.0;
 
+    // La force que la roue a reçue, à sa vitesse de fin de pas : la caisse reçoit la même, et rien ne se perd entre les deux.
+    tyreUsed_ = tyre.forceN + tyre.perWheelMs * radius_ * (wheelOmega_ - wheelBefore);
     const double stopping = brakePedal * kTyreGrip * totalMass * kGravity;
     // À l'arrêt, freins serrés, la pente ne fait pas partir la voiture. Elle ne recule jamais : la vitesse reste positive (voir docs/modele.md).
     const double extra = speedMs_ <= 0.0 && brakePedal > 0.02 ? std::max(roadExtraN(), 0.0) : roadExtraN();
-    const double force = tyre - roadLoadN(powertrain_, speedMs_) - extra - (speedMs_ > 0.0 ? stopping : 0.0);
+    const double force = tyreUsed_ - roadLoadN(powertrain_, speedMs_) - extra - (speedMs_ > 0.0 ? stopping : 0.0);
     acceleration_ = clamp(force / totalMass, -12.0, 12.0);
     speedMs_ = std::max(speedMs_ + force / totalMass * kStep, 0.0);
     // À l'arrêt, freins serrés : les roues ne tournent plus.
@@ -1834,21 +1868,24 @@ double DrivingModel::stepEcu(double throttle, double rpmNow, bool off) {
         else if (caught || speedMs_ >= kLaunchArmMs) launchHold_ = false;
     }
 
-    // Antipatinage : le glissement que calcule déjà le modèle, ramené vers sa cible par une action proportionnelle et intégrale.
-    // Il n'agit que roues tenues par le moteur : un embrayage qui patine ne transmet que sa capacité, quoi que fasse l'allumage,
-    // et couper le moteur le ferait seulement caler.
+    // Antipatinage : le glissement que calcule déjà le modèle, ramené vers sa cible par une action proportionnelle et intégrale :
+    // il retarde l'allumage, puis coupe des cylindres. Un embrayage qui patine ne transmet que sa capacité, quoi que fasse
+    // l'allumage : il n'agit donc que roues tenues par le moteur, ou au départ, où le robot ne serre l'embrayage que jusqu'au
+    // couple que le moteur annonce (`updateClutch`), ce que le calculateur retire compris, comme une boîte pilotée liée à l'ESP.
     if (tractionTarget_ > 0.0) {
         const bool coupled = powertrain_.electric || locked_ || clutch_ > 0.9 || gearing_.box.kind == GearboxKind::Converter;
-        const bool driving = coupled && meshed_ && gear_ > 0 && throttle > 0.05 && !off && !cut_;
-        const double error = wheelSlip() - tractionTarget_;
-        const double proportional = kTractionKp * error;
+        const bool driving = (coupled || robotLaunching()) && meshed_ && gear_ > 0 && throttle > 0.05 && !off && !cut_;
+        // La cible est un glissement κ (tyre.hpp) ; l'écart se compte en m/s, celui que l'inertie de la roue intègre : le même
+        // retrait de couple corrige le même écart de vitesse quelle que soit l'allure.
+        const double error = wheelSlip() - tractionTarget_ * std::max(speedMs_, kTyreLowSpeedMs);
+        double kp = 0.0, ki = 0.0;
+        tractionGains(kp, ki);
+        const double proportional = kp * error;
         // L'intégrale ne grossit pas dans le sens où la commande sature déjà : sans quoi, une fois le glissement retombé,
         // elle tiendrait le moteur coupé le temps de se vider, et il calerait presque (anti-emballement).
         const bool saturated = (proportional + tractionIntegral_ >= 1.0 && error > 0.0) || (proportional + tractionIntegral_ <= 0.0 && error < 0.0);
-        // Un grand écart passe par la part proportionnelle : l'intégrale n'en prend qu'un mètre par seconde au plus, pour tenir la
-        // cible sans emporter le moteur quand les roues reprennent d'un coup.
         if (!driving) tractionIntegral_ = 0.0;
-        else if (!saturated) tractionIntegral_ = clamp(tractionIntegral_ + kTractionKi * clamp(error, -1.0, 1.0) * kStep, 0.0, 1.0);
+        else if (!saturated) tractionIntegral_ = clamp(tractionIntegral_ + ki * error * kStep, 0.0, 1.0);
         a.traction = driving ? clamp(proportional + tractionIntegral_, 0.0, 1.0) : 0.0;
     }
 
@@ -1884,6 +1921,26 @@ double DrivingModel::stepEcu(double throttle, double rpmNow, bool off) {
     ecu_ = a;
     ecuShare_ = retard == 0.0 && fired == 1.0 ? 1.0 : ecuActionShare(a, mapRetard_);
     return launchHold_ ? launchRpm_ : limiterRpm_;
+}
+
+bool DrivingModel::robotLaunching() const {
+    // La branche du démarrage de `updateClutch` : première, sous 25 km/h, l'embrayage patine encore.
+    return !powertrain_.electric && gearing_.box.kind != GearboxKind::Converter && step_ == ShiftStep::None && meshed_ && gear_ == 1 && !locked_ &&
+           speedKmh() < 25.0;
+}
+
+void DrivingModel::tractionGains(double& kp, double& ki) const {
+    // Ce que tout le couple du moteur ferait au glissement, en m/s² : r·T·g·η sur l'inertie vue de la roue (les roues, le
+    // primaire et le moteur, ramenés par le rapport). La boucle, un intégrateur de ce gain, a alors ses pôles à ω et ζ :
+    // ω² = ki·gain, 2ζω = kp·gain. Le pneu y ajoute son amortissement sous le sommet, et une instabilité au-delà. Les mêmes
+    // gains servent au départ, embrayage du robot : desserrer d'autant retire d'autant le couple.
+    const double g = ratio(std::max(gear_, 1));
+    const double reflected = g * g * efficiency_;
+    const double wheels = kWheelInertia * (powertrain_.car.drive == Drive::All ? 2.0 : 1.0);
+    const double inertia = wheels + (gearing_.box.inputInertia + inertia_) * reflected;
+    const double gain = std::max(radius_ * tractionTorqueNm_ * g * efficiency_ / inertia, 1.0);
+    kp = 2.0 * kTractionDamping * kTractionOmega / gain;
+    ki = kTractionOmega * kTractionOmega / gain;
 }
 
 /**

@@ -370,8 +370,12 @@ TEST_CASE("air de charge : en conduite, le protoxyde s'ouvre pied au plancher, s
     CHECK(b.chargeFill() > 0.1);
     b.refillNitrous();
     CHECK(b.chargeAir().bottle().massKg == doctest::Approx(full));
-    // La fiche du même moteur : le couple ajouté se voit, mais 0-100 km/h aussi.
-    CHECK(measurePerformance(nos).zeroTo100S < measurePerformance(stock).zeroTo100S - 0.5);
+    // La fiche du même moteur : le couple ajouté se voit, mais 0-100 km/h aussi, à adhérence tenue. Sans antipatinage, cette
+    // traction patine au-delà du sommet du pneu, et le protoxyde n'y gagne que 0,2 s (9,23 → 9,03 s).
+    Powertrain nosHeld = nos, stockHeld = stock;
+    nosHeld.engine.tractionControl = TractionControl::Sport;
+    stockHeld.engine.tractionControl = TractionControl::Sport;
+    CHECK(measurePerformance(nosHeld).zeroTo100S < measurePerformance(stockHeld).zeroTo100S - 0.5);
 }
 
 TEST_CASE("air de charge : la charge au collecteur se lit aussi au défaut") {

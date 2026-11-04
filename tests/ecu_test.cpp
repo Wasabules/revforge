@@ -270,7 +270,7 @@ TEST_CASE("calculateur : le passage à fond garde la pression du turbo pendant l
     CHECK(measurePerformance(flat).zeroTo100S < measurePerformance(base).zeroTo100S - 0.15);
 }
 
-TEST_CASE("calculateur : l'antipatinage ramène le glissement vers sa cible, et le pneu sans sommet le fait payer") {
+TEST_CASE("calculateur : l'antipatinage ramène le glissement vers sa cible, et le pneu à sommet le fait gagner") {
     Powertrain base;
     base.engine.cylinders = 8;
     base.engine.layout = Layout::CrossPlane;
@@ -283,11 +283,11 @@ TEST_CASE("calculateur : l'antipatinage ramène le glissement vers sa cible, et 
         DrivingModel model(p);
         double sum = 0.0;
         int n = 0;
-        // En première, une fois la voiture lancée et l'embrayage serré.
-        for (int i = 0; i < 5000; ++i) {
+        // Sur les premiers rapports, une fois la voiture lancée et l'embrayage serré.
+        for (int i = 0; i < 6000; ++i) {
             model.stepPedal(0.001, 1.0, 0.0);
-            if (model.gear() == 1 && model.meshed() && !model.shifting() && model.speedKmh() > 15.0 && model.clutch() > 0.95) {
-                sum += model.wheelSlip();
+            if (model.gear() >= 1 && model.meshed() && !model.shifting() && model.speedKmh() > 5.0 && model.clutch() > 0.95) {
+                sum += model.wheelSlipRatio();
                 ++n;
             }
         }
@@ -297,9 +297,9 @@ TEST_CASE("calculateur : l'antipatinage ramène le glissement vers sa cible, et 
     sport.engine.tractionControl = TractionControl::Sport;
     full.engine.tractionControl = TractionControl::Full;
     const double free = meanSlip(base);
-    CHECK(free > 3.0);
-    CHECK(meanSlip(sport) == doctest::Approx(tractionSlipTarget(TractionControl::Sport)).epsilon(0.15));
-    CHECK(meanSlip(full) == doctest::Approx(tractionSlipTarget(TractionControl::Full)).epsilon(0.15));
-    // Ce pneu pousse d'autant plus qu'il glisse : tenir le glissement bas coûte du temps (voir docs/modele.md).
-    CHECK(measurePerformance(full).zeroTo100S > measurePerformance(base).zeroTo100S);
+    CHECK(free > 0.3);
+    CHECK(meanSlip(sport) == doctest::Approx(tractionSlipTarget(TractionControl::Sport)).epsilon(0.25));
+    CHECK(meanSlip(full) == doctest::Approx(tractionSlipTarget(TractionControl::Full)).epsilon(0.25));
+    // Le pneu perd de l'adhérence au-delà de son sommet : tenir le glissement fait gagner du temps (voir docs/modele.md).
+    CHECK(measurePerformance(full).zeroTo100S < measurePerformance(base).zeroTo100S);
 }

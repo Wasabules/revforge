@@ -430,6 +430,12 @@ TEST_CASE("rétrograder sans débrayer, mais en montant le régime au point mort
 
 TEST_CASE("un rapport sous charge ne sort pas sans lever le pied") {
     DrivingModel model = inGear(preset("hot_hatch_na"), 2);
+    // Sous charge : embrayage serré, roues qui tiennent. `inGear` rend la main dès la deuxième passée, parfois à 7 km/h
+    // embrayage encore ouvert ; le refermer à fond depuis 3700 tr/min ferait patiner les roues au-delà du sommet du pneu, et
+    // des roues qui patinent déchargent les dents : le rapport sortirait, et ce serait juste.
+    for (int i = 0; i < 1500; ++i) model.stepPedal(0.001, 0.7, 0.0);
+    REQUIRE(model.gear() == 2);
+    REQUIRE(model.wheelSlipRatio() < tyrePeakSlip());
     model.setClutchAssist(false);
     model.requestShift(1);
     bool sawNeutral = false;
@@ -530,18 +536,23 @@ TEST_CASE("le couple brusque fait osciller la chaîne : de 2 à 10 Hz selon le r
             for (int k = -kHalf; k <= kHalf; ++k) sum += rpm[static_cast<std::size_t>(static_cast<long>(i) + k)];
             detrended[i] = rpm[i] - sum / (2 * kHalf + 1);
         }
-        int crossings = 0;
-        std::size_t first = 0, last = 0;
         double amplitude = 0.0;
-        for (std::size_t i = kHalf + 1; i + kHalf < rpm.size(); ++i) {
-            if ((detrended[i - 1] < 0.0) != (detrended[i] < 0.0)) {
-                if (crossings == 0) first = i;
-                last = i;
-                ++crossings;
+        for (std::size_t i = kHalf + 1; i + kHalf < rpm.size(); ++i) amplitude = std::max(amplitude, std::fabs(detrended[i]));
+        // La fréquence où le signal a le plus d'énergie, de 1 à 12 Hz. Le pneu à sommet amortit l'oscillation en moins d'une
+        // seconde en deuxième : compter les passages à zéro sur 2,5 s mesurait alors la dérive lente qui suit (1,7 Hz).
+        double hz = 0.0, best = 0.0;
+        for (double f = 1.0; f <= 12.0; f += 0.05) {
+            double re = 0.0, im = 0.0;
+            for (std::size_t i = kHalf; i + kHalf < rpm.size(); ++i) {
+                const double phase = 2.0 * kPi * f * static_cast<double>(i) * 0.001;
+                re += detrended[i] * std::cos(phase);
+                im += detrended[i] * std::sin(phase);
             }
-            amplitude = std::max(amplitude, std::fabs(detrended[i]));
+            if (re * re + im * im > best) {
+                best = re * re + im * im;
+                hz = f;
+            }
         }
-        const double hz = crossings > 1 ? (crossings - 1) / 2.0 / (static_cast<double>(last - first) * 0.001) : 0.0;
         return std::make_pair(hz, amplitude);
     };
     const auto second = modeOf(2);

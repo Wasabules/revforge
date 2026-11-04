@@ -164,6 +164,9 @@ TEST_CASE("un gros moteur prend ses tours moins vite qu'un petit") {
 
 TEST_CASE("la masse et la puissance décident du 0 à 100") {
     Powertrain light = findPreset("v8_cross_plane")->powertrain();
+    // À adhérence tenue. Sans antipatinage, cette propulsion patine au-delà du sommet du pneu, et 900 kg de plus, posés sur les
+    // roues motrices, la font partir plus vite (8,5 s contre 9,3) : c'est alors l'adhérence qui décide, pas la masse.
+    light.engine.tractionControl = TractionControl::Sport;
     Powertrain heavy = light;
     heavy.car.massKg = 2600;
     Powertrain small = light;

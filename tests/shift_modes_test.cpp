@@ -399,7 +399,11 @@ TEST_CASE("le 0 à 100 en sport n'est jamais plus lent qu'en éco, sur tous les 
         if (all[i].powertrain().electric) continue;
         for (GearboxKind kind : kBoxes) {
             INFO(std::string(all[i].id) << " boîte " << static_cast<int>(kind));
-            const Powertrain p = withBox(all[i].id, kind);
+            Powertrain p = withBox(all[i].id, kind);
+            // À adhérence tenue : c'est alors le rapport qui décide. Sans antipatinage, le pneu à sommet donne raison à l'éco
+            // sur les propulsions et les intégrales les plus puissantes, qui patinent au-delà du sommet : monter plus tôt retire
+            // du couple aux roues (docs/modele.md, « Les modes de la boîte automatique »).
+            p.engine.tractionControl = TractionControl::Sport;
             const double eco = zeroTo100(p, ShiftMode::Eco);
             const double sport = zeroTo100(p, ShiftMode::Sport);
             CHECK(sport <= eco + 0.05);
