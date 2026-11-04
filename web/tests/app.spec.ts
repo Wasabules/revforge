@@ -154,16 +154,21 @@ test('la fiche technique suit les réglages : puissance, couple, performances', 
   await page.goto('./');
   await expect(page.getByTestId('start')).toHaveText('Démarrer le moteur');
   const number = async (id: string) => Number((await page.getByTestId(id).textContent())!.replace(/[^0-9,]/g, '').replace(',', '.'));
+  // Le 0 à 100 se calcule à part, dans un worker : « … » le temps du calcul.
+  const sprint = async () => {
+    await expect(page.getByTestId('spec-100')).not.toHaveText('…');
+    return number('spec-100');
+  };
   await expect.poll(() => number('spec-hp')).toBeGreaterThan(50);
-  const before = { hp: await number('spec-hp'), torque: await number('spec-torque'), sprint: await number('spec-100') };
+  const before = { hp: await number('spec-hp'), torque: await number('spec-torque'), sprint: await sprint() };
   await ouvrir(page, 'engine');
   await page.getByRole('slider', { name: 'Cylindrée' }).fill('4000');
   await expect.poll(() => number('spec-hp')).toBeGreaterThan(before.hp * 1.5);
   expect(await number('spec-torque')).toBeGreaterThan(before.torque * 1.5);
-  expect(await number('spec-100')).toBeLessThan(before.sprint);
+  expect(await sprint()).toBeLessThan(before.sprint);
   await ouvrir(page, 'car');
   await page.getByRole('slider', { name: 'Masse' }).fill('2500');
-  await expect.poll(() => number('spec-100')).toBeGreaterThan(5);
+  await expect.poll(sprint).toBeGreaterThan(5);
   await expect(page.getByTestId('power-curves')).toContainText('Couple');
 });
 

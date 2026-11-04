@@ -558,13 +558,26 @@ interface RfExports {
 const RUNDOWN_BEFORE_SUSPEND_MS = 2200;
 const CURVE_POINTS = 56;
 
-/** Le moteur : un exemplaire dans l'AudioWorklet pour le son, un autre ici pour les calculs. */
+/** Les deux calculs que fait le worker (`calcWorker.ts`). */
+type CalcKind = 'sprint' | 'sheet';
+/** Les bandes d'octave de la fiche acoustique. */
+const SHEET_BANDS = [125, 250, 500, 1000, 2000, 4000];
+
+/**
+ * Le moteur : un exemplaire dans l'AudioWorklet pour le son, un autre ici pour les calculs, et un troisième dans un worker pour
+ * ce qui est trop long pour ce thread : le 0 à 100 km/h de la fiche (`sprint`) et sa fiche acoustique (`soundSheet`).
+ */
 export class Engine {
   analyser: AnalyserNode | null = null;
   private context: AudioContext | null = null;
   private node: AudioWorkletNode | null = null;
   private bytes: ArrayBuffer | null = null;
   private local: RfExports | null = null;
+  private calc: Worker | null = null;
+  private calcBroken = false;
+  /** Un calcul à la fois dans le worker ; pour chacun des deux, seul le dernier demandé attend son tour. */
+  private calcRunning: { kind: CalcKind; config: EngineConfig; resolve: (values: number[] | null) => void } | null = null;
+  private calcNext: Partial<Record<CalcKind, { config: EngineConfig; resolve: (values: number[] | null) => void }>> = {};
   private suspendTimer: ReturnType<typeof setTimeout> | undefined;
   // Les choix de conduite faits avant le démarrage : le worklet n'existe pas encore, il les reçoit au démarrage.
   private driving = { manual: false, assisted: true, shiftMode: 0, scenario: 0 };
@@ -783,13 +796,94 @@ export class Engine {
     };
   }
 
-  /** Puissance, couple et performances de ce réglage : les mêmes calculs que ceux qui font rouler la voiture. */
+  /**
+   * Le 0 à 100 km/h de la fiche pour ce réglage, conduit par le worker : de 0,1 à 0,6 s de calcul, que la page n'attend pas.
+   * Une demande remplacée avant d'être partie rend `null`.
+   */
+  async sprint(config: EngineConfig): Promise<number | null> {
+    const values = await this.offload('sprint', config);
+    return values ? values[0] : null;
+  }
+
+  private offload(kind: CalcKind, config: EngineConfig): Promise<number[] | null> {
+    return new Promise((resolve) => {
+      this.calcNext[kind]?.resolve(null);
+      this.calcNext[kind] = { config, resolve };
+      this.flushCalc();
+    });
+  }
+
+  /** Ce que le worker calcule, ici : sans worker, ou s'il n'a pas pu se charger. */
+  private calcHere(kind: CalcKind, config: EngineConfig): number[] {
+    const rf = this.applyLocal(config);
+    if (!rf) return kind === 'sprint' ? [0] : [];
+    if (kind === 'sprint') return [rf.rf_zero_to_100()];
+    return [...[0, 1, 2, 3].map((item) => rf.rf_sheet_level(item)), ...SHEET_BANDS.map((hz) => rf.rf_sheet_line_loss(hz / Math.SQRT2, hz * Math.SQRT2))];
+  }
+
+  private flushCalc(): void {
+    if (this.calcRunning) return;
+    const kind = (['sprint', 'sheet'] as const).find((k) => this.calcNext[k]);
+    if (!kind) return;
+    const next = this.calcNext[kind]!;
+    delete this.calcNext[kind];
+    const worker = this.calcWorker();
+    if (!worker) {
+      next.resolve(this.calcHere(kind, next.config));
+      this.flushCalc();
+      return;
+    }
+    this.calcRunning = { kind, ...next };
+    const config = next.config;
+    worker.postMessage({
+      type: kind,
+      car: carArgs(config),
+      ratios: gearRatios(config),
+      gearbox: gearboxArgs(config),
+      tuning: tuningArgs(config),
+      config: configArgs(config),
+      electric: Boolean(config.electric),
+      bands: SHEET_BANDS,
+    });
+  }
+
+  private calcWorker(): Worker | null {
+    if (this.calc || this.calcBroken || !this.bytes || typeof Worker === 'undefined') return this.calc;
+    try {
+      const worker = new Worker(new URL('./calcWorker.ts', import.meta.url), { type: 'module' });
+      worker.onmessage = ({ data }: MessageEvent<{ values: number[] }>) => {
+        const running = this.calcRunning;
+        this.calcRunning = null;
+        running?.resolve(data.values);
+        this.flushCalc();
+      };
+      // Un worker qui ne se charge pas : ce qui attendait se calcule ici, et tout ce qui suit aussi.
+      worker.onerror = () => {
+        this.calcBroken = true;
+        this.calc = null;
+        const running = this.calcRunning;
+        this.calcRunning = null;
+        running?.resolve(this.calcHere(running.kind, running.config));
+        this.flushCalc();
+      };
+      worker.postMessage({ type: 'load', bytes: this.bytes.slice(0) });
+      this.calc = worker;
+    } catch {
+      this.calcBroken = true;
+    }
+    return this.calc;
+  }
+
   /** La carte du calculateur, au régime de la puissance maximale et à pleine charge : tout vient du C++. */
   private ecuSpec(rf: RfExports): Spec['ecu'] {
     const rpm = rf.rf_peak_power_rpm();
     return { rpm, sparkDeg: rf.rf_ecu_spark_deg(rpm, 1), fullShare: rf.rf_ecu_full_share(), exhaustC: rf.rf_ecu_exhaust_c(rpm, 0), stockExhaustC: rf.rf_ecu_exhaust_c(rpm, 1) };
   }
 
+  /**
+   * Puissance, couple et performances de ce réglage : les mêmes calculs que ceux qui font rouler la voiture. Sans le 0 à 100
+   * (`zeroTo100` vaut NaN), que `sprint` calcule à part.
+   */
   spec(config: EngineConfig): Spec {
     const rf = this.applyLocal(config);
     if (!rf) return EMPTY_SPEC;
@@ -819,7 +913,7 @@ export class Engine {
       chargerRatio: rf.rf_supercharger_ratio(),
       chargerVolume: rf.rf_supercharger_volume(),
       chargerWheelMm: rf.rf_supercharger_wheel_mm(),
-      zeroTo100: rf.rf_zero_to_100(),
+      zeroTo100: Number.NaN,
       topSpeed: rf.rf_top_speed(),
       starter: { direct: rf.rf_starter_direct() === 1, kw: rf.rf_starter_kw(), ring: rf.rf_starter_ring(), pinion: rf.rf_starter_pinion(), helix: rf.rf_starter_helix() },
       carb: { throats: rf.rf_carb_throats(), throatMm: rf.rf_carb_throat_mm(), dropKpa: rf.rf_carb_drop_kpa() },
@@ -878,17 +972,19 @@ export class Engine {
     };
   }
 
-  /** Les niveaux de ce réglage : quelques dizaines de millisecondes de calcul, à ne pas appeler à chaque glissé. */
-  soundSheet(config: EngineConfig): SoundSheet | null {
-    const rf = this.applyLocal(config);
-    if (!rf) return null;
-    const bands = [125, 250, 500, 1000, 2000, 4000];
+  /**
+   * Les niveaux de ce réglage, mesurés en jouant le son : près d'une seconde de calcul, dans le worker. Une demande remplacée
+   * avant d'être partie rend `null`.
+   */
+  async soundSheet(config: EngineConfig): Promise<SoundSheet | null> {
+    const values = await this.offload('sheet', config);
+    if (!values) return null;
     return {
-      standstill: rf.rf_sheet_level(0),
-      outsideFull: rf.rf_sheet_level(1),
-      cabinIdle: rf.rf_sheet_level(2),
-      cabinFull: rf.rf_sheet_level(3),
-      lineLoss: bands.map((hz) => ({ hz, db: rf.rf_sheet_line_loss(hz / Math.SQRT2, hz * Math.SQRT2) })),
+      standstill: values[0],
+      outsideFull: values[1],
+      cabinIdle: values[2],
+      cabinFull: values[3],
+      lineLoss: SHEET_BANDS.map((hz, i) => ({ hz, db: values[4 + i] })),
     };
   }
 

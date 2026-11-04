@@ -30,8 +30,11 @@
   import { TelemetryHistory } from './lib/history';
   import { Readings } from './lib/instruments';
   import { Motion, rememberAnimations, rememberSpeed, SPEEDS, systemReducesMotion } from './lib/motion';
-  import { EMPTY_SPEC, Engine, IDLE_TELEMETRY, KW_TO_HP, Listener, Mode, type ModeValue, type Telemetry } from './lib/engine';
+  import { EMPTY_SPEC, Engine, IDLE_TELEMETRY, KW_TO_HP, Listener, Mode, type ModeValue, type Spec, type Telemetry } from './lib/engine';
   import { fixed, lang, setLang, t, whole, type MessageKey } from './lib/i18n.svelte';
+
+  /** Pendant un glissé, la fiche attend que le curseur reste immobile ce temps-là. */
+  const SPEC_PAUSE_MS = 150;
 
   type DriveMode = 'neutral' | 'drive' | 'lap';
   const DRIVE_MODES: { value: DriveMode; label: string; help: string; mode: ModeValue }[] = [
@@ -110,7 +113,35 @@
   const shown = $derived({ ...config, ...draft });
   const preset = $derived(findPreset(config));
   const current = $derived(DRIVE_MODES.find((mode) => mode.value === driveMode)!);
-  const spec = $derived(loaded ? engine.spec(shown) : EMPTY_SPEC);
+  // La fiche se calcule sur ce thread, de 20 à 120 ms par réglage : posé, tout de suite ; pendant le glissé d'un curseur, une fois
+  // qu'il s'arrête, sans quoi chaque mouvement figeait la page autant (le son, lui, part avant, par `live`). Le 0 à 100, jusqu'à
+  // 0,5 s, se calcule dans un worker, une fois le réglage posé : « … » en attendant.
+  const settledSpec = $derived(loaded ? engine.spec(config) : EMPTY_SPEC);
+  let draftSpec = $state<Spec | null>(null);
+  let draftTimer: ReturnType<typeof setTimeout> | undefined;
+  $effect(() => {
+    const next = shown;
+    const dragging = Object.keys(draft).length > 0;
+    clearTimeout(draftTimer);
+    if (!loaded || !dragging) {
+      draftSpec = null;
+      return;
+    }
+    draftTimer = setTimeout(() => (draftSpec = engine.spec(next)), SPEC_PAUSE_MS);
+  });
+  let sprint = $state<{ config: EngineConfig; seconds: number } | null>(null);
+  $effect(() => {
+    const next = config;
+    if (!loaded) return;
+    void engine.sprint(next).then((seconds) => {
+      if (seconds !== null) sprint = { config: next, seconds };
+    });
+  });
+  const spec = $derived.by<Spec>(() => {
+    const dragging = Object.keys(draft).length > 0;
+    const base = dragging && draftSpec ? draftSpec : settledSpec;
+    return { ...base, zeroTo100: !dragging && sprint?.config === config ? sprint.seconds : Number.NaN };
+  });
   const manual = $derived(driveMode === 'drive' && gearbox === 'manual' && !config.electric);
   // Aux palettes, c'est aussi le conducteur qui passe les rapports, sans pédale d'embrayage.
   const paddles = $derived(driveMode === 'drive' && gearbox === 'auto' && shiftMode === 'paddles' && !config.electric);
@@ -597,7 +628,7 @@
             <div><dt>{t('common.power')}</dt><dd data-testid="spec-hp">{Math.round(spec.peakHp)} {t('unit.hp')}</dd></div>
             <div><dt>{t('common.torque')}</dt><dd data-testid="spec-torque">{Math.round(spec.peakTorque)} Nm</dd></div>
             <div><dt>{t('spec.weightRatio')}</dt><dd>{weightRatio} {t('unit.hpPerTon')}</dd></div>
-            <div><dt>{t('spec.zeroTo100')}</dt><dd data-testid="spec-100">{spec.zeroTo100 > 0 ? `${decimal(spec.zeroTo100)} s` : '—'}</dd></div>
+            <div><dt>{t('spec.zeroTo100')}</dt><dd data-testid="spec-100" aria-busy={Number.isNaN(spec.zeroTo100)}>{Number.isNaN(spec.zeroTo100) ? '…' : spec.zeroTo100 > 0 ? `${decimal(spec.zeroTo100)} s` : '—'}</dd></div>
             <div><dt>{t('spec.topSpeed')}</dt><dd data-testid="spec-top">{Math.round(spec.topSpeed)} km/h</dd></div>
             <div><dt>{t('common.gearbox')}</dt><dd>{spec.gears === 1 ? t('spec.gears.one') : t('spec.gears.many', { gears: spec.gears })}</dd></div>
           {/if}

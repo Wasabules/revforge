@@ -52,7 +52,8 @@
   let dragging = $state(false);
   let pointerAt = $state<{ x: number; y: number } | null>(null);
 
-  const plan = $derived<CarPlan | null>(loaded ? engine.plan(config) : null);
+  // Le plan du réglage posé : le recalculer à chaque mouvement d'un curseur referait toute la voiture sur le thread de la page.
+  const plan = $derived<CarPlan | null>(loaded ? engine.plan(settled) : null);
   // La fiche demande de jouer le son quelques instants : seulement une fois le réglage posé.
   let sheet = $state<SoundSheet | null>(null);
   let sheetTimer: ReturnType<typeof setTimeout> | undefined;
@@ -60,7 +61,12 @@
     const next = settled;
     if (!loaded) return;
     clearTimeout(sheetTimer);
-    sheetTimer = setTimeout(() => (sheet = engine.soundSheet(next)), 80);
+    // Le calcul se fait dans un worker : une demande remplacée entre-temps ne rend rien.
+    sheetTimer = setTimeout(() => {
+      void engine.soundSheet(next).then((computed) => {
+        if (computed) sheet = computed;
+      });
+    }, 80);
   });
 
   // Le moteur reçoit ce qu'on a choisi avant de démarrer, puis chaque changement.
