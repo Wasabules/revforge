@@ -70,11 +70,25 @@ double batteryHighRateAs(const BatterySpec& spec, double celsius, double charge)
 /** Température sous laquelle l'électrolyte gèle (°C), selon la charge. */
 double electrolyteFreezeC(double charge);
 /**
- * La batterie au départ : une nuit dehors, à l'air ambiant ; moteur chaud, dans le compartiment, à l'air de celui-ci. Entre
- * les deux, à la part de chemin que l'eau a faite (`coolantC`). Une batterie hors du compartiment (moteur central ou arrière)
- * reste à l'air ambiant.
+ * L'air autour de la batterie, et la batterie elle-même une fois à l'équilibre : une nuit dehors, l'air ambiant ; moteur chaud,
+ * l'air du compartiment. Entre les deux, à la part de chemin que l'eau a faite (`coolantC`). Une batterie hors du compartiment
+ * (moteur central ou arrière) reste à l'air ambiant. Le réseau thermique en fait suivre la batterie avec son inertie
+ * (`ThermalNetwork::batteryC`) : c'est elle que lit le démarreur.
  */
 double batteryStartC(double ambientC, double coolantC, EnginePlacement placement);
+/**
+ * La batterie comme masse thermique, tirée de sa taille : sa capacité (J/K) et sa conductance vers l'air qui l'entoure (W/K).
+ * Une Varta Blue Dynamic D24 (60 Ah, 540 A) pèse 14,7 kg pour 242 × 175 × 190 mm ; un plomb-acide garde 896 J/(kg·K) (la valeur
+ * de la littérature que cite le NREL, qui en mesure 872 sur un module Optima) ; ses cinq faces hors du bac rendent leur chaleur
+ * à l'air calme du compartiment au coefficient du réseau thermique (`kStillAirWm2K`), à l'échelle de la masse puissance 2/3.
+ * La citadine (52 Ah) : 12,6 kg, 11,3 kJ/K, 1,44 W/K, une constante de temps de 2,2 h, celle de son eau moteur coupé. Le
+ * réseau thermique l'intègre (`ThermalNetwork::batteryC`), voir « Quand les réglages se rencontrent (3) » dans docs/modele.md.
+ */
+struct BatteryThermal {
+    double heatJK = 11000.0;
+    double airWK = 1.4;
+};
+BatteryThermal batteryThermalOf(const BatterySpec& spec);
 /** Le démarreur, vissé au carter d'embrayage : à mi-chemin entre l'air et l'eau. */
 double starterWindingC(double ambientC, double coolantC);
 
@@ -168,6 +182,8 @@ struct StartConditions {
     double oilC = 100.0;
     double intakeC = 20.0;
     double ambientBar = 1.01325;
+    /** La batterie, du réseau thermique (`ThermalNetwork::batteryC`) : la référence, moteur chaud par 20 °C, au compartiment. */
+    double batteryC = 32.0;
 };
 
 /** Le relevé d'un démarrage, pour la ligne de commande et les essais. */
@@ -201,6 +217,13 @@ public:
     double stepStarter(double pinionOmega, double dt, bool engaged);
     /** Moteur arrêté ou qui tourne : la batterie se repose, ou l'alternateur la recharge. */
     void stepRest(bool running, double dt);
+    /**
+     * Le moteur reste arrêté `seconds` secondes sans que le modèle avance (le son suspendu, sur le site) : l'acide revient dans
+     * les plaques, comme `stepRest` moteur arrêté l'aurait fait pas à pas.
+     */
+    void rest(double seconds);
+    /** Un modèle reconstruit pour la même voiture (changer de mode sur le site) reprend la batterie de l'ancien. */
+    void restoreBattery(const BatteryState& state);
 
     /**
      * À la synchronisation : le calculateur commence à injecter. Vrai si chaque cycle allume à coup sûr, dispersion comprise : le

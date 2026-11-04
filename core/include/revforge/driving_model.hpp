@@ -249,6 +249,8 @@ public:
     void soakThermal(double seconds);
     /** Un modèle reconstruit pour la même voiture (changer de mode sur le site) reprend les températures de l'ancien. */
     void carryThermal(const ThermalNetwork& from);
+    /** Et sa batterie : la charge qu'un démarrage raté a tirée, l'acide pas encore revenu. Sa température est dans le réseau. */
+    void carryBattery(const BatteryState& from);
     /**
      * Ce que l'écart à la référence change en ce moment : frottements en plus (Nm, négatifs quand l'huile dépasse 100 °C), ralenti
      * visé en plus (tr/min), carburant en plus (part).

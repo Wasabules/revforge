@@ -47,7 +47,7 @@
       <p class="help">{START_TEMPS.find((item) => item.value === config.startTemp)?.help}</p>
       <!-- Ce que le réseau thermique en a calculé (`rf_start_thermal`) : ce que montrent les jauges avant le premier démarrage. -->
       {#if Number.isFinite(spec.startCoolantC)}
-        <p class="air" data-testid="start-state">{t('builder.startState', { coolant: whole(spec.startCoolantC), oil: whole(spec.startOilC) })}</p>
+        <p class="air" data-testid="start-state">{t('builder.startState', { coolant: whole(spec.startCoolantC), oil: whole(spec.startOilC), battery: whole(spec.startBatteryC) })}</p>
       {/if}
     </div>
   {/if}

@@ -180,9 +180,11 @@ void rf_set_mode(int mode) {
     if (mode == kLap || g_mode == kLap) {
         // La même voiture repart à l'arrêt, mais son moteur garde ses températures : il ne redevient pas froid pour autant.
         const ThermalNetwork kept = g_model->thermal();
+        const BatteryState battery = g_model->start().battery();
         g_model->~DrivingModel();
         new (g_model) DrivingModel(g_powertrain);
         g_model->carryThermal(kept);
+        g_model->carryBattery(battery);
         // Le pilote automatique ne sait conduire qu'une automatique : le choix de la manuelle attend qu'on reprenne le volant.
         g_model->setManual(g_manualGearbox && mode != kLap);
         g_model->setClutchAssist(g_clutchAssist);
@@ -756,9 +758,9 @@ float rf_nitrous_activation_rpm() {
 // ── Le moteur à l'arrêt : l'état au départ, et le refroidissement moteur coupé (thermal.cpp) ──
 
 static float thermalPart(const ThermalNetwork& net, int which) {
-    return thermalReading(which == 0 ? net.coolantC() : (which == 1 ? net.oilC() : net.metalC()));
+    return thermalReading(which == 0 ? net.coolantC() : (which == 1 ? net.oilC() : (which == 3 ? net.batteryC() : net.metalC())));
 }
-/** Le moteur tel qu'on l'a choisi au départ (`startTemp`, à l'air du jour) : 0 l'eau, 1 l'huile, 2 le métal (°C). */
+/** Le moteur tel qu'on l'a choisi au départ (`startTemp`, à l'air du jour) : 0 l'eau, 1 l'huile, 2 le métal, 3 la batterie (°C). */
 float rf_start_thermal(int which) { return thermalPart(g_model->startThermal(), which); }
 /**
  * Le son est resté suspendu tant de secondes, moteur coupé : le réseau refroidit d'autant, comme s'il avait avancé pas à pas.
@@ -766,15 +768,41 @@ float rf_start_thermal(int which) { return thermalPart(g_model->startThermal(), 
  */
 void rf_soak(float seconds) { g_model->soakThermal(static_cast<double>(seconds)); }
 /**
- * Un moteur coupé, parti de ces températures (eau, huile, métal, en °C), au bout de `seconds` : 0 l'eau, 1 l'huile, 2 le métal.
- * Les mêmes capacités et la même convection que le modèle de ce réglage ; rien ne change dans le modèle. Les jauges le lisent
- * pendant que le son est suspendu.
+ * Un moteur coupé, parti de ces températures (eau, huile, métal, batterie, en °C), au bout de `seconds` : 0 l'eau, 1 l'huile,
+ * 2 le métal, 3 la batterie. Les mêmes capacités et la même convection que le modèle de ce réglage ; rien ne change dans le
+ * modèle. Les jauges le lisent pendant que le son est suspendu.
  */
-float rf_rest_thermal(float coolantC, float oilC, float metalC, float seconds, int which) {
+float rf_rest_thermal(float coolantC, float oilC, float metalC, float batteryC, float seconds, int which) {
     ThermalNetwork net = g_model->thermal();
-    net.place(static_cast<double>(coolantC), static_cast<double>(oilC), static_cast<double>(metalC));
+    net.place(static_cast<double>(coolantC), static_cast<double>(oilC), static_cast<double>(metalC), static_cast<double>(batteryC));
     net.soak(static_cast<double>(seconds), static_cast<double>(g_powertrain.engine.ambientC));
     return thermalPart(net, which);
+}
+
+/** La batterie, pour la télémétrie : 0 sa charge (0 à 1), 1 l'acide appauvri dans les plaques (A·s), 2 sa température (°C). */
+float rf_battery_state(int which) {
+    if (g_powertrain.electric) return 0.0f;
+    const BatteryState& b = g_model->start().battery();
+    if (which == 0) return static_cast<float>(b.charge);
+    if (which == 1) return static_cast<float>(b.drawnAs);
+    return thermalReading(g_model->thermal().batteryC());
+}
+
+/**
+ * La tension à vide (V) d'une batterie de ce réglage, de cette charge, de cet acide appauvri et de cette température, au bout
+ * de `seconds` de repos : l'acide revient dans les plaques (`StartModel::rest`). Ce que montre la jauge, son suspendu ; avec
+ * une batterie pleine et reposée, avant le premier démarrage.
+ */
+float rf_rest_battery_v(float charge, float drawnAs, float celsius, float seconds) {
+    if (g_powertrain.electric) return 0.0f;
+    BatteryState state;
+    state.charge = static_cast<double>(charge);
+    state.drawnAs = static_cast<double>(drawnAs);
+    state.celsius = static_cast<double>(celsius);
+    StartModel rest = g_model->start();
+    rest.restoreBattery(state);
+    rest.rest(static_cast<double>(seconds));
+    return static_cast<float>(rest.batteryVolts());
 }
 
 }  // extern "C"

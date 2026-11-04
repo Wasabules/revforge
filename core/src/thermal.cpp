@@ -5,6 +5,7 @@
 
 #include "portable_math.hpp"
 #include "revforge/carburetor.hpp"
+#include "revforge/cold_start.hpp"
 #include "revforge/powertrain.hpp"
 
 namespace revforge {
@@ -188,9 +189,9 @@ ThermalSpec thermalSpecOf(const Powertrain& p, double ratedFuelW) {
     // Chemises d'eau : 3000 W/(m²·K) sur une surface en litres^(2/3) (supposé). Carter et bloc dans le compartiment : 8 W/(m²·K) à l'arrêt.
     s.metalCoolantWK = 700.0 * area;
     s.metalOilWK = 150.0 * area;
-    s.metalAirWK = 0.5 * area * 8.0;
+    s.metalAirWK = 0.5 * area * kStillAirWm2K;
     s.metalAirWKPerMs = 0.5 * area * 1.0;
-    s.oilAirWK = 0.15 * area * 8.0;
+    s.oilAirWK = 0.15 * area * kStillAirWm2K;
     s.oilAirWKPerMs = 0.15 * area * 2.0;
     s.pumpWKPerRpm = kCoolantJLK * kPumpLPerSPerLitreKrpm * litres / 1000.0;
     s.oilCoolerUaWK = kOilCoolerUaPerLitre * litres;
@@ -220,6 +221,11 @@ ThermalSpec thermalSpecOf(const Powertrain& p, double ratedFuelW) {
     const double draftUa = s.uaDesignWK * portable::pow(draftKgS / s.airDesignKgS, kAirExponent);
     s.radiatorStillWK = (1.0 - portable::exp(-draftUa / (draftKgS * kAirCp))) * draftKgS * kAirCp;
     s.fanMs = kFanMs;
+    // La batterie, dimensionnée sur le moteur (cold_start.cpp) : une masse à part, que l'air autour d'elle chauffe ou refroidit.
+    const BatteryThermal battery = batteryThermalOf(batterySpecOf(p.engine));
+    s.batteryJK = battery.heatJK;
+    s.batteryAirWK = battery.airWK;
+    s.batteryPlacement = placementOf(p.car);
     return s;
 }
 
@@ -235,9 +241,11 @@ double parkedSeconds(StartTemp start) {
 
 void ThermalNetwork::reset(StartTemp start, double ambientC) {
     if (start == StartTemp::Cold) {
-        metalC_ = coolantC_ = radiatorC_ = oilC_ = ambientC;
+        metalC_ = coolantC_ = radiatorC_ = oilC_ = batteryC_ = ambientC;
         lift_ = 0.0;
     } else {
+        // Moteur chaud, la batterie est à l'air du compartiment (devant) ou du dehors : celle de la référence du démarreur.
+        batteryC_ = batteryStartC(ambientC, kWarmCoolantC, spec_.batteryPlacement);
         coolantC_ = kWarmCoolantC;
         oilC_ = kWarmOilC;
         metalC_ = kWarmCoolantC + 5.0;
@@ -270,10 +278,11 @@ void ThermalNetwork::soak(double seconds, double ambientC) {
     oilCoolerW_ = 0.0;
 }
 
-void ThermalNetwork::place(double coolantC, double oilC, double metalC) {
+void ThermalNetwork::place(double coolantC, double oilC, double metalC, double batteryC) {
     coolantC_ = coolantC;
     oilC_ = oilC;
     metalC_ = metalC;
+    batteryC_ = batteryC;
     radiatorC_ = coolantC;
     lift_ = thermostatCurve(coolantC);
 }
@@ -330,6 +339,11 @@ void ThermalNetwork::step(const ThermalInput& in, double dt) {
         oilCooler = counterFlowEffectiveness(s.oilCoolerUaWK / cMin, cMin / cMax) * cMin * (oilC_ - coolantC_);
     }
     oilCoolerW_ = oilCooler;
+
+    // La batterie suit l'air qui l'entoure, avec sa propre inertie : celui du compartiment, qui suit l'eau, ou celui du dehors.
+    // Elle ne rend rien au reste du réseau.
+    const double aroundBattery = batteryStartC(ambient, coolantC_, s.batteryPlacement);
+    batteryC_ += s.batteryAirWK * (aroundBattery - batteryC_) / s.batteryJK * dt;
 
     metalC_ += (wallW_ + toMetal - metalCoolant - metalToOil - metalToAir) / s.metalJK * dt;
     coolantC_ = std::min(coolantC_ + (metalCoolant - exchanged + oilCooler) / s.coolantJK * dt, kBoilC);

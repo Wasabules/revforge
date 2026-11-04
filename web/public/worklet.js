@@ -206,6 +206,9 @@ class RevforgeProcessor extends AudioWorkletProcessor {
         starterA: rf.rf_starter_a(),
         startFailed: rf.rf_start_failed(),
         preheat: rf.rf_preheat(),
+        batteryCharge: rf.rf_battery_state(0),
+        batteryDrawnAs: rf.rf_battery_state(1),
+        batteryC: rf.rf_battery_state(2),
         peak: this.peak,
       });
       this.peak = 0;

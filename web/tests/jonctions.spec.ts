@@ -185,3 +185,113 @@ test.describe('les sujets du moteur réunis', () => {
     expect(read.vanes).toEqual(['off', 400]);
   });
 });
+
+/** Le départ et le démarreur réunis : voir « Quand les réglages se rencontrent (3) » dans docs/modele.md. */
+test.describe('le froid réuni', () => {
+  const telemetry = (page: Page) => page.evaluate(() => (window as any).__revforge.telemetry());
+  const spec = (page: Page) => page.evaluate(() => (window as any).__revforge.spec());
+  /** Ce qu'une jauge affiche : le signe moins typographique et la virgule française redeviennent un nombre. */
+  const shown = async (page: Page, testId: string) => {
+    const text = (await page.getByTestId(testId).textContent())!;
+    return Number(text.replace(/[^\d,.\-−+]/g, '').replace('−', '-').replace(',', '.'));
+  };
+  /** « · −21 °C » : la température de la batterie, sous sa jauge. */
+  const battery = (celsius: number) => new RegExp(`· ${celsius < 0 ? '[−-]' : ''}${Math.abs(celsius)}\\D`);
+  const SHOTS = process.env.REVFORGE_SHOTS;
+
+  test('deux heures d’arrêt par −30 °C : eau, huile et batterie viennent du C++ avant le démarrage, et le démarreur part de là', async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await open(page, `${BASE}~~amb=-30,start=two_hours`);
+    await expect.poll(() => spec(page).then((s) => s.startBatteryC)).toBeGreaterThan(-30);
+    const parked = await spec(page);
+    // La batterie a suivi l'arrêt avec son inertie : plus froide que le compartiment chaud (-18 °C), plus chaude que l'air.
+    expect(parked.startBatteryC).toBeLessThan(-19);
+    expect(parked.startBatteryC).toBeGreaterThan(-25);
+    // Les jauges avant le premier démarrage : le réseau de la page, pas un chiffre écrit d'avance.
+    await expect.poll(() => shown(page, 'gauge-coolant-value')).toBe(Math.round(parked.startCoolantC));
+    await expect.poll(() => shown(page, 'gauge-oil-value')).toBe(Math.round(parked.startOilC));
+    await expect.poll(() => shown(page, 'gauge-battery-value')).toBe(Math.round(parked.startBatteryV * 10) / 10);
+    await expect(page.getByTestId('gauge-battery-sub')).toContainText(battery(Math.round(parked.startBatteryC)));
+    await ouvrir(page, 'car');
+    await expect(page.getByTestId('panel-car').getByTestId('start-state')).toContainText(new RegExp(`batterie [−-]${Math.abs(Math.round(parked.startBatteryC))}\\D`));
+    if (SHOTS) {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.screenshot({ path: `${SHOTS}/froid-depart-1440.png` });
+      await page.setViewportSize({ width: 360, height: 800 });
+      await page.getByTestId('panel-car').getByTestId('start-temp').scrollIntoViewIfNeeded();
+      await page.getByTestId('panel-car').screenshot({ path: `${SHOTS}/froid-volet-360.png` });
+      await page.setViewportSize({ width: 1280, height: 800 });
+    }
+    await page.keyboard.press('Escape');
+    // Le démarreur lit cette batterie : la télémétrie en marche la retrouve.
+    await page.getByTestId('start').click();
+    await expect.poll(() => telemetry(page).then((t) => t.rpm), { timeout: 10_000 }).toBeGreaterThan(500);
+    const t = await telemetry(page);
+    expect(Math.abs(t.batteryC - parked.startBatteryC)).toBeLessThan(0.5);
+    await expect(page.getByTestId('gauge-battery-sub')).toContainText(battery(Math.round(t.batteryC)));
+    if (SHOTS) {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.getByTestId('gauge-bank').screenshot({ path: `${SHOTS}/froid-jauges-1440.png` });
+      await page.setViewportSize({ width: 360, height: 800 });
+      await page.getByTestId('gauge-bank').scrollIntoViewIfNeeded();
+      await page.getByTestId('gauge-bank').screenshot({ path: `${SHOTS}/froid-jauges-360.png` });
+      await page.setViewportSize({ width: 1280, height: 800 });
+    }
+    expect(errors).toEqual([]);
+  });
+
+  test('arrêt puis redémarrage : la batterie refroidit avec le moteur, se repose, et le démarreur la lit', async ({ page }) => {
+    test.setTimeout(60_000);
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await open(page, `${BASE}~~amb=-30,start=warm`);
+    await page.getByTestId('start').click();
+    await expect.poll(() => telemetry(page).then((t) => t.rpm), { timeout: 10_000 }).toBeGreaterThan(500);
+    // Couper le contact : le son se suspend, le modèle avec lui.
+    await page.getByTestId('start').click();
+    await expect.poll(() => page.evaluate(() => (window as any).__revforge.engine.rest !== null), { timeout: 10_000 }).toBe(true);
+    const stopped = await page.evaluate(() => (window as any).__revforge.engine.rest);
+    // Moteur chaud par -30 °C : la batterie au compartiment, 12 K au-dessus de l'air.
+    expect(stopped.batteryC).toBeGreaterThan(-19);
+    // Deux heures plus tard pour les jauges : le C++ de la page refroidit la batterie avec le reste du réseau.
+    const later = await page.evaluate(() => (window as any).__revforge.engine.restingThermal(performance.now() + 7200e3));
+    expect(later.batteryC).toBeLessThan(stopped.batteryC - 1);
+    expect(later.batteryC).toBeGreaterThan(-30);
+    await page.evaluate(() => {
+      const engine = (window as any).__revforge.engine;
+      engine.rest.since -= 7200e3;
+      engine.restShown = null;
+    });
+    await expect(page.getByTestId('gauge-battery-sub')).toContainText(battery(Math.round(later.batteryC)));
+    // Le worklet rattrape ces deux heures en reprenant : le démarreur part de la batterie refroidie.
+    await page.getByTestId('start').click();
+    await expect.poll(() => telemetry(page).then((t) => t.rpm), { timeout: 10_000 }).toBeGreaterThan(500);
+    expect(Math.abs((await telemetry(page)).batteryC - later.batteryC)).toBeLessThan(0.5);
+    expect(errors).toEqual([]);
+  });
+
+  test('un démarrage raté, puis l’arrêt : la jauge suit la batterie qui se repose, calculée par le C++', async ({ page }) => {
+    test.setTimeout(60_000);
+    // La Cadillac en huile d'été par -25 °C ne prend pas (le démarreur, `demarreur.spec.ts`).
+    await open(page);
+    await ouvrir(page, 'share');
+    await page.getByTestId('preset').selectOption('v16_cadillac');
+    const hash = await page.evaluate(() => {
+      const { encodeConfig, config } = (window as any).__revforge;
+      return encodeConfig({ ...config(), ambientC: -25, startTemp: 'cold' });
+    });
+    await open(page, hash);
+    await page.getByTestId('start').click();
+    await expect(page.getByTestId('start-failed')).toBeVisible({ timeout: 15_000 });
+    await page.getByTestId('start').click();
+    await expect.poll(() => page.evaluate(() => (window as any).__revforge.engine.rest !== null), { timeout: 10_000 }).toBe(true);
+    const stopped = await page.evaluate(() => (window as any).__revforge.engine.rest);
+    // L'acide a manqué dans les plaques : il revient au repos, et la tension avec lui (constante d'une minute).
+    expect(stopped.drawnAs).toBeGreaterThan(100);
+    const now = await page.evaluate(() => (window as any).__revforge.engine.restingThermal(performance.now()));
+    const rested = await page.evaluate(() => (window as any).__revforge.engine.restingThermal(performance.now() + 300e3));
+    expect(rested.batteryV).toBeGreaterThan(now.batteryV + 0.02);
+    expect(rested.batteryV).toBeLessThan(12.75);
+  });
+});

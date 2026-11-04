@@ -86,6 +86,13 @@ constexpr double kDieselBattery = 1.25;
 constexpr double kAmpsPerAh = 9.0;
 // Le compartiment, moteur chaud : 12 K au-dessus de l'air, comme l'air du compartiment de air_filter.cpp (supposé).
 constexpr double kBayRiseK = 12.0;
+// La batterie comme masse thermique (intégration) : Varta Blue Dynamic D24, 60 Ah, 540 A, 14,7 kg, 242 × 175 × 190 mm (fiches
+// des revendeurs) ; la chaleur massique d'un plomb-acide, 896 J/(kg·K), valeur de la littérature que cite le NREL (Keyser et al.,
+// mesure de 872 J/(kg·K) sur un module Optima). Les cinq faces hors du bac : 0,201 m², à l'échelle de la masse puissance 2/3.
+constexpr double kBatteryRefKg = 14.7;
+constexpr double kBatteryRefAh = 60.0;
+constexpr double kBatteryJPerKgK = 896.0;
+constexpr double kBatteryRefAreaM2 = 2.0 * (0.242 + 0.175) * 0.190 + 0.242 * 0.175;
 
 // ── Le démarreur ──
 // Câbles (2 m de 25 à 35 mm², cosses et tresse de masse) : 1,5 mΩ, supposé. L'induit et ses balais : 60 % de cuivre, dont la
@@ -263,6 +270,14 @@ double batteryStartC(double ambientC, double coolantC, EnginePlacement placement
     const double span = kWarmCoolantC - ambientC;
     const double warmth = span > 1.0 ? clamp((coolantC - ambientC) / span, 0.0, 1.0) : 1.0;
     return ambientC + kBayRiseK * warmth;
+}
+
+BatteryThermal batteryThermalOf(const BatterySpec& spec) {
+    BatteryThermal t;
+    const double kg = spec.capacityAh * kBatteryRefKg / kBatteryRefAh;
+    t.heatJK = kg * kBatteryJPerKgK;
+    t.airWK = kStillAirWm2K * kBatteryRefAreaM2 * portable::pow(kg / kBatteryRefKg, 2.0 / 3.0);
+    return t;
 }
 
 double starterWindingC(double ambientC, double coolantC) { return ambientC + 0.5 * (coolantC - ambientC); }
@@ -454,7 +469,8 @@ void StartModel::configure(const Powertrain& p) {
     const StarterSpec starter = p.profile().starter;
     spec_ = batterySpecOf(e);
     ringRatio_ = static_cast<double>(starter.ringTeeth) / std::max(starter.pinionTeeth, 1);
-    placement_ = p.car.placement == EnginePlacement::Natural ? EnginePlacement::Front : p.car.placement;
+    // La place réelle du moteur, celle de la caisse s'il garde la sienne : la batterie d'un moteur central reste à l'air du dehors.
+    placement_ = placementOf(p.car);
     // La batterie de référence : celle d'un moteur chaud par 20 °C, celle sur laquelle le démarreur d'origine est calé.
     referenceMotorC_ = starterWindingC(20.0, kWarmCoolantC);
     circuit_ = starterCircuitOf(starter, spec_, batteryStartC(20.0, kWarmCoolantC, placement_), referenceMotorC_);
@@ -499,7 +515,8 @@ double StartModel::uniform() {
 }
 
 void StartModel::beginAttempt(const StartConditions& c) {
-    battery_.celsius = batteryStartC(c.ambientC, c.coolantC, placement_);
+    // La batterie du réseau thermique : elle a suivi l'arrêt avec son inertie (moteur chaud, celle de la référence, au bit près).
+    battery_.celsius = c.batteryC;
     motorC_ = starterWindingC(c.ambientC, c.coolantC);
     reference_ = BatteryState{};
     reference_.celsius = batteryStartC(20.0, kWarmCoolantC, placement_);
@@ -566,6 +583,20 @@ void StartModel::stepRest(bool running, double dt) {
     volts_ = running ? kAlternatorVolts : revforge::batteryVolts(spec_, battery_, 0.0);
     amps_ = 0.0;
     supplyShare_ = 0.0;
+}
+
+void StartModel::rest(double seconds) {
+    if (!(seconds > 0.0)) return;
+    // dq/dt = −q/τ, sans courant : la solution exacte de `stepBattery` à courant nul.
+    battery_.drawnAs *= portable::exp(-seconds / kRecoveryS);
+    volts_ = revforge::batteryVolts(spec_, battery_, 0.0);
+    amps_ = 0.0;
+    supplyShare_ = 0.0;
+}
+
+void StartModel::restoreBattery(const BatteryState& state) {
+    battery_ = state;
+    volts_ = revforge::batteryVolts(spec_, battery_, 0.0);
 }
 
 double StartModel::phiVapor(const StartConditions& c) const {

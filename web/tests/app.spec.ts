@@ -154,9 +154,9 @@ test('la fiche technique suit les réglages : puissance, couple, performances', 
   await page.goto('./');
   await expect(page.getByTestId('start')).toHaveText('Démarrer le moteur');
   const number = async (id: string) => Number((await page.getByTestId(id).textContent())!.replace(/[^0-9,]/g, '').replace(',', '.'));
-  // Le 0 à 100 se calcule à part, dans un worker : « … » le temps du calcul.
+  // Le 0 à 100 se calcule à part, dans un worker : « … » le temps du calcul, que la passe complète allonge (`CALCUL_A_PART`).
   const sprint = async () => {
-    await expect(page.getByTestId('spec-100')).not.toHaveText('…');
+    await expect(page.getByTestId('spec-100')).not.toHaveText('…', CALCUL_A_PART);
     return number('spec-100');
   };
   await expect.poll(() => number('spec-hp')).toBeGreaterThan(50);
@@ -168,7 +168,7 @@ test('la fiche technique suit les réglages : puissance, couple, performances', 
   expect(await sprint()).toBeLessThan(before.sprint);
   await ouvrir(page, 'car');
   await page.getByRole('slider', { name: 'Masse' }).fill('2500');
-  await expect.poll(sprint).toBeGreaterThan(5);
+  await expect.poll(sprint, CALCUL_A_PART).toBeGreaterThan(5);
   await expect(page.getByTestId('power-curves')).toContainText('Couple');
 });
 

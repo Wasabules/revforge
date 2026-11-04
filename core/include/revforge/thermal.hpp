@@ -16,6 +16,11 @@ struct Powertrain;
  */
 inline constexpr double kWarmCoolantC = 90.0;
 inline constexpr double kWarmOilC = 100.0;
+/**
+ * L'air calme du compartiment, voiture arrêtée : 8 W/(m²·K), convection naturelle et rayonnement (supposé, ordre de grandeur).
+ * Le carter et le bloc le rendent à l'air à ce coefficient, et la batterie aussi (cold_start.hpp).
+ */
+inline constexpr double kStillAirWm2K = 8.0;
 
 // ── Fonctions pures, pour la combustion, l'injection, le calculateur et les frottements ──
 
@@ -86,6 +91,14 @@ struct ThermalSpec {
     double oilCoolerUaWK = 0.0;
     double oilPumpWKPerRpm = 0.0;
     double oilCoolerWaterShare = 0.0;
+    /**
+     * La batterie (intégration du départ et du démarreur) : sa capacité (J/K), sa conductance vers l'air qui l'entoure (W/K),
+     * tirées de sa taille (`batteryThermalOf`), et la place du moteur : devant, elle est dans son compartiment ; au milieu ou à
+     * l'arrière, elle reste à l'air du dehors (`batteryStartC`). Elle ne rend rien au reste du réseau.
+     */
+    double batteryJK = 11000.0;
+    double batteryAirWK = 1.4;
+    EnginePlacement batteryPlacement = EnginePlacement::Front;
 };
 
 /** Efficacité d'un échangeur à contre-courant (ε-NTU) : celle d'un échangeur à plaques. */
@@ -125,14 +138,20 @@ public:
      */
     void soak(double seconds, double ambientC);
     /**
-     * Pose l'eau, l'huile et le métal, lus sur un moteur arrêté (les jauges, sur le site). Le faisceau prend la température de
-     * l'eau : moteur arrêté, la pompe ne tourne pas, et il ne change rien à l'eau, à l'huile ni au métal.
+     * Pose l'eau, l'huile, le métal et la batterie, lus sur un moteur arrêté (les jauges, sur le site). Le faisceau prend la
+     * température de l'eau : moteur arrêté, la pompe ne tourne pas, et il ne change rien à l'eau, à l'huile ni au métal.
      */
-    void place(double coolantC, double oilC, double metalC);
+    void place(double coolantC, double oilC, double metalC, double batteryC);
 
     double coolantC() const { return coolantC_; }
     double oilC() const { return oilC_; }
     double metalC() const { return metalC_; }
+    /**
+     * La batterie (°C) : elle suit l'air qui l'entoure avec sa propre inertie (τ de 2 à 3 h), celui du compartiment, qui suit
+     * l'eau (`batteryStartC`), ou celui du dehors. Une nuit, l'air ; moteur chaud, le compartiment ; entre les deux, le même
+     * refroidissement moteur coupé que le reste du réseau. C'est elle que lit le démarreur.
+     */
+    double batteryC() const { return batteryC_; }
     /** L'eau du radiateur, celle qui en sort : c'est elle que lit le thermocontact du ventilateur. */
     double radiatorC() const { return radiatorC_; }
     /** Levée du calorstat, 0 fermé à 1 grand ouvert. */
@@ -151,6 +170,7 @@ private:
     double coolantC_ = kWarmCoolantC;
     double radiatorC_ = 55.0;
     double oilC_ = kWarmOilC;
+    double batteryC_ = 32.0;
     double lift_ = 0.0;
     bool fan_ = false;
     double radiatorW_ = 0.0;

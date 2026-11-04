@@ -3,7 +3,7 @@
  * ce qui a changé : ni rendu de composant à 30 Hz, ni texte fabriqué à chaque image.
  */
 import type { EngineConfig } from './config';
-import type { Telemetry } from './engine';
+import type { RestingState, Telemetry } from './engine';
 import { lang, type Lang } from './i18n.svelte';
 import type { Motion } from './motion';
 
@@ -93,16 +93,19 @@ export class Readings {
   /** Eau et huile (°C), du réseau thermique : celles de l'état choisi au départ tant que le son n'a pas démarré. */
   coolantC = 20;
   oilC = 20;
+  /** La batterie : sa tension (V) et sa température (°C), de même. 0 V tant que rien n'est calculé. */
+  batteryV = 0;
+  batteryC = 20;
   private lastNow = -1;
 
   constructor(private motion: Motion) {}
 
   /**
-   * `resting` : l'eau et l'huile du moteur quand le son ne les donne pas, calculées par le C++ : l'état choisi au départ avant
-   * le premier démarrage (`Spec.startCoolantC`), puis le moteur coupé qui refroidit (`Engine.restingThermal`). NaN : pas encore
-   * calculé, l'air ambiant en attendant.
+   * `resting` : l'eau, l'huile et la batterie quand le son ne les donne pas, calculées par le C++ : l'état choisi au départ
+   * avant le premier démarrage (`Spec.startCoolantC`…), puis le moteur coupé qui refroidit (`Engine.restingThermal`). NaN : pas
+   * encore calculé, l'air ambiant en attendant.
    */
-  update(now: number, t: Telemetry, config: EngineConfig, running: boolean, resting: { coolantC: number; oilC: number }): void {
+  update(now: number, t: Telemetry, config: EngineConfig, running: boolean, resting: RestingState): void {
     if (now === this.lastNow) return;
     const seconds = this.lastNow < 0 ? 0 : Math.min((now - this.lastNow) / 1000, 0.1);
     this.lastNow = now;
@@ -113,6 +116,8 @@ export class Readings {
     const known = (value: number) => (Number.isFinite(value) ? value : config.ambientC);
     this.coolantC = running ? t.coolantC : known(resting.coolantC);
     this.oilC = running ? t.oilC : known(resting.oilC);
+    this.batteryC = running ? t.batteryC : known(resting.batteryC);
+    this.batteryV = running ? t.batteryV : Number.isFinite(resting.batteryV) ? resting.batteryV : 0;
 
     const net = config.electric ? null : motion.meters;
     const ready = net !== null && net.n > 0 && net.zP[net.zonePlenum] > 0;

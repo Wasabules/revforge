@@ -161,10 +161,12 @@
         const amps = live && live.cranking ? Math.round(live.starterA / 10) * 10 : 0;
         const preheat = live ? Math.ceil(live.preheat) : 0;
         const failed = live ? live.startFailed : 0;
-        const key = `${amps}|${preheat}|${failed}|${lang()}`;
+        // Sa température, nœud du réseau thermique : au départ, moteur coupé, puis en marche, comme l'eau et l'huile.
+        const celsius = Math.round(readings.batteryC);
+        const key = `${amps}|${preheat}|${failed}|${celsius}|${lang()}`;
         if (key === lastBattery) return;
         lastBattery = key;
-        batteryNode.textContent = preheat > 0 ? t('gauge.battery.preheat', { s: whole(preheat) }) : amps > 0 ? t('gauge.battery.cranking', { a: whole(amps) }) : failed ? t('gauge.battery.failed') : t('gauge.battery.sub');
+        batteryNode.textContent = preheat > 0 ? t('gauge.battery.preheat', { s: whole(preheat) }) : amps > 0 ? t('gauge.battery.cranking', { a: whole(amps) }) : failed ? t('gauge.battery.failed') : t('gauge.battery.sub', { c: whole(celsius) });
       }),
       clock.add((text) => {
         if (!text) return;
@@ -256,7 +258,7 @@
     </Gauge>
     <!-- La batterie (cold_start.hpp) : à vide, sous le démarreur, puis l'alternateur moteur tournant. Repère : 12,7 V, pleine au repos. -->
     <Gauge id="battery" label={t('gauge.battery')} note={t('gauge.battery.note')} unit="V" min={6} max={16} step={2} minor={1} zone={{ from: 6, to: 9.6 }} mark={12.7}
-      digits={1} tickDigits={0} {clock} read={() => (running() ? telemetry().batteryV : 12.7)}>
+      digits={1} tickDigits={0} {clock} read={() => readings.batteryV}>
       <span data-testid="gauge-battery-sub" bind:this={batteryNode}></span>
     </Gauge>
     {#if filtered}

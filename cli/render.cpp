@@ -507,10 +507,10 @@ void start(EngineSound& sound, DrivingModel& model, Output& out, int rate, doubl
     const StartStats& s = model.start().stats();
     const bool running = !model.stalled() && !model.cranking() && model.rpm() > 0.8 * model.idleRpm();
     std::printf("Start: %s after %.2f s from the key (attempt %d of %d), cranking %.0f rpm on average before the first firing, %d firings and %d misfires,\n"
-                "       battery %.0f A on average, %.2f V at the lowest, %.3f Ah drawn, %.0f %% left; oil %s; preheat %.1f s\n",
+                "       battery %.0f A on average, %.2f V at the lowest, %.3f Ah drawn, %.0f %% left, at %.1f C; oil %s; preheat %.1f s\n",
                 running ? "running" : (s.caught ? "caught, then stalled" : "failed"), s.caught ? s.caughtAfterS : s.crankedS, s.attempts, attempts,
-                s.meanCrankRpm, s.firings, s.misfires, s.meanAmps, s.minVolts, s.drawnAh, model.start().battery().charge * 100.0, oilGradeName(model.start().oil()),
-                model.start().preheatS());
+                s.meanCrankRpm, s.firings, s.misfires, s.meanAmps, s.minVolts, s.drawnAh, model.start().battery().charge * 100.0, model.start().battery().celsius,
+                oilGradeName(model.start().oil()), model.start().preheatS());
 }
 
 void lap(EngineSound& sound, DrivingModel& model, Output& out, int rate, bool walk = false) {
@@ -703,8 +703,8 @@ void printFuel(const DrivingModel& model, const Powertrain& powertrain, double s
         if (w.cold) {
             // Ce que le réseau a calculé de l'arrêt : le moteur au moment de démarrer.
             const ThermalNetwork& s = w.atStart;
-            std::printf("At the start (%s, %.0f C outside): coolant %.1f C, oil %.1f C, metal %.1f C, radiator %.1f C\n", w.startName(), static_cast<double>(powertrain.engine.ambientC),
-                        s.coolantC(), s.oilC(), s.metalC(), s.radiatorC());
+            std::printf("At the start (%s, %.0f C outside): coolant %.1f C, oil %.1f C, metal %.1f C, radiator %.1f C, battery %.1f C\n", w.startName(), static_cast<double>(powertrain.engine.ambientC),
+                        s.coolantC(), s.oilC(), s.metalC(), s.radiatorC(), s.batteryC());
             std::printf("Warm-up: thermostat opens at %.0f s, coolant 70 C at %.0f s, oil 80 C at %.0f s, fast idle over at %.0f s (-1: not reached)\n", w.thermostatS, w.coolant70S, w.oil80S, w.idleWarmS);
         }
     }
@@ -719,8 +719,9 @@ void printFuel(const DrivingModel& model, const Powertrain& powertrain, double s
     const ThermalNetwork atStart = model.startThermal();
     const double startCoolant = powertrain.electric ? ambient : atStart.coolantC();
     const double startOil = powertrain.electric ? ambient : atStart.oilC();
-    std::printf("raw fuel_lph=%.17g fuel_trip_l=%.17g trip_km=%.17g oil_trip_ml=%.17g energy_trip_kwh=%.17g coolant_c=%.17g oil_c=%.17g start_coolant_c=%.17g start_oil_c=%.17g\n", c.fuelLph(), c.fuelTripL(), c.tripKm(), c.oilTripMl(),
-                c.energyTripKwh(), coolant, oil, startCoolant, startOil);
+    const double startBattery = powertrain.electric ? ambient : atStart.batteryC();
+    std::printf("raw fuel_lph=%.17g fuel_trip_l=%.17g trip_km=%.17g oil_trip_ml=%.17g energy_trip_kwh=%.17g coolant_c=%.17g oil_c=%.17g start_coolant_c=%.17g start_oil_c=%.17g start_battery_c=%.17g\n", c.fuelLph(), c.fuelTripL(), c.tripKm(), c.oilTripMl(),
+                c.energyTripKwh(), coolant, oil, startCoolant, startOil, startBattery);
     if (model.chargeAirEngine()) {
         // L'air de charge : la fiche à 100 km/h, face au même moteur sans eau, sans protoxyde, avec l'échangeur d'origine.
         const ManifoldCharge now = steadyManifoldCharge(powertrain, peak.peakPowerRpm);

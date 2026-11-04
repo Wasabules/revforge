@@ -126,8 +126,9 @@ DrivingModel::DrivingModel(const Powertrain& powertrain) {
     // Fusion des finitions : le réseau thermique agit aussi moteur chaud (`coldCoupled_`), d'où le départ à froid écrit en entier.
     // Un moteur arrêté une demi-heure ou deux heures est entre les deux : tant que son eau n'a pas fini la mise en température
     // (le calculateur tient encore un ralenti accéléré), il part de même ; au-delà, comme un moteur chaud. Une nuit dehors, l'eau
-    // est à l'air (50 °C au plus) : toujours en mise en température, comme à l'origine.
-    if (coldCoupled_ && startTemp_ != StartTemp::Warm && coldIdleRise_ > 0.0) {
+    // est à l'air (50 °C au plus) : toujours en mise en température, comme à l'origine. Intégration : seule l'eau en décide, pas
+    // l'étiquette du départ ; parti chaud, l'eau est à 90 °C, le ralenti accéléré nul, et rien ne change au bit près.
+    if (coldCoupled_ && coldIdleRise_ > 0.0) {
         const double friction = frictionTorqueNm(powertrain_, idle_) + hydroNmPerRpm_ * idle_ * viscosityExcess_;
         manifold_ = clamp(friction / std::max(fullLoadTorqueNm(powertrain_, idle_, 0.0) + frictionTorqueNm(powertrain_, idle_), 1.0), 0.0, 1.0);
     }
@@ -408,6 +409,8 @@ StartConditions DrivingModel::startConditions() const {
     c.ambientBar = air.pressurePa / 1e5;
     c.coolantC = thermalEngine_ ? thermal_.coolantC() : kWarmCoolantC;
     c.oilC = thermalEngine_ ? thermal_.oilC() : kWarmOilC;
+    // La batterie a suivi l'arrêt dans le réseau, avec son inertie : une nuit, l'air ; chaud, le compartiment ; entre les deux, calculée.
+    if (thermalEngine_) c.batteryC = thermal_.batteryC();
     return c;
 }
 
@@ -668,8 +671,15 @@ ThermalNetwork DrivingModel::startThermal() const {
 
 void DrivingModel::soakThermal(double seconds) {
     if (!thermalEngine_ || !(seconds > 0.0)) return;
+    // La batterie avec : sa température dans le réseau, et l'acide qui revient dans ses plaques.
     thermal_.soak(seconds, static_cast<double>(ambientC_));
+    start_.rest(seconds);
     updateColdEffects();
+}
+
+void DrivingModel::carryBattery(const BatteryState& from) {
+    if (!thermalEngine_) return;
+    start_.restoreBattery(from);
 }
 
 void DrivingModel::carryThermal(const ThermalNetwork& from) {

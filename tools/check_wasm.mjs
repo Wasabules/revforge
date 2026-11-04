@@ -1022,12 +1022,18 @@ for (const [name, code] of [['electronic', BOOST_CONTROL.electronic], ['by_gear'
   };
   check('arrêt de 2 h, démarrage par -20 °C', render(cranked(), 10, 128), native(...crankArgs));
   const rf = cranked();
-  const atStart = [rf.rf_start_thermal(0), rf.rf_start_thermal(1)];
+  const atStart = [rf.rf_start_thermal(0), rf.rf_start_thermal(1), rf.rf_start_thermal(3)];
   driveLikeNative(rf, 10);
   const figures = nativeFigures(...crankArgs);
   checkFigures('arrêt de 2 h, démarrage par -20 °C', rf, figures);
   check('arrêt de 2 h, eau au départ', String(atStart[0]), String(figures.start_coolant_c));
   check('arrêt de 2 h, huile au départ', String(atStart[1]), String(figures.start_oil_c));
+  // Intégration du froid : la batterie, nœud du même réseau, que lit le démarreur.
+  check('arrêt de 2 h, batterie au départ', String(atStart[2]), String(figures.start_battery_c));
+  const minus30 = parkedCity(START.two_hours, -30);
+  minus30.rf_set_mode(1);
+  minus30.rf_crank();
+  check('arrêt de 2 h, démarrage par -30 °C', render(minus30, 6, 128), native('--preset', 'city_14', '--ambient', '-30', '--start', 'two_hours', '--scenario', 'start', '--seconds', '6'));
   const posed = parkedCity(START.half_hour, 10);
   posed.rf_set_mode(FRESH);
   check('arrêt de 30 min, posé au ralenti', render(posed, 20, 128), native('--preset', 'city_14', '--ambient', '10', '--start', 'half_hour', '--scenario', 'lap', '--seconds', '20'));

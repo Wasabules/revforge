@@ -214,6 +214,24 @@ export interface Telemetry {
   starterA: number;
   startFailed: number;
   preheat: number;
+  /**
+   * La batterie, pour les jauges moteur coupé (`rf_battery_state`) : sa charge (0 à 1), l'acide appauvri dans ses plaques (A·s)
+   * et sa température (°C), nœud du réseau thermique qui suit l'arrêt avec son inertie.
+   */
+  batteryCharge: number;
+  batteryDrawnAs: number;
+  batteryC: number;
+}
+
+/**
+ * Ce que montrent les jauges quand le son ne le dit pas, calculé par le C++ : l'eau, l'huile, la batterie (°C) et sa tension à
+ * vide (V). Avant le premier démarrage, l'état au départ (`Spec.start*`) ; moteur coupé, `Engine.restingThermal`.
+ */
+export interface RestingState {
+  coolantC: number;
+  oilC: number;
+  batteryC: number;
+  batteryV: number;
 }
 
 export const IDLE_TELEMETRY: Telemetry = {
@@ -225,7 +243,7 @@ export const IDLE_TELEMETRY: Telemetry = {
   camHigh: 0, camPhaser: 0,
   turbo2Rpm: 0, turbo2Exhaust: 0, turbo2Wastegate: 0, turbo2Flow: 0, turbo2GasC: 20, turboVane: 0, turbo2Vane: 0, twinStage: 0, twinValve: 0, twinOnline: 0, chargerClutch: 0, chargerFlap: 0, chargerInterstage: 0,
   chargeC: 20, chargeWaterC: 20, waterGps: 0, nitrousBar: 0, nitrousKg: 0, nitrousFlow: 0,
-  batteryV: 0, starterA: 0, startFailed: 0, preheat: 0,
+  batteryV: 0, starterA: 0, startFailed: 0, preheat: 0, batteryCharge: 1, batteryDrawnAs: 0, batteryC: 20,
 };
 
 export interface CurvePoint {
@@ -339,6 +357,9 @@ export interface Spec {
    */
   startCoolantC: number;
   startOilC: number;
+  /** La batterie au départ, du même réseau : sa température (°C) et sa tension à vide, pleine et reposée (V). */
+  startBatteryC: number;
+  startBatteryV: number;
 }
 
 export interface CamSpec {
@@ -383,7 +404,7 @@ export interface SoundSheet {
   lineLoss: { hz: number; db: number }[];
 }
 
-export const EMPTY_SPEC: Spec = { idle: 0, redline: 7000, peakTorque: 0, peakTorqueRpm: 0, peakHp: 0, peakHpRpm: 0, gears: 0, ratios: [], turboWheelMm: 0, turboInertia: 0, turboUnits: 0, chargerOffRpm: 0, intakeDropKpa: 0, intakeAirC: 20, chargerRatio: 0, chargerVolume: 0, chargerWheelMm: 0, zeroTo100: 0, topSpeed: 0, starter: { direct: false, kw: 0, ring: 0, pinion: 0, helix: 0 }, carb: { throats: 0, throatMm: 0, dropKpa: 0 }, nitrousRpm: 0, combustion: { ratio: 0, efficiency: 1, marginDeg: 0, marginRpm: 0, sensor: false }, ecu: { rpm: 0, sparkDeg: 0, fullShare: 1, exhaustC: 0, stockExhaustC: 0 }, curve: [], box: EMPTY_BOX, injection: { coolingK: 0, fillGain: 0, railBar: 0, lowEnd: 0, knockDb: 0, egr: 0, dpfCleanKpa: 0, dpfFullKpa: 0 }, cam: EMPTY_CAM, valves: { floatRpm: 0, massG: 0, seatN: 0, openN: 0, naturalHz: 0, ratio: 0 }, startCoolantC: Number.NaN, startOilC: Number.NaN };
+export const EMPTY_SPEC: Spec = { idle: 0, redline: 7000, peakTorque: 0, peakTorqueRpm: 0, peakHp: 0, peakHpRpm: 0, gears: 0, ratios: [], turboWheelMm: 0, turboInertia: 0, turboUnits: 0, chargerOffRpm: 0, intakeDropKpa: 0, intakeAirC: 20, chargerRatio: 0, chargerVolume: 0, chargerWheelMm: 0, zeroTo100: 0, topSpeed: 0, starter: { direct: false, kw: 0, ring: 0, pinion: 0, helix: 0 }, carb: { throats: 0, throatMm: 0, dropKpa: 0 }, nitrousRpm: 0, combustion: { ratio: 0, efficiency: 1, marginDeg: 0, marginRpm: 0, sensor: false }, ecu: { rpm: 0, sparkDeg: 0, fullShare: 1, exhaustC: 0, stockExhaustC: 0 }, curve: [], box: EMPTY_BOX, injection: { coolingK: 0, fillGain: 0, railBar: 0, lowEnd: 0, knockDb: 0, egr: 0, dpfCleanKpa: 0, dpfFullKpa: 0 }, cam: EMPTY_CAM, valves: { floatRpm: 0, massG: 0, seatN: 0, openN: 0, naturalHz: 0, ratio: 0 }, startCoolantC: Number.NaN, startOilC: Number.NaN, startBatteryC: Number.NaN, startBatteryV: Number.NaN };
 
 interface RfExports {
   memory: WebAssembly.Memory;
@@ -413,6 +434,9 @@ interface RfExports {
   rf_starter_a(): number;
   rf_start_failed(): number;
   rf_preheat(): number;
+  /** La batterie : 0 sa charge, 1 l'acide appauvri (A·s), 2 sa température (°C) ; et sa tension à vide après un repos. */
+  rf_battery_state(which: number): number;
+  rf_rest_battery_v(charge: number, drawnAs: number, celsius: number, seconds: number): number;
   rf_render(frames: number): void;
   rf_render_stereo(frames: number): void;
   rf_set_listener(listener: number): void;
@@ -579,7 +603,7 @@ interface RfExports {
    */
   rf_start_thermal(which: number): number;
   rf_soak(seconds: number): void;
-  rf_rest_thermal(coolantC: number, oilC: number, metalC: number, seconds: number, which: number): number;
+  rf_rest_thermal(coolantC: number, oilC: number, metalC: number, batteryC: number, seconds: number, which: number): number;
 }
 
 /** Le moteur finit de tourner sur son élan avant qu'on suspende l'audio. */
@@ -618,14 +642,14 @@ export class Engine {
    * n'avance plus ; les jauges lisent ce que le réseau en ferait (`rf_rest_thermal`), et le worklet rattrape ce temps en
    * reprenant (`rf_soak`). Effacé quand l'état au départ, l'air ou le moteur changent : le worklet repart alors de l'état choisi.
    */
-  private rest: { coolantC: number; oilC: number; metalC: number; since: number } | null = null;
+  private rest: { coolantC: number; oilC: number; metalC: number; batteryC: number; charge: number; drawnAs: number; since: number } | null = null;
   /** Ce qui, changé, remet le réseau du worklet à l'état choisi (`DrivingModel::configureThermal`), et combien de fois. */
   private thermalKey = '';
   private thermalResets = 0;
   /** Le compte des remises à l'état choisi au dernier arrêt du moteur ; -1 tant qu'il tourne ou n'a jamais tourné. */
   private stoppedAfter = -1;
   /** Les jauges, moteur coupé : recalculées au plus une fois par demi-seconde. */
-  private restShown: { at: number; coolantC: number; oilC: number } | null = null;
+  private restShown: ({ at: number } & RestingState) | null = null;
 
   constructor(private onTelemetry: (t: Telemetry) => void, private onError: (message: string) => void) {}
 
@@ -701,30 +725,32 @@ export class Engine {
       // Le modèle s'arrête avec le son : ses températures sont celles de la dernière télémétrie, et le temps commence à compter.
       // Sauf si l'état au départ a changé depuis l'arrêt : le moteur est alors celui qu'on vient de choisir.
       const last = this.latest;
-      if (last && this.context && resets === this.thermalResets) this.rest = { coolantC: last.coolantC, oilC: last.oilC, metalC: last.metalC, since: performance.now() };
+      if (last && this.context && resets === this.thermalResets) {
+        this.rest = { coolantC: last.coolantC, oilC: last.oilC, metalC: last.metalC, batteryC: last.batteryC, charge: last.batteryCharge, drawnAs: last.batteryDrawnAs, since: performance.now() };
+      }
       this.restShown = null;
       void this.context?.suspend();
     }, RUNDOWN_BEFORE_SUSPEND_MS);
   }
 
   /**
-   * L'eau et l'huile d'un moteur coupé dont le son est suspendu, au moment `now` : le même réseau, avec les capacités et la
-   * convection de ce réglage, calculé par l'exemplaire de la page. `null` tant que le son n'a pas été suspendu, ou si l'état au
-   * départ a changé depuis : le moteur est alors celui qu'on a choisi.
+   * L'eau, l'huile et la batterie d'un moteur coupé dont le son est suspendu, au moment `now` : le même réseau, avec les
+   * capacités et la convection de ce réglage, et la même batterie, dont l'acide revient dans les plaques, calculés par
+   * l'exemplaire de la page. `null` tant que le son n'a pas été suspendu, ou si l'état au départ a changé depuis : le moteur est
+   * alors celui qu'on a choisi.
    */
-  restingThermal(now: number): { coolantC: number; oilC: number } | null {
+  restingThermal(now: number): RestingState | null {
     const rest = this.rest;
     const rf = this.local;
     // Le temps que le moteur finisse de tourner, le son n'est pas encore suspendu : le modèle avance, la télémétrie le dit.
-    if (!rest && this.stoppedAfter === this.thermalResets && this.latest) return { coolantC: this.latest.coolantC, oilC: this.latest.oilC };
+    const last = this.latest;
+    if (!rest && this.stoppedAfter === this.thermalResets && last) return { coolantC: last.coolantC, oilC: last.oilC, batteryC: last.batteryC, batteryV: last.batteryV };
     if (!rest || !rf) return null;
     if (this.restShown && Math.abs(now - this.restShown.at) < 500) return this.restShown;
     const seconds = Math.max(now - rest.since, 0) / 1000;
-    this.restShown = {
-      at: now,
-      coolantC: rf.rf_rest_thermal(rest.coolantC, rest.oilC, rest.metalC, seconds, 0),
-      oilC: rf.rf_rest_thermal(rest.coolantC, rest.oilC, rest.metalC, seconds, 1),
-    };
+    const part = (which: number) => rf.rf_rest_thermal(rest.coolantC, rest.oilC, rest.metalC, rest.batteryC, seconds, which);
+    const batteryC = part(3);
+    this.restShown = { at: now, coolantC: part(0), oilC: part(1), batteryC, batteryV: rf.rf_rest_battery_v(rest.charge, rest.drawnAs, batteryC, seconds) };
     return this.restShown;
   }
 
@@ -1059,6 +1085,9 @@ export class Engine {
       },
       startCoolantC: rf.rf_start_thermal(0),
       startOilC: rf.rf_start_thermal(1),
+      startBatteryC: rf.rf_start_thermal(3),
+      // Une batterie pleine et reposée, à sa température au départ : sa tension à vide.
+      startBatteryV: rf.rf_rest_battery_v(1, 0, rf.rf_start_thermal(3), 0),
     };
   }
 

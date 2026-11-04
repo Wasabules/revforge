@@ -381,7 +381,7 @@
     // Le son ne dit les températures qu'une fois sa première télémétrie reçue ; avant, et moteur coupé, le C++ de la page.
     const live = running && telemetry !== IDLE_TELEMETRY;
     const resting = live ? null : engine.restingThermal(now);
-    readings.update(now, telemetry, shown, live, resting ?? { coolantC: spec.startCoolantC, oilC: spec.startOilC });
+    readings.update(now, telemetry, shown, live, resting ?? { coolantC: spec.startCoolantC, oilC: spec.startOilC, batteryC: spec.startBatteryC, batteryV: spec.startBatteryV });
   }
 
   // ── Les vues : une à la fois, montée la première fois qu'on la demande, puis en pause cachée. ──
