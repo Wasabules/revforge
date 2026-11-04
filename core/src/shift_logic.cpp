@@ -1,5 +1,7 @@
 #include "revforge/shift_logic.hpp"
 
+#include "revforge/tyre.hpp"
+
 #include <algorithm>
 #include <cmath>
 
@@ -17,7 +19,8 @@ constexpr double kLandingMargin = 1.02;
 constexpr double kMinAfterShiftS = 0.4;
 // Le rapport inférieur n'apporte quelque chose que s'il tire vraiment plus aux roues.
 constexpr double kKickdownGain = 1.02;
-constexpr double kTractionSlipMs = 0.8;
+// Roues qui patinent : le rapport suivant doit retomber au moins à ce multiple du ralenti, à la vitesse de la voiture (supposé).
+constexpr double kStallLanding = 1.3;
 constexpr double kPullingMs2 = 0.8;
 // Juste après un passage, on ne revient en arrière que si la voiture n'avance vraiment plus.
 constexpr double kKickLockS = 2.5;
@@ -168,10 +171,16 @@ int decideShift(const ShiftMap& m, ShiftMode mode, const ShiftView& v) {
     const bool gapOver = v.sinceShift > traits.gapSec;
     const double floor = downshiftFloor(m, mode);
 
+    // Les pneus sont à leur limite, passé le sommet de leur courbe (tyre.hpp) : plus de couple n'y ajouterait rien, et un
+    // rapport de moins ne ferait que patiner.
+    const bool traction = v.slipRatio > tyrePeakSlip();
+    // Les roues patinent : le régime ne dit plus la vitesse de la voiture. Le rapport suivant doit retomber au-dessus du
+    // ralenti à la vitesse de la voiture elle-même, comme le lit une boîte aux roues non motrices (ABS) : sinon, monté à
+    // l'allure d'un piéton, il calerait. Le rupteur, lui, protège le moteur en attendant.
+    const bool stallingAbove = traction && canUp &&
+                               v.speedKmh / 3.6 / m.radius * 60.0 / (2.0 * kPi) * m.overall[static_cast<std::size_t>(v.gear)] < m.idle * kStallLanding;
     // Protéger le moteur vient avant tout le reste, même en virage, même au frein.
-    if (canUp && v.rpm >= m.redline * kProtectShare && v.sinceShift > kMinAfterShiftS && v.coupled) return 1;
-    // Les pneus sont à leur limite : plus de couple n'y ajouterait rien, et un rapport de moins ne ferait que patiner.
-    const bool traction = v.slipMs > kTractionSlipMs;
+    if (canUp && v.rpm >= m.redline * kProtectShare && v.sinceShift > kMinAfterShiftS && v.coupled && !stallingAbove) return 1;
     // Bas dans les tours mais la voiture accélère franchement : le moteur n'a pas besoin d'aide.
     if (canDown && v.coupled && v.roadRpm < floor && v.sinceShift > kMinAfterShiftS && !traction && v.accelMs2 < kPullingMs2) return -1;
     if (mode == ShiftMode::Paddles) return 0;
@@ -206,6 +215,7 @@ int decideShift(const ShiftMap& m, ShiftMode mode, const ShiftView& v) {
     }
 
     if (!canUp || !gapOver || rpmAbove < floor * kLandingMargin) return 0;
+    if (stallingAbove) return 0;
     // Le rapport suivant doit tenir la route, même si la vitesse fléchit un peu : c'est ce qui évite d'hésiter dans une côte,
     // surtout sous un turbo, dont le couple s'effondre avec le régime.
     const double pull = m.torqueAt(rpmAbove * 0.9) * m.overall[static_cast<std::size_t>(v.gear)] * m.efficiency / m.radius;

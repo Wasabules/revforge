@@ -16,6 +16,7 @@
 #include "revforge/valve_float.hpp"
 #include "revforge/twin_turbo.hpp"
 #include "revforge/two_stroke.hpp"
+#include "revforge/tyre.hpp"
 #include "revforge/valvetrain.hpp"
 
 namespace revforge {
@@ -821,27 +822,117 @@ Gearing gearingOf(const Powertrain& p) {
     return g;
 }
 
+namespace {
+
+constexpr double kPerformanceStep = 0.01;
+// L'essayeur sans antipatinage (voir « Le pneu, l'antipatinage et le départ », docs/modele.md). Il passe lui-même les rapports
+// au régime où la boîte les passerait pied au plancher, et fait plusieurs départs, dont il garde le meilleur, comme un essai
+// de presse. Il part pied tenu à une part de sa course, ce qui fixe le régime auquel le robot fait patiner l'embrayage ; une
+// fois l'embrayage serré :
+// - soit il passe au plancher ;
+// - soit il dose la pédale sur le patinage qu'il sent : une régulation proportionnelle et intégrale du glissement vers le
+//   sommet du pneu, comme l'antipatinage, mais à la bande passante d'un pilote humain. Selon le modèle de McRuer, l'ensemble
+//   pilote et véhicule se comporte près de la coupure comme un intégrateur de pulsation ω_c, retardé de τ (McRuer et Jex,
+//   1967 : ω_c de 2 à 5 rad/s, τ de 0,1 à 0,3 s, cités de mémoire) : pôles à ω_c = 3 rad/s, amortis à 0,7, ce qu'il sent
+//   datant de 0,2 s (valeurs retenues supposées).
+constexpr double kTesterLaunchPedals[] = {0.4, 0.6, 0.8, 1.0};
+constexpr double kTesterReactionS = 0.2;
+constexpr double kTesterCrossover = 3.0;
+constexpr double kTesterDamping = 0.7;
+
+/**
+ * Un départ de l'essayeur, pied à `launch` jusqu'à l'embrayage serré, puis au plancher, ou dosé. 0 s'il n'atteint pas
+ * 100 km/h avant `bestS`, son meilleur temps jusque-là : il n'a pas besoin de finir un départ déjà perdu.
+ */
+double testerZeroTo100(const Powertrain& warm, double launch, bool dosing, double bestS) {
+    constexpr int kDelay = static_cast<int>(kTesterReactionS / kPerformanceStep + 0.5);
+    const int steps = bestS > 0.0 ? std::min(40 * 100, static_cast<int>(bestS / kPerformanceStep + 0.5)) : 40 * 100;
+    DrivingModel model(warm);
+    const ShiftMap map = buildShiftMap(withReferenceAir(warm), model.gearing());
+    model.setManual(true);
+    model.requestShift(1);
+    const double peak = tyrePeakSlip();
+    double slipFelt[kDelay] = {};
+    double speedFelt[kDelay] = {};
+    int at = 0;
+    // L'intégrale part de ce que fait déjà son pied : il ne le relève pas d'un coup en commençant à doser.
+    double integral = 1.0 - launch;
+    double foot = launch;
+    bool launched = false;
+    for (int i = 0; i < 100 && !model.meshed(); ++i) model.stepPedal(kPerformanceStep, foot, 0.0);
+    for (int i = 0; i < steps; ++i) {
+        const int gear = model.gear();
+        if (!model.shifting() && gear >= 1 && gear < model.gears() && model.rpm() >= upshiftPoint(map, ShiftMode::Normal, gear, 1.0)) model.requestShift(1);
+        model.stepPedal(kPerformanceStep, foot, 0.0);
+        if (model.speedKmh() >= 100.0) return static_cast<double>(i) * kPerformanceStep;
+        // Ce qu'il sent maintenant s'est passé il y a τ : le patinage (m/s), face à ce que le pneu tient à son sommet.
+        const double error = slipFelt[at] - peak * std::max(speedFelt[at], kTyreLowSpeedMs);
+        slipFelt[at] = model.wheelSlip();
+        speedFelt[at] = model.speedKmh() / 3.6;
+        at = (at + 1) % kDelay;
+        if (!launched) {
+            launched = model.clutch() >= 0.99;
+            continue;
+        }
+        if (!dosing) {
+            foot = 1.0;
+            continue;
+        }
+        const double gain = model.slipPlantGain();
+        const double proportional = 2.0 * kTesterDamping * kTesterCrossover / gain * error;
+        const bool saturated = (proportional + integral >= 1.0 && error > 0.0) || (proportional + integral <= 0.0 && error < 0.0);
+        if (!saturated) integral = std::clamp(integral + kTesterCrossover * kTesterCrossover / gain * error * kPerformanceStep, 0.0, 1.0);
+        foot = 1.0 - std::clamp(proportional + integral, 0.0, 1.0);
+    }
+    return 0.0;
+}
+
+/** Pied au plancher, la boîte laissée à elle-même. 0 si jamais 100 km/h. `spun` : les roues ont dépassé le sommet du pneu. */
+double flatOutZeroTo100(const Powertrain& warm, bool& spun) {
+    DrivingModel model(warm);
+    spun = false;
+    // Avec le launch control, on part comme sur une piste : pied sur le frein et au plancher, le temps que le régime et la
+    // pression montent ; le chronomètre part au lâcher du frein.
+    if (!warm.electric && warm.engine.launchRpm > 0) {
+        for (int i = 0; i < static_cast<int>(kLaunchStageS / kPerformanceStep); ++i) model.stepPedal(kPerformanceStep, 1.0, 1.0);
+    }
+    // Le chronomètre part une fois la première engagée, embrayage au point de patinage.
+    for (int i = 0; i < 100 && !model.meshed(); ++i) model.stepPedal(kPerformanceStep, 1.0, 0.0);
+    for (int i = 0; i < 40 * 100; ++i) {
+        model.stepPedal(kPerformanceStep, 1.0, 0.0);
+        spun = spun || model.wheelSlipRatio() > tyrePeakSlip();
+        if (model.speedKmh() >= 100.0) return static_cast<double>(i) * kPerformanceStep;
+    }
+    return 0.0;
+}
+
+}  // namespace
+
 Performance measurePerformance(const Powertrain& p) {
     Performance out;
-    constexpr double kStep = 0.01;
     // La fiche se mesure moteur chaud, comme une homologation : un départ à froid ne change pas la voiture.
     Powertrain warm = p;
     warm.engine.startTemp = StartTemp::Warm;
-    DrivingModel model(warm);
-    // Avec le launch control, on part comme sur une piste : pied sur le frein et au plancher, le temps que le régime et la
-    // pression montent ; le chronomètre part au lâcher du frein.
-    if (!p.electric && p.engine.launchRpm > 0) {
-        for (int i = 0; i < static_cast<int>(kLaunchStageS / kStep); ++i) model.stepPedal(kStep, 1.0, 1.0);
-    }
-    // Le chronomètre part une fois la première engagée, embrayage au point de patinage.
-    for (int i = 0; i < 100 && !model.meshed(); ++i) model.stepPedal(kStep, 1.0, 0.0);
-    for (int i = 0; i < 40 * 100; ++i) {
-        model.stepPedal(kStep, 1.0, 0.0);
-        if (model.speedKmh() >= 100.0) {
-            out.zeroTo100S = static_cast<double>(i) * kStep;
-            break;
+    // La fiche est le meilleur départ d'un essayeur. Il pose d'abord le pied au plancher et laisse faire la boîte. Si les roues
+    // ont patiné au-delà du sommet, sans antipatinage ni launch control, il essaie aussi de choisir son régime de départ, puis
+    // de doser lui-même la pédale ; avec eux, il les laisse faire. Une voiture électrique a déjà son couple dosé par son
+    // onduleur : pied au plancher. En conduite, rien de cela.
+    bool spun = false;
+    out.zeroTo100S = flatOutZeroTo100(warm, spun);
+    if (spun && !p.electric && p.engine.launchRpm == 0 && p.engine.tractionControl == TractionControl::Off) {
+        for (const double launch : kTesterLaunchPedals) {
+            for (const bool dosing : {false, true}) {
+                const double t = testerZeroTo100(warm, launch, dosing, out.zeroTo100S);
+                if (t > 0.0 && (out.zeroTo100S == 0.0 || t < out.zeroTo100S)) out.zeroTo100S = t;
+            }
         }
     }
+    out.topSpeedKmh = topSpeedKmh(p);
+    return out;
+}
+
+double topSpeedKmh(const Powertrain& p) {
+    double top = 0.0;
     const Gearing gearing = gearingOf(p);
     const double radius = wheelRadiusM(p.car);
     const double redline = redlineRpmOf(p);
@@ -852,11 +943,11 @@ Performance measurePerformance(const Powertrain& p) {
             const double rpm = speed * ratio * 60.0 / (2.0 * kPi * radius);
             if (rpm > redline) break;
             if (torqueCurveNm(p, rpm) * ratio * gearing.box.meshEfficiency / radius >= roadLoadN(p, speed)) {
-                out.topSpeedKmh = std::max(out.topSpeedKmh, kmh);
+                top = std::max(top, kmh);
             }
         }
     }
-    return out;
+    return top;
 }
 
 }  // namespace revforge

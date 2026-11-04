@@ -79,7 +79,7 @@ struct ShiftView {
     double demand = 0.0;       // le pied, sa vitesse et sa mémoire : voir ShiftTraits
     double speedKmh = 0.0;
     double sinceShift = 0.0;
-    double slipMs = 0.0;       // glissement des pneus moteurs
+    double slipRatio = 0.0;    // glissement des pneus moteurs, κ (tyre.hpp)
     double accelMs2 = 0.0;
     double tractionN = 1e9;    // ce que les pneus moteurs peuvent transmettre
     double resistanceN = 0.0;  // route, pente, remorque

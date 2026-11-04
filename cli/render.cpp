@@ -590,7 +590,7 @@ void wltc(EngineSound& sound, DrivingModel& model, Output& out, int rate, SpeedF
  * Une reprise : tenu en troisième à ce régime, puis pied au plancher. Écrit le couple de la première seconde, et le creux du
  * mélange s'il y a un carburateur. Sert à mesurer : ni le son ni les empreintes n'en dépendent.
  */
-void tipIn(EngineSound& sound, DrivingModel& model, Output& out, int rate, double fromRpm) {
+void tipIn(EngineSound& sound, DrivingModel& model, Output& out, int rate, double fromRpm, double wheelRadius) {
     constexpr double kHoldS = 12.0;
     model.setManual(true);
     model.requestShift(1);
@@ -599,11 +599,16 @@ void tipIn(EngineSound& sound, DrivingModel& model, Output& out, int rate, doubl
     play(sound, model, out, rate, [&](int step, double dt) {
         const double t = static_cast<double>(step) * kTick / rate;
         if (t < kHoldS) {
-            // On ne passe que si le rapport suivant retombe au-dessus du régime visé : pas de quoi caler.
+            // On ne passe que si le rapport suivant retombe au-dessus du régime visé : pas de quoi caler. Ce régime se lit à la
+            // vitesse de la voiture, comme au compteur : ni au moteur, qui tourne bien plus vite que la voiture ne roule tant que
+            // l'embrayage patine au départ, ni aux roues, qui peuvent patiner. Lu au moteur, la troisième entrait à 2 km/h, et le
+            // moteur calait dès que l'embrayage s'y refermait.
             const int now = model.gear();
             if (now >= 1 && now < 3 && !model.shifting()) {
-                const double next = model.rpm() * model.gearing().overall[static_cast<std::size_t>(now)] / model.gearing().overall[static_cast<std::size_t>(now - 1)];
-                if (next > std::max(fromRpm, model.idleRpm() * 1.4) || model.rpm() > model.redlineRpm() * 0.85) model.requestShift(1);
+                const double wheels = model.speedKmh() / 3.6 / wheelRadius * 60.0 / (2.0 * 3.141592653589793);
+                const double road = wheels * model.gearing().overall[static_cast<std::size_t>(now - 1)];
+                const double next = wheels * model.gearing().overall[static_cast<std::size_t>(now)];
+                if (next > std::max(fromRpm, model.idleRpm() * 1.4) || road > model.redlineRpm() * 0.85) model.requestShift(1);
             }
             const double error = (fromRpm - model.rpm()) / 1000.0;
             held = std::clamp(held + 0.5 * error * dt, 0.02, 1.0);
@@ -1035,7 +1040,7 @@ int main(int argc, char** argv) {
     } else if (scenario == "wltc") {
         wltc(sound, model, output, rate, driver);
     } else if (scenario == "tipin") {
-        tipIn(sound, model, output, rate, rpm);
+        tipIn(sound, model, output, rate, rpm, wheelRadiusM(powertrain.car));
     } else if (scenario == "soak") {
         soak(sound, model, output, rate);
     } else if (scenario == "steady") {

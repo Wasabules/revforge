@@ -469,7 +469,11 @@ TEST_CASE("air de charge : départ arrêté, faisceau froid ou chauffé par le d
     for (const char* name : {"hot_hatch_turbo", "diesel_four", "v8_supercharged"}) {
         const std::string id = name;
         CAPTURE(id);
-        const Powertrain p = preset(name);
+        // Fusion des finitions : antipatinage sport, comme les autres essais de conduite que le pneu à sommet contredisait. Sans
+        // lui, le V8 à compresseur patine bien au-delà du sommet : moins de couple y patine moins, et le faisceau chaud allait plus
+        // vite (9,41 s contre 9,47) ; c'est le patinage qu'on chronométrait, pas l'air de charge.
+        Powertrain p = preset(name);
+        p.engine.tractionControl = TractionControl::Sport;
         DrivingModel fresh(p);
         stop(fresh, 60.0);
         const Start cold = start(fresh);

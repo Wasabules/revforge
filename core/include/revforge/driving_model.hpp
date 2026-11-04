@@ -15,6 +15,7 @@
 #include "revforge/shift_logic.hpp"
 #include "revforge/thermal.hpp"
 #include "revforge/twin_turbo.hpp"
+#include "revforge/tyre.hpp"
 
 namespace revforge {
 
@@ -171,6 +172,15 @@ public:
     double wheelRpm() const;
     /** Glissement des pneus moteurs (m/s). */
     double wheelSlip() const { return wheelSpeedMs() - speedMs_; }
+    /** Le même, en glissement longitudinal κ (tyre.hpp) : ce que le pneu en fait, et ce que vise l'antipatinage. */
+    double wheelSlipRatio() const { return tyreSlipRatio(wheelSpeedMs(), speedMs_); }
+    /** La force des roues motrices au sol au dernier pas (N). */
+    double tyreForceN() const { return tyreUsed_; }
+    /**
+     * Ce que tout le couple maximal du moteur ferait au glissement des roues sur le rapport engagé (m/s²) : r·T·g·η sur l'inertie
+     * vue de la roue. Le gain de la boucle que ferment l'antipatinage, et l'essayeur de la fiche (`measurePerformance`).
+     */
+    double slipPlantGain() const;
     /** Combustion coupée : rupteur, ou contact coupé. */
     bool cut() const { return cut_; }
     bool shifting() const { return step_ != ShiftStep::None; }
@@ -295,10 +305,14 @@ private:
     void updateEngine(double pedal, bool off);
     double stepEcu(double throttle, double rpmNow, bool off);
     void finishEcu(double rpmNow, double indicated, bool off);
+    /** Le robot fait partir la voiture : première, embrayage qui patine encore (la branche du démarrage de `updateClutch`). */
+    bool robotLaunching() const;
+    /** Les gains de l'antipatinage sur le rapport engagé. */
+    void tractionGains(double& kp, double& ki) const;
     void integrate(double brakePedal);
-    void drivenStep(double tyre, double wheelInertia);
-    void freeStep(double tyre, double wheelInertia);
-    void converterStep(double tyre, double wheelInertia);
+    void drivenStep(const TyreContact& tyre, double wheelInertia);
+    void freeStep(const TyreContact& tyre, double wheelInertia);
+    void converterStep(const TyreContact& tyre, double wheelInertia);
     void converterTorque(double& pump, double& turbine) const;
     bool settled() const;
     bool assisted() const { return !manual_ || clutchAssist_; }
@@ -498,6 +512,7 @@ private:
     bool flatCut_ = false;
     double tractionTarget_ = 0.0;
     double tractionIntegral_ = 0.0;
+    double tractionTorqueNm_ = 300.0;
     double portK_ = 293.0;
     double ignition_ = 0.0;
     double unburntJoules_ = 0.0;
@@ -508,6 +523,8 @@ private:
     double wheelOmega_ = 0.0;
     double brake_ = 0.0;
     double acceleration_ = 0.0;
+    // Le pneu : la force au sol de ce pas, celle que reçoivent la roue et la caisse (tyre.hpp).
+    double tyreUsed_ = 0.0;
 
     // La came : deux profils, un déphaseur. Voir cam.hpp.
     void stepCam(double rpmNow);

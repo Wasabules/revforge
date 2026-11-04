@@ -163,6 +163,9 @@ TEST_CASE("jonction carburateur et suralimentation : une seule perte, la même p
         Powertrain p = findPreset("v8_supercharged")->powertrain();
         p.engine.aspiration = aspiration;
         p.engine.fuelSystem = system;
+        // À adhérence tenue : sans antipatinage, cette propulsion de 767 Nm patine au-delà du sommet du pneu, et le film à
+        // 4000 tr/min dirait la dynamique du patinage plutôt que la densité au col.
+        p.engine.tractionControl = TractionControl::Sport;
         return p;
     };
     for (const FuelSystem system : {FuelSystem::Carburetor, FuelSystem::MultiCarb}) {
@@ -554,12 +557,19 @@ TEST_CASE("jonction calculateur et cliquetis : l'avance passe par la carte du cl
     CHECK(grossAt(advanced, rpm) / grossAt(stock, rpm) == doctest::Approx(map->steadyTorqueShare(rpm)).epsilon(1e-6));
     CHECK(map->steadyAdvanceDeg(rpm) < map->at(rpm, 1.0).stockDeg + 6.0);
     // Le calculateur lit ce que retire le capteur : en quatrième vers 1800 tr/min, puis pied au plancher.
+    // Fusion des finitions : le régime qui décide de monter se lit à la vitesse de la voiture, comme `--scenario tipin` (« La
+    // reprise ») : lu au moteur, pendant que les roues patinaient au départ (κ = 4,7), la deuxième entrait à 4,5 km/h, et le
+    // moteur, un peu moins fort en bas une fois le réseau thermique et le cycle de Woschni réunis, calait à 1,5 s (729 tr/min au
+    // plus bas sur la conduite seule).
     DrivingModel model(advanced);
     model.setManual(true);
     model.requestShift(1);
+    const double wheelRadius = wheelRadiusM(advanced.car);
     for (int i = 0; i < 12000; ++i) {
         const int now = model.gear();
-        if (now >= 1 && now < 4 && !model.shifting() && model.rpm() > 2600.0) model.requestShift(1);
+        const double wheelRpm = model.speedKmh() / 3.6 / wheelRadius * 60.0 / (2.0 * 3.141592653589793);
+        const double roadRpm = now >= 1 ? wheelRpm * model.gearing().overall[static_cast<std::size_t>(now - 1)] : 0.0;
+        if (now >= 1 && now < 4 && !model.shifting() && roadRpm > 2600.0) model.requestShift(1);
         const double error = (1800.0 - model.rpm()) / 1000.0;
         model.stepPedal(0.001, now < 4 ? 0.5 : std::clamp(0.2 + error, 0.02, 1.0), now == 4 && error < -0.1 ? 0.3 : 0.0);
     }

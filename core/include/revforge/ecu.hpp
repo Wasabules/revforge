@@ -164,16 +164,18 @@ inline constexpr double kSoftCutBand = 0.02;
 inline constexpr double kLaunchRetardDeg = 25.0;
 /** Le départ d'un essai avec launch control : frein serré et pied au plancher pendant ce temps, avant de lâcher le frein. */
 inline constexpr double kLaunchStageS = 3.0;
-/** Antipatinage : la part de l'adhérence que chaque mode accepte de laisser (voir `tractionSlipTarget`). */
-inline constexpr double kTractionSportGrip = 0.9;
-inline constexpr double kTractionFullGrip = 0.8;
+/**
+ * Antipatinage : la part du sommet du pneu que chaque mode laisse prendre en ligne droite (voir `tractionSlipTarget`). Le sport
+ * va au sommet ; le complet s'arrête avant, et garde √(1 − 0,9²) = 44 % de l'adhérence pour tenir en virage (cercle de Kamm).
+ */
+inline constexpr double kTractionSportGrip = 1.0;
+inline constexpr double kTractionFullGrip = 0.9;
 /** Antipatinage : retard au plus, avant de couper des cylindres (supposé, l'ordre de grandeur d'un ESP de série). */
 inline constexpr double kTractionMaxRetardDeg = 25.0;
 
 /**
- * Le glissement (m/s) que l'antipatinage vise. Le pneu du modèle, `F = μ·N·s/√(1+s²)` avec s en m/s, n'a pas de sommet :
- * plus il glisse, plus il pousse. La cible se lit donc sur sa courbe, comme la part de l'adhérence que le mode accepte de
- * laisser pour garder de la marge en virage : 90 % en sport (2,1 m/s), 80 % en complet (1,3 m/s). 0 : aucun.
+ * Le glissement κ que l'antipatinage vise (tyre.hpp). Le pneu culmine vers 11 % puis perd de l'adhérence : la cible se lit
+ * sur la montée de sa courbe, à la part du sommet que le mode laisse prendre. Le sommet en sport (κ*), 90 % en complet. 0 : aucun.
  */
 double tractionSlipTarget(TractionControl mode);
 
