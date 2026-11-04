@@ -22,7 +22,9 @@ const water = (celsius: number) => new RegExp(`eau ${celsius < 0 ? '[−-]' : ''
 async function open(page: Page, changes: Record<string, unknown> = {}) {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
-  page.on('console', (message) => message.type() === 'error' && errors.push(message.text()));
+  // Sous Firefox, la navigation qui suit interrompt le chargement du worker de la fiche, et l'instrumentation de Playwright
+  // (`chrome://juggler/…`) l'écrit dans la console : ce n'est pas une erreur du site.
+  page.on('console', (message) => message.type() === 'error' && !message.text().includes('chrome://juggler/') && errors.push(message.text()));
   await page.goto('./?test');
   await expect(page.getByTestId('start')).toHaveText('Démarrer le moteur');
   if (Object.keys(changes).length) {
