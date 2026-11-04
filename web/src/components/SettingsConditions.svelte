@@ -4,16 +4,21 @@
   import Slider from './Slider.svelte';
   import { ambientAirOf, REFERENCE_K, REFERENCE_PA } from '../lib/atmosphere';
   import { LIMITS, START_TEMPS, type EngineConfig } from '../lib/config';
+  import type { Spec } from '../lib/engine';
   import { fixed, t, whole } from '../lib/i18n.svelte';
 
-  /** Conditions : l'air autour de la voiture, l'altitude, et le moteur chaud ou froid au démarrage. */
+  /** Conditions : l'air autour de la voiture, l'altitude, et le temps d'arrêt du moteur avant le démarrage. */
   interface Props {
     config: EngineConfig;
     shown: EngineConfig;
+    spec: Spec;
     onapply: (next: Partial<EngineConfig>) => void;
     onlive: (next: Partial<EngineConfig>) => void;
   }
-  let { config, shown, onapply, onlive }: Props = $props();
+  let { config, shown, spec, onapply, onlive }: Props = $props();
+
+  /** Dans l'ordre du temps passé à l'arrêt ; `START_TEMPS` garde, lui, l'ordre du C++ (sa position est la valeur). */
+  const PARKED = [...START_TEMPS].sort((a, b) => a.parkedHours - b.parkedHours);
 
   /** L'air de référence, 20 °C au niveau de la mer : celui de toutes les calibrations. */
   const REFERENCE_DENSITY = REFERENCE_PA / (287 * REFERENCE_K);
@@ -38,8 +43,12 @@
   <!-- Un moteur électrique n'a ni eau ni huile à chauffer. -->
   {#if !config.electric}
     <div data-testid="start-temp">
-      <Choices label={t('builder.startTemp')} options={START_TEMPS} value={config.startTemp} onchange={(startTemp) => onapply({ startTemp })} />
+      <Choices label={t('builder.startTemp')} options={PARKED} value={config.startTemp} onchange={(startTemp) => onapply({ startTemp })} />
       <p class="help">{START_TEMPS.find((item) => item.value === config.startTemp)?.help}</p>
+      <!-- Ce que le réseau thermique en a calculé (`rf_start_thermal`) : ce que montrent les jauges avant le premier démarrage. -->
+      {#if Number.isFinite(spec.startCoolantC)}
+        <p class="air" data-testid="start-state">{t('builder.startState', { coolant: whole(spec.startCoolantC), oil: whole(spec.startOilC) })}</p>
+      {/if}
     </div>
   {/if}
 </SettingsSection>

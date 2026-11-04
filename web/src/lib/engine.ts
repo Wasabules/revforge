@@ -324,6 +324,12 @@ export interface Spec {
   injection: { coolingK: number; fillGain: number; railBar: number; lowEnd: number; knockDb: number; egr: number; dpfCleanKpa: number; dpfFullKpa: number };
   /** La came, telle que le C++ la calcule (voir `rf_cam_spec`) : calage à 1 mm du profil de base et du second, croisement, fermeture de l'admission après le point mort bas, compression effective, régime de bascule, et le ralenti qu'elle donne. */
   cam: CamSpec;
+  /**
+   * L'eau et l'huile au départ (°C), selon le temps d'arrêt choisi, à l'air du jour : calculées par le réseau thermique
+   * (`rf_start_thermal`). Ce que montrent les jauges avant le premier démarrage. NaN tant que rien n'est calculé.
+   */
+  startCoolantC: number;
+  startOilC: number;
 }
 
 export interface CamSpec {
@@ -368,7 +374,7 @@ export interface SoundSheet {
   lineLoss: { hz: number; db: number }[];
 }
 
-export const EMPTY_SPEC: Spec = { idle: 0, redline: 7000, peakTorque: 0, peakTorqueRpm: 0, peakHp: 0, peakHpRpm: 0, gears: 0, ratios: [], turboWheelMm: 0, turboInertia: 0, turboUnits: 0, chargerOffRpm: 0, intakeDropKpa: 0, intakeAirC: 20, chargerRatio: 0, chargerVolume: 0, chargerWheelMm: 0, zeroTo100: 0, topSpeed: 0, starter: { direct: false, kw: 0, ring: 0, pinion: 0, helix: 0 }, carb: { throats: 0, throatMm: 0, dropKpa: 0 }, nitrousRpm: 0, combustion: { ratio: 0, efficiency: 1, marginDeg: 0, marginRpm: 0, sensor: false }, ecu: { rpm: 0, sparkDeg: 0, fullShare: 1, exhaustC: 0, stockExhaustC: 0 }, curve: [], box: EMPTY_BOX, injection: { coolingK: 0, fillGain: 0, railBar: 0, lowEnd: 0, knockDb: 0, egr: 0, dpfCleanKpa: 0, dpfFullKpa: 0 }, cam: EMPTY_CAM, valves: { floatRpm: 0, massG: 0, seatN: 0, openN: 0, naturalHz: 0, ratio: 0 } };
+export const EMPTY_SPEC: Spec = { idle: 0, redline: 7000, peakTorque: 0, peakTorqueRpm: 0, peakHp: 0, peakHpRpm: 0, gears: 0, ratios: [], turboWheelMm: 0, turboInertia: 0, turboUnits: 0, chargerOffRpm: 0, intakeDropKpa: 0, intakeAirC: 20, chargerRatio: 0, chargerVolume: 0, chargerWheelMm: 0, zeroTo100: 0, topSpeed: 0, starter: { direct: false, kw: 0, ring: 0, pinion: 0, helix: 0 }, carb: { throats: 0, throatMm: 0, dropKpa: 0 }, nitrousRpm: 0, combustion: { ratio: 0, efficiency: 1, marginDeg: 0, marginRpm: 0, sensor: false }, ecu: { rpm: 0, sparkDeg: 0, fullShare: 1, exhaustC: 0, stockExhaustC: 0 }, curve: [], box: EMPTY_BOX, injection: { coolingK: 0, fillGain: 0, railBar: 0, lowEnd: 0, knockDb: 0, egr: 0, dpfCleanKpa: 0, dpfFullKpa: 0 }, cam: EMPTY_CAM, valves: { floatRpm: 0, massG: 0, seatN: 0, openN: 0, naturalHz: 0, ratio: 0 }, startCoolantC: Number.NaN, startOilC: Number.NaN };
 
 interface RfExports {
   memory: WebAssembly.Memory;
@@ -552,6 +558,13 @@ interface RfExports {
   rf_ecu_full_share(): number;
   rf_ecu_spark_deg(rpm: number, load: number): number;
   rf_ecu_exhaust_c(rpm: number, stockMap: number): number;
+  /**
+   * Le moteur à l'arrêt (thermal.cpp) : l'état au départ choisi (0 l'eau, 1 l'huile, 2 le métal) ; le temps où le son est resté
+   * suspendu, que le worklet rattrape ; et ce que deviennent ces températures, moteur coupé, au bout de tant de secondes.
+   */
+  rf_start_thermal(which: number): number;
+  rf_soak(seconds: number): void;
+  rf_rest_thermal(coolantC: number, oilC: number, metalC: number, seconds: number, which: number): number;
 }
 
 /** Le moteur finit de tourner sur son élan avant qu'on suspende l'audio. */
@@ -583,6 +596,21 @@ export class Engine {
   private driving = { manual: false, assisted: true, shiftMode: 0, scenario: 0 };
   /** Le dernier message de chaque partie du réglage reçu par le worklet, qui le garde jusqu'au suivant (`setConfig`). */
   private sentParts: Record<'car' | 'gearbox' | 'engine', string> = { car: '', gearbox: '', engine: '' };
+  /** La dernière télémétrie reçue : les températures du moteur au moment où le son se suspend. */
+  private latest: Telemetry | null = null;
+  /**
+   * Le moteur coupé, son suspendu : ses températures à cet instant et l'instant lui-même (`performance.now()`). Le modèle
+   * n'avance plus ; les jauges lisent ce que le réseau en ferait (`rf_rest_thermal`), et le worklet rattrape ce temps en
+   * reprenant (`rf_soak`). Effacé quand l'état au départ, l'air ou le moteur changent : le worklet repart alors de l'état choisi.
+   */
+  private rest: { coolantC: number; oilC: number; metalC: number; since: number } | null = null;
+  /** Ce qui, changé, remet le réseau du worklet à l'état choisi (`DrivingModel::configureThermal`), et combien de fois. */
+  private thermalKey = '';
+  private thermalResets = 0;
+  /** Le compte des remises à l'état choisi au dernier arrêt du moteur ; -1 tant qu'il tourne ou n'a jamais tourné. */
+  private stoppedAfter = -1;
+  /** Les jauges, moteur coupé : recalculées au plus une fois par demi-seconde. */
+  private restShown: { at: number; coolantC: number; oilC: number } | null = null;
 
   constructor(private onTelemetry: (t: Telemetry) => void, private onError: (message: string) => void) {}
 
@@ -632,6 +660,11 @@ export class Engine {
       this.analyser = analyser;
     }
     await this.context.resume();
+    // Le moteur est resté coupé, son suspendu : le réseau rattrape ce temps avant tout le reste, puis on redémarre de là.
+    if (this.rest) this.send({ type: 'soak', seconds: (performance.now() - this.rest.since) / 1000 });
+    this.rest = null;
+    this.restShown = null;
+    this.stoppedAfter = -1;
     this.setConfig(config);
     this.setVolume(volume);
     this.send({ type: 'transmission', manual: this.driving.manual });
@@ -645,12 +678,44 @@ export class Engine {
   stop(): void {
     this.setMode(Mode.Off);
     clearTimeout(this.suspendTimer);
-    this.suspendTimer = setTimeout(() => void this.context?.suspend(), RUNDOWN_BEFORE_SUSPEND_MS);
+    const resets = this.thermalResets;
+    this.stoppedAfter = resets;
+    this.suspendTimer = setTimeout(() => {
+      // Le modèle s'arrête avec le son : ses températures sont celles de la dernière télémétrie, et le temps commence à compter.
+      // Sauf si l'état au départ a changé depuis l'arrêt : le moteur est alors celui qu'on vient de choisir.
+      const last = this.latest;
+      if (last && this.context && resets === this.thermalResets) this.rest = { coolantC: last.coolantC, oilC: last.oilC, metalC: last.metalC, since: performance.now() };
+      this.restShown = null;
+      void this.context?.suspend();
+    }, RUNDOWN_BEFORE_SUSPEND_MS);
+  }
+
+  /**
+   * L'eau et l'huile d'un moteur coupé dont le son est suspendu, au moment `now` : le même réseau, avec les capacités et la
+   * convection de ce réglage, calculé par l'exemplaire de la page. `null` tant que le son n'a pas été suspendu, ou si l'état au
+   * départ a changé depuis : le moteur est alors celui qu'on a choisi.
+   */
+  restingThermal(now: number): { coolantC: number; oilC: number } | null {
+    const rest = this.rest;
+    const rf = this.local;
+    // Le temps que le moteur finisse de tourner, le son n'est pas encore suspendu : le modèle avance, la télémétrie le dit.
+    if (!rest && this.stoppedAfter === this.thermalResets && this.latest) return { coolantC: this.latest.coolantC, oilC: this.latest.oilC };
+    if (!rest || !rf) return null;
+    if (this.restShown && Math.abs(now - this.restShown.at) < 500) return this.restShown;
+    const seconds = Math.max(now - rest.since, 0) / 1000;
+    this.restShown = {
+      at: now,
+      coolantC: rf.rf_rest_thermal(rest.coolantC, rest.oilC, rest.metalC, seconds, 0),
+      oilC: rf.rf_rest_thermal(rest.coolantC, rest.oilC, rest.metalC, seconds, 1),
+    };
+    return this.restShown;
   }
 
   private onMessage(message: { type: string; message?: string } & Partial<Telemetry>): void {
-    if (message.type === 'telemetry') this.onTelemetry(message as Telemetry);
-    else if (message.type === 'error') this.onError(message.message ?? t('error.engine'));
+    if (message.type === 'telemetry') {
+      this.latest = message as Telemetry;
+      this.onTelemetry(message as Telemetry);
+    } else if (message.type === 'error') this.onError(message.message ?? t('error.engine'));
   }
 
   private send(command: Record<string, unknown>): void {
@@ -663,6 +728,14 @@ export class Engine {
    * 48 kHz. Seul part ce qui a changé depuis le dernier envoi : le worklet garde le reste tel quel.
    */
   setConfig(config: EngineConfig): void {
+    // Un autre état au départ, un autre air, ou un électrique : le worklet remet son réseau à l'état choisi, rien à rattraper.
+    const key = `${config.electric ? 1 : 0}|${config.startTemp}|${config.ambientC}`;
+    if (key !== this.thermalKey) {
+      this.thermalKey = key;
+      this.thermalResets++;
+      this.rest = null;
+      this.restShown = null;
+    }
     if (!this.node) return;
     this.sendChanged('car', { type: 'car', args: carArgs(config) });
     this.sendChanged('gearbox', { type: 'gearbox', args: gearboxArgs(config), ratios: gearRatios(config) });
@@ -959,6 +1032,8 @@ export class Engine {
         dpfCleanKpa: rf.rf_dpf_kpa_at(0),
         dpfFullKpa: rf.rf_dpf_kpa_at(1),
       },
+      startCoolantC: rf.rf_start_thermal(0),
+      startOilC: rf.rf_start_thermal(1),
     };
   }
 

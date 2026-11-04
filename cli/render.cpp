@@ -674,7 +674,12 @@ void printFuel(const DrivingModel& model, const Powertrain& powertrain, double s
     const double ambient = static_cast<double>(powertrain.engine.ambientC);
     const double coolant = powertrain.electric ? ambient : model.thermal().coolantC();
     const double oil = powertrain.electric ? ambient : model.thermal().oilC();
-    std::printf("raw fuel_lph=%.17g fuel_trip_l=%.17g trip_km=%.17g oil_trip_ml=%.17g energy_trip_kwh=%.17g coolant_c=%.17g oil_c=%.17g\n", c.fuelLph(), c.fuelTripL(), c.tripKm(), c.oilTripMl(), c.energyTripKwh(), coolant, oil);
+    // L'état au départ, après l'arrêt choisi : ce que rf_start_thermal donne aux jauges du site.
+    const ThermalNetwork atStart = model.startThermal();
+    const double startCoolant = powertrain.electric ? ambient : atStart.coolantC();
+    const double startOil = powertrain.electric ? ambient : atStart.oilC();
+    std::printf("raw fuel_lph=%.17g fuel_trip_l=%.17g trip_km=%.17g oil_trip_ml=%.17g energy_trip_kwh=%.17g coolant_c=%.17g oil_c=%.17g start_coolant_c=%.17g start_oil_c=%.17g\n", c.fuelLph(), c.fuelTripL(), c.tripKm(), c.oilTripMl(),
+                c.energyTripKwh(), coolant, oil, startCoolant, startOil);
     if (model.chargeAirEngine()) {
         // L'air de charge : la fiche à 100 km/h, face au même moteur sans eau, sans protoxyde, avec l'échangeur d'origine.
         const ManifoldCharge now = steadyManifoldCharge(powertrain, peak.peakPowerRpm);

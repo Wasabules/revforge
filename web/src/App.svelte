@@ -26,6 +26,7 @@
   import Trends from './components/Trends.svelte';
   import { AIR_FILTERS, BODIES, BOX_KINDS, CUSTOM_ID, DRIVES, EXHAUSTS, PRESETS, ROUTINGS, decodeConfig, encodeConfig, findPreset, strokeMm, type EngineConfig, type ShiftModeId, ANTI_LAGS, CAMSHAFTS, SUPERCHARGER_KINDS, FUEL_SYSTEMS, isRotary } from './lib/config';
   import { BOOST_CONTROLS, DIESEL_INJECTIONS, FUEL_GRADES, INTERCOOLERS, REV_LIMITERS, TRACTION_CONTROLS, TUNING_FIELDS, TURBO_LAYOUTS, VALVE_TIMINGS, tuningArgs } from './lib/config';
+  import { SITE_START_TEMP, START_TEMPS } from './lib/config';
   import { heated, updateHeat, wallCelsius } from './lib/heat';
   import { TelemetryHistory } from './lib/history';
   import { Readings } from './lib/instruments';
@@ -358,7 +359,10 @@
   /** `gas` : seules les jauges qui en dépendent font avancer le modèle du gaz. Le reste ne le demande pas. */
   function sample(now: number, gas = false) {
     motion.update(now, telemetry, shown, gas);
-    readings.update(now, telemetry, shown, running);
+    // Le son ne dit les températures qu'une fois sa première télémétrie reçue ; avant, et moteur coupé, le C++ de la page.
+    const live = running && telemetry !== IDLE_TELEMETRY;
+    const resting = live ? null : engine.restingThermal(now);
+    readings.update(now, telemetry, shown, live, resting ?? { coolantC: spec.startCoolantC, oilC: spec.startOilC });
   }
 
   // ── Les vues : une à la fois, montée la première fois qu'on la demande, puis en pause cachée. ──
@@ -485,7 +489,8 @@
         t('summary.car', { body: label(BODIES, c.body), mass: c.massKg, drive: label(DRIVES, c.drive) }),
         part(c.ambientC !== 20 && t('summary.ambient', { c: c.ambientC })),
         part(c.altitudeM !== 0 && t('summary.altitude', { m: whole(c.altitudeM) })),
-        part(!c.electric && c.startTemp !== 'warm' && t('summary.coldStart')),
+        // Ce qui diffère du défaut du site, une nuit dehors (le C++ et la CLI, eux, partent chauds).
+        part(!c.electric && c.startTemp !== SITE_START_TEMP && t('summary.startTemp', { state: label(START_TEMPS, c.startTemp) })),
       ].join(''),
       listener: typeof listener === 'number' ? t(POSITION_LABEL[listener]) : t('listener.free'),
       share: preset?.name ?? t('builder.custom'),

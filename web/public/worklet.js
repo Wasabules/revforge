@@ -47,6 +47,8 @@ class RevforgeProcessor extends AudioWorkletProcessor {
       case 'listenerAt': rf.rf_set_listener_position(command.x, command.y, command.z); break;
       case 'windows': rf.rf_set_windows(command.open ? 1 : 0); break;
       case 'volume': rf.rf_set_volume(command.volume); break;
+      // Le son est resté suspendu moteur coupé : le réseau thermique refroidit d'autant avant qu'on redémarre.
+      case 'soak': rf.rf_soak(command.seconds); break;
       default: break;
     }
   }
