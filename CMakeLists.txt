@@ -200,12 +200,26 @@ else()
   # Départ à froid : ralenti accéléré, frottements de l'huile froide ; et le starter d'un carburateur par -10 °C.
   # Intégration : b3a7b95a -> 25dc320d. Après un départ à froid, le film de l'injection indirecte lit l'eau du réseau thermique, et la paroi froide réchauffe moins l'air piégé.
   # Finitions : 25dc320d -> d3d404e4. thermique et air : départ à froid : l'échangeur eau-huile réchauffe l'huile par l'eau, et l'air piégé lit l'eau, non plus le métal. Niveau −0,48 dB face à l'intégration.
-  golden(start_cold_city d3d404e4 --preset city_14 --start cold --scenario start --seconds 8)
+# Démarreur (froid-démarreur) : d3d404e4 -> d6e113cd. Huile à 20 °C, sous 80 °C : le lancement se joue cycle par cycle. La
+  # batterie est à l'air (20 °C) et non au compartiment chaud de la référence (32 °C), l'huile freine en (μ/μ₈₀)^0,86, le
+  # calculateur se synchronise en tours, puis la première explosion lance le moteur : prise à 0,99 s (0,82 s avant), 283 tr/min
+  # d'entraînement. Niveau +0,3 dB (LAeq sur 8 s).
+  golden(start_cold_city d6e113cd --preset city_14 --start cold --scenario start --seconds 8)
   # Intégration : par -10 °C, l'air est aussi plus dense (atmosphère) ; avec l'air de référence, l'empreinte redevient d3a95f44.
   # Intégration : fdd3932c -> 558e94b7. Après un départ à froid, la paroi froide réchauffe moins l'air piégé (thermique et atmosphère),
   # et le ralenti accéléré garde l'autorité du démarrage (0,8 du remplissage), et non 0,45 comme moteur chaud.
   # Finitions : 558e94b7 -> f9aa6b8e. thermique et air : départ à froid : l'échangeur eau-huile réchauffe l'huile par l'eau, et l'air piégé, comme le film des carburateurs, lit l'eau, non plus le métal, carte du cliquetis à l'eau réelle (par −10 °C, elle existe) ; conduite : départ à froid, le modèle posé au ralenti part collecteur au remplissage du ralenti, et non vide. Niveau +0,11 dB face à l'intégration.
-  golden(blips_cold_carb f9aa6b8e --preset carb_twin_cam --start cold --ambient -10 --scenario blips --seconds 8)
+# Démarreur (froid-démarreur) : f9aa6b8e -> c14ff92d. Les carburateurs des années 1970 ont leur huile, une 20W-50 minérale :
+  # par -10 °C (huile sous 80 °C), sa viscosité suit sa propre loi de Vogel, deux fois celle de la 5W-30 de référence ; le ralenti
+  # froid frotte plus, les coups de gaz montent moins : niveau −1,3 dB. Moteur chaud, rien ne change (au-dessus de 80 °C, chaque
+  # huile frotte comme la référence).
+  golden(blips_cold_carb c14ff92d --preset carb_twin_cam --start cold --ambient -10 --scenario blips --seconds 8)
+  # Démarreur : par -30 °C, la batterie froide et l'huile épaisse lancent la citadine à 153 tr/min ; synchronisation en tours,
+  # explosions une à une, prise à 1,8 s. Le diesel préchauffe 5,8 s par -20 °C, puis prend. La Cadillac en SAE 30 d'été par
+  # -10 °C : 103 tr/min, prise à 1,5 s. Niveaux, face au démarrage d'avant : +2,2 dB, −3,4 dB (le préchauffage, muet), +1,5 dB.
+  golden(start_cold_minus30 2d044622 --preset city_14 --start cold --ambient -30 --scenario start --seconds 6)
+  golden(start_cold_diesel 0c8b3e85 --preset diesel_four --start cold --ambient -20 --scenario start --seconds 10)
+  golden(start_cold_cadillac f3dfe054 --preset v16_cadillac --start cold --ambient -10 --scenario start --seconds 6)
   # La combustion : des carburateurs à 12:1 qui cliquettent sans capteur, l'E85 sur un turbo, un diesel moins comprimé au démarrage, un rotor plus creusé.
   # Intégration : cd653d6e -> 854924ae. La vaporisation prend à l'air la part d'un carburateur (0,5, injection), non plus 0,15 pour toute alimentation.
   # Finitions : 854924ae -> c9315cfc. régulation : le cycle du cliquetis perd sa chaleur aux parois pas à pas (Woschni) : ces carburateurs sans capteur cliquettent plus, et plus haut ; thermique et air : réseau thermique branché moteur chaud, carte du cliquetis à l'eau réelle ; conduite : pneu à sommet. Niveau −0,02 dB face à l'intégration.

@@ -456,6 +456,8 @@ void clutchBlips(EngineSound& sound, DrivingModel& model, Output& out, int rate)
 
 /** `--crank` : le lancement, toutes les 10 ms. */
 std::FILE* g_crank = nullptr;
+/** `--out -` n'écrit que l'empreinte : le relevé du démarrage la décalerait dans tools/check_wasm.mjs. */
+bool g_hashOnly = false;
 
 /**
  * Contact : le démarreur, le moteur qui prend, le ralenti. Le conducteur tient la clé jusqu'à ce que le moteur prenne, au plus
@@ -487,6 +489,7 @@ void start(EngineSound& sound, DrivingModel& model, Output& out, int rate, doubl
                          model.stalled() ? 1 : 0, s.firingChance(), s.glowC(), s.battery().charge, s.stats().firings, s.stats().misfires);
         }
     }, 128);
+    if (g_hashOnly) return;
     const StartStats& s = model.start().stats();
     const bool running = !model.stalled() && !model.cranking() && model.rpm() > 0.8 * model.idleRpm();
     std::printf("Start: %s after %.2f s from the key (attempt %d of %d), cranking %.0f rpm on average before the first firing, %d firings and %d misfires,\n"
@@ -1063,6 +1066,7 @@ int main(int argc, char** argv) {
     Output output{pcm, channels};
     if (silent) output.silentFrames = frames;
     SpeedFollower driver;
+    g_hashOnly = out == "-";
     if (scenario == "lap") {
         lap(sound, model, output, rate, walk);
     } else if (scenario == "blips") {
