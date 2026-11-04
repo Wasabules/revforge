@@ -1158,7 +1158,17 @@ double DrivingModel::boostTargetPa() const {
 
 void DrivingModel::updateAntiLag(double throttle, double rpmNow, bool off) {
     const double threshold = kAntiLagMinShare * redline_ * (antiLag_.active ? kAntiLagHoldShare : 1.0);
-    antiLag_.active = !off && !cut_ && !catching_ && throttle < kAntiLagLiftedPedal && rpmNow >= threshold;
+    const bool wanted = !off && !cut_ && !catching_ && throttle < kAntiLagLiftedPedal && rpmNow >= threshold;
+    // Fusion des finitions : la limite de pression de l'anti-lag, celle des calculateurs de rallye. Il ne sert qu'à tenir l'arbre
+    // lancé : dès que la pression atteint le point où la soupape de décharge s'ouvre, ce qu'il apporte en plus partirait par elle.
+    // Le calculateur le suspend jusqu'au bas de la bande de la soupape (les mêmes constantes que sa loi, turbo.cpp). Sans cela,
+    // l'injection d'air, que l'air-air ε-NTU nourrit d'une charge plus froide à son débit partiel (306 K contre 318 avec l'ancienne
+    // loi), tenait 0,98 de la pression pied levé : à 25 % d'ouverture et 40° de retard, le cylindre plein rendait alors autant que
+    // ses frottements et son pompage, et le moteur ne freinait plus (+1,6 Nm en moyenne).
+    const double band = turbo_laws::constants().wastegateBand;
+    if (boost_ >= 1.0 - 0.2 * band) antiLagLimited_ = true;
+    else if (boost_ < 1.0 - band) antiLagLimited_ = false;
+    antiLag_.active = wanted && !antiLagLimited_;
 }
 
 double DrivingModel::stepKnock(double rpmNow) {

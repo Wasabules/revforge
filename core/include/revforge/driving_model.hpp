@@ -385,6 +385,8 @@ private:
     TurboCharger turbo_;
     bool turboEngine_ = false;
     bool antiLagEngine_ = false;
+    /** La limite de pression de l'anti-lag : suspendu tant que la pression n'est pas retombée au bas de la bande de la soupape. */
+    bool antiLagLimited_ = false;
     AntiLagCommand antiLag_;
     double antiLagLostNm_ = 0.0;
     Supercharger supercharger_;
