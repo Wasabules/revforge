@@ -114,7 +114,11 @@ Lap playScenario(const Powertrain& p, DriveScenario scenario, ShiftMode mode = S
 
 TEST_CASE("à même pédale, Éco passe avant Normal, Normal avant Sport, Sport avant Piste") {
     for (const char* id : kEngines) {
-        const Powertrain p = preset(id);
+        // À adhérence tenue : c'est alors le régime qui décide. Sans antipatinage, la propulsion de 3,2 L patine en première dès
+        // 60 % de pédale ; la boîte attend alors que la vitesse de la voiture tienne le rapport suivant (`decideShift`), et l'éco,
+        // qui y passe, monte plus haut que le normal, qui n'y passe pas sur route plate.
+        Powertrain p = preset(id);
+        p.engine.tractionControl = TractionControl::Sport;
         for (double pedal : {0.35, 0.6, 1.0}) {
             INFO(std::string(id) << " pédale " << pedal);
             const double eco = upshiftRpmAt(p, ShiftMode::Eco, pedal, 1);

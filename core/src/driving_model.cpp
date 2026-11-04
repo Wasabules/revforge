@@ -930,13 +930,14 @@ void DrivingModel::updateClutch(bool wantsToMove) {
             if (!wantsToMove && speedMs_ < 0.5) wanted = 0.0;
             // Pied sur le frein, la boîte pilotée garde l'embrayage ouvert : on le lâche, elle part.
             if (launchHold_ && !manual_ && brake_ > kLaunchBrake) wanted = 0.0;
-            // Tant que le moteur entraîne, le robot ne serre pas au-delà du couple qu'il annonce (celui de l'air admis, moins ce
-            // que le calculateur retire : l'antipatinage, le launch control), plus de quoi ramener le moteur à son régime de départ
-            // en `kLaunchSettleS`. Serré selon le seul régime, l'embrayage montait d'un coup à 1,6 fois le couple du moteur, et le
+            // Le robot ne serre pas au-delà du couple que le moteur annonce (celui de l'air admis, moins ce que le calculateur
+            // retire : l'antipatinage, le launch control), plus de quoi ramener le moteur à son régime de départ en
+            // `kLaunchSettleS`. Serré selon le seul régime, l'embrayage montait d'un coup à 1,6 fois le couple du moteur, et le
             // volant se vidait dans les roues : un pneu sans sommet l'absorbait ; avec un sommet, ce surplus fait patiner, et
             // l'antipatinage n'y pouvait rien (docs/modele.md, « Le pneu, l'antipatinage et le départ »). Une fois les disques
-            // presque à la même vitesse, il n'y a plus d'élan à vider : il serre, et l'embrayage colle.
-            if (omega_ - inputOmega_ > toOmega(kLaunchSyncRpm)) {
+            // presque à la même vitesse, pied posé, il n'y a plus d'élan à vider : il serre, et l'embrayage colle. Pied levé, il
+            // reste plafonné : la voiture qui ralentit en côte n'entraîne pas le moteur jusqu'à le caler.
+            if (!(std::fabs(omega_ - inputOmega_) <= toOmega(kLaunchSyncRpm) && throttle_ > 0.05)) {
                 const double announced = ecuShare_ * manifold_ * fullLoadTorqueNm(powertrain_, toRpm(omega_), boost_);
                 const double settle = inertia_ * std::max(omega_ - toOmega(launch), 0.0) / kLaunchSettleS;
                 wanted = std::min(wanted, std::max(announced + settle, 0.0) / clutchCapacity_);

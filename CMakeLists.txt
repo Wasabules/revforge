@@ -130,22 +130,22 @@ else()
   golden(lap_twin_rotor_stroke 4c5904b0 --preset twin_rotor_13 --scenario lap --seconds 20 --stroke 95)
   golden(steady_three_rotor_turbo a454f216 --layout rotary --cylinders 3 --cc 1962 --redline 8000 --exhaust sport --aspiration turbo --boost 0.8 --scenario steady --rpm 5000)
   # Les trajets et les modes de boîte : un moteur sans turbo, sur 40 s.
-  # Finitions, pneu à sommet, et la logique de passage ne monte plus de rapport tant que les roues patinent au-delà du sommet : 40a3403c -> 399081b9. Vitesse en fin de trajet 0,0 -> 0,0 km/h, au plus haut 28,4 -> 28,6 ; glissement maximal 1,94 -> 0,23 m/s ; régime moyen 1100 -> 1104 tr/min.
-  golden(drive_stop_go_eco 399081b9 --preset inline_six --scenario lap --seconds 40 --drive-scenario stop_go --shift-mode eco)
-  # Finitions, pneu à sommet, et la logique de passage ne monte plus de rapport tant que les roues patinent au-delà du sommet : 3bd2f6e2 -> 1096373d. Vitesse en fin de trajet 86,0 -> 86,0 km/h, au plus haut 89,9 -> 89,9 ; glissement maximal 4,50 -> 10,63 m/s ; régime moyen 4152 -> 4151 tr/min.
-  golden(drive_country_sport 1096373d --preset inline_six --scenario lap --seconds 40 --drive-scenario country --shift-mode sport)
-  # Finitions, pneu à sommet, et la logique de passage ne monte plus de rapport tant que les roues patinent au-delà du sommet : 9b590593 -> e1ba076a. Vitesse en fin de trajet 130,6 -> 130,6 km/h, au plus haut 130,6 -> 130,6 ; glissement maximal 10,48 -> 13,53 m/s ; régime moyen 3823 -> 3779 tr/min.
+  # Finitions, pneu à sommet, et la logique de passage ne monte plus, roues patinant, un rapport que la vitesse de la voiture ne tient pas : 40a3403c -> fb070ab6. Vitesse en fin de trajet 0,0 -> 0,0 km/h, au plus haut 28,4 -> 28,6 ; glissement maximal 1,94 -> 0,23 m/s ; régime moyen 1100 -> 1085 tr/min.
+  golden(drive_stop_go_eco fb070ab6 --preset inline_six --scenario lap --seconds 40 --drive-scenario stop_go --shift-mode eco)
+  # Finitions, pneu à sommet, et la logique de passage ne monte plus, roues patinant, un rapport que la vitesse de la voiture ne tient pas : 3bd2f6e2 -> fe7e92c0. Vitesse en fin de trajet 86,0 -> 86,0 km/h, au plus haut 89,9 -> 89,9 ; glissement maximal 4,50 -> 10,41 m/s ; régime moyen 4152 -> 4053 tr/min.
+  golden(drive_country_sport fe7e92c0 --preset inline_six --scenario lap --seconds 40 --drive-scenario country --shift-mode sport)
+  # Finitions, pneu à sommet, et la logique de passage ne monte plus, roues patinant, un rapport que la vitesse de la voiture ne tient pas : 9b590593 -> e1ba076a. Vitesse en fin de trajet 130,6 -> 130,6 km/h, au plus haut 130,6 -> 130,6 ; glissement maximal 10,48 -> 13,53 m/s ; régime moyen 3823 -> 3779 tr/min.
   golden(drive_motorway_normal e1ba076a --preset inline_six --scenario lap --seconds 40 --drive-scenario motorway --shift-mode normal)
-  # Finitions, pneu à sommet, et la logique de passage ne monte plus de rapport tant que les roues patinent au-delà du sommet : b582784f -> 9031844e. Vitesse en fin de trajet 50,0 -> 49,9 km/h, au plus haut 70,4 -> 70,4 ; glissement maximal 6,50 -> 12,95 m/s ; régime moyen 3773 -> 3682 tr/min.
-  golden(drive_mountain_sport 9031844e --preset inline_six --scenario lap --seconds 40 --drive-scenario mountain --shift-mode sport)
-  # Finitions, pneu à sommet, et la logique de passage ne monte plus de rapport tant que les roues patinent au-delà du sommet : c3666b07 -> c0d7084c. Vitesse en fin de trajet 40,1 -> 40,8 km/h, au plus haut 180,5 -> 174,6 ; glissement maximal 12,73 -> 17,32 m/s ; régime moyen 4392 -> 4537 tr/min.
-  golden(drive_drag_track c0d7084c --preset inline_six --scenario lap --seconds 40 --drive-scenario drag --shift-mode track)
-  # Finitions, pneu à sommet, et la logique de passage ne monte plus de rapport tant que les roues patinent au-delà du sommet : 35997d21 -> 735199fd. Vitesse en fin de trajet 82,1 -> 81,9 km/h, au plus haut 149,9 -> 148,3 ; glissement maximal 12,72 -> 16,73 m/s ; régime moyen 5480 -> 5664 tr/min.
-  golden(drive_track_track 735199fd --preset inline_six --scenario lap --seconds 40 --drive-scenario track --shift-mode track)
-  # Finitions, pneu à sommet, et la logique de passage ne monte plus de rapport tant que les roues patinent au-delà du sommet : 67cec9e3 -> f6a09301. Vitesse en fin de trajet 0,0 -> 0,0 km/h, au plus haut 36,7 -> 36,7 ; glissement maximal 7,94 -> 14,90 m/s ; régime moyen 1478 -> 1809 tr/min.
-  golden(drive_hill_start_eco f6a09301 --preset inline_six --scenario lap --seconds 40 --drive-scenario hill_start --shift-mode eco)
-  # Finitions, pneu à sommet, et la logique de passage ne monte plus de rapport tant que les roues patinent au-delà du sommet : f7acef8f -> b7e5105f. Vitesse en fin de trajet 91,1 -> 91,1 km/h, au plus haut 91,1 -> 91,1 ; glissement maximal 14,46 -> 22,83 m/s ; régime moyen 3057 -> 3156 tr/min.
-  golden(drive_towing_normal b7e5105f --preset inline_six --scenario lap --seconds 40 --drive-scenario towing --shift-mode normal)
+  # Finitions, pneu à sommet, et la logique de passage ne monte plus, roues patinant, un rapport que la vitesse de la voiture ne tient pas : b582784f -> 8bf30f32. Vitesse en fin de trajet 50,0 -> 49,8 km/h, au plus haut 70,4 -> 70,4 ; glissement maximal 6,50 -> 12,57 m/s ; régime moyen 3773 -> 3645 tr/min.
+  golden(drive_mountain_sport 8bf30f32 --preset inline_six --scenario lap --seconds 40 --drive-scenario mountain --shift-mode sport)
+  # Finitions, pneu à sommet, et la logique de passage ne monte plus, roues patinant, un rapport que la vitesse de la voiture ne tient pas : c3666b07 -> 8283c4bc. Vitesse en fin de trajet 40,1 -> 40,8 km/h, au plus haut 180,5 -> 174,9 ; glissement maximal 12,73 -> 15,27 m/s ; régime moyen 4392 -> 4539 tr/min.
+  golden(drive_drag_track 8283c4bc --preset inline_six --scenario lap --seconds 40 --drive-scenario drag --shift-mode track)
+  # Finitions, pneu à sommet, et la logique de passage ne monte plus, roues patinant, un rapport que la vitesse de la voiture ne tient pas : 35997d21 -> a6137786. Vitesse en fin de trajet 82,1 -> 81,9 km/h, au plus haut 149,9 -> 148,3 ; glissement maximal 12,72 -> 15,27 m/s ; régime moyen 5480 -> 5663 tr/min.
+  golden(drive_track_track a6137786 --preset inline_six --scenario lap --seconds 40 --drive-scenario track --shift-mode track)
+  # Finitions, pneu à sommet, et la logique de passage ne monte plus, roues patinant, un rapport que la vitesse de la voiture ne tient pas : 67cec9e3 -> 236908a8. Vitesse en fin de trajet 0,0 -> 0,0 km/h, au plus haut 36,7 -> 36,7 ; glissement maximal 7,94 -> 14,90 m/s ; régime moyen 1478 -> 1764 tr/min.
+  golden(drive_hill_start_eco 236908a8 --preset inline_six --scenario lap --seconds 40 --drive-scenario hill_start --shift-mode eco)
+  # Finitions, pneu à sommet, et la logique de passage ne monte plus, roues patinant, un rapport que la vitesse de la voiture ne tient pas : f7acef8f -> c27090fd. Vitesse en fin de trajet 91,1 -> 91,1 km/h, au plus haut 91,1 -> 91,1 ; glissement maximal 14,46 -> 20,41 m/s ; régime moyen 3057 -> 3292 tr/min.
+  golden(drive_towing_normal c27090fd --preset inline_six --scenario lap --seconds 40 --drive-scenario towing --shift-mode normal)
   # La carrosserie des années 80, sur un moteur aux réglages neutres : sa ligne, son plan et sa caisse.
   # Finitions, pneu à sommet : fe72a187 -> d1e123b0. Vitesse en fin de trajet 112,4 -> 112,4 km/h, au plus haut 112,4 -> 112,4 ; glissement maximal 5,67 -> 9,44 m/s ; régime moyen 2566 -> 2518 tr/min.
   golden(lap_retro d1e123b0 --cylinders 6 --cc 2500 --bore 84 --redline 6400 --exhaust stock --body retro --mass 1150 --rim 14 --drive rear --insulation light --scenario lap)
@@ -243,8 +243,8 @@ else()
   # Intégration : 07dfbb8d -> 34de3f5e. La carte du cliquetis lit la charge sans échangeur (air de charge), plus chaude.
   # Finitions, pneu à sommet : 34de3f5e -> 48b33a4c. Vitesse en fin de trajet 118,7 -> 118,9 km/h, au plus haut 118,7 -> 118,9 ; glissement maximal 0,51 -> 0,33 m/s ; régime moyen 2631 -> 2636 tr/min.
   golden(charge_none_turbo 48b33a4c --preset hot_hatch_turbo --intercooler none --scenario turbo)
-  # Finitions, pneu à sommet : efc2c12e -> 17a85901. Vitesse en fin de trajet 124,7 -> 93,7 km/h, au plus haut 124,7 -> 93,7 ; glissement maximal 17,46 -> 19,32 m/s ; régime moyen 4139 -> 3801 tr/min.
-  golden(charge_water_cooler 17a85901 --preset v8_supercharged --intercooler water --scenario launch --seconds 10)
+  # Finitions, pneu à sommet : efc2c12e -> 9c54d4d3. Vitesse en fin de trajet 124,7 -> 93,7 km/h, au plus haut 124,7 -> 93,7 ; glissement maximal 17,46 -> 19,32 m/s ; régime moyen 4139 -> 3802 tr/min.
+  golden(charge_water_cooler 9c54d4d3 --preset v8_supercharged --intercooler water --scenario launch --seconds 10)
   # Finitions, pneu à sommet : 59ac8a9c -> 926d64f1. Vitesse en fin de trajet 126,2 -> 126,9 km/h, au plus haut 126,2 -> 126,9 ; glissement maximal 1,25 -> 0,60 m/s ; régime moyen 4032 -> 4056 tr/min.
   golden(charge_water_injection 926d64f1 --preset hot_hatch_turbo --water 1 --scenario launch --seconds 10)
   # Finitions, pneu à sommet : bedbec6d -> c2bc8a01. Vitesse en fin de trajet 116,3 -> 96,8 km/h, au plus haut 116,3 -> 96,8 ; glissement maximal 18,09 -> 19,76 m/s ; régime moyen 5445 -> 5311 tr/min.
