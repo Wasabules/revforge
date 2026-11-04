@@ -16,12 +16,18 @@
 
   interface Props {
     config: EngineConfig;
+    /**
+     * Le moteur dont on dessine les pièces, s'il n'est pas `config` : pendant un glissé, celui d'avant tant que le curseur bouge.
+     * Refaire la 3D coûte de 50 à 180 ms, ce qui retenait chaque mouvement d'autant.
+     */
+    shape?: EngineConfig;
     telemetry: Telemetry;
     motion: Motion;
     /** Le ralenti des animations : la légende le suit. */
     slow?: number;
   }
-  let { config, telemetry, motion, slow = SLOW_MOTION }: Props = $props();
+  let { config, shape, telemetry, motion, slow = SLOW_MOTION }: Props = $props();
+  const pieces = () => shape ?? config;
 
   const MODE_KEY = 'revforge.engineView';
   const rememberedMode = (): '2d' | '3d' | null => {
@@ -79,6 +85,7 @@
 
   function ensureLayout() {
     // Le réglage ne change d'objet que s'il change vraiment : pas de texte à refaire à chaque image.
+    const config = pieces();
     if (config === lastConfig) return;
     lastConfig = config;
     const rotary = !config.electric && isRotary(config);
@@ -172,22 +179,24 @@
     engineScene = null;
     electricScene = null;
     rotaryPieces = null;
+    const electric = pieces().electric;
     if (rotaryShapeNow) {
       scene = rotaryPieces = new rotaryScenes.RotaryScene(s, rotaryShapeNow);
-    } else if (config.electric || !layout) {
+    } else if (electric || !layout) {
       scene = electricScene = new scenes.ElectricScene(s);
     } else {
       scene = engineScene = new scenes.EngineScene(s, layout);
     }
-    s.frameOn(scene.center[0], scene.center[1], scene.center[2], scene.radius, { yaw: config.electric ? 0.8 : 0.72, pitch: 0.3 });
+    s.frameOn(scene.center[0], scene.center[1], scene.center[2], scene.radius, { yaw: electric ? 0.8 : 0.72, pitch: 0.3 });
   }
 
   function labels2d(): Labels2D {
     // Relu à chaque image pour suivre la langue, mais refait seulement quand quelque chose change.
-    if (labelsCache && labelsLang === lang() && labelsCache.parts === names && labelsFuel === config.fuel && !!labelsCache.compressor === !!(layout?.turbo || layout?.charger) && !!labelsCache.carburetor === !!layout?.carb && labelsPipe === layout?.turboPipeMm) return labelsCache;
+    const fuel = pieces().fuel;
+    if (labelsCache && labelsLang === lang() && labelsCache.parts === names && labelsFuel === fuel && !!labelsCache.compressor === !!(layout?.turbo || layout?.charger) && !!labelsCache.carburetor === !!layout?.carb && labelsPipe === layout?.turboPipeMm) return labelsCache;
     labelsLang = lang();
     labelsPipe = layout?.turboPipeMm;
-    labelsFuel = config.fuel;
+    labelsFuel = fuel;
     labelsCache = {
       front: t('engine.view.front'),
       // Un V ne montre qu'une rangée dans cette coupe : on le dit sur son titre.
@@ -200,7 +209,7 @@
       cam: t('engine.part.cam'),
       valve: t('engine.part.valve'),
       chain: t('engine.part.chain'),
-      ignition: t(config.fuel === 'diesel' ? 'engine.part.glow' : 'engine.part.plug'),
+      ignition: t(fuel === 'diesel' ? 'engine.part.glow' : 'engine.part.plug'),
       ring: t('engine.part.ring'),
       pan: t('engine.part.pan'),
       head: t('engine.part.head'),

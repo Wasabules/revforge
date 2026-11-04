@@ -33,8 +33,8 @@
   import { EMPTY_SPEC, Engine, IDLE_TELEMETRY, KW_TO_HP, Listener, Mode, type ModeValue, type Spec, type Telemetry } from './lib/engine';
   import { fixed, lang, setLang, t, whole, type MessageKey } from './lib/i18n.svelte';
 
-  /** Pendant un glissé, la fiche attend que le curseur reste immobile ce temps-là. */
-  const SPEC_PAUSE_MS = 150;
+  /** Pendant un glissé, ce qui coûte attend que le curseur reste immobile ce temps-là : la fiche, le son, les pièces de la vue du moteur. */
+  const PAUSE_MS = 150;
 
   type DriveMode = 'neutral' | 'drive' | 'lap';
   const DRIVE_MODES: { value: DriveMode; label: string; help: string; mode: ModeValue }[] = [
@@ -107,28 +107,39 @@
   // Assisté : le levier actionne aussi l'embrayage. Au pied : passer sans débrayer gratte.
   let footClutch = $state(false);
   let gamepad = $state<string | null>(null);
-  // Pendant le glissé d'un curseur : l'aperçu et le son suivent, le lien attend le relâchement.
+  // Pendant le glissé d'un curseur : l'aperçu suit chaque mouvement, le son et la fiche l'arrêt du curseur, le lien le relâchement.
   let draft = $state<Partial<EngineConfig>>({});
 
   const shown = $derived({ ...config, ...draft });
   const preset = $derived(findPreset(config));
   const current = $derived(DRIVE_MODES.find((mode) => mode.value === driveMode)!);
   // La fiche se calcule sur ce thread, de 20 à 120 ms par réglage : posé, tout de suite ; pendant le glissé d'un curseur, une fois
-  // qu'il s'arrête, sans quoi chaque mouvement figeait la page autant (le son, lui, part avant, par `live`). Le 0 à 100, jusqu'à
-  // 0,6 s, se calcule dans un worker, une fois le réglage posé : « … » en attendant.
+  // qu'il s'arrête, sans quoi chaque mouvement figeait la page autant. Le 0 à 100, jusqu'à 0,6 s, se calcule dans un worker, une
+  // fois le réglage posé : « … » en attendant.
   const settledSpec = $derived(loaded ? engine.spec(config) : EMPTY_SPEC);
   let draftSpec = $state<Spec | null>(null);
+  // Le réglage glissé, une fois le curseur immobile : le son le reçoit alors, et la vue du moteur en refait ses pièces.
+  let paused = $state<EngineConfig | null>(null);
   let draftTimer: ReturnType<typeof setTimeout> | undefined;
   $effect(() => {
     const next = shown;
     const dragging = Object.keys(draft).length > 0;
     clearTimeout(draftTimer);
-    if (!loaded || !dragging) {
+    if (!dragging) {
       draftSpec = null;
+      paused = null;
       return;
     }
-    draftTimer = setTimeout(() => (draftSpec = engine.spec(next)), SPEC_PAUSE_MS);
+    draftTimer = setTimeout(() => {
+      paused = next;
+      // Le son d'abord. Le worklet y reconstruit le modèle de conduite (jusqu'à 28 ms sur son thread, pour 2,7 ms par bloc) : à
+      // chaque mouvement, le son décrochait.
+      engine.setConfig(next);
+      if (loaded) draftSpec = engine.spec(next);
+    }, PAUSE_MS);
   });
+  /** Ce que montrent les pièces de la vue du moteur : refaire sa 3D coûte de 50 à 180 ms, une fois le curseur arrêté seulement. */
+  const posed = $derived(Object.keys(draft).length > 0 ? (paused ?? config) : config);
   let sprint = $state<{ config: EngineConfig; seconds: number } | null>(null);
   $effect(() => {
     const next = config;
@@ -181,10 +192,9 @@
     history.replaceState(null, '', `#m=${encodeConfig(config)}`);
   }
 
-  /** Au glissé : le son change en direct, sans couper, tant que le moteur garde ses pièces. */
+  /** Au glissé : l'aperçu suit chaque mouvement ; le son et la fiche, l'arrêt du curseur (`paused`) ; le lien, le relâchement (`apply`). */
   function live(next: Partial<EngineConfig>) {
     draft = next;
-    engine.setConfig({ ...config, ...next });
   }
 
   function choosePreset(id: string) {
@@ -643,7 +653,7 @@
         </div>
         {#if mounted.engine}
           <section class="pane" hidden={view !== 'engine'} aria-label={t('section.engine')}>
-            <EngineView config={shown} telemetry={feed('engine')} {motion} slow={speed} />
+            <EngineView config={shown} shape={posed} telemetry={feed('engine')} {motion} slow={speed} />
           </section>
         {/if}
         {#if mounted.clutch}
