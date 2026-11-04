@@ -101,6 +101,12 @@ struct TurboInput {
     double cooledK = 0.0;       // la sortie de l'échangeur, quand l'air de charge la calcule (air-eau, aucun). 0 : l'air-air.
     /** La vitesse de la voiture (m/s), dont l'air traverse le faisceau air-air. Par défaut, la soufflerie du banc de la fiche. */
     double coolingAirMs = kChargeReferenceSpeedMs;
+    /**
+     * Le banc d'étalonnage de la régulation (boost_control.cpp) : le faisceau air-air déjà stabilisé, à l'équilibre de ce qui le
+     * traverse, comme le suppose `turboSteady`. Sa masse thermique (une constante de temps de 5 à 20 s) est une dérive lente que
+     * l'intégrale rattrape, pas la réponse de l'arbre que l'échelon doit mesurer.
+     */
+    bool settledCooler = false;
 };
 
 /** Le point d'équilibre à pleine charge : ce que donnent les courbes de la fiche. */

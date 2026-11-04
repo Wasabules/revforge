@@ -442,7 +442,14 @@ TurboSteady turboSteady(const TurboSpec& spec, double rpm, double breathing) {
             found = balanceAt(spec, rpm, breathing, chargePa, 0.0);
             // Ce sont les roues qui bornent la pression, pas l'énergie : la soupape s'ouvre juste assez pour les tenir à leur
             // vitesse limite, comme au pas de temps. Fermée, elle enverrait tout le gaz à la turbine, et une contre-pression que
-            // l'arbre ne peut pas absorber.
+            // l'arbre ne peut pas absorber. Fusion des finitions : le milieu du dernier intervalle peut tomber au-delà de la limite
+            // des roues, où le bilan vaut −1 quelle que soit la soupape ; la pression tenue est alors `low`, la plus haute où elles
+            // tournent encore sous leur limite. Sans cela, la soupape restait fermée selon l'arrondi de la dichotomie (5 bar avant
+            // la turbine, à 3000 m sous régulation électronique, une fois l'air-air ε-NTU de série).
+            if (found.tipLimited) {
+                chargePa = low;
+                found = balanceAt(spec, rpm, breathing, chargePa, 0.0);
+            }
             if (balanceAt(spec, rpm, breathing, high, 0.0).tipLimited && found.surplusW > 0.0) {
                 double shut = 0.0;
                 double open = 1.0;
@@ -651,7 +658,7 @@ void TurboCharger::step(double dt, const TurboInput& input) {
         ChargeConditions air;
         air.ambientK = spec.ambientK;
         air.ambientPa = spec.ambientPa;
-        s.coolerOutK = core_.step(spec.cooler, dt, outK, flowNext, input.coolingAirMs, air);
+        s.coolerOutK = input.settledCooler ? airToAirOutletK(spec.cooler, outK, flowNext, input.coolingAirMs, air) : core_.step(spec.cooler, dt, outK, flowNext, input.coolingAirMs, air);
     } else if (flowNext > 0.02 * spec.ratedFlow) {
         s.coolerOutK += (coolerOutlet(outK, flowNext, spec.ratedFlow, spec.ambientK) - s.coolerOutK) * dt / kCoolerMassS;
     } else {

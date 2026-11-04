@@ -212,17 +212,28 @@ TEST_CASE("le point d'équilibre calculé retrouve celui que la simulation attei
             CHECK(turbo.state().shaftOmega * 60.0 / (2.0 * kPi) == doctest::Approx(steady.shaftRpm).epsilon(0.13));
         }
     }
-    // Sous le seuil aussi, là où l'énergie ne suffit pas : c'est le bilan qui fixe la pression, pas la soupape.
+    // Sous le seuil aussi, là où l'énergie ou le pompage bornent la pression : c'est le bilan qui la fixe, pas la soupape.
+    // Fusion des finitions : à 2500 tr/min, le gros turbo pompe. La simulation passe la limite de pompage, s'effondre, et remonte,
+    // en un cycle de 2 à 5 s ; l'équilibre calculé, que cette limite borne (`kHoldX`), est la pression où elle retombe. On compare
+    // donc au plus bas des 10 dernières secondes, qui ne dépend pas de la phase du cycle : la pression à la 20e seconde en
+    // dépendait, et la masse du faisceau ε-NTU, qui allonge le cycle, l'avait fait passer de 0,55 à 0,91.
     const Powertrain large = sized("hot_hatch_turbo", TurboSize::Large);
     const TurboSpec spec = turboSpecOf(large);
     for (const double rpm : {2000.0, 2500.0}) {
         INFO("gros turbo à " << rpm);
         TurboCharger turbo;
         turbo.setSpec(spec);
-        run(turbo, at(large, rpm, 1.0), 20.0);
+        const TurboInput in = at(large, rpm, 1.0);
+        run(turbo, in, 10.0);
+        double lowest = turbo.boost();
+        for (int i = 0; i < 10000; ++i) {
+            turbo.step(kStep, in);
+            lowest = std::min(lowest, turbo.boost());
+        }
         const TurboSteady steady = turboSteady(spec, rpm, breathingOf(large, rpm));
+        MESSAGE("gros turbo à " << rpm << " tr/min : " << steady.boost << " à l'équilibre calculé, " << lowest << " au plus bas, " << turbo.boost() << " à la fin");
         CHECK(steady.boost < 0.5);
-        CHECK(turbo.boost() == doctest::Approx(steady.boost).epsilon(0.25));
+        CHECK(lowest == doctest::Approx(steady.boost).epsilon(0.25));
     }
 }
 

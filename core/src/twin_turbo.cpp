@@ -799,7 +799,8 @@ void TwinTurbo::step(double dt, const TwinTurboInput& input) {
         ChargeConditions air;
         air.ambientK = airK;
         air.ambientPa = airPa;
-        a.coolerOutK = core_.step(ref.cooler, dt, s.coolerInK, mixFlow, input.coolingAirMs, air);
+        a.coolerOutK = input.settledCooler ? airToAirOutletK(ref.cooler, s.coolerInK, mixFlow, input.coolingAirMs, air)
+                                           : core_.step(ref.cooler, dt, s.coolerInK, mixFlow, input.coolingAirMs, air);
     } else if (mixFlow > 0.02 * ref.ratedFlow) {
         a.coolerOutK += (coolerOutlet(mixHeat / mixFlow, mixFlow, ref.ratedFlow, ref.ambientK) - a.coolerOutK) * dt / k.coolerMassS;
     } else {

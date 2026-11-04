@@ -249,9 +249,11 @@ else()
   golden(valve_float_bay 73732eab --preset hot_hatch_na --scenario steady --rpm 9000 --listener bay --seconds 2)
   # La régulation de pression : l'électrovanne et son PID sur le coup de gaz en quatrième ; selon le rapport, une traction qui part.
   # Finitions : 6b201abd -> f9beacfe. Réseau thermique branché moteur chaud (eau 86 à 90 °C, huile 95 à 102 °C) ; air-air ε-NTU (air de route, faisceau). Niveau 0,00 dB par la thermique, −0,12 dB par l'air-air.
-  golden(boost_electronic f9beacfe --preset hot_hatch_turbo --scenario turbo --boost-control electronic)
+  # Fusion des finitions : f9beacfe -> 891ebb82. Le banc d'étalonnage attend que la pression soit établie, faisceau stabilisé (`identifyPlant`).
+  golden(boost_electronic 891ebb82 --preset hot_hatch_turbo --scenario turbo --boost-control electronic)
   # Finitions : 64bde81c -> cc4f3baa. Réseau thermique branché moteur chaud (eau 86 à 90 °C, huile 95 à 102 °C) ; air-air ε-NTU (air de route, faisceau). Niveau +0,03 dB par la thermique, −0,18 dB par l'air-air.
-  golden(boost_by_gear cc4f3baa --preset three_cyl_turbo --scenario launch --seconds 10 --boost-control by_gear)
+  # Fusion des finitions : cc4f3baa -> 8497b132. Le banc d'étalonnage attend que la pression soit établie, faisceau stabilisé (`identifyPlant`).
+  golden(boost_by_gear 8497b132 --preset three_cyl_turbo --scenario launch --seconds 10 --boost-control by_gear)
   # Deux turbos, twincharger, aubes : twin_turbo.cpp, et le second sifflement.
   # Finitions : 4a3f8582 -> 08ed5aaa. Réseau thermique branché moteur chaud (eau 86 à 90 °C, huile 95 à 102 °C) ; air-air ε-NTU (air de route, faisceau). Niveau +0,08 dB par la thermique, −0,14 dB par l'air-air.
   golden(twin_parallel_v6 08ed5aaa --cylinders 6 --layout v --cc 3000 --bore 86 --redline 6800 --aspiration turbo --boost 1 --exhaust sport --body coupe --mass 1500 --rim 18 --drive rear --scenario turbo --seconds 12 --turbo-layout twin_parallel)
@@ -262,8 +264,9 @@ else()
   # Finitions : c1df8a8e -> 1e20d532. Réseau thermique branché moteur chaud (eau 86 à 90 °C, huile 95 à 102 °C) ; air-air ε-NTU (air de route, faisceau). Niveau +0,07 dB par la thermique, −0,11 dB par l'air-air.
   golden(vgt_diesel 1e20d532 --preset diesel_four --vgt 1 --scenario turbo --seconds 12)
   # Finitions (régulation) : l'électrovanne pilote les deux soupapes d'un séquentiel, PID étalonné sur le banc des deux turbos.
-  # Fusion avec la thermique et l'air : 960d1218 -> 8c4702d1, réseau thermique branché et air-air ε-NTU, comme twin_sequential.
-  golden(twin_sequential_electronic 8c4702d1 --preset hot_hatch_turbo --turbo-layout twin_sequential --boost-control electronic --scenario turbo --seconds 12)
+  # Fusion avec la thermique et l'air : 960d1218 -> 8fd23b6e, réseau thermique branché et air-air ε-NTU, comme twin_sequential ; la
+  # précommande des petits turbos tient leurs roues à leur limite (`turboSteady`), et le banc attend l'équilibre (`identifyPlant`).
+  golden(twin_sequential_electronic 8fd23b6e --preset hot_hatch_turbo --turbo-layout twin_sequential --boost-control electronic --scenario turbo --seconds 12)
   # L'air de charge : sans échangeur, air-eau, injection d'eau, protoxyde.
   # Intégration : 07dfbb8d -> 34de3f5e. La carte du cliquetis lit la charge sans échangeur (air de charge), plus chaude.
   # Finitions (régulation) : 34de3f5e -> 7f5a5c89. le cycle de la carte du cliquetis perd sa chaleur aux parois pas à pas (Woschni) et libère 0,95 de l'énergie de l'air au lieu de 0,80 net : 94 combustions entendues qui cliquettent au lieu de 89, marge la plus faible −11,9° au lieu de −11,8°.

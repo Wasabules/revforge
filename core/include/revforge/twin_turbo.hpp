@@ -119,6 +119,8 @@ struct TwinTurboInput {
     double wastegate = -1.0;
     /** La vitesse de la voiture (m/s), dont l'air traverse l'échangeur air-air. Par défaut, la soufflerie du banc de la fiche. */
     double coolingAirMs = kChargeReferenceSpeedMs;
+    /** Le banc d'étalonnage de la régulation : le faisceau commun déjà stabilisé, comme pour un turbo seul (`TurboInput::settledCooler`). */
+    bool settledCooler = false;
 };
 
 /** L'équilibre à pleine charge : ce que donnent les courbes de la fiche. */

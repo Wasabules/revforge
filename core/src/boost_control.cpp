@@ -18,6 +18,11 @@ constexpr double kDerivativeFilter = 10.0;
 // Le banc : un échelon d'un point d'ouverture, assez petit pour rester linéaire.
 constexpr double kBenchStep = 0.01;
 constexpr double kBenchWindowS = 3.0;
+// Avant l'échelon, le banc attend que la pression ne bouge plus : moins de 20 Pa en une demi-seconde, soit environ 1 % de ce que
+// l'échelon lui fera, et au plus 30 s. Près du seuil, l'arbre s'établit en 2 s de constante de temps : 5 s n'y suffisaient pas.
+constexpr double kBenchSettledPa = 20.0;
+constexpr double kBenchSettledEveryS = 0.5;
+constexpr double kBenchSettleMaxS = 30.0;
 // Où l'on mesure l'arbre, en part du régime maximal : là où la wastegate travaille.
 constexpr double kBenchShares[4] = {0.4, 0.55, 0.7, 0.88};
 // Une wastegate qui n'a presque rien à jeter ne dit rien de sa pente : on ne la mesure pas là.
@@ -151,6 +156,17 @@ BoostPlant identifyPlant(StepAt&& stepAt, double rpm, double gate, double settle
     const int settle = ticks(settleS, kStep);
     double before = 0.0;
     for (int i = 0; i < settle; ++i) before = stepAt(gate);
+    // Fusion des finitions : puis jusqu'à l'équilibre, comme un vrai banc qui attend que tout soit stabilisé. Sans cela, à
+    // 2600 tr/min, la pression montait encore de 8 kPa pendant l'échelon, et le banc lisait le double de la pente d'équilibre.
+    const int every = ticks(kBenchSettledEveryS, kStep);
+    const int cap = ticks(kBenchSettleMaxS, kStep);
+    double mark = before;
+    for (int i = settle; i < cap; ++i) {
+        before = stepAt(gate);
+        if ((i - settle + 1) % every != 0) continue;
+        if (std::fabs(before - mark) < kBenchSettledPa) break;
+        mark = before;
+    }
     // On ferme d'un point si l'on peut, sinon on ouvre : la pente est la même au premier ordre.
     const double step = gate >= kBenchStep ? -kBenchStep : kBenchStep;
     const int window = ticks(kBenchWindowS, kStep);
@@ -203,6 +219,10 @@ BoostPlant identifyBoostPlant(TurboCharger& turbo, double rpm, double breathing,
     in.fill = 1.0;
     in.breathing = breathing;
     in.burning = true;
+    // Fusion des finitions : comme sur un vrai banc, on mesure une fois les températures stabilisées. Sans cela, le faisceau air-air
+    // ε-NTU, parti froid, se réchauffait encore pendant l'échelon : à 2600 tr/min, le banc lisait 25,9 bar par ouverture, pour
+    // 13,7 à l'équilibre.
+    in.settledCooler = true;
     return identifyPlant(
         [&](double opening) {
             in.gateDemand = opening;
@@ -218,6 +238,7 @@ BoostPlant identifyTwinBoostPlant(TwinTurbo& twin, double rpm, double breathing,
     in.fill = 1.0;
     in.breathing = breathing;
     in.burning = true;
+    in.settledCooler = true;
     return identifyPlant(
         [&](double opening) {
             in.wastegate = opening;
