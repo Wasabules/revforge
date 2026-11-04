@@ -1116,6 +1116,22 @@ export const fr: Record<MessageKey, string> = {
   'gauge.oil.idle': 'Viscosité —',
   'gauge.oil.friction': ' · frottements +{pct} %',
   'gauge.oil.frictionLess': ' · frottements −{pct} %',
+  'state.startFailed': 'Ne démarre pas',
+  'state.preheat': 'Préchauffage',
+  'builder.oilGrade': 'Huile moteur',
+  'oil.5w30.help': "La référence : une 5W-30 des années 2000, sur laquelle le moteur chaud est calé. Elle se lance jusqu'à −30 °C (sa limite au démarreur, SAE J300).",
+  'oil.0w20.help': 'Une huile fine récente (années 2010) : limite au démarreur à −35 °C, moins de frottements à froid.',
+  'oil.10w40.help': 'Une semi-synthèse des années 1990 : limite au démarreur à −25 °C.',
+  'oil.15w40.help': 'Une minérale des années 1980 : limite au démarreur à −20 °C ; bien plus épaisse par grand froid.',
+  'oil.20w50.help': 'Une minérale des années 1970 : limite au démarreur à −15 °C. Plus bas, le démarreur peine.',
+  'oil.sae30.help': "Une monograde d'été, comme en 1930 : sans indice d'hiver, elle se fige presque sous −15 °C. On passait alors à une huile d'hiver.",
+  'summary.oil': 'huile {oil}',
+  'gauge.battery': 'Batterie',
+  'gauge.battery.note': "Une batterie au plomb de 12 V, dimensionnée sur le moteur (courant de démarrage à froid, EN 50342-1). Sa résistance monte au froid, et l'acide manque dans ses plaques quand le démarreur insiste ; l'alternateur la recharge lentement. Repère : 12,7 V, pleine et au repos.",
+  'gauge.battery.sub': "Au repos, ou l'alternateur",
+  'gauge.battery.cranking': 'Démarreur {a} A',
+  'gauge.battery.preheat': 'Préchauffage · {s} s',
+  'gauge.battery.failed': "Le moteur n'a pas pris",
 };
 
 /** Les préréglages en français, par identifiant : l'anglais est dans `presets/presets.json`, qui reste la source unique. */

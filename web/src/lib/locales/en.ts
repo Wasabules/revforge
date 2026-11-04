@@ -1117,6 +1117,22 @@ export const en = {
   'gauge.oil.idle': 'Viscosity —',
   'gauge.oil.friction': ' · friction +{pct} %',
   'gauge.oil.frictionLess': ' · friction −{pct} %',
+  'state.startFailed': "Won't start",
+  'state.preheat': 'Glow plugs',
+  'builder.oilGrade': 'Engine oil',
+  'oil.5w30.help': 'The reference: a 5W-30 of the 2000s, on which the warm engine is calibrated. It cranks down to −30 °C (its SAE J300 cold-cranking limit).',
+  'oil.0w20.help': 'A thin modern oil (2010s): cold-cranking limit at −35 °C, less friction when cold.',
+  'oil.10w40.help': 'A 1990s semi-synthetic: cold-cranking limit at −25 °C.',
+  'oil.15w40.help': 'A 1980s mineral oil: cold-cranking limit at −20 °C; much thicker in deep cold.',
+  'oil.20w50.help': 'A 1970s mineral oil: cold-cranking limit at −15 °C. Below, the starter struggles.',
+  'oil.sae30.help': 'A single-grade summer oil, as in 1930: no winter rating, it sets almost solid below −15 °C. Drivers then switched to a winter oil.',
+  'summary.oil': 'oil {oil}',
+  'gauge.battery': 'Battery',
+  'gauge.battery.note': 'A 12 V lead-acid battery sized for the engine (cold-cranking amps per EN 50342-1). Its internal resistance rises in the cold and its plates run short of acid when the starter keeps going; the alternator recharges it slowly. Mark: 12.7 V, full and at rest.',
+  'gauge.battery.sub': 'At rest, or the alternator',
+  'gauge.battery.cranking': 'Starter {a} A',
+  'gauge.battery.preheat': 'Glow plugs · {s} s',
+  'gauge.battery.failed': 'The engine did not catch',
 };
 
 export type MessageKey = keyof typeof en;

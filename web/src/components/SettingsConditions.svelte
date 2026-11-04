@@ -3,7 +3,7 @@
   import SettingsSection from './SettingsSection.svelte';
   import Slider from './Slider.svelte';
   import { ambientAirOf, REFERENCE_K, REFERENCE_PA } from '../lib/atmosphere';
-  import { LIMITS, START_TEMPS, type EngineConfig } from '../lib/config';
+  import { LIMITS, OIL_GRADES, START_TEMPS, type EngineConfig } from '../lib/config';
   import { fixed, t, whole } from '../lib/i18n.svelte';
 
   /** Conditions : l'air autour de la voiture, l'altitude, et le moteur chaud ou froid au démarrage. */
@@ -40,6 +40,13 @@
     <div data-testid="start-temp">
       <Choices label={t('builder.startTemp')} options={START_TEMPS} value={config.startTemp} onchange={(startTemp) => onapply({ startTemp })} />
       <p class="help">{START_TEMPS.find((item) => item.value === config.startTemp)?.help}</p>
+    </div>
+  {/if}
+  <!-- L'huile du carter : elle ne change que le moteur froid (cold_start.hpp). Un électrique n'en a pas. -->
+  {#if !config.electric}
+    <div data-testid="oil-grade">
+      <Choices label={t('builder.oilGrade')} options={OIL_GRADES} value={config.oilGrade} onchange={(oilGrade) => onapply({ oilGrade })} />
+      <p class="help">{OIL_GRADES.find((item) => item.value === config.oilGrade)?.help}</p>
     </div>
   {/if}
 </SettingsSection>

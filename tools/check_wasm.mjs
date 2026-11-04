@@ -50,12 +50,13 @@ const TURBO_LAYOUT = { single: 0, twin_parallel: 1, twin_sequential: 2, twinchar
 const BOOST_CONTROL = { spring: 0, electronic: 1, by_gear: 2 };
 const INTERCOOLER = { air: 0, water: 1, none: 2 };
 const CYCLE = { four_stroke: 0, two_stroke: 1 };
+const OIL = { '5w30': 0, '0w20': 1, '10w40': 2, '15w40': 3, '20w50': 4, sae30: 5 };
 /** Les arguments de `rf_set_tuning`, dans son ordre, à leur défaut : le moteur d'aujourd'hui. */
 const TUNING = {
   ambientC: 20, altitudeM: 0, startTemp: 0, compressionRatio: 0, fuelGrade: 0, ignitionOffsetDeg: 0, fullLoadLambda: 0, revLimiter: 0,
   launchRpm: 0, flatShift: 0, tractionControl: 0, dieselInjection: 0, egr: 0, particulateFilter: 0, camDurationDeg: 0, camLiftMm: 0,
   lobeSeparationDeg: 0, valveTiming: 0, valveSprings: 0, turboLayout: 0, variableGeometry: 0, boostControl: 0, intercooler: 0,
-  waterInjection: 0, nitrousKw: 0, cycle: 0,
+  waterInjection: 0, nitrousKw: 0, cycle: 0, oilGrade: 0,
 };
 // Les noms et l'ordre de `TUNING` sont ceux de la signature de `rf_set_tuning` : un écart décalerait tous les réglages qui suivent.
 {

@@ -56,9 +56,9 @@ constexpr double kCrankViscosityExponent = 0.86;
 // atteint à la fin de l'essai (x = 0,96, supposé) : I·R = 5,129 V, V_K = 0,151 V, Q = 28,8 s × I (froid/battery.py).
 constexpr double kFullVolts = 12.7;
 constexpr double kEmptyVolts = 11.8;
-constexpr double kRatedDropV = 5.129;
-constexpr double kPolarizationV = 0.151;
-constexpr double kHighRateSeconds = 28.8;
+constexpr double kRatedDropV = 5.059;
+constexpr double kPolarizationV = 0.139;
+constexpr double kHighRateSeconds = 33.27;
 constexpr double kRecoveryS = 60.0;
 constexpr double kRatedK = kAbsolute - 18.0;
 // La résistance suit la convention des courants nominaux (BCI) : le courant à 0 °C (CA) vaut 1,2 fois celui à −18 °C (CCA),

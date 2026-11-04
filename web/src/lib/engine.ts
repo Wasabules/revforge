@@ -206,6 +206,14 @@ export interface Telemetry {
   nitrousBar: number;
   nitrousKg: number;
   nitrousFlow: number;
+  /**
+   * Le démarrage (cold_start.hpp) : la tension de la batterie (V : à vide, sous le démarreur, ou celle de l'alternateur moteur
+   * tournant ; 0 sur l'électrique), le courant du démarreur (A), le démarrage raté (1), le préchauffage restant (s).
+   */
+  batteryV: number;
+  starterA: number;
+  startFailed: number;
+  preheat: number;
 }
 
 export const IDLE_TELEMETRY: Telemetry = {
@@ -217,6 +225,7 @@ export const IDLE_TELEMETRY: Telemetry = {
   camHigh: 0, camPhaser: 0,
   turbo2Rpm: 0, turbo2Exhaust: 0, turbo2Wastegate: 0, turbo2Flow: 0, turbo2GasC: 20, turboVane: 0, turbo2Vane: 0, twinStage: 0, twinValve: 0, twinOnline: 0, chargerClutch: 0, chargerFlap: 0, chargerInterstage: 0,
   chargeC: 20, chargeWaterC: 20, waterGps: 0, nitrousBar: 0, nitrousKg: 0, nitrousFlow: 0,
+  batteryV: 0, starterA: 0, startFailed: 0, preheat: 0,
 };
 
 export interface CurvePoint {
@@ -392,6 +401,12 @@ interface RfExports {
   rf_nitrous_flow(): number;
   rf_nitrous_refill(): void;
   rf_nitrous_activation_rpm(): number;
+  /** Le démarrage : la clé relâchée, la batterie (V), le démarreur (A), le démarrage raté, le préchauffage restant (s). */
+  rf_release_key(): void;
+  rf_battery_v(): number;
+  rf_starter_a(): number;
+  rf_start_failed(): number;
+  rf_preheat(): number;
   rf_render(frames: number): void;
   rf_render_stereo(frames: number): void;
   rf_set_listener(listener: number): void;
@@ -724,9 +739,17 @@ export class Engine {
     this.send({ type: 'refillNitrous' });
   }
 
-  /** Relance le démarreur, après un calage. */
+  /**
+   * Tourne la clé et la tient : le démarreur lance le moteur. Relâchée (`releaseKey`) avant qu'il ait pris, le calculateur tient
+   * encore le démarreur dix secondes au plus, comme un démarrage par bouton, puis renonce : le démarrage est raté.
+   */
   crank(): void {
     this.send({ type: 'crank' });
+  }
+
+  /** Relâche la clé. */
+  releaseKey(): void {
+    this.send({ type: 'releaseKey' });
   }
 
   shift(direction: 1 | -1): void {
