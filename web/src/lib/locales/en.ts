@@ -1133,7 +1133,7 @@ export const en = {
   'oil.sae30.help': 'A single-grade summer oil, as in 1930: no winter rating, it sets almost solid below −15 °C. Drivers then switched to a winter oil.',
   'summary.oil': 'oil {oil}',
   'gauge.battery': 'Battery',
-  'gauge.battery.note': 'A 12 V lead-acid battery sized for the engine (cold-cranking amps per EN 50342-1). Its internal resistance rises in the cold and its plates run short of acid when the starter keeps going; the alternator recharges it slowly. Mark: 12.7 V, full and at rest.',
+  'gauge.battery.note': 'A 12 V lead-acid battery sized for the engine (cold-cranking amps to the European standard 50342-1). Its internal resistance rises in the cold and its plates run short of acid when the starter keeps going; the alternator recharges it slowly. Mark: 12.7 V, full and at rest.',
   'gauge.battery.sub': 'At rest, or the alternator · {c} °C',
   'gauge.battery.cranking': 'Starter {a} A',
   'gauge.battery.preheat': 'Glow plugs · {s} s',

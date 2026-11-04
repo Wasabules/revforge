@@ -211,7 +211,7 @@ test.describe('le froid réuni', () => {
     // Les jauges avant le premier démarrage : le réseau de la page, pas un chiffre écrit d'avance.
     await expect.poll(() => shown(page, 'gauge-coolant-value')).toBe(Math.round(parked.startCoolantC));
     await expect.poll(() => shown(page, 'gauge-oil-value')).toBe(Math.round(parked.startOilC));
-    await expect.poll(() => shown(page, 'gauge-battery-value')).toBe(Math.round(parked.startBatteryV * 10) / 10);
+    await expect.poll(() => shown(page, 'meter-battery-value')).toBe(Math.round(parked.startBatteryV * 10) / 10);
     await expect(page.getByTestId('gauge-battery-sub')).toContainText(battery(Math.round(parked.startBatteryC)));
     await ouvrir(page, 'car');
     await expect(page.getByTestId('panel-car').getByTestId('start-state')).toContainText(new RegExp(`batterie [−-]${Math.abs(Math.round(parked.startBatteryC))}\\D`));

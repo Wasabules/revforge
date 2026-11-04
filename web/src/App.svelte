@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import BatteryGauge from './components/BatteryGauge.svelte';
   import CarSettings from './components/CarSettings.svelte';
   import CarStage from './components/CarStage.svelte';
   import ChartsPanel from './components/ChartsPanel.svelte';
@@ -640,6 +641,13 @@
         {/if}
       </div>
 
+      <!-- La batterie, sous le démarreur qu'elle alimente. Un électrique n'en a pas. -->
+      {#if !shown.electric}
+        <div class="battery-slot">
+          <BatteryGauge {readings} telemetry={() => telemetry} running={() => running} sample={(now) => sample(now)} />
+        </div>
+      {/if}
+
       <div class="modes">
         <Choices label={t('mode.label')} options={DRIVE_MODES} value={driveMode} onchange={chooseDriveMode} />
         <p class="help">{current.help}</p>
@@ -938,6 +946,7 @@
     .dial { order: 1; --tach-max: 300px; }
     .live { order: 1; }
     .flags { order: 1; }
+    .battery-slot { order: 1; }
     .stage { order: 2; }
     .config { order: 3; flex: none; grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .config button { min-height: 68px; }

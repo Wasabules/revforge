@@ -34,7 +34,6 @@
   let dutyNode = $state<HTMLElement>();
   let chargeNode = $state<HTMLElement>();
   let bottleNode = $state<HTMLElement>();
-  let batteryNode = $state<HTMLElement>();
 
   const turbo = $derived(config.aspiration === 'turbo' && !config.electric);
   // L'air d'admission n'a d'intérêt que s'il n'est plus celui du dehors : un filtre sous le capot.
@@ -92,7 +91,6 @@
     let lastCharge = NaN;
     let lastChargeLang = lang();
     let lastBottle = '';
-    let lastBattery = '';
     const stops = [
       clock.add((text) => {
         if (!text) return;
@@ -153,20 +151,6 @@
         if (extra > 0) line += t('gauge.oil.friction', { pct: whole(extra) });
         else if (extra < 0) line += t('gauge.oil.frictionLess', { pct: whole(-extra) });
         oilNode.textContent = line;
-      }),
-      // La batterie : le courant du démarreur pendant le lancement, le préchauffage d'un diesel, le démarrage raté.
-      clock.add((text) => {
-        if (!text || !batteryNode) return;
-        const live = running() ? telemetry() : null;
-        const amps = live && live.cranking ? Math.round(live.starterA / 10) * 10 : 0;
-        const preheat = live ? Math.ceil(live.preheat) : 0;
-        const failed = live ? live.startFailed : 0;
-        // Sa température, nœud du réseau thermique : au départ, moteur coupé, puis en marche, comme l'eau et l'huile.
-        const celsius = Math.round(readings.batteryC);
-        const key = `${amps}|${preheat}|${failed}|${celsius}|${lang()}`;
-        if (key === lastBattery) return;
-        lastBattery = key;
-        batteryNode.textContent = preheat > 0 ? t('gauge.battery.preheat', { s: whole(preheat) }) : amps > 0 ? t('gauge.battery.cranking', { a: whole(amps) }) : failed ? t('gauge.battery.failed') : t('gauge.battery.sub', { c: whole(celsius) });
       }),
       clock.add((text) => {
         if (!text) return;
@@ -255,11 +239,6 @@
     </Gauge>
     <Gauge id="oil" label={t('gauge.oil')} note={t('gauge.oil.note')} unit="°C" min={0} max={160} step={40} minor={20} zone={{ from: 140, to: 160 }} mark={100} {clock} read={() => readings.oilC}>
       <span data-testid="gauge-oil-sub" bind:this={oilNode}></span>
-    </Gauge>
-    <!-- La batterie (cold_start.hpp) : à vide, sous le démarreur, puis l'alternateur moteur tournant. Repère : 12,7 V, pleine au repos. -->
-    <Gauge id="battery" label={t('gauge.battery')} note={t('gauge.battery.note')} unit="V" min={6} max={16} step={2} minor={1} zone={{ from: 6, to: 9.6 }} mark={12.7}
-      digits={1} tickDigits={0} {clock} read={() => readings.batteryV}>
-      <span data-testid="gauge-battery-sub" bind:this={batteryNode}></span>
     </Gauge>
     {#if filtered}
       <Gauge id="dpf" label={t('gauge.dpf')} note={t('gauge.dpf.note')} unit="%" min={0} max={120} step={20} minor={10} {clock} read={() => (running() ? telemetry().dpfLoad * 100 : 0)}>
