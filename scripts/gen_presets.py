@@ -33,6 +33,8 @@ TURBO_LAYOUT = {"single": "Single", "twin_parallel": "TwinParallel", "twin_seque
 BOOST_CONTROL = {"spring": "Spring", "electronic": "Electronic", "by_gear": "ByGear"}
 INTERCOOLER = {"air_to_air": "AirToAir", "air_to_water": "AirToWater", "none": "None"}
 CYCLE = {"four_stroke": "FourStroke", "two_stroke": "TwoStroke"}
+# L'huile du carter (démarreur) : mêmes valeurs que OIL_GRADES de web/src/lib/config.ts.
+OIL_GRADE = {"5w30": "Sae5W30", "0w20": "Sae0W20", "10w40": "Sae10W40", "15w40": "Sae15W40", "20w50": "Sae20W50", "sae30": "Sae30"}
 BODY = {"city": "City", "compact": "Compact", "coupe": "Coupe", "supercar": "Supercar", "van": "Van", "retro": "Retro"}
 DRIVE = {"front": "Front", "rear": "Rear", "all": "All"}
 GEARBOX = {"synchro": "Synchro", "dog": "Dog", "sequential": "Sequential", "dual_clutch": "DualClutch", "converter": "Converter", "reducer": "Reducer"}
@@ -65,7 +67,8 @@ def tuning(p):
         f"ValveTiming::{VALVE_TIMING[p.get('valveTiming', 'fixed')]}, ValveSprings::{VALVE_SPRINGS[p.get('valveSprings', 'stock')]}, "
         f"TurboLayout::{TURBO_LAYOUT[p.get('turboLayout', 'single')]}, {flag(p.get('variableGeometry', False))}, "
         f"BoostControl::{BOOST_CONTROL[p.get('boostControl', 'spring')]}, Intercooler::{INTERCOOLER[p.get('intercooler', 'air_to_air')]}, "
-        f"{flag(p.get('waterInjection', False))}, {int(p.get('nitrousKw', 0))}, EngineCycle::{CYCLE[p.get('cycle', 'four_stroke')]}"
+        f"{flag(p.get('waterInjection', False))}, {int(p.get('nitrousKw', 0))}, EngineCycle::{CYCLE[p.get('cycle', 'four_stroke')]}, "
+        f"OilGrade::{OIL_GRADE[p.get('oilGrade', '5w30')]}"
     )
 
 

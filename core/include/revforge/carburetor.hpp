@@ -110,4 +110,10 @@ private:
     double lambda_ = 0.0;
 };
 
+/**
+ * Le film d'un carburateur au lancement (cold_start.hpp) : l'air passe à peine dans le venturi, le carburant tombe en grosses
+ * gouttes et mouille la pipe. Part déposée et constante de temps, à cette température d'eau, pipe à la pression ambiante.
+ */
+FilmParameters crankingCarburetorFilm(double wallShare, double coolantC);
+
 }  // namespace revforge

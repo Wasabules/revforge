@@ -1,10 +1,12 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 
 #include "revforge/cam.hpp"
 #include "revforge/boost_control.hpp"
 #include "revforge/carburetor.hpp"
+#include "revforge/cold_start.hpp"
 #include "revforge/combustion.hpp"
 #include "revforge/consumption.hpp"
 #include "revforge/driver_scenarios.hpp"
@@ -47,8 +49,15 @@ public:
     void stepNeutral(double dt, double pedal);
     void stepOff(double dt);
 
-    /** Lance le démarreur : quelques tours sans combustion, puis le moteur prend. */
+    /**
+     * Tourne la clé et la tient : le démarreur lance le moteur, le calculateur se synchronise, puis le moteur prend, aussitôt
+     * s'il est chaud, après des ratés et des explosions isolées s'il est froid. Sans `releaseKey`, le conducteur la tient
+     * jusqu'à ce qu'il prenne ; relâchée plus tôt, le calculateur tient encore le démarreur `kAutoCrankS` au plus, comme un
+     * démarrage par bouton. Un diesel froid préchauffe d'abord.
+     */
     void crank();
+    /** Relâche la clé : sans moteur qui a pris, le démarreur s'arrête et le démarrage est raté. */
+    void releaseKey() { keyHeld_ = false; }
     /** Moteur à l'arrêt, sans passer par son élan. */
     void halt();
 
@@ -129,8 +138,8 @@ public:
     /** Trop bas en prise : le moteur broute. */
     bool lugging() const { return lugging_; }
     /** Le démarreur est alimenté, et son pignon est engagé dans la couronne. */
-    bool starterPowered() const { return crankLeft_ > 0.0 || overrunLeft_ > 0.0; }
-    bool starterMeshed() const { return (crankLeft_ > 0.0 && pullInLeft_ <= 0.0) || meshHoldLeft_ > 0.0; }
+    bool starterPowered() const { return (crankingNow() && preheatLeft_ <= 0.0) || overrunLeft_ > 0.0; }
+    bool starterMeshed() const { return (crankingNow() && preheatLeft_ <= 0.0 && pullInLeft_ <= 0.0) || meshHoldLeft_ > 0.0; }
     /** Couple transmis par les dents, rapporté au couple de calage du démarreur. */
     double starterLoad() const { return starterLoad_; }
     /** Pression avant le papillon, en part de `boostBar` : c'est celle du vrai turbo, au retard près. */
@@ -184,7 +193,7 @@ public:
     /** Combustion coupée : rupteur, ou contact coupé. */
     bool cut() const { return cut_; }
     bool shifting() const { return step_ != ShiftStep::None; }
-    bool cranking() const { return crankLeft_ > 0.0; }
+    bool cranking() const { return crankingNow() && preheatLeft_ <= 0.0; }
     bool stopped() const { return omega_ <= 0.0; }
     double idleRpm() const { return idle_; }
     int powertrainCylinders() const { return powertrain_.engine.cylinders; }
@@ -279,6 +288,25 @@ public:
     /** Remplir la bouteille de protoxyde. */
     void refillNitrous() { chargeAir_.refill(); }
 
+    /**
+     * Le démarrage (cold_start.hpp) : la batterie et son courant, le préchauffage d'un diesel, ce que le son reçoit du
+     * lancement. Le démarrage raté : la clé relâchée, ou le temps du calculateur passé, sans que le moteur ait pris.
+     */
+    const StartModel& start() const { return start_; }
+    StartDrive startDrive() const { return start_.drive(coldCrank_); }
+    /** L'écart du courant du démarreur à celui de la batterie de référence, en part du courant de calage : 0 moteur chaud. */
+    double starterSupply() const { return start_.supplyShare(); }
+    double batteryVolts() const { return start_.batteryVolts(); }
+    double starterAmps() const { return start_.starterAmps(); }
+    bool startFailed() const { return startFailed_; }
+    bool keyHeld() const { return keyHeld_; }
+    /** Le préchauffage en cours (s restantes). */
+    double preheatLeft() const { return preheatLeft_; }
+    /** Pour les essais et la ligne de commande : l'état de charge de la batterie, 0 à 1. */
+    void setBatteryCharge(double charge) { start_.setBatteryCharge(charge); }
+    /** Le temps que le calculateur tient le démarreur après qu'on a lâché la clé (s) : un démarrage par bouton. */
+    static constexpr double kAutoCrankS = 10.0;
+
 private:
     enum class Driver { Pilot, Pedal, Neutral, Off };
     enum class ShiftStep { None, Declutch, PullOut, Flight, Sync, Engage, Reclutch, Handover };
@@ -325,8 +353,22 @@ private:
     double rpmInGear(int gear) const;
     double ratio(int gear) const;
     double compressionLoadNm() const;
-    double rotaryCompressionLoadNm() const;
-    double twoStrokeCompressionLoadNm() const;
+    /** Le lancement : le démarreur tourne, synchronisation comprise, ou le moteur froid n'a pas encore pris. */
+    bool crankingNow() const { return crankLeft_ > 0.0 || coldCrank_; }
+    /** Ce que les explosions du lancement ajoutent au vilebrequin (Nm), cylindre par cylindre, pendant leur détente. */
+    double firingTorqueNm() const;
+    double startRise(double heatJ) const;
+    /** Le décalage du point mort haut de chaque explosion, sur un cycle (rad) ; le nombre d'explosions par cycle. */
+    int startEvents() const;
+    double startEventPhase(int event, double angle) const;
+    double startCyclesPerS(double rpmNow) const;
+    StartConditions startConditions() const;
+    void failStart();
+    double rotaryCompressionLoadNm(double angle) const;
+    double twoStrokeCompressionLoadNm(double angle) const;
+    double compressionLoadAt(double angle) const;
+    /** Le régime d'entraînement moteur chaud, sur la batterie de référence (tr/min) : la mesure en tours de la synchronisation. */
+    double referenceCrankRpm() const;
     void stepTurbo(double rpmNow, bool burning);
     void updateAntiLag(double throttle, double rpmNow, bool off);
     void stepSupercharger(double rpmNow);
@@ -429,6 +471,22 @@ private:
     double starterLoad_ = 0.0;
     double overrunLeft_ = 0.0;
     double crankAngle_ = 0.0;
+    // Le démarrage : la clé, le préchauffage, le lancement d'un moteur froid, ce que chaque cylindre a fait à son point mort haut.
+    StartModel start_;
+    bool keyHeld_ = false;
+    double autoCrankLeft_ = 0.0;
+    double preheatLeft_ = 0.0;
+    double sinceKey_ = 0.0;
+    bool coldCrank_ = false;
+    bool coldKey_ = false;
+    double omegaRefCrank_ = 0.0;
+    bool coldStart_ = false;
+    bool startFailed_ = false;
+    double crankExcess_ = 0.0;
+    double startShare_ = 1.0;
+    int startRefresh_ = 0;
+    std::array<bool, kMaxCylinders> eventFired_{};
+    std::array<double, kMaxCylinders> eventRise_{};
     bool stalled_ = false;
     bool lugging_ = false;
     double fastIdle_ = 0.0;

@@ -257,4 +257,15 @@ void Carburetor::step(const CarburetorInput& in, double dt) {
     torqueShare_ = torqueOfRichness(now) / torqueOfRichness(calibrated);
 }
 
+FilmParameters crankingCarburetorFilm(double wallShare, double coolantC) {
+    // Au lancement, l'air ne fait presque pas de dépression : la vitesse au col est nulle, la pipe à la pression ambiante.
+    const FilmParameters cold = coldFilmShare(coolantC, 1.0);
+    CarburetorSpec spec;
+    spec.wallShare = wallShare;
+    FilmParameters out;
+    out.deposit = std::min(wallShareAt(spec, 0.0, 1.0) * cold.deposit, 0.95);
+    out.tauS = filmTauAt(0.0, 1.0) * cold.tauS;
+    return out;
+}
+
 }  // namespace revforge

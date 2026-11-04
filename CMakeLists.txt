@@ -60,6 +60,7 @@ add_library(revforge_core STATIC
   core/src/charge_air.cpp
   core/src/two_stroke.cpp
   core/src/tyre.cpp
+  core/src/cold_start.cpp
   ${GENERATED_DIR}/presets_data.inc
 )
 target_include_directories(revforge_core PUBLIC core/include PRIVATE core/src ${GENERATED_DIR})
