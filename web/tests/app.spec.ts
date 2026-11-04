@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { ouvrir, voir } from './aide';
+import { CALCUL_A_PART, ouvrir, voir } from './aide';
 
 declare global {
   interface Window {
@@ -518,10 +518,10 @@ test("changer d'échappement se voit sur la fiche : niveau et ce que retient la 
   const loss = await page.getByTestId('line-loss').innerHTML();
   await ouvrir(page, 'exhaust');
   await page.getByRole('group', { name: 'Échappement' }).getByRole('button', { name: 'Ligne directe' }).click();
-  await expect.poll(read).toBeGreaterThan(origin + 10);
+  await expect.poll(read, CALCUL_A_PART).toBeGreaterThan(origin + 10);
   expect(await page.getByTestId('line-loss').innerHTML()).not.toBe(loss);
   await page.getByRole('group', { name: 'Échappement' }).getByRole('button', { name: 'Confort' }).click();
-  await expect.poll(read).toBeLessThan(origin);
+  await expect.poll(read, CALCUL_A_PART).toBeLessThan(origin);
 });
 
 test("isolation et emplacement du moteur changent l'habitacle sur la fiche", async ({ page }) => {
@@ -534,12 +534,12 @@ test("isolation et emplacement du moteur changent l'habitacle sur la fiche", asy
   const normal = await read();
   await ouvrir(page, 'car');
   await page.getByRole('group', { name: 'Insonorisation' }).getByRole('button', { name: 'Course' }).click();
-  await expect.poll(read).toBeGreaterThan(normal + 8);
+  await expect.poll(read, CALCUL_A_PART).toBeGreaterThan(normal + 8);
   await page.getByRole('group', { name: 'Insonorisation' }).getByRole('button', { name: 'Luxe' }).click();
-  await expect.poll(read).toBeLessThan(normal - 3);
+  await expect.poll(read, CALCUL_A_PART).toBeLessThan(normal - 3);
   const luxury = await read();
   await page.getByRole('group', { name: 'Moteur', exact: true }).getByRole('button', { name: 'Central' }).click();
-  await expect.poll(read).toBeGreaterThan(luxury + 2);
+  await expect.poll(read, CALCUL_A_PART).toBeGreaterThan(luxury + 2);
 });
 
 test('le lien de partage garde emplacement, isolation et sorties, et les anciens liens restent valides', async ({ page }) => {

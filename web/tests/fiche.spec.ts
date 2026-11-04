@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { ouvrir } from './aide';
+import { CALCUL_A_PART, ouvrir } from './aide';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
@@ -55,7 +55,7 @@ test('glisser la masse ne fige pas la page : la fiche attend le curseur, le 0 à
   await ouvrir(page, 'share');
   await page.getByTestId('preset').selectOption('v8_cross_plane');
   const sprint = page.getByTestId('spec-100');
-  await expect(sprint).not.toHaveText('…');
+  await expect(sprint).not.toHaveText('…', CALCUL_A_PART);
   const before = Number((await sprint.textContent())!.replace(/[^0-9,]/g, '').replace(',', '.'));
   expect(before).toBeGreaterThan(3);
 
@@ -69,7 +69,7 @@ test('glisser la masse ne fige pas la page : la fiche attend le curseur, le 0 à
   expect(result.pending).toBe('…');
 
   // Relâché : la fiche suit la voiture plus lourde, et le 0 à 100 arrive.
-  await expect(sprint).not.toHaveText('…');
+  await expect(sprint).not.toHaveText('…', CALCUL_A_PART);
   const after = Number((await sprint.textContent())!.replace(/[^0-9,]/g, '').replace(',', '.'));
   expect(after).toBeGreaterThan(before);
   const mass = await page.evaluate(() => (window as unknown as { __revforge: { config(): { massKg: number } } }).__revforge.config().massKg);

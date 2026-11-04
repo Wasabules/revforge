@@ -18,3 +18,11 @@ export async function ouvrir(page: Page, id: PanelId) {
 export async function voir(page: Page, id: ViewId) {
   await page.getByTestId(`view-${id}`).click();
 }
+
+/**
+ * L'attente d'un chiffre que calcule le worker de la fiche (`calcWorker.ts`) : le 0 à 100 et la fiche acoustique. Il fait un
+ * calcul à la fois et ne garde que la dernière demande de chacun : seul, un réglage y attend au plus le calcul en cours, son
+ * 0 à 100 puis sa fiche acoustique, environ 2,4 s. Une passe complète, deux navigateurs à la fois, en a pris plus de 5. Ce
+ * n'est que le temps d'attente : ce que le test exige du chiffre ne change pas.
+ */
+export const CALCUL_A_PART = { timeout: 15_000 };
