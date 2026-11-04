@@ -87,7 +87,7 @@ TEST_CASE("le coupé marche comme ses contemporains, à 30 % près") {
 }
 
 TEST_CASE("à moteur et masse égaux, cette caisse freine plus dans l'air qu'une compacte, et plafonne plus bas") {
-    Powertrain retro = retroCoupe();
+    const Powertrain retro = retroCoupe();
     const Powertrain compact = sameInCompact();
     CHECK(roadLoadN(retro, 130.0 / 3.6) > roadLoadN(compact, 130.0 / 3.6));
     // Mêmes pertes au roulement : à l'arrêt, seul l'air diffère.
@@ -96,15 +96,11 @@ TEST_CASE("à moteur et masse égaux, cette caisse freine plus dans l'air qu'une
 }
 
 TEST_CASE("la légèreté se paie moins cher que la traînée : plus vive qu'une compacte de série au même moteur") {
-    Powertrain retro = retroCoupe();
+    const Powertrain retro = retroCoupe();
     Powertrain compact = sameInCompact();
     compact.car.massKg = 1350;
     compact.car.rimInch = 18;
     compact.car.drive = Drive::Front;
-    // À adhérence tenue : sans antipatinage, la propulsion légère patine au-delà du sommet du pneu (9,75 s contre 10,11), et
-    // c'est l'adhérence qui décide, pas la masse ni la traînée.
-    retro.engine.tractionControl = TractionControl::Sport;
-    compact.engine.tractionControl = TractionControl::Sport;
     CHECK(measurePerformance(retro).zeroTo100S < measurePerformance(compact).zeroTo100S - 0.5);
 }
 
@@ -130,7 +126,7 @@ TEST_CASE("les sources sont placées d'après sa géométrie") {
 }
 
 TEST_CASE("la caisse change le son, et le peu d'isolant s'entend dans l'habitacle") {
-    Powertrain retro = retroCoupe();
+    const Powertrain retro = retroCoupe();
     Powertrain compact = sameInCompact();
     // La même isolation : la ligne et le plan suffisent à changer le rendu.
     CHECK(rendered(retro) != rendered(compact));

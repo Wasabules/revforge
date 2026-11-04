@@ -1930,16 +1930,20 @@ bool DrivingModel::robotLaunching() const {
            speedKmh() < 25.0;
 }
 
-void DrivingModel::tractionGains(double& kp, double& ki) const {
+double DrivingModel::slipPlantGain() const {
     // Ce que tout le couple du moteur ferait au glissement, en m/s² : r·T·g·η sur l'inertie vue de la roue (les roues, le
-    // primaire et le moteur, ramenés par le rapport). La boucle, un intégrateur de ce gain, a alors ses pôles à ω et ζ :
-    // ω² = ki·gain, 2ζω = kp·gain. Le pneu y ajoute son amortissement sous le sommet, et une instabilité au-delà. Les mêmes
-    // gains servent au départ, embrayage du robot : desserrer d'autant retire d'autant le couple.
+    // primaire et le moteur, ramenés par le rapport).
     const double g = ratio(std::max(gear_, 1));
     const double reflected = g * g * efficiency_;
     const double wheels = kWheelInertia * (powertrain_.car.drive == Drive::All ? 2.0 : 1.0);
     const double inertia = wheels + (gearing_.box.inputInertia + inertia_) * reflected;
-    const double gain = std::max(radius_ * tractionTorqueNm_ * g * efficiency_ / inertia, 1.0);
+    return std::max(radius_ * tractionTorqueNm_ * g * efficiency_ / inertia, 1.0);
+}
+
+void DrivingModel::tractionGains(double& kp, double& ki) const {
+    // La boucle, un intégrateur de `slipPlantGain`, a ses pôles à ω et ζ : ω² = ki·gain, 2ζω = kp·gain. Le pneu y ajoute son
+    // amortissement sous le sommet, et une instabilité au-delà.
+    const double gain = slipPlantGain();
     kp = 2.0 * kTractionDamping * kTractionOmega / gain;
     ki = kTractionOmega * kTractionOmega / gain;
 }

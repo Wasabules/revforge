@@ -35,7 +35,8 @@ Nothing is entered by hand: everything starts from displacement, maximum rpm and
 5. **Car.** Mass, air and rolling resistance, load transfer, and tires whose grip limits torque: an overpowered
    front-wheel-drive car spins its wheels.
 
-The 0 to 100 shown is measured by driving this model, pedal to the floor. These figures are still those of a model:
+The 0 to 100 shown is measured by driving this model: it is a tester's best start, who modulates the pedal himself
+when the wheels spin ("The tyre, slip control and the start"). These figures are still those of a model:
 the tests compare peak power to real engines, to within 30%.
 
 ## The turbo
@@ -1908,7 +1909,7 @@ The same control, with each gear's target bounded by the torque it can pass, tak
 - the crankshaft torque that gives it, C = F·r/(i·η), bounded by the gearbox's admissible torque;
 - the pressure that gives this torque, by inverting `fullLoadTorqueNm` by bisection: the filling model run backwards, like a torque-structured ECU.
 
-The engaged gear is read in `DrivingModel`; in neutral, first gear. On `three_cyl_turbo` (front drive, 1150 kg), first gear passes 137 Nm, against 192 Nm at the engine: the target falls there from 2.21 to 1.46-1.71 bar absolute depending on rpm, second gear (260 Nm) is not bounded. From a standing start, the peak slip in first falls from 5.6 to 1.9 m/s. With the former tyre, without a peak, 0-100 km/h still went from 10.03 to 10.22 s: more slip always gave a little more force there. With the finishing work's peaked tyre, it goes from 10.48 s (spring) to 10.19 s: capping the torque keeps the tyre near its peak. On all-wheel drives (`hot_hatch_turbo`, 388 Nm in first for 357 Nm), nothing changes.
+The engaged gear is read in `DrivingModel`; in neutral, first gear. On `three_cyl_turbo` (front drive, 1150 kg), first gear passes 137 Nm, against 192 Nm at the engine: the target falls there from 2.21 to 1.46-1.71 bar absolute depending on rpm, second gear (260 Nm) is not bounded. From a standing start, the peak slip in first falls from 5.6 to 1.9 m/s. With the former tyre, without a peak, 0-100 km/h still went from 10.03 to 10.22 s: more slip always gave a little more force there. With the finishing work's peaked tyre, foot to the floor, it goes from 10.48 s (spring) to 10.19 s: capping the torque keeps the tyre near its peak. The spec sheet, for its part, measures a tester who already modulates the pedal: 10.04 s on the spring, 10.19 s by gear. On all-wheel drives (`hot_hatch_turbo`, 388 Nm in first for 357 Nm), nothing changes.
 
 **What does not change.** The spec sheet (`torqueCurveNm`) stays the spring's: at sea level, electronic control holds `turboSteady`'s equilibrium exactly, and the gearbox stays designed for this engine. WLTC consumption does not move: 8.90 L/100 km in both cases on `hot_hatch_turbo`, 6.34 and 6.32 on `three_cyl_turbo` by gear.
 
@@ -2257,54 +2258,61 @@ Hence B = K/(C·μ) = 13.65; 90 % of the peak at κ = 6.5 %, 76 % at κ = 1, 71 
 
 **The start robot** (the start branch of `updateClutch`) used to close the clutch on engine speed alone, up to 1.6 times the engine's torque: the flywheel, spun above the start speed, emptied itself into the wheels. The peakless tyre absorbed that surplus; with a peak, it spins the wheels, and slip control, which only acts on the spark, could do nothing about it while the clutch slipped. While the engine drives, the robot no longer closes beyond the announced torque, `engine-management share × filling × full-load torque`, plus what brings the engine back to its start speed in 0.3 s (`J·(ω − ω_start)/0.3 s`, assumed): the wheels receive its torque, and its momentum gradually rather than all at once. Once the plates are within 150 rpm of each other (assumed), foot on the pedal, there is no momentum left to empty: it closes, and the clutch locks. Foot off, it stays capped: without this, the W16 slowing down on a 16 % hill was dragged by its wheels until it stalled. Without this last rule, it stayed half open up to 25 km/h, and Eco and Normal took second gear at the same speed. Since the announced torque counts what the engine management takes off, slip control acts from the start: without this cap, sport 0-100 lost 0.05 to 0.5 s (`v8_supercharged`: 6.27 → 6.74 s; measured without the return to the start speed), full up to 0.4 s; without slip control, 0.02 s at most. Without the return to the start speed, the engine stayed where it had flared, and the clutch slipped up to 25 km/h. Counter-check: without this cap, the W16 stalls on the 16 % hill start, in all four modes: the "every journey goes to the end" test fails.
 
-| Spec-sheet 0-100 km/h | Peakless tyre: off / sport / full | Peaked tyre: off / sport / full |
+| 0-100 km/h, foot to the floor | Peakless tyre: off / sport / full | Peaked tyre: off / sport / full |
 |---|---|---|
 | 7 L V8, rear drive, 1700 kg | 6.18 / 6.20 / 6.86 s | 8.55 / 6.25 / 6.48 s |
 | The same, launch control at 3500 rpm (off; sport) | 6.03; 6.05 s | 8.40; 6.08 s |
 | `hot_hatch_turbo`, all-wheel drive | 6.86 s throughout | 6.82 s throughout |
 
-Without slip control, the rear-wheel drive spins well past the peak in first and second (κ from 1 to 10): it loses 2.4 s. With it, it gets back to the former figure within 0.05 s: the former tyre only gave its full force while slipping by several m/s.
+Without slip control, foot to the floor, the rear-wheel drive spins well past the peak in first and second (κ from 1 to 10): it loses 2.4 s. With it, it gets back to the former figure within 0.05 s: the former tyre only gave its full force while slipping by several m/s. The spec sheet's tester (below), without slip control, loses only 0.5 s: 6.72 s.
 
 **Launch control** is unchanged: it holds the speed and lets go at 1 m/s. Without slip control it often only spins harder (below, "off, launch" column); with it, it gains up to 0.7 s, except on `three_cyl_turbo`, `v10_open` and `v12`, where it costs up to 0.17 s. `hot_hatch_turbo` at 4500 rpm: 6.13 → 6.16 s; with the flat shift: 6.54 → 6.51 s.
 
-**By-gear boost (`by_gear`)** caps the torque at what the tyres pass at their peak, load transfer included (`gearTorqueCapNm`, unchanged). It now gains time: `three_cyl_turbo`, 0-100 km/h in 10.48 s on the spring, 10.47 electronic, 10.19 by gear (10.05, 10.04 and 10.26 with the former tyre).
+**By-gear boost (`by_gear`)** caps the torque at what the tyres pass at their peak, load transfer included (`gearTorqueCapNm`, unchanged). It now gains time foot to the floor: `three_cyl_turbo`, 0-100 km/h in 10.48 s on the spring, 10.47 electronic, 10.19 by gear (10.05, 10.04 and 10.26 with the former tyre). The spec sheet's tester, who already modulates the pedal, has nothing more to gain from it: 10.04, 10.14 and 10.19 s.
 
 **The shift logic** (`decideShift`) said "the tyres are at their limit" beyond 0.8 m/s of slip: it is now beyond the peak, κ > κ* (`ShiftView::slipRatio`). While the wheels spin past the peak, engine speed no longer tells the car's speed: it only shifts up if the next gear lands at 1.3 times idle at least at the car's own speed (assumed), as a gearbox reading the speed at the undriven wheels does; engine protection at the maximum speed gives up too, the limiter protecting it meanwhile (without this, the supercharged V8 on a 16 % hill took second gear at 9 km/h, and stalled). Without this, the 3 L rear-wheel drive of the hill start (12 %, 55 % pedal, Eco mode) spun, took second gear at 4 km/h, and stalled. Normal mode on a flat road, which does not go through it, stays the original logic.
 
+**The spec sheet** (`measurePerformance`) used to time the 0-100 foot to the floor, without slip control: with a peaked tyre, that meant timing a rear-wheel drive smoking its tyres. It now measures a tester's best start, like a press test. He first floors it and lets the gearbox work. If the wheels went past the peak (κ > κ*), without slip control or launch control, he makes eight more starts, shifting himself, at the speed where the gearbox would shift foot to the floor:
+- he starts with the pedal at 40, 60, 80 or 100 % of its travel, which sets the speed at which the robot slips the clutch: that is how he picks his start speed;
+- once the clutch is closed, he either floors it or modulates the pedal on the spin he feels. That modulation is the slip-control loop, slip in m/s towards the peak, gains placed on the same driveline (`DrivingModel::slipPlantGain`), but at a human driver's bandwidth: according to McRuer's model, driver and vehicle together behave near crossover like an integrator of pulsation ω_c, delayed by τ (McRuer and Jex, *A Review of Quasi-Linear Pilot Models*, 1967: ω_c from 2 to 5 rad/s, τ from 0.1 to 0.3 s, from memory). Chosen: ω_c = 3 rad/s, ζ = 0.7, and what he feels is 0.2 s old (assumed).
+
+He keeps the best time; a start already slower is abandoned on the way, which changes nothing in the figure. With slip control or launch control set, the spec sheet takes them as they are, foot to the floor; so does an electric car, whose inverter already doses the torque. A car that does not spin keeps its figure to the hundredth. When driving (site, journeys, autopilot), nothing changes: the fingerprints are the same. On the 7 L V8: 6.72 s, against 8.55 foot to the floor and 6.25 with sport slip control. The 40 % start wins most often: at 30 %, three presets would still gain up to 0.2 s, the others nothing. Top speed is not driven (`topSpeedKmh`, separate, which `rf_top_speed` reads without redoing the 0-100).
+
 ### 0-100 km/h of every preset
 
-Measured by `measurePerformance` (the spec sheet, foot to the floor, the preset's gearbox driven by the robot): `revforge-render --out none --preset X --scenario idle --seconds 1 --fuel 1 [--traction sport|full] [--launch RPM]`. Launch control is set at 60 % of the maximum speed (2000 to 7000 rpm, assumed). The published figures are those of a comparable car (maker or press tests, from memory): an order of magnitude, never a target; no preset was touched.
+Measured by `measurePerformance`: `revforge-render --out none --preset X --scenario idle --seconds 1 --fuel 1 [--traction sport|full] [--launch RPM]`. "Sheet" is the tester above, without slip control; "Floored", foot to the floor without slip control, the gearbox left to itself, what the spec sheet measured until now; "Old tyre", that same start with the peakless tyre. The following columns are the spec sheet with those settings, hence foot to the floor. Launch control is set at 60 % of the maximum speed (2000 to 7000 rpm, assumed). The published figures are those of a comparable car (maker or press tests, from memory): an order of magnitude, never a target; no preset was touched.
 
-| Preset | Before, off | Off | Sport | Full | Off, launch | Sport, launch | Published (comparable car) |
-|---|---|---|---|---|---|---|---|
-| `city_14` (57 kW, 1100 kg, front) | 13.34 | 13.49 | 13.46 | 13.58 | 13.34 | 13.35 | 12 to 14 s (1.4 city cars of 55 to 70 kW) |
-| `four_cyl_sport` (115 kW, 1300 kg, front) | 9.09 | 9.42 | 8.94 | 9.28 | 9.27 | 8.85 | 8 to 9 s (2.0 compacts of 110 to 120 kW) |
-| `three_cyl_turbo` (95 kW, 1150 kg, front) | 10.05 | 10.48 | 9.66 | 9.82 | 10.79 | 9.83 | 9.4 s (Fiesta 1.0 EcoBoost 125 PS) |
-| `hot_hatch_turbo` (194 kW, 1400 kg, AWD) | 6.86 | 6.82 | 6.82 | 6.82 | 6.16 | 6.40 | 5.7 to 6.1 s (Golf R VI) |
-| `hot_hatch_na` (118 kW, 1250 kg, front) | 8.72 | 9.23 | 8.67 | 8.97 | 9.09 | 8.59 | ≈ 8 s (Focus ST170) |
-| `five_cyl_turbo` (297 kW, 1500 kg, AWD) | 5.29 | 5.25 | 5.25 | 5.25 | 6.73 | 4.89 | 4.1 s (RS3 8V, launch) |
-| `inline_six` (223 kW, 1500 kg, rear) | 6.48 | 8.47 | 6.37 | 6.60 | 6.96 | 6.20 | 5.2 s (M3 E46, 252 kW) |
-| `v6_gt` (146 kW, 1650 kg, rear) | 8.33 | 9.65 | 8.83 | 8.81 | 9.44 | 8.62 | ≈ 8 s |
-| `flat_six` (250 kW, 1450 kg, rear) | 4.83 | 6.15 | 5.42 | 5.61 | 6.10 | 5.19 | 4.8 s (911 Carrera S 997) |
-| `boxer_four_turbo` (253 kW, 1450 kg, AWD) | 5.45 | 5.41 | 5.41 | 5.41 | 5.60 | 5.09 | ≈ 5 s (Impreza WRX STI) |
-| `v8_cross_plane` (214 kW, 1700 kg, rear) | 6.95 | 9.33 | 6.98 | 7.10 | 7.48 | 6.57 | ≈ 5.5 s (Mustang GT 2005) |
-| `v10_open` (410 kW, 1500 kg, AWD) | 3.49 | 4.01 | 3.69 | 3.87 | 3.96 | 3.73 | 3.7 s (Gallardo LP560-4) |
-| `v12` (544 kW, 1650 kg, AWD) | 3.32 | 4.00 | 3.52 | 3.79 | 3.94 | 3.63 | 2.9 s (Aventador LP700-4) |
-| `diesel_four` (114 kW, 1950 kg, front) | 12.94 | 12.70 | 12.68 | 12.73 | 13.87 | 12.01 | 11 to 12.5 s (Transporter 2.0 TDI) |
-| `electric` (190 kW, 1800 kg, rear) | 7.74 | 7.74 | 7.74 | 7.74 | — | — | 6.1 s (Model 3 RWD) |
-| `retro_coupe` (101 kW, 1150 kg, rear) | 8.75 | 9.75 | 9.11 | 9.36 | 9.64 | 8.98 | 8.3 s (325i E30, 125 kW) |
-| `v8_supercharged` (394 kW, 1850 kg, rear) | 6.99 | 8.72 | 6.28 | 6.72 | 8.48 | 6.25 | 4.0 to 4.3 s (Camaro ZL1, CTS-V) |
-| `carb_twin_cam` (90 kW, 1040 kg, rear) | 8.65 | 9.35 | 9.06 | 9.13 | 9.14 | 8.85 | ≈ 9 s (Alfa Romeo 2000 GTV) |
-| `twin_rotor_13` (167 kW, 1300 kg, rear) | 7.13 | 7.68 | 7.07 | 7.20 | 7.55 | 6.83 | 6.4 s (RX-8 231 PS) |
-| `vr6_golf` (110 kW, 1285 kg, front) | 9.06 | 9.56 | 9.09 | 9.43 | 9.50 | 9.03 | 7.8 s (Golf III VR6) |
-| `w12_continental` (406 kW, 2385 kg, AWD) | 5.38 | 5.39 | 5.39 | 5.39 | 5.32 | 4.93 | 4.8 s (Continental GT 2003) |
-| `w16_hypercar` (671 kW, 1888 kg, AWD) | 3.61 | 4.16 | 3.66 | 3.84 | 4.02 | 3.49 | 2.5 s (Veyron 16.4) |
-| `v16_cadillac` (138 kW, 2400 kg, rear) | 12.37 | 12.88 | 12.48 | 12.60 | 15.27 | 12.41 | — |
-| `two_stroke_triple` (20 kW, 813 kg, front) | 33.26 | 33.21 | 33.21 | 33.21 | 33.00 | 33.00 | 25.6 s to 97 km/h (Saab 96, 28 kW) |
+| Preset | Old tyre | Sheet | Floored | Sport | Full | Off, launch | Sport, launch | Published (comparable car) |
+|---|---|---|---|---|---|---|---|---|
+| `city_14` (57 kW, 1100 kg, front) | 13.34 | 13.44 | 13.49 | 13.46 | 13.58 | 13.34 | 13.35 | 12 to 14 s (1.4 city cars of 55 to 70 kW) |
+| `four_cyl_sport` (115 kW, 1300 kg, front) | 9.09 | 9.22 | 9.42 | 8.94 | 9.28 | 9.27 | 8.85 | 8 to 9 s (2.0 compacts of 110 to 120 kW) |
+| `three_cyl_turbo` (95 kW, 1150 kg, front) | 10.05 | 10.04 | 10.48 | 9.66 | 9.82 | 10.79 | 9.83 | 9.4 s (Fiesta 1.0 EcoBoost 125 PS) |
+| `hot_hatch_turbo` (194 kW, 1400 kg, AWD) | 6.86 | 6.82 | 6.82 | 6.82 | 6.82 | 6.16 | 6.40 | 5.7 to 6.1 s (Golf R VI) |
+| `hot_hatch_na` (118 kW, 1250 kg, front) | 8.72 | 9.06 | 9.23 | 8.67 | 8.97 | 9.09 | 8.59 | ≈ 8 s (Focus ST170) |
+| `five_cyl_turbo` (297 kW, 1500 kg, AWD) | 5.29 | 5.25 | 5.25 | 5.25 | 5.25 | 6.73 | 4.89 | 4.1 s (RS3 8V, launch) |
+| `inline_six` (223 kW, 1500 kg, rear) | 6.48 | 6.89 | 8.47 | 6.37 | 6.60 | 6.96 | 6.20 | 5.2 s (M3 E46, 252 kW) |
+| `v6_gt` (146 kW, 1650 kg, rear) | 8.33 | 8.58 | 9.65 | 8.83 | 8.81 | 9.44 | 8.62 | ≈ 8 s |
+| `flat_six` (250 kW, 1450 kg, rear) | 4.83 | 5.72 | 6.15 | 5.42 | 5.61 | 6.10 | 5.19 | 4.8 s (911 Carrera S 997) |
+| `boxer_four_turbo` (253 kW, 1450 kg, AWD) | 5.45 | 5.41 | 5.41 | 5.41 | 5.41 | 5.60 | 5.09 | ≈ 5 s (Impreza WRX STI) |
+| `v8_cross_plane` (214 kW, 1700 kg, rear) | 6.95 | 6.92 | 9.33 | 6.98 | 7.10 | 7.48 | 6.57 | ≈ 5.5 s (Mustang GT 2005) |
+| `v10_open` (410 kW, 1500 kg, AWD) | 3.49 | 3.79 | 4.01 | 3.69 | 3.87 | 3.96 | 3.73 | 3.7 s (Gallardo LP560-4) |
+| `v12` (544 kW, 1650 kg, AWD) | 3.32 | 3.73 | 4.00 | 3.52 | 3.79 | 3.94 | 3.63 | 2.9 s (Aventador LP700-4) |
+| `diesel_four` (114 kW, 1950 kg, front) | 12.94 | 12.70 | 12.70 | 12.68 | 12.73 | 13.87 | 12.01 | 11 to 12.5 s (Transporter 2.0 TDI) |
+| `electric` (190 kW, 1800 kg, rear) | 7.74 | 7.74 | 7.74 | 7.74 | 7.74 | — | — | 6.1 s (Model 3 RWD) |
+| `retro_coupe` (101 kW, 1150 kg, rear) | 8.75 | 9.00 | 9.75 | 9.11 | 9.36 | 9.64 | 8.98 | 8.3 s (325i E30, 125 kW) |
+| `v8_supercharged` (394 kW, 1850 kg, rear) | 6.99 | 6.75 | 8.72 | 6.28 | 6.72 | 8.48 | 6.25 | 4.0 to 4.3 s (Camaro ZL1, CTS-V) |
+| `carb_twin_cam` (90 kW, 1040 kg, rear) | 8.65 | 8.82 | 9.35 | 9.06 | 9.13 | 9.14 | 8.85 | ≈ 9 s (Alfa Romeo 2000 GTV) |
+| `twin_rotor_13` (167 kW, 1300 kg, rear) | 7.13 | 7.44 | 7.68 | 7.07 | 7.20 | 7.55 | 6.83 | 6.4 s (RX-8 231 PS) |
+| `vr6_golf` (110 kW, 1285 kg, front) | 9.06 | 9.45 | 9.56 | 9.09 | 9.43 | 9.50 | 9.03 | 7.8 s (Golf III VR6) |
+| `w12_continental` (406 kW, 2385 kg, AWD) | 5.38 | 5.39 | 5.39 | 5.39 | 5.39 | 5.32 | 4.93 | 4.8 s (Continental GT 2003) |
+| `w16_hypercar` (671 kW, 1888 kg, AWD) | 3.61 | 4.07 | 4.16 | 3.66 | 3.84 | 4.02 | 3.49 | 2.5 s (Veyron 16.4) |
+| `v16_cadillac` (138 kW, 2400 kg, rear) | 12.37 | 12.36 | 12.88 | 12.48 | 12.60 | 15.27 | 12.41 | — |
+| `two_stroke_triple` (20 kW, 813 kg, front) | 33.26 | 33.21 | 33.21 | 33.21 | 33.21 | 33.00 | 33.00 | 25.6 s to 97 km/h (Saab 96, 28 kW) |
 
 What it shows:
-- **Without slip control**, rear-wheel drives spin past the peak and lose from 0.5 s (`twin_rotor_13`) to 2.4 s (`v8_cross_plane`); front-wheel drives, 0.1 to 0.5 s; the turbo all-wheel drives, nothing, and the most powerful ones (V10, V12, W16) 0.5 to 0.7 s. Launch control without slip control spins harder still on torquey engines (`five_cyl_turbo`, `diesel_four`, `v16_cadillac`).
-- **With slip control**, sport is never slower than off (up to 2.4 s better), nor than full, within 0.02 s (`v6_gt`); where the wheels do not spin (the turbo all-wheel drives, the electric car), nothing changes. The best start (sport and launch) gets back to the former figure within 0.4 s (`flat_six`), and beats it on 15 presets out of 23.
+- **Foot to the floor, without slip control**, rear-wheel drives spin past the peak and lose from 0.5 s (`twin_rotor_13`) to 2.4 s (`v8_cross_plane`); front-wheel drives, 0.1 to 0.5 s; the turbo all-wheel drives, nothing, and the most powerful ones (V10, V12, W16) 0.5 to 0.7 s. Launch control without slip control spins harder still on torquey engines (`five_cyl_turbo`, `diesel_four`, `v16_cadillac`).
+- **The spec sheet** gets back, through the tester, most of what spinning cost: 2.4 s on `v8_cross_plane` (9.33 → 6.92 s), 2 s on `v8_supercharged`, 1.6 s on `inline_six`, 1.1 s on `v6_gt`, 0.05 to 0.45 s on the petrol front-wheel drives. It beats sport slip control on six presets (`city_14`, `v6_gt`, `v8_cross_plane`, `retro_coupe`, `carb_twin_cam`, `v16_cadillac`, up to 0.25 s), and falls behind on those that still spin (up to 0.5 s on `inline_six` and `v8_supercharged`): a foot that feels 0.2 s late does not hold the peak as closely as a computer, but it picks its start speed, which the robot does not. The turbo all-wheel drives, the diesel, the electric car and the two-stroke keep their figure, and so does `w12_continental`: its wheels stay below the peak (κ = 0.106).
+- **With slip control**, sport is never slower than foot to the floor without it (up to 2.4 s better), nor than full, within 0.02 s (`v6_gt`); where the wheels do not spin (the turbo all-wheel drives, the electric car), nothing changes. The best start (sport and launch) gets back to the former figure within 0.4 s (`flat_six`), and beats it on 15 presets out of 23.
 - **Against the published cars**, the model stays slow on the most powerful ones (V12, W16, supercharged V8: one grip, stock tyres, no torque split between the axles), and on the electric car, whose motor does not spin its wheels and which slip control therefore does not change: its gap comes from its torque curve, not from the tyre. Nothing was tuned to close in on them.
 
 ### The cold start
@@ -2333,6 +2341,6 @@ The tyre changes every fingerprint where the car moves: each is explained in `CM
 
 - One dry grip; no rain, snow, or sport tyre. The two wheels of an axle, and the four of an all-wheel drive, are a single wheel: no differential, no torque split.
 - The coefficients are quoted from memory; the published full-slide grip ranges from 0.65 to 0.88 of the peak depending on the source, and rear-wheel drives' 0-100 without slip control depends directly on it.
-- The autopilot and the spec sheet do not lift off when the wheels spin: without slip control, they keep the foot to the floor.
-- **Some tests changed conditions, not thresholds.** Six checked a claim that assumed unlimited grip: mass decides the 0-100 (`powertrain_test`), Sport is never slower than Eco and Eco shifts before Normal (`shift_modes_test`), nitrous gains 0.5 s (`charge_air_test`), the light retro body beats the compact (`retro_body_test`), a blown carburetor's film (`jonctions_test`). Without slip control the peaked tyre contradicts them for a physical reason (the car spins); they are now measured with sport slip control, thresholds unchanged. Two gearbox tests also changed their measurement: the driveline oscillation is read at its spectral peak, no longer by counting zero crossings, which the slow drift skewed once the oscillation had died out (3.45 Hz in second for 3.56 expected, 1.66 with the former count); the "under load" gear waits for the clutch to be closed. To be checked in review.
+- The autopilot does not lift off when the wheels spin: without slip control, it keeps the foot to the floor. The spec sheet's tester only modulates the pedal: the clutch stays with the robot, the gears go in at the full-load shift speed. His bandwidth, his delay and his four start pedals are assumed; since the spec sheet is the best of nine starts, it keeps a little of a start's luck, a few hundredths to a few tenths depending on the pedal. It also costs more to compute: in the WASM (measured under Node), 0.14 s for `v8_cross_plane` and 0.22 s for `city_14`, which spin, against 0.05 to 0.07 s before (two starts, top speed redoing the 0-100); a car that does not spin costs half what it did. The site recomputes it while a slider is dragged.
+- **Some tests changed conditions, not thresholds.** Three checked, while driving, a claim that assumed unlimited grip: Sport is never slower than Eco and Eco shifts before Normal (`shift_modes_test`), a blown carburetor's film (`jonctions_test`). Without slip control the peaked tyre contradicts them for a physical reason (the car spins); they are now measured with sport slip control, thresholds unchanged. Three others, on the spec sheet (mass decides the 0-100, `powertrain_test`; nitrous gains 0.5 s, `charge_air_test`; the light retro body beats the compact, `retro_body_test`), had moved to sport slip control with the peaked tyre: the tester makes them pass again as they were written. Two gearbox tests also changed their measurement: the driveline oscillation is read at its spectral peak, no longer by counting zero crossings, which the slow drift skewed once the oscillation had died out (3.45 Hz in second for 3.56 expected, 1.66 with the former count); the "under load" gear waits for the clutch to be closed. To be checked in review.
 - Listening remains to be done: the tyre squeal follows the slip in m/s, now louder and longer on rear-wheel drives without slip control (`--preset v8_cross_plane --scenario launch`, then `--traction sport`), and the set cold start (`--preset city_14 --start cold --ambient -20 --scenario lap --seconds 30`).

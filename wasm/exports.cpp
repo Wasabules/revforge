@@ -553,7 +553,7 @@ int rf_box_reverse_teeth(int which) {
 }
 float rf_wheel_radius() { return static_cast<float>(wheelRadiusM(g_powertrain.car)); }
 float rf_zero_to_100() { return static_cast<float>(measurePerformance(g_powertrain).zeroTo100S); }
-float rf_top_speed() { return static_cast<float>(measurePerformance(g_powertrain).topSpeedKmh); }
+float rf_top_speed() { return static_cast<float>(topSpeedKmh(g_powertrain)); }
 
 // ── La voiture vue de dessus et sa fiche acoustique, sans rien jouer ──
 

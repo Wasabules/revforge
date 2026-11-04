@@ -176,6 +176,11 @@ public:
     double wheelSlipRatio() const { return tyreSlipRatio(wheelSpeedMs(), speedMs_); }
     /** La force des roues motrices au sol au dernier pas (N). */
     double tyreForceN() const { return tyreUsed_; }
+    /**
+     * Ce que tout le couple maximal du moteur ferait au glissement des roues sur le rapport engagé (m/s²) : r·T·g·η sur l'inertie
+     * vue de la roue. Le gain de la boucle que ferment l'antipatinage, et l'essayeur de la fiche (`measurePerformance`).
+     */
+    double slipPlantGain() const;
     /** Combustion coupée : rupteur, ou contact coupé. */
     bool cut() const { return cut_; }
     bool shifting() const { return step_ != ShiftStep::None; }

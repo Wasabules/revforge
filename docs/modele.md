@@ -36,7 +36,8 @@ Rien n'est saisi à la main : tout part de la cylindrée, du régime maximal et 
 5. **Voiture.** Masse, résistance de l'air et au roulement, transfert de charge, et des pneus dont
    l'adhérence limite le couple : une traction trop puissante patine.
 
-Le 0 à 100 affiché est mesuré en conduisant ce modèle, pied au plancher. Ces chiffres restent ceux
+Le 0 à 100 affiché est mesuré en conduisant ce modèle : c'est le meilleur départ d'un essayeur, qui dose
+lui-même la pédale quand les roues patinent (« Le pneu, l'antipatinage et le départ »). Ces chiffres restent ceux
 d'un modèle : les tests comparent la puissance maximale à de vrais moteurs, à 30 % près.
 
 ## Le turbo
@@ -1945,7 +1946,7 @@ La même régulation, avec une cible bornée sur chaque rapport par le couple qu
 - le couple au vilebrequin qui la donne, C = F·r/(i·η), borné par le couple admissible de la boîte ;
 - la pression qui donne ce couple, en inversant `fullLoadTorqueNm` par dichotomie : le modèle de remplissage, à l'envers, comme un calculateur à structure de couple.
 
-Le rapport engagé se lit dans `DrivingModel` ; au point mort, la première. Sur `three_cyl_turbo` (traction, 1150 kg), la première passe 137 Nm, face à 192 Nm au moteur : la cible y tombe de 2,21 à 1,46-1,71 bar absolus selon le régime, la deuxième (260 Nm) n'est pas bornée. Au départ arrêté, le glissement maximal en première passe de 5,6 à 1,9 m/s. Avec l'ancien pneu, sans sommet, le 0-100 km/h passait pourtant de 10,03 à 10,22 s : plus de glissement y donnait toujours un peu plus de force. Avec le pneu à sommet des finitions, il passe de 10,48 s (ressort) à 10,19 s : plafonner le couple tient le pneu près de son sommet. Sur les intégrales (`hot_hatch_turbo`, 388 Nm en première pour 357 Nm), rien ne change.
+Le rapport engagé se lit dans `DrivingModel` ; au point mort, la première. Sur `three_cyl_turbo` (traction, 1150 kg), la première passe 137 Nm, face à 192 Nm au moteur : la cible y tombe de 2,21 à 1,46-1,71 bar absolus selon le régime, la deuxième (260 Nm) n'est pas bornée. Au départ arrêté, le glissement maximal en première passe de 5,6 à 1,9 m/s. Avec l'ancien pneu, sans sommet, le 0-100 km/h passait pourtant de 10,03 à 10,22 s : plus de glissement y donnait toujours un peu plus de force. Avec le pneu à sommet des finitions, pied au plancher, il passe de 10,48 s (ressort) à 10,19 s : plafonner le couple tient le pneu près de son sommet. La fiche, elle, mesure un essayeur qui dose déjà la pédale : 10,04 s au ressort, 10,19 s selon le rapport. Sur les intégrales (`hot_hatch_turbo`, 388 Nm en première pour 357 Nm), rien ne change.
 
 **Ce qui ne change pas.** La fiche (`torqueCurveNm`) reste celle du ressort : au niveau de la mer, l'électronique tient exactement l'équilibre de `turboSteady`, et la boîte reste dessinée pour ce moteur. La consommation au WLTC ne bouge pas : 8,90 L/100 km dans les deux cas sur `hot_hatch_turbo`, 6,34 et 6,32 sur `three_cyl_turbo` selon le rapport.
 
@@ -2294,54 +2295,61 @@ D'où B = K/(C·μ) = 13,65 ; 90 % du sommet à κ = 6,5 %, 76 % à κ = 1, 71 %
 
 **Le robot du départ** (la branche du démarrage de `updateClutch`) serrait l'embrayage selon le seul régime, jusqu'à 1,6 fois le couple du moteur : le volant moteur, monté au-dessus du régime de départ, se vidait dans les roues. Le pneu sans sommet absorbait ce surplus ; avec un sommet, il fait patiner, et l'antipatinage, qui n'agit que sur l'allumage, n'y pouvait rien tant que l'embrayage patinait. Tant que le moteur entraîne, le robot ne serre plus au-delà du couple annoncé, `part du calculateur × remplissage × couple de pleine charge`, plus de quoi ramener le moteur à son régime de départ en 0,3 s (`J·(ω − ω_départ)/0,3 s`, supposé) : les roues reçoivent son couple, et son élan peu à peu, plus d'un coup. Une fois les disques à 150 tr/min l'un de l'autre (supposé), pied posé, il n'y a plus d'élan à vider : il serre, et l'embrayage colle. Pied levé, il reste plafonné : sans cela, la W16 qui ralentit en côte de 16 % était entraînée par ses roues jusqu'à caler. Sans cette dernière règle, il restait à moitié ouvert jusqu'à 25 km/h, et l'éco et le normal montaient la deuxième au même régime. Le couple annoncé comptant ce que retire le calculateur, l'antipatinage agit dès le départ : sans ce plafond, le 0 à 100 en sport perdait de 0,05 à 0,5 s (`v8_supercharged` : 6,27 → 6,74 s ; mesuré sans le retour au régime de départ), en complet jusqu'à 0,4 s ; sans antipatinage, 0,02 s au plus. Sans le retour au régime de départ, le moteur restait au régime où il s'était emballé, et l'embrayage patinait jusqu'à 25 km/h. Contre-épreuve : sans ce plafond, la W16 cale au départ en côte de 16 %, dans les quatre modes : le test « chaque trajet va au bout » échoue.
 
-| 0-100 km/h de la fiche | Pneu sans sommet : sans / sport / complet | Pneu à sommet : sans / sport / complet |
+| 0-100 km/h pied au plancher | Pneu sans sommet : sans / sport / complet | Pneu à sommet : sans / sport / complet |
 |---|---|---|
 | V8 de 7 L, propulsion, 1700 kg | 6,18 / 6,20 / 6,86 s | 8,55 / 6,25 / 6,48 s |
 | Le même, launch control à 3500 tr/min (sans ; sport) | 6,03 ; 6,05 s | 8,40 ; 6,08 s |
 | `hot_hatch_turbo`, quatre roues motrices | 6,86 s partout | 6,82 s partout |
 
-Sans antipatinage, la propulsion patine bien au-delà du sommet en première et en deuxième (κ de 1 à 10) : elle perd 2,4 s. Avec, elle retrouve l'ancien chiffre à 0,05 s près : l'ancien pneu ne donnait sa pleine force qu'en patinant de plusieurs m/s.
+Sans antipatinage, pied au plancher, la propulsion patine bien au-delà du sommet en première et en deuxième (κ de 1 à 10) : elle perd 2,4 s. Avec, elle retrouve l'ancien chiffre à 0,05 s près : l'ancien pneu ne donnait sa pleine force qu'en patinant de plusieurs m/s. L'essayeur de la fiche (ci-dessous), sans antipatinage, n'en perd que 0,5 s : 6,72 s.
 
 **Le launch control** ne change pas : il tient le régime, et lâche à 1 m/s. Sans antipatinage, il ne fait souvent que patiner plus fort (ci-dessous, colonne « sans, launch ») ; avec, il gagne jusqu'à 0,7 s, sauf sur `three_cyl_turbo`, `v10_open` et `v12`, où il coûte jusqu'à 0,17 s. `hot_hatch_turbo` à 4500 tr/min : 6,13 → 6,16 s ; avec le passage à fond : 6,54 → 6,51 s.
 
-**La cible selon le rapport (`by_gear`)** plafonne le couple à ce que passent les pneus au sommet, report de charge compris (`gearTorqueCapNm`, inchangée). Elle fait maintenant gagner du temps : `three_cyl_turbo`, 0 à 100 km/h en 10,48 s au ressort, 10,47 en électronique, 10,19 selon le rapport (10,05, 10,04 et 10,26 avec l'ancien pneu).
+**La cible selon le rapport (`by_gear`)** plafonne le couple à ce que passent les pneus au sommet, report de charge compris (`gearTorqueCapNm`, inchangée). Elle fait maintenant gagner du temps pied au plancher : `three_cyl_turbo`, 0 à 100 km/h en 10,48 s au ressort, 10,47 en électronique, 10,19 selon le rapport (10,05, 10,04 et 10,26 avec l'ancien pneu). L'essayeur de la fiche, qui dose déjà la pédale, n'a plus rien à y gagner : 10,04, 10,14 et 10,19 s.
 
 **La logique de passage** (`decideShift`) disait « les pneus sont à leur limite » au-delà de 0,8 m/s de glissement : c'est maintenant au-delà du sommet, κ > κ* (`ShiftView::slipRatio`). Tant que les roues patinent au-delà du sommet, le régime ne dit plus la vitesse de la voiture : elle ne monte un rapport que s'il retombe à 1,3 fois le ralenti au moins à la vitesse de la voiture elle-même (supposé), comme le lit une boîte aux roues non motrices ; la protection du moteur au régime maximal y renonce aussi, le rupteur le protégeant en attendant (sans cela, le V8 à compresseur en côte de 16 % montait la deuxième à 9 km/h, et calait). Sans cela, la propulsion de 3 L du départ en côte (12 %, pied à 55 %, mode éco) patinait, montait la deuxième à 4 km/h, et calait. Le mode normal sur route plate, qui n'y passe pas, reste la logique d'origine.
 
+**La fiche** (`measurePerformance`) mesurait le 0 à 100 pied au plancher, sans antipatinage : avec un pneu à sommet, c'était chronométrer une propulsion qui fume ses pneus. Elle mesure maintenant le meilleur départ d'un essayeur, comme un essai de presse. Il pose d'abord le pied au plancher et laisse faire la boîte. Si les roues ont dépassé le sommet (κ > κ*), sans antipatinage ni launch control, il refait huit départs en passant lui-même les rapports, au régime où la boîte les passerait pied au plancher :
+- il part pied à 40, 60, 80 ou 100 % de sa course, ce qui fixe le régime auquel le robot fait patiner l'embrayage : il choisit ainsi son régime de départ ;
+- une fois l'embrayage serré, soit il passe au plancher, soit il dose la pédale sur le patinage qu'il sent. Ce dosage est la boucle de l'antipatinage, glissement en m/s vers le sommet, gains placés sur la même transmission (`DrivingModel::slipPlantGain`), mais à la bande passante d'un pilote humain : selon le modèle de McRuer, l'ensemble pilote et véhicule se comporte près de la coupure comme un intégrateur de pulsation ω_c, retardé de τ (McRuer et Jex, *A Review of Quasi-Linear Pilot Models*, 1967 : ω_c de 2 à 5 rad/s, τ de 0,1 à 0,3 s, de mémoire). Retenus : ω_c = 3 rad/s, ζ = 0,7, et ce qu'il sent date de 0,2 s (supposés).
+
+Il garde le meilleur temps ; un départ déjà plus lent est abandonné en route, ce qui ne change rien au chiffre. Avec l'antipatinage ou le launch control réglés, la fiche les prend tels quels, pied au plancher ; une électrique, dont l'onduleur dose déjà le couple, aussi. Une voiture qui ne patine pas garde son chiffre au centième. En conduite (site, trajets, pilote automatique), rien ne change : les empreintes sont les mêmes. Sur le V8 de 7 L : 6,72 s, contre 8,55 pied au plancher et 6,25 avec l'antipatinage sport. Le départ choisi à 40 % gagne le plus souvent : à 30 %, trois préréglages gagneraient encore jusqu'à 0,2 s, les autres rien. La vitesse de pointe ne conduit pas (`topSpeedKmh`, à part, que lit `rf_top_speed` sans refaire le 0 à 100).
+
 ### 0-100 km/h de tous les préréglages
 
-Mesuré par `measurePerformance` (la fiche, pied au plancher, boîte du préréglage pilotée par le robot) : `revforge-render --out none --preset X --scenario idle --seconds 1 --fuel 1 [--traction sport|full] [--launch RPM]`. Le launch control est réglé à 60 % du régime maximal (de 2000 à 7000 tr/min, supposé). Les chiffres publiés sont ceux d'une voiture comparable (constructeur ou essais de presse, de mémoire) : un ordre de grandeur, jamais une cible ; aucun préréglage n'a été retouché.
+Mesuré par `measurePerformance` : `revforge-render --out none --preset X --scenario idle --seconds 1 --fuel 1 [--traction sport|full] [--launch RPM]`. « Fiche » est l'essayeur ci-dessus, sans antipatinage ; « Au plancher », pied au plancher sans antipatinage, la boîte laissée faire, ce que la fiche mesurait jusqu'ici ; « Ancien pneu », ce même départ avec le pneu sans sommet. Les colonnes suivantes sont la fiche avec ces réglages, donc pied au plancher. Le launch control est réglé à 60 % du régime maximal (de 2000 à 7000 tr/min, supposé). Les chiffres publiés sont ceux d'une voiture comparable (constructeur ou essais de presse, de mémoire) : un ordre de grandeur, jamais une cible ; aucun préréglage n'a été retouché.
 
-| Préréglage | Avant, sans | Sans | Sport | Complet | Sans, launch | Sport, launch | Publié (voiture comparable) |
-|---|---|---|---|---|---|---|---|
-| `city_14` (57 kW, 1100 kg, traction) | 13,34 | 13,49 | 13,46 | 13,58 | 13,34 | 13,35 | 12 à 14 s (citadines 1.4 de 55 à 70 kW) |
-| `four_cyl_sport` (115 kW, 1300 kg, traction) | 9,09 | 9,42 | 8,94 | 9,28 | 9,27 | 8,85 | 8 à 9 s (compactes 2.0 de 110 à 120 kW) |
-| `three_cyl_turbo` (95 kW, 1150 kg, traction) | 10,05 | 10,48 | 9,66 | 9,82 | 10,79 | 9,83 | 9,4 s (Fiesta 1.0 EcoBoost 125 ch) |
-| `hot_hatch_turbo` (194 kW, 1400 kg, 4 roues) | 6,86 | 6,82 | 6,82 | 6,82 | 6,16 | 6,40 | 5,7 à 6,1 s (Golf R VI) |
-| `hot_hatch_na` (118 kW, 1250 kg, traction) | 8,72 | 9,23 | 8,67 | 8,97 | 9,09 | 8,59 | ≈ 8 s (Focus ST170) |
-| `five_cyl_turbo` (297 kW, 1500 kg, 4 roues) | 5,29 | 5,25 | 5,25 | 5,25 | 6,73 | 4,89 | 4,1 s (RS3 8V, launch) |
-| `inline_six` (223 kW, 1500 kg, propulsion) | 6,48 | 8,47 | 6,37 | 6,60 | 6,96 | 6,20 | 5,2 s (M3 E46, 252 kW) |
-| `v6_gt` (146 kW, 1650 kg, propulsion) | 8,33 | 9,65 | 8,83 | 8,81 | 9,44 | 8,62 | ≈ 8 s |
-| `flat_six` (250 kW, 1450 kg, propulsion) | 4,83 | 6,15 | 5,42 | 5,61 | 6,10 | 5,19 | 4,8 s (911 Carrera S 997) |
-| `boxer_four_turbo` (253 kW, 1450 kg, 4 roues) | 5,45 | 5,41 | 5,41 | 5,41 | 5,60 | 5,09 | ≈ 5 s (Impreza WRX STI) |
-| `v8_cross_plane` (214 kW, 1700 kg, propulsion) | 6,95 | 9,33 | 6,98 | 7,10 | 7,48 | 6,57 | ≈ 5,5 s (Mustang GT 2005) |
-| `v10_open` (410 kW, 1500 kg, 4 roues) | 3,49 | 4,01 | 3,69 | 3,87 | 3,96 | 3,73 | 3,7 s (Gallardo LP560-4) |
-| `v12` (544 kW, 1650 kg, 4 roues) | 3,32 | 4,00 | 3,52 | 3,79 | 3,94 | 3,63 | 2,9 s (Aventador LP700-4) |
-| `diesel_four` (114 kW, 1950 kg, traction) | 12,94 | 12,70 | 12,68 | 12,73 | 13,87 | 12,01 | 11 à 12,5 s (Transporter 2.0 TDI) |
-| `electric` (190 kW, 1800 kg, propulsion) | 7,74 | 7,74 | 7,74 | 7,74 | — | — | 6,1 s (Model 3 propulsion) |
-| `retro_coupe` (101 kW, 1150 kg, propulsion) | 8,75 | 9,75 | 9,11 | 9,36 | 9,64 | 8,98 | 8,3 s (325i E30, 125 kW) |
-| `v8_supercharged` (394 kW, 1850 kg, propulsion) | 6,99 | 8,72 | 6,28 | 6,72 | 8,48 | 6,25 | 4,0 à 4,3 s (Camaro ZL1, CTS-V) |
-| `carb_twin_cam` (90 kW, 1040 kg, propulsion) | 8,65 | 9,35 | 9,06 | 9,13 | 9,14 | 8,85 | ≈ 9 s (Alfa Romeo 2000 GTV) |
-| `twin_rotor_13` (167 kW, 1300 kg, propulsion) | 7,13 | 7,68 | 7,07 | 7,20 | 7,55 | 6,83 | 6,4 s (RX-8 231 ch) |
-| `vr6_golf` (110 kW, 1285 kg, traction) | 9,06 | 9,56 | 9,09 | 9,43 | 9,50 | 9,03 | 7,8 s (Golf III VR6) |
-| `w12_continental` (406 kW, 2385 kg, 4 roues) | 5,38 | 5,39 | 5,39 | 5,39 | 5,32 | 4,93 | 4,8 s (Continental GT 2003) |
-| `w16_hypercar` (671 kW, 1888 kg, 4 roues) | 3,61 | 4,16 | 3,66 | 3,84 | 4,02 | 3,49 | 2,5 s (Veyron 16.4) |
-| `v16_cadillac` (138 kW, 2400 kg, propulsion) | 12,37 | 12,88 | 12,48 | 12,60 | 15,27 | 12,41 | — |
-| `two_stroke_triple` (20 kW, 813 kg, traction) | 33,26 | 33,21 | 33,21 | 33,21 | 33,00 | 33,00 | 25,6 s à 97 km/h (Saab 96, 28 kW) |
+| Préréglage | Ancien pneu | Fiche | Au plancher | Sport | Complet | Sans, launch | Sport, launch | Publié (voiture comparable) |
+|---|---|---|---|---|---|---|---|---|
+| `city_14` (57 kW, 1100 kg, traction) | 13,34 | 13,44 | 13,49 | 13,46 | 13,58 | 13,34 | 13,35 | 12 à 14 s (citadines 1.4 de 55 à 70 kW) |
+| `four_cyl_sport` (115 kW, 1300 kg, traction) | 9,09 | 9,22 | 9,42 | 8,94 | 9,28 | 9,27 | 8,85 | 8 à 9 s (compactes 2.0 de 110 à 120 kW) |
+| `three_cyl_turbo` (95 kW, 1150 kg, traction) | 10,05 | 10,04 | 10,48 | 9,66 | 9,82 | 10,79 | 9,83 | 9,4 s (Fiesta 1.0 EcoBoost 125 ch) |
+| `hot_hatch_turbo` (194 kW, 1400 kg, 4 roues) | 6,86 | 6,82 | 6,82 | 6,82 | 6,82 | 6,16 | 6,40 | 5,7 à 6,1 s (Golf R VI) |
+| `hot_hatch_na` (118 kW, 1250 kg, traction) | 8,72 | 9,06 | 9,23 | 8,67 | 8,97 | 9,09 | 8,59 | ≈ 8 s (Focus ST170) |
+| `five_cyl_turbo` (297 kW, 1500 kg, 4 roues) | 5,29 | 5,25 | 5,25 | 5,25 | 5,25 | 6,73 | 4,89 | 4,1 s (RS3 8V, launch) |
+| `inline_six` (223 kW, 1500 kg, propulsion) | 6,48 | 6,89 | 8,47 | 6,37 | 6,60 | 6,96 | 6,20 | 5,2 s (M3 E46, 252 kW) |
+| `v6_gt` (146 kW, 1650 kg, propulsion) | 8,33 | 8,58 | 9,65 | 8,83 | 8,81 | 9,44 | 8,62 | ≈ 8 s |
+| `flat_six` (250 kW, 1450 kg, propulsion) | 4,83 | 5,72 | 6,15 | 5,42 | 5,61 | 6,10 | 5,19 | 4,8 s (911 Carrera S 997) |
+| `boxer_four_turbo` (253 kW, 1450 kg, 4 roues) | 5,45 | 5,41 | 5,41 | 5,41 | 5,41 | 5,60 | 5,09 | ≈ 5 s (Impreza WRX STI) |
+| `v8_cross_plane` (214 kW, 1700 kg, propulsion) | 6,95 | 6,92 | 9,33 | 6,98 | 7,10 | 7,48 | 6,57 | ≈ 5,5 s (Mustang GT 2005) |
+| `v10_open` (410 kW, 1500 kg, 4 roues) | 3,49 | 3,79 | 4,01 | 3,69 | 3,87 | 3,96 | 3,73 | 3,7 s (Gallardo LP560-4) |
+| `v12` (544 kW, 1650 kg, 4 roues) | 3,32 | 3,73 | 4,00 | 3,52 | 3,79 | 3,94 | 3,63 | 2,9 s (Aventador LP700-4) |
+| `diesel_four` (114 kW, 1950 kg, traction) | 12,94 | 12,70 | 12,70 | 12,68 | 12,73 | 13,87 | 12,01 | 11 à 12,5 s (Transporter 2.0 TDI) |
+| `electric` (190 kW, 1800 kg, propulsion) | 7,74 | 7,74 | 7,74 | 7,74 | 7,74 | — | — | 6,1 s (Model 3 propulsion) |
+| `retro_coupe` (101 kW, 1150 kg, propulsion) | 8,75 | 9,00 | 9,75 | 9,11 | 9,36 | 9,64 | 8,98 | 8,3 s (325i E30, 125 kW) |
+| `v8_supercharged` (394 kW, 1850 kg, propulsion) | 6,99 | 6,75 | 8,72 | 6,28 | 6,72 | 8,48 | 6,25 | 4,0 à 4,3 s (Camaro ZL1, CTS-V) |
+| `carb_twin_cam` (90 kW, 1040 kg, propulsion) | 8,65 | 8,82 | 9,35 | 9,06 | 9,13 | 9,14 | 8,85 | ≈ 9 s (Alfa Romeo 2000 GTV) |
+| `twin_rotor_13` (167 kW, 1300 kg, propulsion) | 7,13 | 7,44 | 7,68 | 7,07 | 7,20 | 7,55 | 6,83 | 6,4 s (RX-8 231 ch) |
+| `vr6_golf` (110 kW, 1285 kg, traction) | 9,06 | 9,45 | 9,56 | 9,09 | 9,43 | 9,50 | 9,03 | 7,8 s (Golf III VR6) |
+| `w12_continental` (406 kW, 2385 kg, 4 roues) | 5,38 | 5,39 | 5,39 | 5,39 | 5,39 | 5,32 | 4,93 | 4,8 s (Continental GT 2003) |
+| `w16_hypercar` (671 kW, 1888 kg, 4 roues) | 3,61 | 4,07 | 4,16 | 3,66 | 3,84 | 4,02 | 3,49 | 2,5 s (Veyron 16.4) |
+| `v16_cadillac` (138 kW, 2400 kg, propulsion) | 12,37 | 12,36 | 12,88 | 12,48 | 12,60 | 15,27 | 12,41 | — |
+| `two_stroke_triple` (20 kW, 813 kg, traction) | 33,26 | 33,21 | 33,21 | 33,21 | 33,21 | 33,00 | 33,00 | 25,6 s à 97 km/h (Saab 96, 28 kW) |
 
 Ce qui se lit :
-- **Sans antipatinage**, les propulsions patinent au-delà du sommet et perdent de 0,5 s (`twin_rotor_13`) à 2,4 s (`v8_cross_plane`) ; les tractions, de 0,1 à 0,5 s ; les quatre roues motrices turbo, rien, et les plus puissantes (V10, V12, W16) de 0,5 à 0,7 s. Le launch control sans antipatinage patine plus fort encore sur les moteurs coupleux (`five_cyl_turbo`, `diesel_four`, `v16_cadillac`).
-- **Avec l'antipatinage**, le sport n'est jamais plus lent que sans (jusqu'à 2,4 s de mieux), ni que le complet, à 0,02 s près (`v6_gt`) ; là où les roues ne patinent pas (les quatre roues motrices turbo, l'électrique), rien ne change. Le meilleur départ (sport et launch) retrouve l'ancien chiffre à 0,4 s près (`flat_six`), et le bat sur 15 préréglages sur 23.
+- **Pied au plancher, sans antipatinage**, les propulsions patinent au-delà du sommet et perdent de 0,5 s (`twin_rotor_13`) à 2,4 s (`v8_cross_plane`) ; les tractions, de 0,1 à 0,5 s ; les quatre roues motrices turbo, rien, et les plus puissantes (V10, V12, W16) de 0,5 à 0,7 s. Le launch control sans antipatinage patine plus fort encore sur les moteurs coupleux (`five_cyl_turbo`, `diesel_four`, `v16_cadillac`).
+- **La fiche** reprend à l'essayeur l'essentiel de ce que le patinage coûtait : 2,4 s sur `v8_cross_plane` (9,33 → 6,92 s), 2 s sur `v8_supercharged`, 1,6 s sur `inline_six`, 1,1 s sur `v6_gt`, de 0,05 à 0,45 s sur les tractions à essence. Elle fait mieux que l'antipatinage sport sur six préréglages (`city_14`, `v6_gt`, `v8_cross_plane`, `retro_coupe`, `carb_twin_cam`, `v16_cadillac`, jusqu'à 0,25 s), moins bien sur ceux qui patinent encore (jusqu'à 0,5 s sur `inline_six` et `v8_supercharged`) : un pied qui sent avec 0,2 s de retard ne tient pas le sommet aussi près qu'un calculateur, mais il choisit son régime de départ, ce que le robot ne fait pas. Les quatre roues motrices turbo, le diesel, l'électrique et la deux-temps gardent leur chiffre, et `w12_continental` aussi : ses roues restent sous le sommet (κ = 0,106).
+- **Avec l'antipatinage**, le sport n'est jamais plus lent que pied au plancher sans (jusqu'à 2,4 s de mieux), ni que le complet, à 0,02 s près (`v6_gt`) ; là où les roues ne patinent pas (les quatre roues motrices turbo, l'électrique), rien ne change. Le meilleur départ (sport et launch) retrouve l'ancien chiffre à 0,4 s près (`flat_six`), et le bat sur 15 préréglages sur 23.
 - **Face aux voitures publiées**, le modèle reste lent sur les plus puissantes (V12, W16, V8 à compresseur : une seule adhérence, des pneus de série, pas de répartition du couple entre les essieux), et sur l'électrique, dont le moteur ne patine pas et que l'antipatinage ne change donc pas : son écart vient de sa courbe de couple, pas du pneu. Rien n'a été réglé pour s'en approcher.
 
 ### Le démarrage à froid
@@ -2370,6 +2378,6 @@ Le pneu change toutes les empreintes où la voiture roule : chacune est expliqu�
 
 - Une seule adhérence, sèche ; pas de pluie, de neige, ni de pneu de sport. Les deux roues d'un essieu, et les quatre d'une transmission intégrale, sont une seule roue : ni différentiel, ni répartition du couple.
 - Les coefficients sont cités de mémoire ; le glissement franc publié va de 0,65 à 0,88 du sommet selon la source, et le 0 à 100 sans antipatinage des propulsions en dépend directement.
-- Le pilote automatique et la fiche ne lèvent pas le pied quand les roues patinent : sans antipatinage, ils gardent le pied au plancher.
-- **Des tests ont changé de conditions, pas de seuils.** Six vérifiaient une affirmation qui supposait l'adhérence illimitée : la masse décide du 0 à 100 (`powertrain_test`), le sport n'est jamais plus lent que l'éco et l'éco monte avant le normal (`shift_modes_test`), le protoxyde fait gagner 0,5 s (`charge_air_test`), la caisse rétro légère bat la compacte (`retro_body_test`), le film d'un carburateur soufflé (`jonctions_test`). Sans antipatinage, le pneu à sommet les contredit pour une raison physique (la voiture patine) ; ils se mesurent maintenant antipatinage sport, à seuils inchangés. Deux tests de la boîte ont aussi changé de mesure : l'oscillation de la chaîne se lit au sommet de son spectre, et non plus au compte des passages à zéro, que la dérive lente faussait une fois l'oscillation amortie (3,45 Hz en deuxième pour 3,56 attendus, 1,66 avec l'ancien compte) ; le rapport « sous charge » attend que l'embrayage soit serré. À vérifier par la relecture.
+- Le pilote automatique ne lève pas le pied quand les roues patinent : sans antipatinage, il garde le pied au plancher. L'essayeur de la fiche ne dose que la pédale : l'embrayage reste au robot, les rapports passent au régime de pleine charge. Sa bande passante, son retard et ses quatre pédales de départ sont supposés ; la fiche étant le meilleur de neuf départs, elle garde un peu du hasard d'un départ, quelques centièmes à quelques dixièmes selon la pédale. Elle coûte aussi plus cher à calculer : dans le WASM (mesuré sous Node), 0,14 s pour `v8_cross_plane` et 0,22 s pour `city_14`, qui patinent, contre 0,05 à 0,07 s auparavant (deux départs, la vitesse de pointe refaisant le 0 à 100) ; une voiture qui ne patine pas coûte moitié moins qu'avant. Le site la recalcule pendant qu'on glisse un curseur.
+- **Des tests ont changé de conditions, pas de seuils.** Trois vérifiaient en conduite une affirmation qui supposait l'adhérence illimitée : le sport n'est jamais plus lent que l'éco et l'éco monte avant le normal (`shift_modes_test`), le film d'un carburateur soufflé (`jonctions_test`). Sans antipatinage, le pneu à sommet les contredit pour une raison physique (la voiture patine) ; ils se mesurent maintenant antipatinage sport, à seuils inchangés. Trois autres, sur la fiche (la masse décide du 0 à 100, `powertrain_test` ; le protoxyde fait gagner 0,5 s, `charge_air_test` ; la caisse rétro légère bat la compacte, `retro_body_test`), étaient passés à l'antipatinage sport avec le pneu à sommet : l'essayeur les fait passer de nouveau tels qu'ils étaient écrits. Deux tests de la boîte ont aussi changé de mesure : l'oscillation de la chaîne se lit au sommet de son spectre, et non plus au compte des passages à zéro, que la dérive lente faussait une fois l'oscillation amortie (3,45 Hz en deuxième pour 3,56 attendus, 1,66 avec l'ancien compte) ; le rapport « sous charge » attend que l'embrayage soit serré. À vérifier par la relecture.
 - L'écoute reste à faire : le crissement des pneus suit le glissement en m/s, désormais plus fort et plus long sur les propulsions sans antipatinage (`--preset v8_cross_plane --scenario launch`, puis `--traction sport`), et le départ à froid posé (`--preset city_14 --start cold --ambient -20 --scenario lap --seconds 30`).

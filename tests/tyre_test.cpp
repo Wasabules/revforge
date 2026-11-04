@@ -27,6 +27,17 @@ Powertrain bigV8(TractionControl traction = TractionControl::Off) {
     return p;
 }
 
+/** Le 0 à 100 d'un conducteur qui pose le pied au plancher et laisse faire la boîte : la conduite, pas la fiche. */
+double flatOutZeroTo100(const Powertrain& p) {
+    DrivingModel model(p);
+    for (int i = 0; i < 100 && !model.meshed(); ++i) model.stepPedal(0.01, 1.0, 0.0);
+    for (int i = 0; i < 4000; ++i) {
+        model.stepPedal(0.01, 1.0, 0.0);
+        if (model.speedKmh() >= 100.0) return i * 0.01;
+    }
+    return 1e9;
+}
+
 }  // namespace
 
 TEST_CASE("pneu : l'arc tangente portable suit celle de la bibliothèque") {
@@ -137,10 +148,28 @@ TEST_CASE("pneu : l'antipatinage tient le glissement près du sommet, et fait ga
     CHECK(tractionSlipTarget(TractionControl::Full) < tractionSlipTarget(TractionControl::Sport));
     CHECK(meanSlip(sport) == doctest::Approx(tractionSlipTarget(TractionControl::Sport)).epsilon(0.25));
     CHECK(meanSlip(full) == doctest::Approx(tractionSlipTarget(TractionControl::Full)).epsilon(0.25));
-    // Au-delà du sommet, le pneu perd de la force : tenir le glissement fait gagner du temps, le sport plus que le complet.
-    const double tOff = measurePerformance(off).zeroTo100S, tSport = measurePerformance(sport).zeroTo100S, tFull = measurePerformance(full).zeroTo100S;
-    MESSAGE("0-100 km/h, V8 7 L propulsion : " << tOff << " s sans, " << tSport << " s sport, " << tFull << " s complet");
+    // Au-delà du sommet, le pneu perd de la force : pied au plancher, tenir le glissement fait gagner du temps, le sport plus
+    // que le complet.
+    const double tOff = flatOutZeroTo100(off), tSport = flatOutZeroTo100(sport), tFull = flatOutZeroTo100(full);
+    MESSAGE("0-100 km/h pied au plancher, V8 7 L propulsion : " << tOff << " s sans, " << tSport << " s sport, " << tFull << " s complet");
     CHECK(tSport < tOff - 0.5);
     CHECK(tFull < tOff);
     CHECK(tSport < tFull);
+}
+
+TEST_CASE("pneu : la fiche mesure un essayeur, qui dose la pédale sans antipatinage") {
+    const Powertrain off = bigV8(), sport = bigV8(TractionControl::Sport);
+    // Pied au plancher, la propulsion patine ; l'essayeur choisit son régime de départ, dose la pédale et passe ses rapports.
+    const double flat = flatOutZeroTo100(off);
+    const double sheet = measurePerformance(off).zeroTo100S;
+    const double sheetSport = measurePerformance(sport).zeroTo100S;
+    MESSAGE("V8 7 L : fiche " << sheet << " s, pied au plancher " << flat << " s, fiche avec l'antipatinage sport " << sheetSport << " s");
+    CHECK(sheet < flat - 1.0);
+    // Sur cette propulsion de 7 L, un pied humain, qui sent avec 0,2 s de retard, ne fait pas mieux que le calculateur.
+    CHECK(sheet > sheetSport);
+    // Avec l'antipatinage réglé, la fiche le prend tel quel : pied au plancher, la boîte laissée faire.
+    CHECK(sheetSport == doctest::Approx(flatOutZeroTo100(sport)).epsilon(1e-9));
+    // Une voiture qui ne patine pas : l'essayeur ne fait que poser le pied au plancher, et retrouve le chiffre d'avant.
+    const Powertrain grippy = findPreset("hot_hatch_turbo")->powertrain();
+    CHECK(measurePerformance(grippy).zeroTo100S == doctest::Approx(flatOutZeroTo100(grippy)).epsilon(1e-9));
 }

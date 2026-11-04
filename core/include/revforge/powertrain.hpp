@@ -149,8 +149,13 @@ struct Performance {
     double topSpeedKmh = 0.0;
 };
 
-/** Mesuré en conduisant le modèle, pied au plancher, comme sur une piste. */
+/**
+ * Mesuré en conduisant le modèle, comme sur une piste : le 0 à 100 km/h est le meilleur départ d'un essayeur, qui dose
+ * lui-même la pédale sans antipatinage ni launch control ; la vitesse de pointe est `topSpeedKmh`.
+ */
 Performance measurePerformance(const Powertrain& p);
+/** La vitesse de pointe, sans conduire : la plus haute où, sur un rapport et sous le régime maximal, le couple vainc l'air et le roulement. */
+double topSpeedKmh(const Powertrain& p);
 
 // ── L'air ambiant (atmosphere.hpp) ──
 
