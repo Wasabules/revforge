@@ -594,6 +594,18 @@ struct EngineSound::State {
     KnockSound knock;
     bool knockOn = false;
     KnockDrive knockIn;
+    // ── Le lancement d'un moteur froid : rien de tout cela ne tourne moteur chaud, et ses explosions tirent de leur propre générateur ──
+    StartDrive startIn;
+    bool startOn = false;
+    std::uint32_t startRng = 0x9E3779B9u;
+    float startRandom() {
+        std::uint32_t x = startRng;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        startRng = x;
+        return static_cast<float>(x) * 2.3283064e-10f;
+    }
     // ── Le calculateur : rien de tout cela ne tourne quand il n'agit pas, et son tirage est à part ──
     EcuDrive ecuIn;
     bool ecuOn = false;
@@ -1337,6 +1349,8 @@ struct EngineSound::State {
         }
         cutGate += ((cutNow ? 0.1f : 1.0f) - cutGate) * smoothing(0.006f);
         if (driveCrank) openPressure = 0.1f;
+        // Le lancement d'un moteur froid : des explosions isolées parmi les compressions (cold_start.hpp).
+        startOn = driven && driveCrank && startIn.active;
         // Du carburant arrive encore pendant la coupure : il peut s'enflammer à la reprise.
         if (wasCut && !cutNow) popOnRecovery();
         wasCut = cutNow;
@@ -1834,6 +1848,12 @@ struct EngineSound::State {
                         }
                         pure = lit ? scavengingNow : 1.0f - (1.0f - scavengingNow) * (1.0f - pure);
                     }
+                    // Le lancement d'un moteur froid : ce cylindre explose à la part que dit le modèle, à son propre tirage. Raté, il
+                    // ne rejette que l'air comprimé.
+                    if (startOn) {
+                        fires = startRandom() < startIn.firing;
+                        if (fires) pressure[c] = km::max(startIn.fill * p.firingGain[c] * spread, 0.02f);
+                    }
                     // La combustion frappe la structure : le bloc rayonne un coup à chaque explosion.
                     if (fires) blockEnv = km::max(blockEnv, spread);
                     if (p.diesel) knockEnv = km::max(knockEnv, spread);
@@ -2299,9 +2319,11 @@ void EngineSound::setEcu(const EcuDrive& drive) { s_->ecuIn = drive; }
 void EngineSound::setCam(const CamDrive& drive) { s_->camIn = drive; }
 void EngineSound::setCharge(float fill) { s_->chargeFill = fill; }
 
-void EngineSound::setStarter(bool powered, bool meshed, float load) {
-    s_->starter.setState(powered, meshed, load);
+void EngineSound::setStarter(bool powered, bool meshed, float load, float supply) {
+    s_->starter.setState(powered, meshed, load, supply);
 }
+
+void EngineSound::setStart(const StartDrive& drive) { s_->startIn = drive; }
 
 void EngineSound::setRoad(float speedMs, float slipMs) {
     s_->roadSpeed = speedMs;

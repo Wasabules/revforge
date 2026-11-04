@@ -44,6 +44,10 @@ constexpr double kReleaseAfterCatchS = 0.3;
 constexpr double kMeshHoldS = 0.25;
 constexpr double kStarterEfficiency = 0.85;
 constexpr double kColdFriction = 1.5;
+// Un moteur froid a pris quand il dépasse franchement son régime d'entraînement (supposé).
+constexpr double kCaughtOverCrank = 1.5;
+// ... et jamais sous 150 tr/min : sous 120 tr/min (deux fois `kStopRpm`), le modèle tient un moteur qui tourne seul pour calé.
+constexpr double kCaughtMinRpm = 150.0;
 // Sous ce régime, en prise, la combustion ne suit plus : le moteur cale.
 constexpr double kStallShare = 0.68;
 // Le cône a fini sous cet écart : le baladeur peut passer.
@@ -173,6 +177,8 @@ void DrivingModel::setPowertrain(const Powertrain& powertrain) {
     // Un collecteur plus gros met plus de temps à se remplir.
     manifoldTau_ = 0.06 + 0.02 * litres;
     starter_ = powertrain.profile().starter;
+    // La batterie, le circuit du démarreur, l'huile et le carburant du lancement (cold_start.hpp). La charge de la batterie reste.
+    if (!powertrain.electric) start_.configure(powertrain);
     turboEngine_ = !powertrain.electric && powertrain.engine.aspiration == Aspiration::Turbo;
     if (turboEngine_) turbo_.setSpec(turboSpecOf(powertrain));
     // La régulation de pression : rien à calculer sur une wastegate à ressort, qui reste dans `TurboCharger`.
@@ -352,6 +358,22 @@ void DrivingModel::crank() {
     stalled_ = false;
     catching_ = true;
     fastIdle_ = 0.45;
+    // La clé : tenue, et le calculateur qui tient le démarreur si on la lâche. Un diesel froid préchauffe d'abord.
+    keyHeld_ = true;
+    autoCrankLeft_ = kAutoCrankS;
+    sinceKey_ = 0.0;
+    coldCrank_ = false;
+    coldStart_ = false;
+    startFailed_ = false;
+    startShare_ = 1.0;
+    eventFired_.fill(false);
+    eventRise_.fill(0.0);
+    start_.beginAttempt(startConditions());
+    preheatLeft_ = start_.preheatS();
+    // L'huile froide : le lancement se mesure en tours. Le calculateur se synchronise après autant de tours que le démarrage
+    // d'origine en fait, à son régime d'entraînement moteur chaud.
+    coldKey_ = thermalEngine_ && thermal_.oilC() < kCrankingJoinC;
+    omegaRefCrank_ = coldKey_ ? toOmega(referenceCrankRpm()) : 0.0;
     omega_ = 0.0;
     gear_ = 0;
     clutch_ = 0.0;
@@ -371,6 +393,103 @@ void DrivingModel::halt() {
     meshHoldLeft_ = 0.0;
     stalled_ = false;
     catching_ = false;
+    coldCrank_ = false;
+    coldStart_ = false;
+    preheatLeft_ = 0.0;
+    keyHeld_ = false;
+    autoCrankLeft_ = 0.0;
+}
+
+StartConditions DrivingModel::startConditions() const {
+    StartConditions c;
+    const AmbientAir air = ambientAirOf(powertrain_.engine);
+    c.ambientC = static_cast<double>(powertrain_.engine.ambientC);
+    c.intakeC = c.ambientC;
+    c.ambientBar = air.pressurePa / 1e5;
+    c.coolantC = thermalEngine_ ? thermal_.coolantC() : kWarmCoolantC;
+    c.oilC = thermalEngine_ ? thermal_.oilC() : kWarmOilC;
+    return c;
+}
+
+void DrivingModel::failStart() {
+    // La clé est revenue, ou le calculateur a renoncé : le démarreur s'arrête, le moteur n'a pas pris.
+    start_.endAttempt(false, sinceKey_);
+    crankLeft_ = 0.0;
+    coldCrank_ = false;
+    pullInLeft_ = 0.0;
+    overrunLeft_ = 0.0;
+    meshHoldLeft_ = 0.0;
+    preheatLeft_ = 0.0;
+    catching_ = false;
+    autoCrankLeft_ = 0.0;
+    keyHeld_ = false;
+    stalled_ = true;
+    startFailed_ = true;
+}
+
+int DrivingModel::startEvents() const {
+    const EngineConfig& e = powertrain_.engine;
+    if (isRotary(e)) return e.rotors();
+    if (twoStrokeEngine_) return e.pistons();
+    return ownArchitecture(e) ? architectureOf(e).cylinders : e.cylinders;
+}
+
+double DrivingModel::startEventPhase(int i, double angle) const {
+    // La même phase que les compressions (`compressionLoadNm`) : 0 au point mort haut d'allumage.
+    const EngineConfig& e = powertrain_.engine;
+    const int count = startEvents();
+    if (isRotary(e) || twoStrokeEngine_) return std::fmod(angle + 2.0 * kPi * i / count, 2.0 * kPi);
+    double lead = 4.0 * kPi * i / count;
+    if (ownArchitecture(e)) {
+        const Architecture architecture = architectureOf(e);
+        lead = 4.0 * kPi * (1.0 - architecture.firingDeg[static_cast<std::size_t>((count - i) % count)] / 720.0);
+    }
+    return std::fmod(angle + lead, 4.0 * kPi);
+}
+
+double DrivingModel::startCyclesPerS(double rpmNow) const {
+    // Par cylindre (ou par rotor) : une explosion tous les deux tours en quatre temps, à chaque tour en deux temps et sur un rotor.
+    return std::max(rpmNow, 0.0) / 60.0 * (isRotary(powertrain_.engine) || twoStrokeEngine_ ? 1.0 : 0.5);
+}
+
+double DrivingModel::startRise(double heatJ) const {
+    // La chaleur Q, dégagée au point mort haut, s'y ajoute en pression : Δp = (n − 1)·Q/V_m. Détendue en (V_m/V)^n, elle rend au
+    // vilebrequin Q·(1 − ε^(1−n)), le rendement d'un cycle d'Otto (n = 1,3). En part de la pression du gaz comprimé seul.
+    const EngineConfig& e = powertrain_.engine;
+    const double swept = static_cast<double>(e.displacementCc) * 1e-6 / startEvents();
+    const double ratio = static_cast<double>(starter_.compressionRatio);
+    const double clearance = swept / std::max(ratio - 1.0, 1.0);
+    const double tdc = 1e5 * ambientAirOf(e).pressureRatio * portable::pow((clearance + swept) / clearance, 1.13);
+    return 0.3 * heatJ / (clearance * tdc);
+}
+
+double DrivingModel::firingTorqueNm() const {
+    // Chaque explosion pousse pendant sa détente : p = p_pmh·(1 + q/(c_v·T))·(V_m/V)^1,3, face au gaz comprimé seul, qui se
+    // détend en (V_tot/V)^1,13 (`compressionLoadNm`). Le bras de levier est celui des compressions.
+    const EngineConfig& e = powertrain_.engine;
+    const int count = startEvents();
+    const bool rotary = isRotary(e);
+    const double swept = static_cast<double>(e.displacementCc) * 1e-6 / count;
+    const double ratio = static_cast<double>(starter_.compressionRatio);
+    const double clearance = swept / std::max(ratio - 1.0, 1.0);
+    const double full = clearance + swept;
+    const double atmosphere = 1e5 * ambientAirOf(e).pressureRatio;
+    const double tdc = atmosphere * portable::pow(full / clearance, 1.13);
+    // Un rotatif : sa chambre se détend sur 270° d'arbre, aux deux tiers de l'angle ; un deux-temps jusqu'à sa lumière.
+    const double share = rotary ? 2.0 / 3.0 : 1.0;
+    const double reach = rotary ? 1.5 * kPi : (twoStrokeEngine_ ? twoStrokePortsOf(e).exhaustOpenDeg * kPi / 180.0 : kPi);
+    double push = 0.0;
+    for (int i = 0; i < count; ++i) {
+        if (!eventFired_[static_cast<std::size_t>(i)]) continue;
+        const double phase = startEventPhase(i, crankAngle_);
+        if (phase >= reach) continue;
+        const double phi = phase * share;
+        const double volume = clearance + swept * 0.5 * (1.0 - portable::cos(phi));
+        const double fired = tdc * (1.0 + eventRise_[static_cast<std::size_t>(i)]) * portable::pow(clearance / volume, 1.3);
+        const double motored = atmosphere * portable::pow(full / volume, 1.13);
+        push += std::max(fired - motored, 0.0) * swept * 0.5 * share * portable::sin(phi);
+    }
+    return push;
 }
 
 void DrivingModel::step(double dt) {
@@ -531,6 +650,7 @@ void DrivingModel::holdThermalReference(bool held) {
     if (held) {
         coolantC_ = kWarmCoolantC;
         viscosityExcess_ = 0.0;
+        crankExcess_ = 0.0;
         coldFrictionNm_ = 0.0;
         coldIdleRise_ = 0.0;
         coldEnrichment_ = 0.0;
@@ -560,7 +680,9 @@ void DrivingModel::carryThermal(const ThermalNetwork& from) {
 
 void DrivingModel::updateColdEffects() {
     if (!coldCoupled_) return;
-    viscosityExcess_ = revforge::coldViscosityExcess(thermal_.oilC());
+    // L'huile de ce moteur (cold_start.hpp) : la référence au-dessus de 80 °C, son grade au-dessous ; linéaire au lancement.
+    viscosityExcess_ = runningViscosityExcess(powertrain_.engine.oilGrade, thermal_.oilC());
+    crankExcess_ = crankingViscosityExcess(powertrain_.engine.oilGrade, thermal_.oilC());
     // L'eau du réseau, que lisent le film de carburant (injection indirecte, carburateur) et la carte du cliquetis.
     coolantC_ = thermal_.coolantC();
     coldIdleRise_ = revforge::coldIdleRise(thermal_.coolantC());
@@ -1010,7 +1132,7 @@ double DrivingModel::bmepPumping(double rpm) const {
     return pumpingTorqueNm(powertrain_, std::max(rpm, idle_ + 1500.0), 0.0) * clamp(rpm / 1000.0, 0.2, 1.0);
 }
 
-double DrivingModel::rotaryCompressionLoadNm() const {
+double DrivingModel::rotaryCompressionLoadNm(double angle) const {
     // Chaque rotor a trois chambres, décalées d'un tour d'arbre : le même calcul qu'un cylindre, sur un cycle de trois tours.
     // Le volume suit 2/3 de l'angle de l'arbre : une compression dure plus longtemps, et pousse moins fort sur l'arbre.
     const EngineConfig& e = powertrain_.engine;
@@ -1028,7 +1150,7 @@ double DrivingModel::rotaryCompressionLoadNm() const {
     double load = 0.0;
     for (int rotor = 0; rotor < rotors; ++rotor) {
         for (int face = 0; face < 3; ++face) {
-            const double shaft = crankAngle_ + 2.0 * kPi * (static_cast<double>(face) + static_cast<double>(rotor) / rotors);
+            const double shaft = angle + 2.0 * kPi * (static_cast<double>(face) + static_cast<double>(rotor) / rotors);
             const double phi = std::fmod(shaft * kShare, 4.0 * kPi);
             const bool compressing = phi >= 3.0 * kPi;
             if (!compressing && phi >= kPi) continue;
@@ -1041,7 +1163,7 @@ double DrivingModel::rotaryCompressionLoadNm() const {
     return load;
 }
 
-double DrivingModel::twoStrokeCompressionLoadNm() const {
+double DrivingModel::twoStrokeCompressionLoadNm(double angle) const {
     // Chaque cylindre comprime à chaque tour, mais seulement une fois la lumière d'échappement fermée : du volume qu'elle enferme.
     const EngineConfig& e = powertrain_.engine;
     const TwoStrokePorts ports = twoStrokePortsOf(e);
@@ -1057,7 +1179,7 @@ double DrivingModel::twoStrokeCompressionLoadNm() const {
     constexpr double kExpansionReturn = 0.8;
     double load = 0.0;
     for (int i = 0; i < count; ++i) {
-        const double phi = std::fmod(crankAngle_ + 2.0 * kPi * i / count, 2.0 * kPi);
+        const double phi = std::fmod(angle + 2.0 * kPi * i / count, 2.0 * kPi);
         const bool compressing = phi >= closesAt;
         if (!compressing && phi >= opensAt) continue;
         const double travel = pistonTravelShare(phi * 180.0 / kPi, ports.rodOverStroke);
@@ -1072,9 +1194,11 @@ double DrivingModel::twoStrokeCompressionLoadNm() const {
     return load;
 }
 
-double DrivingModel::compressionLoadNm() const {
-    if (isRotary(powertrain_.engine)) return rotaryCompressionLoadNm();
-    if (twoStrokeEngine_) return twoStrokeCompressionLoadNm();
+double DrivingModel::compressionLoadNm() const { return compressionLoadAt(crankAngle_); }
+
+double DrivingModel::compressionLoadAt(double angle) const {
+    if (isRotary(powertrain_.engine)) return rotaryCompressionLoadNm(angle);
+    if (twoStrokeEngine_) return twoStrokeCompressionLoadNm(angle);
     // Chaque cylindre comprime l'air enfermé, puis le gaz lui rend presque tout en se détendant.
     const double swept = static_cast<double>(powertrain_.engine.displacementCc) * 1e-6 / powertrain_.engine.cylinders;
     const double ratio = static_cast<double>(starter_.compressionRatio);
@@ -1094,7 +1218,7 @@ double DrivingModel::compressionLoadNm() const {
     constexpr double kCylinderSeal[6] = {1.0, 0.88, 1.07, 0.93, 1.1, 0.85};
     for (int i = 0; i < count; ++i) {
         const double lead = own ? 4.0 * kPi * (1.0 - architecture.firingDeg[static_cast<std::size_t>((count - i) % count)] / 720.0) : 4.0 * kPi * i / count;
-        const double phi = std::fmod(crankAngle_ + lead, 4.0 * kPi);
+        const double phi = std::fmod(angle + lead, 4.0 * kPi);
         const bool compressing = phi >= 3.0 * kPi;
         if (!compressing && phi >= kPi) continue;
         const double volume = clearance + swept * 0.5 * (1.0 - portable::cos(phi));
@@ -1103,6 +1227,26 @@ double DrivingModel::compressionLoadNm() const {
         load += compressing ? push : kExpansionReturn * push;
     }
     return load;
+}
+
+double DrivingModel::referenceCrankRpm() const {
+    // La droite du démarreur d'origine face à la compression moyenne d'un cycle et aux frottements du lancement, huile chaude :
+    // le régime où le démarrage d'origine se synchronise.
+    const double gear = static_cast<double>(starter_.ringTeeth) / starter_.pinionTeeth;
+    const double reduction = static_cast<double>(starter_.reduction);
+    const double freePinion = toOmega(static_cast<double>(starter_.motorFreeRpm)) / reduction;
+    const double stallAtPinion = 4.0 * static_cast<double>(starter_.powerKw) * 1000.0 / freePinion;
+    constexpr int kSamples = 720;
+    double compression = 0.0;
+    for (int i = 0; i < kSamples; ++i) compression += compressionLoadAt(4.0 * kPi * i / kSamples);
+    compression /= kSamples;
+    double low = 1.0, high = toRpm(freePinion / gear);
+    for (int i = 0; i < 40; ++i) {
+        const double mid = 0.5 * (low + high);
+        const double driven = stallAtPinion * (1.0 - toOmega(mid) * gear / freePinion) * gear * kStarterEfficiency;
+        (driven > compression + kColdFriction * frictionTorqueNm(powertrain_, mid) ? low : high) = mid;
+    }
+    return 0.5 * (low + high);
 }
 
 void DrivingModel::stepTwin(double rpmNow, bool burning) {
@@ -1343,25 +1487,66 @@ void DrivingModel::updateEngine(double throttle, bool off) {
         meshHoldLeft_ = rpmNow > idle_ * 0.85 ? 0.0 : meshHoldLeft_ - kStep;
         starterLoad_ *= 1.0 - kStep / 0.05;
     }
-    if (crankLeft_ > 0.0) {
+    // Le préchauffage d'un diesel froid : le voyant est allumé, le démarreur attend. Les bougies tirent sur la batterie.
+    if (preheatLeft_ > 0.0) {
+        preheatLeft_ = std::max(preheatLeft_ - kStep, 0.0);
+        sinceKey_ += kStep;
+        start_.stepStarter(0.0, kStep, false);
+        cut_ = true;
+        manifold_ = 0.0;
+        torque_ = 0.0;
+        if (!keyHeld_) autoCrankLeft_ -= kStep;
+        if (keyHeld_ || autoCrankLeft_ > 0.0) return;
+        failStart();
+    }
+    // Le moteur froid qui vient de prendre, la clé encore tenue : s'il retombe, le pignon toujours là le relance.
+    if (coldStart_ && catching_ && !crankingNow() && (keyHeld_ || autoCrankLeft_ > 0.0) &&
+        toOmega(rpmNow) * starter_.ringTeeth / starter_.pinionTeeth < 0.7 * start_.pinionFreeOmega()) {
+        coldCrank_ = true;
+        meshHoldLeft_ = 0.0;
+        overrunLeft_ = 0.0;
+        stalled_ = false;
+    }
+    if (crankingNow()) {
+        sinceKey_ += kStep;
+        // La clé lâchée, le calculateur tient encore le démarreur un temps ; ensuite, le démarrage est raté.
+        if (autoCrankLeft_ > 0.0) autoCrankLeft_ -= kStep;
+        if (!keyHeld_ && autoCrankLeft_ <= 0.0) failStart();
+    }
+    if (crankingNow()) {
         // Rien ne brûle encore : l'arbre, s'il tournait, continue sur son élan.
         if (turboEngine_) stepTurbo(rpmNow, false);
         if (superchargerEngine_) stepSupercharger(rpmNow);
         if (carbEngine_) carb_.prime();
-        crankLeft_ -= kStep;
+        bool expired = false;
+        if (!coldCrank_) {
+            crankLeft_ -= coldKey_ && pullInLeft_ <= 0.0 ? kStep * omega_ / omegaRefCrank_ : kStep;
+            expired = crankLeft_ <= 0.0;
+        }
         cut_ = true;
         manifold_ = 0.0;
         torque_ = 0.0;
-        if (crankLeft_ <= 0.0) {
-            overrunLeft_ = kReleaseAfterCatchS;
-            // Le démarreur reste engagé pendant que le moteur prend : le pignon ne sort qu'une fois dépassé.
-            meshHoldLeft_ = kMeshHoldS;
-            // Le collecteur s'est rempli pendant le lancement : les premières explosions sont franches.
-            manifold_ = 0.7;
+        if (expired) {
+            // Le calculateur est synchronisé : il injecte. Si chaque cycle allume à coup sûr, le moteur prend à la première
+            // explosion, comme à l'origine. Sinon, le démarreur continue, et chaque point mort haut tente sa chance.
+            if (start_.beginFiring(startConditions(), rpmNow, startCyclesPerS(rpmNow))) {
+                overrunLeft_ = kReleaseAfterCatchS;
+                // Le démarreur reste engagé pendant que le moteur prend : le pignon ne sort qu'une fois dépassé.
+                meshHoldLeft_ = kMeshHoldS;
+                // Le collecteur s'est rempli pendant le lancement : les premières explosions sont franches.
+                manifold_ = 0.7;
+                start_.endAttempt(true, sinceKey_);
+            } else {
+                coldCrank_ = true;
+                coldStart_ = true;
+                crankLeft_ = 0.0;
+                eventFired_.fill(false);
+            }
         }
         if (pullInLeft_ > 0.0) {
             // Le solénoïde pousse le pignon vers la couronne : rien ne tourne encore.
             pullInLeft_ -= kStep;
+            start_.stepStarter(0.0, kStep, false);
             return;
         }
         // Moteur à courant continu : tout son couple à l'arrêt, plus rien à sa vitesse libre.
@@ -1369,23 +1554,65 @@ void DrivingModel::updateEngine(double throttle, bool off) {
         const double reduction = static_cast<double>(starter_.reduction);
         const double freePinion = toOmega(static_cast<double>(starter_.motorFreeRpm)) / reduction;
         const double stallAtPinion = 4.0 * static_cast<double>(starter_.powerKw) * 1000.0 / freePinion;
-        const double pinionTorque = std::max(stallAtPinion * (1.0 - omega_ * gear / freePinion), 0.0);
+        // La batterie (cold_start.hpp) : ce que son courant change au couple de la droite d'origine, calée sur la batterie de
+        // référence. Exactement nul quand elle l'est : moteur chaud par 20 °C, batterie pleine.
+        const double supply = start_.stepStarter(omega_ * gear, kStep, true);
+        const double line = stallAtPinion * (1.0 - omega_ * gear / freePinion);
+        const double pinionTorque = std::max(supply == 0.0 ? line : line + supply, 0.0);
         const double motorInertia = static_cast<double>(starter_.motorInertia) * reduction * reduction;
         const double total = inertia_ + motorInertia * gear * gear;
         const double driven = pinionTorque * gear * kStarterEfficiency;
         double crankFriction = kColdFriction * frictionTorqueNm(powertrain_, rpmNow);
-        // L'huile froide freine aussi le lancement : le démarreur tourne moins vite.
-        if (coldCoupled_) crankFriction += hydroNmPerRpm_ * std::max(rpmNow, 0.0) * viscosityExcess_;
+        // L'huile froide freine aussi le lancement : le démarreur tourne moins vite. Sous 80 °C, au lancement, la viscosité agit
+        // linéairement (Petroff, `crankingViscosityExcess`) ; au-dessus, comme moteur tournant, au bit près.
+        if (coldCoupled_) crankFriction += hydroNmPerRpm_ * std::max(rpmNow, 0.0) * crankExcess_;
         frictionHeatNm_ = crankFriction;
-        const double net = driven - compressionLoadNm() - crankFriction;
+        double net = driven - compressionLoadNm() - crankFriction;
+        if (coldCrank_) net += firingTorqueNm();
         const double alpha = net / total;
         // Ce qui passe vraiment par les dents : le couple du moteur, moins ce qu'il faut pour accélérer
         // l'induit. Il s'annule, et change de sens, quand une détente fait filer le vilebrequin.
         starterLoad_ = (driven - motorInertia * gear * gear * alpha) / (stallAtPinion * gear);
         // La roue libre du pignon : le vilebrequin peut filer, jamais repartir en arrière.
+        const double before = crankAngle_;
         omega_ = std::max(omega_ + alpha * kStep, 0.0);
         crankAngle_ = std::fmod(crankAngle_ + omega_ * kStep, 4.0 * kPi);
+        if (coldCrank_) {
+            // Chaque cylindre qui passe son point mort haut tente sa chance : la vapeur dans ses limites, ou le délai d'un diesel.
+            const StartConditions conditions = startConditions();
+            const int count = startEvents();
+            for (int i = 0; i < count; ++i) {
+                if (startEventPhase(i, crankAngle_) < startEventPhase(i, before)) {
+                    const bool lit = start_.fire(conditions, toRpm(omega_));
+                    eventFired_[static_cast<std::size_t>(i)] = lit;
+                    eventRise_[static_cast<std::size_t>(i)] = lit ? startRise(start_.lastHeatJ()) : 0.0;
+                }
+            }
+            start_.stepFilm(kStep, startCyclesPerS(toRpm(omega_)), throttle, conditions.coolantC);
+            // Le moteur part : il file plus vite que le pignon ne peut le pousser, ou il dépasse franchement son régime d'entraînement
+            // (une fois et demie : le conducteur l'entend partir, supposé). Le démarreur roule libre, le moteur tourne seul.
+            if (omega_ * gear > std::min(start_.pinionFreeOmega(), std::max(kCaughtOverCrank * toOmega(start_.crankRpm()), toOmega(kCaughtMinRpm)) * gear)) {
+                coldCrank_ = false;
+                overrunLeft_ = kReleaseAfterCatchS;
+                meshHoldLeft_ = kMeshHoldS;
+                manifold_ = 0.7;
+                catching_ = true;
+                startShare_ = start_.firingChance();
+                start_.endAttempt(true, sinceKey_);
+            }
+        }
         return;
+    }
+    if (preheatLeft_ <= 0.0) start_.stepRest(!stalled_ && !off && rpmNow > 0.5 * idle_, kStep);
+    // Le moteur froid qui vient de prendre : ses explosions restent celles du lancement tant qu'il n'a pas atteint son ralenti.
+    if (coldStart_ && catching_) {
+        autoCrankLeft_ = std::max(autoCrankLeft_ - kStep, 0.0);
+        const StartConditions conditions = startConditions();
+        start_.stepFilm(kStep, startCyclesPerS(rpmNow), throttle, conditions.coolantC);
+        if (++startRefresh_ >= 10) {
+            startRefresh_ = 0;
+            startShare_ = start_.refreshChance(conditions, rpmNow);
+        }
     }
 
     if (stalled_) {
@@ -1454,6 +1681,12 @@ void DrivingModel::updateEngine(double throttle, bool off) {
     if (coldCoupled_) idleTarget += idle_ * coldIdleRise_;
     if (catching_) {
         if (rpmNow > idleTarget * 0.98) catching_ = false;
+        // Le moteur froid tient son ralenti : le conducteur lâche la clé, le calculateur rend la main.
+        if (!catching_ && coldStart_) {
+            coldStart_ = false;
+            keyHeld_ = false;
+            autoCrankLeft_ = 0.0;
+        }
     } else {
         fastIdle_ *= 1.0 - kStep / 0.9;
     }
@@ -1489,6 +1722,8 @@ void DrivingModel::updateEngine(double throttle, bool off) {
     if (chargeAirEngine_) indicated *= stepChargeAir(rpmNow, throttle, indicated);
 
     double produced = cut_ ? 0.0 : manifold_ * indicated * torqueScale_;
+    // Un moteur froid qui vient de prendre : seule la part des cycles qui allument pousse (cold_start.hpp).
+    if (coldStart_ && catching_) produced *= startShare_;
     if (knockEngine_) produced *= stepKnock(rpmNow);
     // Le calculateur : ce que retirent le retard et les cylindres coupés, et la richesse, qui ne s'écarte qu'à pleine charge.
     if (ecuEngine_ && ecuShare_ != 1.0) produced *= ecuShare_;
@@ -1727,7 +1962,7 @@ void DrivingModel::freeStep(const TyreContact& tyre, double wheelInertia) {
         // La réaction sur les roues, négligeable, mais physique.
         coneOnWheels = cone * g * efficiency_;
     }
-    if (crankLeft_ > 0.0) {
+    if (crankingNow()) {
         // Le démarreur fixe seul le régime pendant le lancement : le primaire suit s'il est embrayé, sans rien changer.
         locked_ = false;
         inputOmega_ = clutch_ > 0.5 ? omega_ : std::max(inputOmega_ - drag / J * kStep, 0.0);
@@ -1842,7 +2077,7 @@ GearboxDrive DrivingModel::gearboxDrive() const {
     d.torqueNm = static_cast<float>(powertrain_.electric ? torque_ : (driving ? gearTorque_ : 0.0));
     d.firings = powertrain_.engine.firingsPerTwoTurns();
     d.gear = driving ? gear_ : 0;
-    d.running = omega_ > 1.0 && !cut_ && crankLeft_ <= 0.0 && !stalled_ && !powertrain_.electric;
+    d.running = omega_ > 1.0 && !cut_ && !crankingNow() && !stalled_ && !powertrain_.electric;
     d.coneSlip = static_cast<float>(coneSlip_);
     d.coneTorque = static_cast<float>(coneTorque_);
     d.grind = static_cast<float>(grinding_);
@@ -1912,7 +2147,7 @@ void DrivingModel::integrate(double brakePedal) {
         freeStep(tyre, wheelInertia);
     }
 
-    if (!powertrain_.electric && !cut_ && crankLeft_ <= 0.0 && meshed_ && gear_ != 0 && gearing_.box.kind != GearboxKind::Converter &&
+    if (!powertrain_.electric && !cut_ && !crankingNow() && meshed_ && gear_ != 0 && gearing_.box.kind != GearboxKind::Converter &&
         toRpm(omega_) < idle_ * (manual_ ? kStallShare : 0.8)) {
         if (manual_) {
             // En manuelle, rien ne protège le moteur : si l'embrayage le relie aux roues, il cale.
@@ -1925,8 +2160,8 @@ void DrivingModel::integrate(double brakePedal) {
         }
     }
     // Un moteur qui s'éteint le dit, quelle que soit la boîte : sans cela, plus rien ne propose de le relancer.
-    if (!powertrain_.electric && !stalled_ && !cut_ && crankLeft_ <= 0.0 && toRpm(omega_) < 2.0 * kStopRpm) stalled_ = true;
-    if (toRpm(omega_) < kStopRpm && cut_ && crankLeft_ <= 0.0 && !powertrain_.electric) omega_ = 0.0;
+    if (!powertrain_.electric && !stalled_ && !cut_ && !crankingNow() && toRpm(omega_) < 2.0 * kStopRpm) stalled_ = true;
+    if (toRpm(omega_) < kStopRpm && cut_ && !crankingNow() && !powertrain_.electric) omega_ = 0.0;
 
     // La force que la roue a reçue, à sa vitesse de fin de pas : la caisse reçoit la même, et rien ne se perd entre les deux.
     tyreUsed_ = tyre.forceN + tyre.perWheelMs * radius_ * (wheelOmega_ - wheelBefore);

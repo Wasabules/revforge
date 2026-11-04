@@ -65,6 +65,9 @@ void usage() {
         "          Conditions:   --ambient C --altitude M --start warm|half_hour|two_hours|cold\n"
         "                        (warm: just driven; half_hour, two_hours: parked that long, cooled by the thermal network;\n"
         "                        cold: overnight, everything at the ambient air)\n"
+        "          Starting:     --oil 5w30|0w20|10w40|15w40|20w50|sae30 (the preset's oil otherwise)\n"
+        "                        --battery PCT (state of charge, 100) --crank-max S (key held at most, 10)\n"
+        "                        --attempts N (with --scenario start: retries after 30 s, 1) --crank FILE (CSV every 10 ms)\n"
         "Car:      --body city|compact|coupe|supercar|van|retro --mass KG --rim INCHES --drive front|rear|all\n"
         "          --placement front|mid|rear --insulation stripped|light|standard|comfort|luxury --windows open|closed\n"
         "Gearbox:  --gearbox synchro|dog|sequential|dual_clutch|converter --gears N --family matched|short|close|long\n"
@@ -278,7 +281,8 @@ void play(EngineSound& sound, DrivingModel& model, Output& out, int rate, Drive 
         sound.setSupercharger(model.superchargerDrive());
         sound.setEcu(model.ecuDrive());
         sound.setCharge(static_cast<float>(model.chargeFill()));
-        sound.setStarter(model.starterPowered(), model.starterMeshed(), static_cast<float>(model.starterLoad()));
+        sound.setStarter(model.starterPowered(), model.starterMeshed(), static_cast<float>(model.starterLoad()), static_cast<float>(model.starterSupply()));
+        sound.setStart(model.startDrive());
         sound.setRoad(static_cast<float>(model.speedKmh() / 3.6), static_cast<float>(model.wheelSlip()));
         sound.setGearbox(model.box(), model.gearboxDrive());
         sound.setKnock(model.knockDrive());
@@ -464,12 +468,49 @@ void clutchBlips(EngineSound& sound, DrivingModel& model, Output& out, int rate)
     });
 }
 
-/** Contact : le démarreur, le moteur qui prend, le ralenti. */
-void start(EngineSound& sound, DrivingModel& model, Output& out, int rate) {
+/** `--crank` : le lancement, toutes les 10 ms. */
+std::FILE* g_crank = nullptr;
+/** `--out -` n'écrit que l'empreinte : le relevé du démarrage la décalerait dans tools/check_wasm.mjs. */
+bool g_hashOnly = false;
+
+/**
+ * Contact : le démarreur, le moteur qui prend, le ralenti. Le conducteur tient la clé jusqu'à ce que le moteur prenne, au plus
+ * `holdS` ; raté, il attend 30 s et recommence, `attempts` fois au plus. Écrit le relevé du démarrage.
+ */
+void start(EngineSound& sound, DrivingModel& model, Output& out, int rate, double holdS, int attempts) {
     model.halt();
     model.crank();
+    int tried = 1;
+    double keyAt = 0.0;
+    double nextLine = 0.0;
+    double restUntil = -1.0;
     // Par petits blocs, comme dans le navigateur : la hauteur du démarreur suit le régime de très près.
-    play(sound, model, out, rate, [&model](int, double dt) { model.stepNeutral(dt, 0.0); }, 128);
+    play(sound, model, out, rate, [&](int step, double dt) {
+        const double t = static_cast<double>(step) * dt;
+        if (model.keyHeld() && t - keyAt >= holdS) model.releaseKey();
+        if (model.startFailed() && restUntil < 0.0 && tried < attempts) restUntil = t + 30.0;
+        if (restUntil >= 0.0 && t >= restUntil) {
+            restUntil = -1.0;
+            ++tried;
+            keyAt = t;
+            model.crank();
+        }
+        model.stepNeutral(dt, 0.0);
+        if (g_crank != nullptr && t >= nextLine) {
+            nextLine += 0.01;
+            const StartModel& s = model.start();
+            std::fprintf(g_crank, "%.2f,%.1f,%.2f,%.1f,%d,%d,%.3f,%.1f,%.3f,%d,%d\n", t, model.rpm(), s.batteryVolts(), s.starterAmps(), model.cranking() ? 1 : 0,
+                         model.stalled() ? 1 : 0, s.firingChance(), s.glowC(), s.battery().charge, s.stats().firings, s.stats().misfires);
+        }
+    }, 128);
+    if (g_hashOnly) return;
+    const StartStats& s = model.start().stats();
+    const bool running = !model.stalled() && !model.cranking() && model.rpm() > 0.8 * model.idleRpm();
+    std::printf("Start: %s after %.2f s from the key (attempt %d of %d), cranking %.0f rpm on average before the first firing, %d firings and %d misfires,\n"
+                "       battery %.0f A on average, %.2f V at the lowest, %.3f Ah drawn, %.0f %% left; oil %s; preheat %.1f s\n",
+                running ? "running" : (s.caught ? "caught, then stalled" : "failed"), s.caught ? s.caughtAfterS : s.crankedS, s.attempts, attempts,
+                s.meanCrankRpm, s.firings, s.misfires, s.meanAmps, s.minVolts, s.drawnAh, model.start().battery().charge * 100.0, oilGradeName(model.start().oil()),
+                model.start().preheatS());
 }
 
 void lap(EngineSound& sound, DrivingModel& model, Output& out, int rate, bool walk = false) {
@@ -757,6 +798,9 @@ int main(int argc, char** argv) {
     ShiftMode shiftMode = ShiftMode::Normal;
     DriveScenario driveScenario = DriveScenario::City;
     double kmh = 90.0;
+    double batteryPct = 100.0;
+    double crankMaxS = 10.0;
+    int attempts = 1;
     std::optional<ExhaustRouting> routing;
     std::optional<Exhaust> exhaustChoice;
     std::optional<SuperchargerKind> superchargerChoice;
@@ -847,6 +891,17 @@ int main(int argc, char** argv) {
             }
             std::fputs("t,rpm,kmh,coolant_c,oil_c,metal_c,radiator_c,thermostat,fan,radiator_kw,cold_friction_nm,cold_idle_rpm,enrichment,trip_l,wall_w,torque_nm\n", g_thermal);
         }
+        else if (arg == "--crank") {
+            g_crank = std::fopen(value.c_str(), "w");
+            if (g_crank == nullptr) {
+                std::fprintf(stderr, "Cannot write: %s\n", value.c_str());
+                return 2;
+            }
+            std::fputs("t,rpm,battery_v,starter_a,cranking,stalled,firing_chance,glow_c,charge,firings,misfires\n", g_crank);
+        }
+        else if (arg == "--battery") batteryPct = std::atof(value.c_str());
+        else if (arg == "--crank-max") crankMaxS = std::atof(value.c_str());
+        else if (arg == "--attempts") attempts = std::max(std::atoi(value.c_str()), 1);
         else if (arg == "--kmh") kmh = std::atof(value.c_str());
         else if (arg == "--walk") walk = value != "0";
         else if (arg == "--placement") { car.placement = pick<EnginePlacement>(value, {{"front", EnginePlacement::Front}, {"mid", EnginePlacement::Mid}, {"rear", EnginePlacement::Rear}}); customCar = true; }
@@ -929,6 +984,7 @@ int main(int argc, char** argv) {
             else if (arg == "--water") later(&EngineConfig::waterInjection, value != "0");
             else if (arg == "--nitrous") later(&EngineConfig::nitrousKw, whole(value));
             else if (arg == "--cycle") later(&EngineConfig::cycle, pick<EngineCycle>(value, {{"four_stroke", EngineCycle::FourStroke}, {"two_stroke", EngineCycle::TwoStroke}}));
+            else if (arg == "--oil") later(&EngineConfig::oilGrade, pick<OilGrade>(value, {{"5w30", OilGrade::Sae5W30}, {"0w20", OilGrade::Sae0W20}, {"10w40", OilGrade::Sae10W40}, {"15w40", OilGrade::Sae15W40}, {"20w50", OilGrade::Sae20W50}, {"sae30", OilGrade::Sae30}}));
             else if (arg == "--fuel") config.fuel = pick<Fuel>(value, {{"petrol", Fuel::Petrol}, {"diesel", Fuel::Diesel}});
             else if (arg == "--pops") config.pops = pick<PopLevel>(value, {{"off", PopLevel::Off}, {"light", PopLevel::Light}, {"strong", PopLevel::Strong}});
             else if (arg == "--release") config.turboRelease = pick<TurboRelease>(value, {{"dump_valve", TurboRelease::DumpValve}, {"flutter", TurboRelease::Flutter}});
@@ -993,6 +1049,7 @@ int main(int argc, char** argv) {
     if (coherentTwoStroke(powertrain.engine)) std::fprintf(stderr, "two-stroke: crankcase-scavenged, petrol and naturally aspirated only (at most %d cylinders)\n", powertrain.engine.pistons());
     const EngineProfile profile = powertrain.profile();
     DrivingModel model(powertrain);
+    if (batteryPct != 100.0) model.setBatteryCharge(std::clamp(batteryPct, 0.0, 100.0) / 100.0);
     g_warmUp.active = !powertrain.electric;
     g_warmUp.cold = powertrain.engine.startTemp != StartTemp::Warm;
     g_warmUp.start = powertrain.engine.startTemp;
@@ -1034,6 +1091,7 @@ int main(int argc, char** argv) {
     Output output{pcm, channels};
     if (silent) output.silentFrames = frames;
     SpeedFollower driver;
+    g_hashOnly = out == "-";
     if (scenario == "lap") {
         lap(sound, model, output, rate, walk);
     } else if (scenario == "blips") {
@@ -1043,7 +1101,7 @@ int main(int argc, char** argv) {
     } else if (scenario == "launch_control") {
         launchControl(sound, model, output, rate);
     } else if (scenario == "start") {
-        start(sound, model, output, rate);
+        start(sound, model, output, rate, crankMaxS, attempts);
     } else if (scenario == "passby") {
         passby(sound, model, output, rate, -7.5f, 1.2f);
             } else if (scenario == "rattle") {

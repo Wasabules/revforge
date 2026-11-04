@@ -36,6 +36,7 @@ export type TurboLayout = 'single' | 'twin_parallel' | 'twin_sequential' | 'twin
 export type BoostControl = 'spring' | 'electronic' | 'by_gear';
 export type Intercooler = 'air_to_air' | 'air_to_water' | 'none';
 export type EngineCycle = 'four_stroke' | 'two_stroke';
+export type OilGrade = '5w30' | '0w20' | '10w40' | '15w40' | '20w50' | 'sae30';
 export type Body = 'city' | 'compact' | 'coupe' | 'supercar' | 'van' | 'retro';
 export type Drive = 'front' | 'rear' | 'all';
 export type BoxKind = 'synchro' | 'dog' | 'sequential' | 'dual_clutch' | 'converter';
@@ -107,6 +108,8 @@ export interface EngineConfig {
   /** Puissance du kit de protoxyde d'azote (kW) ; 0 : sans. */
   nitrousKw: number;
   cycle: EngineCycle;
+  /** L'huile du carter : elle ne change que le moteur froid, au démarreur et pendant la mise en température. */
+  oilGrade: OilGrade;
   electric: boolean;
   body: Body;
   massKg: number;
@@ -295,6 +298,15 @@ export const ENGINE_CYCLES: { value: EngineCycle; label: string; help: string }[
   { value: 'four_stroke', get label() { return t('cycle.four_stroke'); }, get help() { return t('cycle.four_stroke.help'); } },
   { value: 'two_stroke', get label() { return t('cycle.two_stroke'); }, get help() { return t('cycle.two_stroke.help'); } },
 ];
+/** L'huile, selon l'époque du moteur (SAE J300) : la position est la valeur de `OilGrade` en C++. */
+export const OIL_GRADES: { value: OilGrade; label: string; help: string }[] = [
+  { value: '5w30', label: '5W-30', get help() { return t('oil.5w30.help'); } },
+  { value: '0w20', label: '0W-20', get help() { return t('oil.0w20.help'); } },
+  { value: '10w40', label: '10W-40', get help() { return t('oil.10w40.help'); } },
+  { value: '15w40', label: '15W-40', get help() { return t('oil.15w40.help'); } },
+  { value: '20w50', label: '20W-50', get help() { return t('oil.20w50.help'); } },
+  { value: 'sae30', label: 'SAE 30', get help() { return t('oil.sae30.help'); } },
+];
 /** Un réglage tout ou rien, dans une rangée de boutons : `Choices` ne prend pas de booléen. */
 export const ON_OFF: { value: 'off' | 'on'; label: string }[] = [
   { value: 'off', get label() { return t('toggle.off'); } },
@@ -456,6 +468,7 @@ const DEFAULTS: EngineConfig = {
   waterInjection: false,
   nitrousKw: 0,
   cycle: 'four_stroke',
+  oilGrade: '5w30',
   electric: false,
   body: 'city',
   massKg: 1100,
@@ -586,7 +599,7 @@ export function configArgs(c: EngineConfig): number[] {
 
 // ── Les réglages du socle moteur : une seule table pour `rf_set_tuning` et le lien de partage ──
 
-type TuningKey = 'ambientC' | 'altitudeM' | 'startTemp' | 'compressionRatio' | 'fuelGrade' | 'ignitionOffsetDeg' | 'fullLoadLambda' | 'revLimiter' | 'launchRpm' | 'flatShift' | 'tractionControl' | 'dieselInjection' | 'egr' | 'particulateFilter' | 'camDurationDeg' | 'camLiftMm' | 'lobeSeparationDeg' | 'valveTiming' | 'valveSprings' | 'turboLayout' | 'variableGeometry' | 'boostControl' | 'intercooler' | 'waterInjection' | 'nitrousKw' | 'cycle';
+type TuningKey = 'ambientC' | 'altitudeM' | 'startTemp' | 'compressionRatio' | 'fuelGrade' | 'ignitionOffsetDeg' | 'fullLoadLambda' | 'revLimiter' | 'launchRpm' | 'flatShift' | 'tractionControl' | 'dieselInjection' | 'egr' | 'particulateFilter' | 'camDurationDeg' | 'camLiftMm' | 'lobeSeparationDeg' | 'valveTiming' | 'valveSprings' | 'turboLayout' | 'variableGeometry' | 'boostControl' | 'intercooler' | 'waterInjection' | 'nitrousKw' | 'cycle' | 'oilGrade';
 interface TuningField {
   key: TuningKey;
   /** Son nom dans le lien de partage. Ne change jamais : les liens déjà partagés en dépendent. */
@@ -627,6 +640,7 @@ export const TUNING_FIELDS: readonly TuningField[] = [
   { key: 'waterInjection', code: 'water' },
   { key: 'nitrousKw', code: 'nos', limits: LIMITS.nitrousKw },
   { key: 'cycle', code: 'cycle', list: ENGINE_CYCLES },
+  { key: 'oilGrade', code: 'oil', list: OIL_GRADES },
 ];
 
 /** Arguments de rf_set_tuning, dans l'ordre du C : à envoyer juste avant rf_set_config ou rf_set_electric, qui les appliquent. */

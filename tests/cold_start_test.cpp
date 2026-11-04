@@ -17,15 +17,25 @@ struct ColdRun {
     double kmh = 0.0;
 };
 
-/** Par ce froid, départ à froid : au démarreur ou moteur posé au ralenti, 10 s de ralenti, puis on part, pied à 30 %, 5 s. */
+/**
+ * Par ce froid, départ à froid : au démarreur ou moteur posé au ralenti, 10 s de ralenti, puis on part, pied à 30 %, 5 s.
+ * Démarreur (froid-démarreur) : le démarrage prend maintenant son temps réel (préchauffage d'un diesel, lancement mesuré en
+ * tours, explosions une à une) ; le ralenti se juge 2 s après que le moteur a pris, et non 2 s après la clé.
+ */
 ColdRun coldRun(const Powertrain& base, double ambientC, bool starter) {
     Powertrain p = base;
     p.engine.startTemp = StartTemp::Cold;
     p.engine.ambientC = static_cast<float>(ambientC);
     DrivingModel model(p);
+    int offset = 0;
     if (starter) {
         model.halt();
         model.crank();
+        // Le conducteur tient la clé jusqu'à ce que le moteur prenne (le calculateur, au plus 10 s).
+        while (offset < 15000 && (model.cranking() || model.preheatLeft() > 0.0)) {
+            model.stepNeutral(0.001, 0.0);
+            ++offset;
+        }
     }
     ColdRun run;
     for (int i = 0; i < 15000; ++i) {
@@ -42,12 +52,16 @@ ColdRun coldRun(const Powertrain& base, double ambientC, bool starter) {
 
 }  // namespace
 
+// Démarreur (froid-démarreur) : chaque moteur a l'huile de son époque. Une monograde d'été (SAE 30, la Cadillac de 1930) n'a
+// pas de classe d'hiver : par −20 °C, elle est cent fois plus épaisse qu'une 5W-30, et ce moteur ne démarre pas (voir
+// demarreur_test.cpp) ; ni par −30 °C, posé au ralenti, il ne tient. Ces deux essais ne demandent ce froid qu'aux huiles classées
+// pour l'hiver.
 TEST_CASE("démarrage à froid : chaque préréglage démarre par -20 °C, tient son ralenti et part sans caler") {
     std::size_t count = 0;
     const Preset* all = presets(count);
     for (std::size_t k = 0; k < count; ++k) {
         const Powertrain p = all[k].powertrain();
-        if (p.electric) continue;
+        if (p.electric || p.engine.oilGrade == OilGrade::Sae30) continue;
         for (const bool starter : {true, false}) {
             CAPTURE(std::string(all[k].id));
             CAPTURE(starter);
@@ -66,7 +80,7 @@ TEST_CASE("démarrage à froid : par -30 °C aussi, moteur posé au ralenti") {
     const Preset* all = presets(count);
     for (std::size_t k = 0; k < count; ++k) {
         const Powertrain p = all[k].powertrain();
-        if (p.electric) continue;
+        if (p.electric || p.engine.oilGrade == OilGrade::Sae30) continue;
         CAPTURE(std::string(all[k].id));
         const ColdRun run = coldRun(p, -30.0, false);
         CHECK_FALSE(run.stalled);

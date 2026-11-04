@@ -2573,3 +2573,128 @@ No fingerprint changes: `Warm` and `Cold` take the same path as before, to the b
 Exposed: `parkedSeconds(StartTemp)`, `ThermalNetwork::soak(seconds, air)` and `place(coolant, oil, metal)`, `DrivingModel::startThermal()` (the chosen state, without changing the model), `soakThermal(seconds)` and `carryThermal(network)`; `rf_start_thermal`, `rf_soak`, `rf_rest_thermal`. The starter can read the coolant and oil at the start from `DrivingModel::thermal()` right after construction, and the parking time from `parkedSeconds` (−1 overnight) for its battery temperature.
 
 Listening remains to be done, where the fast idle changes with the stop: `revforge-render --out start_2h.wav --preset city_14 --start two_hours --ambient -30 --scenario start --seconds 20`, against `--start cold` and `--start half_hour`.
+
+## The starter, the battery and a cold engine catching
+
+Before, at −30 °C, the city car cranked at 250-290 rpm, as when warm, and caught after 0.82 s: the starter saw neither the cold battery nor the thick oil (the running engine's square-root law added only 30 % friction at cranking), and the engine caught at a fixed time. Now the lead-acid battery, the starter it feeds, the oil of the engine's era and every firing of the crank are computed. Code: `core/src/cold_start.cpp` (pure functions and `StartModel`), the cranking branch of `DrivingModel::updateEngine`, `EngineSound::setStart`; tests: `tests/demarreur_test.cpp`; constants rebuilt by `tools/cold_start_fits.py`.
+
+### Warm, nothing changes
+
+The original starter is calibrated on its reference battery: full, in the bay of a warm engine on a 20 °C day (32 °C). The real battery acts only through the gap between its current and that reference's at the same speed, `ΔT_pinion = k·(I − I_ref)`, both integrated step by step: warm at 20 °C, the gap is exactly zero, and torque, speed and sound are the original ones, bit for bit (of the 77 former fingerprints, only the two cold starts change). Above 80 °C oil, cranking also keeps its friction law and its synchronisation time, in seconds; and if every cycle fires for sure, spread included, the engine catches at the first firing, as before.
+
+### The battery
+
+A 12 V battery sized for the engine, as in a catalogue (Varta Blue Dynamic, from memory: 44 Ah 440 A, 60 Ah 540 A, 74 Ah 680 A, 95 Ah 800 A): `CCA = 300 + 120 A/L`, 1.25 times on a diesel, 300 to 1000 A; capacity `CCA/9` Ah.
+
+```
+V = E(SOC) − I·R(T, SOC) − V_K·x/(1 − x),   x = q/Q(T, SOC)       (Shepherd)
+E = 11.8 + 0.9·SOC     dq/dt = I − q/60 s     R(T) ∝ exp(706 K·(1/T − 1/255 K))     Q(T) ∝ exp(−1060 K·(1/T − 1/255 K))
+```
+
+- **Fitted to the EN 50342-1 test** at −18 °C: 7.5 V after 10 s at the rated current, then 6 V after 73 s at 60 % of it, after a 10 s rest; the knee reached at the end of the test (assumed), the falling charge included: `I·R = 5.06 V`, `V_K = 0.139 V`, `Q = 33.3 s × I`. A battery that just meets its rating; a new one does better.
+- **Cold.** Resistance follows the rating convention (BCI: the 0 °C current is 1.2 times the −18 °C one), 706 K: 30 % less at 25 °C than at −18 °C, 15 % more at −30 °C. The high-rate charge falls faster (55 % at −18 °C of the 25 °C one, the order of Battery University): this is what makes a battery that is made to insist run out. The Exide table reproduced everywhere (available power 100, 65, 40, 25 % at 27, 0, −18, −35 °C) is harsher: it probably mixes both.
+- **The electrolyte freezes** according to the charge: −60 °C full, −24 °C half charged, −7 °C empty (specific-gravity tables). Frozen, the battery has thirty times its resistance (assumed).
+- **The current drawn** lowers the charge; at rest the acid returns to the plates (60 s, assumed); with the engine running the alternator holds 14.2 V and returns what the battery accepts, four times its discharge resistance (assumed), at most a quarter of its capacity in amps. It costs the engine nothing: the calibrated friction already includes it.
+- **Its temperature.** After a night outside, the air's; warm engine, the bay's, 12 K above (like the air-filter bay air, assumed); in between, by how far the coolant has come (computed by the other subject, "the state at the start"). A mid or rear engine has its battery up front: at air temperature. Glow plugs draw 48 A (four times 12 A, assumed).
+
+### The starter
+
+A DC motor: `I = (E − V_p − k·ω)/(R_bat + R_cables + R_armature)`, `T = k·I` at the pinion, then the reduction and the ring gear (`starterTeeth`). The original line sets `k = E_ref/ω_free` and the total resistance `E_ref²/(4P)`, the one that gives the starter's power; cables are 1.5 mΩ, the armature the rest. Its copper (60 % of its resistance, assumed) follows 0.393 %/K: at −30 °C it almost makes up for the battery. The starter sits halfway between the air and the coolant (assumed). Cranking speed is the balance of this torque against the compressions (`compressionLoadNm`) and the friction of the oil at its temperature.
+
+### The oil of each era
+
+One Vogel law per grade, fitted on three points: KV40 and KV100 of a typical oil, and the SAE J300 CCS limit of its W class (0W: 6200 mPa·s at −35 °C, 10W and 15W: 7000 at −25 and −20 °C, 20W: 9500 at −15 °C), at the same margin as the reference 5W-30 (4250 mPa·s for 6600 at −30 °C). The single-grade SAE 30, with no winter class, takes the ASTM D341 (Walther) extrapolation at −10 °C. At −20 °C: 0W-20 1.0 Pa·s, 5W-30 1.7, 10W-40 2.9, 15W-40 4.5, 20W-50 10, SAE 30 19.
+
+| Preset | Oil | Why |
+|---|---|---|
+| `three_cyl_turbo` | 0W-20 | small 2010s boosted engine (VW 508, Ford WSS-M2C947) |
+| `retro_coupe` | 15W-40 | 1980s six, mineral oil |
+| `vr6_golf` | 10W-40 | 1990s (VW 500.00) |
+| `carb_twin_cam` | 20W-50 | 1970s twin cam with carburettors, mineral |
+| `v16_cadillac` | SAE 30 | a 1930 summer single grade; owners switched to a winter oil |
+| the others | 5W-30 | the reference, 1995 to 2015 |
+
+**Friction.** Above 80 °C every grade rubs like the reference, bit for bit: the warm engine is calibrated there, and its fingerprints do not move. Below, the shape of its own curve: running, the thermal subject's square-root law (Sandoval and Heywood), joined at 80 °C. **At cranking** cold oil weighs more: `(μ/μ₈₀)^0.86`, joined at 80 °C. The exponent is fitted to the Exide table (power an engine asks of its starter: 100, 155, 210, 350 % at 27, 0, −18, −35 °C), city car at 150 rpm; Petroff would give 1, and the square root 0.5 asked for only 129 % at −35 °C: this is what made cold starting so easy. The switch from one law to the other happens at once, when the engine catches.
+
+### Catching
+
+With oil below 80 °C, the ECU synchronises in revolutions, as many as the original start makes at its warm cranking speed (`referenceCrankRpm`): cranked half as fast, it waits twice as long. Then every cylinder passing its top dead centre tries its luck, from a generator of its own:
+
+- **Petrol.** A winter petrol of nine pure compounds (butane to decane, Antoine, shares set on the EN 228 winter class: E70 25 %, E100 48 %, E150 87 %, true vapour pressure at 37.8 °C 79 kPa). What reaches the cylinder (the injection's x-τ film, a carburettor's manifold film) evaporates at equilibrium in the trapped air, at the wall temperature (Raoult, Rachford-Rice with a non-condensing gas). At −30 °C, 13 % of an injection at 8 times stoichiometric; at 20 °C, 88 % at stoichiometric. The ECU aims at a rich vapour (φ 1.3, assumed), at most 20 times stoichiometric per cycle (assumed), and only compensates a warm engine's film: a cold engine's first cycles are 40 % lean. A choke, with no ECU, compensates ahead of time the share a dry manifold soaks up. The cycle fires if the vapour, spread by ±15 % from cycle to cycle (assumed, bounded law), falls between 0.6 (the lean limit measured at cranking by Shin et al., 1997) and 3 (light vapour, Zabetakis). The accelerator pump throws its petrol into the manifold at every pedal stroke.
+- **Diesel.** The end of compression is integrated from intake closing to top dead centre, with Hohenberg's wall losses (which keep an exchange with the piston almost still) and a ring leak fitted to the compression test (14.7 bar at 10.5:1, 31.6 bar at 18:1 at 250 rpm warm; manuals: 12 to 14 and 25 to 31 bar). At −30 °C and 150 rpm: 24 bar, 490 K, exponent 1.25; at 90 rpm, 16 bar, 406 K, exponent 1.18. The delay is the existing model's (Hardenberg and Hase); the injection misfires if it exceeds 30° (assumed, spread by ±20 %). The glow plug (metal: 1000 °C, 3 s) heats up to 850 °C below 20 °C coolant, about 5.8 s, and warms by a quarter of the gap the gas where the flame starts (assumed).
+- **A firing** releases half the charge's heat at its richness (cold walls, slow flame: assumed); added as pressure at top dead centre and expanded with 1.3, it gives back an Otto cycle's work. The engine has caught when it exceeds the pinion's free speed, or one and a half times its cranking speed (and at least 150 rpm: the driver hears it go, assumed); the driving model takes over, with the share of firing cycles as long as it has not reached idle. If it drops back, key held, the pinion cranks it again.
+
+**Two-stroke and rotary.** Battery, starter and oil apply to them; a two-stroke's oil is mixed in the petrol and its bearings roll: it keeps the reference law (a limit). The two-stroke goes through its carburettor and its port compressions, one firing per turn and per cylinder; the rotary through its injection, one per rotor and per shaft turn, its chambers expanding over 270°. Neither a rotary's flooding nor the petrol wetting a two-stroke's crankcase is modelled.
+
+### The key
+
+The starter turns as long as the key is held (`crank`, `releaseKey`). Let go before the engine has caught, the ECU keeps the starter going for 10 s at most (`kAutoCrankS`, the order of owner's manuals: no more than 10 s per attempt), like a push-button start: this is how a short click starts a warm engine as before. Past that, the start has failed: the engine stops, and one can try again. On the site, the restart button is held with the finger (or the D key); a lamp says "Glow plugs" and "Won't start", and a battery gauge shows its voltage and the starter current. On the command line, `--scenario start` prints the record (time to catch, cranking speed, misfires, lowest voltage, current, charge), with `--oil`, `--battery PCT`, `--crank-max S`, `--attempts N` (30 s rest between two) and `--crank FILE` (CSV every 10 ms).
+
+### Sound
+
+The starter receives the real current, as a gap to the reference battery (`setStarter`, `supply`): the brushes follow it, and the tooth contact follows the torque, which slackens at every firing. While cranking, every cylinder that opens fires at the share the model gives, drawn from a generator of its own (`setStart`, `startRandom`): a firing blows out its charge, a misfire only the compressed air. Warm, none of this runs. Measured (`--db 1`, against the former start): +0.3 dB at 20 °C, +2.2 dB at −30 °C (twice as much starter, and the idle taking off), −3.4 dB for the diesel at −20 °C (5.8 s of silent preheat).
+
+### Figures
+
+Cold start, everything at air temperature, battery full: `revforge-render --out none --preset X --scenario start --start cold --ambient T --seconds 14`. Mean cranking speed before the first firing, time from the key to the catch, misfires/firings while cranking, lowest voltage. | Preset | Oil | 20 °C | −10 °C | −20 °C | −30 °C |
+|---|---|---|---|---|---|
+| `city_14` | 5W-30 | 283 rpm, 0.99 s, 0/1, 9.5 V | 249, 1.13 s, 0/1, 8.6 V | 214, 1.30 s, 0/1, 8.3 V | 154, 1.80 s, 0/1, 7.8 V |
+| `four_cyl_sport` | 5W-30 | 262, 0.96 s, 0/1, 9.5 V | 225, 1.12 s, 0/1, 8.6 V | 187, 1.33 s, 0/1, 8.2 V | 121, 2.08 s, 0/1, 7.8 V |
+| `three_cyl_turbo` | 0W-20 | 293, 1.00 s, 0/1, 9.6 V | 261, 1.12 s, 0/1, 8.7 V | 229, 1.27 s, 0/1, 8.3 V | 172, 1.69 s, 0/1, 7.9 V |
+| `hot_hatch_turbo` | 5W-30 | 263, 0.96 s, 0/1, 9.5 V | 224, 1.12 s, 0/1, 8.6 V | 187, 1.34 s, 0/1, 8.2 V | 121, 2.05 s, 0/1, 7.8 V |
+| `hot_hatch_na` | 5W-30 | 263, 0.96 s, 0/1, 9.5 V | 223, 1.13 s, 0/1, 8.6 V | 183, 1.36 s, 0/1, 8.2 V | 113, 2.22 s, 0/1, 7.8 V |
+| `five_cyl_turbo` | 5W-30 | 247, 1.01 s, 0/1, 9.4 V | 209, 1.19 s, 0/1, 8.5 V | 174, 1.42 s, 0/1, 8.1 V | 116, 2.12 s, 0/1, 7.7 V |
+| `inline_six` | 5W-30 | 232, 0.99 s, 0/1, 9.4 V | 197, 1.15 s, 0/1, 8.5 V | 164, 1.38 s, 0/1, 8.1 V | 111, 2.01 s, 0/1, 7.7 V |
+| `v6_gt` | 5W-30 | 235, 0.98 s, 0/1, 9.4 V | 203, 1.12 s, 0/1, 8.5 V | 173, 1.31 s, 0/1, 8.1 V | 122, 1.84 s, 0/1, 7.7 V |
+| `flat_six` | 5W-30 | 226, 0.93 s, 0/1, 9.3 V | 198, 1.06 s, 0/1, 8.4 V | 169, 1.23 s, 0/1, 8.0 V | 121, 1.70 s, 0/1, 7.6 V |
+| `boxer_four_turbo` | 5W-30 | 250, 1.00 s, 0/1, 9.4 V | 216, 1.15 s, 0/1, 8.5 V | 182, 1.36 s, 0/1, 8.1 V | 119, 1.89 s, 0/1, 7.7 V |
+| `v8_cross_plane` | 5W-30 | 180, 0.95 s, 0/1, 9.3 V | 165, 1.05 s, 0/1, 8.4 V | 148, 1.16 s, 0/1, 8.0 V | 118, 1.44 s, 0/1, 7.6 V |
+| `v10_open` | 5W-30 | 181, 0.91 s, 0/1, 9.2 V | 164, 1.00 s, 0/1, 8.3 V | 147, 1.11 s, 0/1, 7.9 V | 116, 1.39 s, 0/1, 7.5 V |
+| `v12` | 5W-30 | 169, 0.93 s, 0/1, 8.9 V | 156, 1.02 s, 0/1, 8.0 V | 141, 1.12 s, 0/1, 7.6 V | 115, 1.35 s, 0/1, 7.2 V |
+| `diesel_four` | 5W-30 | 223, 0.98 s, 0/1, 9.7 V | 201, 6.81 s (preheat 5.7 s), 0/1, 8.5 V | 178, 6.97 s (5.8 s), 0/1, 8.1 V | 130, 8.17 s (5.8 s), 8/1, 7.7 V |
+| `retro_coupe` | 15W-40 | 238, 0.97 s, 0/1, 9.4 V | 192, 1.19 s, 0/1, 8.5 V | 149, 1.52 s, 0/1, 8.1 V | 89, 2.54 s, 0/1, 7.7 V |
+| `v8_supercharged` | 5W-30 | 171, 0.92 s, 0/1, 9.1 V | 156, 1.01 s, 0/1, 8.2 V | 141, 1.11 s, 0/1, 7.8 V | 113, 1.38 s, 0/1, 7.4 V |
+| `carb_twin_cam` | 20W-50 | 257, 0.98 s, 0/1, 9.5 V | 184, 1.36 s, 0/1, 8.6 V | 115, 2.17 s, 0/1, 8.2 V | 44, 5.65 s, 0/3, 7.8 V |
+| `twin_rotor_13` | 5W-30 | 271, 0.93 s, 0/1, 9.4 V | 258, 0.97 s, 0/1, 8.5 V | 245, 1.02 s, 0/1, 8.1 V | 217, 1.15 s, 0/1, 7.7 V |
+| `vr6_golf` | 10W-40 | 233, 0.99 s, 0/1, 9.4 V | 193, 1.18 s, 0/1, 8.5 V | 157, 1.44 s, 0/1, 8.1 V | 105, 2.15 s, 0/1, 7.7 V |
+| `w12_continental` | 5W-30 | 170, 0.95 s, 0/1, 9.2 V | 155, 1.05 s, 0/2, 8.3 V | 139, 1.15 s, 0/1, 7.9 V | 111, 1.41 s, 0/1, 7.5 V |
+| `w16_hypercar` | 5W-30 | 162, 0.99 s, 1/2, 8.3 V | 147, 1.04 s, 0/2, 7.3 V | 133, 1.15 s, 0/2, 6.9 V | 106, 1.40 s, 0/1, 6.5 V |
+| `v16_cadillac` | SAE 30 | 154, 1.07 s, 1/3, 8.7 V | 103, 1.46 s, 0/3, 7.7 V | 55 rpm, **does not start** (108 firings in 10 s), 7.3 V | 16 rpm, **does not start**, 6.8 V |
+| `two_stroke_triple` | 5W-30 | 310, 1.00 s, 0/1, 9.5 V | 271, 1.41 s, 3/2, 8.6 V | 232, 1.76 s, 3/4, 8.2 V | 169, 2.57 s, 10/7, 7.8 V |
+
+In short:
+
+| | 20 °C | −10 °C | −20 °C | −30 °C |
+|---|---|---|---|---|
+| Cranking speed, 5W-30 and 0W-20 | 160 to 310 rpm | 147 to 271 | 133 to 245 | 106 to 172 (rotary 217) |
+| Time to catch, petrol | 0.91 to 1.07 s | 0.97 to 1.46 s | 1.02 to 2.17 s | 1.15 to 2.57 s (5.65 s, 20W-50) |
+| Diesel (preheat included) | 0.98 s | 6.81 s | 6.97 s | 8.17 s, 8 misfires |
+| Lowest voltage | 8.3 to 9.7 V | 7.3 to 8.7 V | 6.9 to 8.3 V | 6.5 to 7.9 V |
+| Fails | — | — | Cadillac, SAE 30 (55 rpm) | Cadillac, SAE 30 (16 rpm) |
+
+| Measure | Model | Published | Source |
+|---|---|---|---|
+| Cold cranking speed | 106 to 172 rpm at −30 °C on 5W-30 or 0W-20 (the rotary, without skirts, 217); 44 to 105 on older oils | 60 to 150 rpm | common order of magnitude; minimum firing speed of a petrol engine 60 to 100 rpm (Bosch, from memory) |
+| Warm cranking speed | 160 to 310 rpm | 150 to 300 | same |
+| Power asked of the starter | ×1.16 at 0 °C, ×1.64 at −18 °C, ×4.0 at −35 °C (city car, 150 rpm) | ×1.55, ×2.1, ×3.5 | Exide table, reproduced by manuals and forums (seen quoted): the 0.86 exponent is fitted on it |
+| Voltage under the starter | 8.3 to 9.7 V at 20 °C, 6.5 to 7.9 V at −30 °C | at least 9.6 V at half the rated current (load test); 7.2 to 7.5 V at the rated current at −18 °C | EN 50342-1, SAE J537 (from memory) |
+| First vapour | 31 % of the injected fuel at 20 °C (5 times stoichiometric), 6 % at −30 °C | 15 to 20 % (first cycle, room temperature), under 10 % in deep cold | Shin et al., KSME Int. J. 1997; Lang and Cheng, SAE 2004-01-3057 (abstracts seen quoted) |
+| Lean limit at cranking | 0.6 (taken) | 0.6 | Shin et al. 1997 |
+| Start at −30 °C | 1.4 to 2.2 s, modern engines; the Cadillac on summer oil does not start | "about 5 s" (methanol V6, plasma ignition); below −30 °C a block heater is advised for direct injection | SAE 930331; GM TechLink (seen quoted) |
+
+What it shows: the city car cranks at 154 rpm at −30 °C instead of 250-290, catches in 1.8 s instead of 0.82, and its battery falls to 7.8 V. Older oils slow the crank far more than cold alone: the Alfa's 20W-50 cranks it at 44 rpm at −30 °C (5.7 s), the Cadillac's SAE 30 keeps it from going from −20 °C. The diesel catches quickly once preheated; at −30 °C and 130 rpm, a few injections misfire before the catch.
+
+### What is assumed, and what is missing
+
+- **Assumed**: the vapour the ECU aims at and its injection ceiling, the mixture spread (±15 %) and the delay spread (±20 %), the diesel window (30°), the heat a firing keeps (half), the glow plug's share (a quarter of the gap), the catch threshold (one and a half times the cranking speed, at least 150 rpm), the bay (12 K), the starter's copper share, the cables, the alternator's recharge, the margin of commercial oils under their J300 limit.
+- **The first cycle evaporates too well**: at equilibrium, everything that reaches the cylinder, when Shin et al. measure half as much; neither the film on the cold liner and piston nor the evaporation time is counted. So at −30 °C a modern engine catches from its first firings: the slow crank and the synchronisation revolutions make its struggle, more than misfires.
+- **A diesel's delay** (Hardenberg and Hase, the running diesel's model) is fitted to running engines, 700 to 900 K: at cranking its pressure term dominates and temperature weighs little. Preheating only lowers the minimum speed by a few tens of rpm (between 90 and 120 rpm at −30 °C, it only lights a share of the injections). With Wolfer's law, in exp(4650/T), temperature would dominate.
+- **The oil film does not heat** while cranking: the cranking law holds until the catch, the running one afterwards. An engine already firing every cycle but turning too slowly (the Cadillac on SAE 30 at −20 °C, 108 firings in 10 s) does not catch, where a heating film would probably help it.
+- Neither waxing diesel (a French winter diesel, filterable down to −15 or −20 °C, clogs its filter at −30 °C), nor direct injection at cranking (rail pressure not yet built: "slightly longer" according to GM), nor E10 (ethanol makes petrol more volatile than Raoult says), nor a starter's magnet (ferrite gives more flux when cold), nor its armature heating over a long crank.
+- **A test changed conditions**: the cold-start test (`cold_start_test.cpp`) judged the idle 2 s after the key; it now judges it 2 s after the catch, the start now taking its real time (5.8 s of preheat for the diesel). It no longer asks a summer single grade (the Cadillac) to start at −20 °C nor to hold at −30 °C when set running: it cannot (counter-check: with it, the test fails; with a 0W-20, it starts, `demarreur_test.cpp`). To be checked in review.
+
+### What is read, and what is exposed
+
+Read: the air temperature (`ambientC`), the coolant and oil when the key turns (`ThermalNetwork`, computed by the state at the start), the air pressure (atmosphere), the fuel (`FuelGrade`), the starter's compression ratio. Exposed: `batteryStartC`, `starterWindingC`, `batterySpecOf`, `batteryVolts`, `stepBattery`, `crankingViscosityExcess`, `runningViscosityExcess`, `oilViscosityPaS(OilGrade, T)`, `crankCompression`, `vaporizedShare`, `startFuelShare`, `petrolFiringChance`, `crankIgnitionDelayDeg`, `glowPreheatS`; in `DrivingModel`: `releaseKey`, `startFailed`, `batteryVolts`, `starterAmps`, `preheatLeft`, `start()` (the record).
+
+Listening remains to be done, on files: `revforge-render --out cold.wav --preset city_14 --start cold --ambient -30 --scenario start --seconds 8`, the preheated diesel (`--preset diesel_four --start cold --ambient -20 --scenario start --seconds 10`), the misfiring two-stroke (`--preset two_stroke_triple --start cold --ambient -30 --scenario start --seconds 8`), and the Cadillac that does not catch (`--preset v16_cadillac --start cold --ambient -20 --scenario start --seconds 14`).

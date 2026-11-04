@@ -74,6 +74,11 @@ enum class BoostControl { Spring, Electronic, ByGear };
 enum class Intercooler { AirToAir, AirToWater, None };
 /** Le cycle : quatre temps, ou deux (lumières, carter-pompe : voir two_stroke.hpp). Un rotatif garde le sien. */
 enum class EngineCycle { FourStroke, TwoStroke };
+/**
+ * L'huile, selon l'époque du moteur (SAE J300) : la 5W-30 de référence, sur laquelle le moteur chaud est calé, puis 0W-20,
+ * 10W-40, 15W-40, 20W-50 et un monograde SAE 30. Elle ne change que le moteur froid : voir cold_start.hpp.
+ */
+enum class OilGrade { Sae5W30, Sae0W20, Sae10W40, Sae15W40, Sae20W50, Sae30 };
 
 /**
  * Ce qui dépend de l'échappement en dehors de sa géométrie, calculée par ExhaustLine :
@@ -459,6 +464,8 @@ struct EngineConfig {
     int nitrousKw = 0;
     /** Architecture : le cycle. */
     EngineCycle cycle = EngineCycle::FourStroke;
+    /** L'huile du carter (démarreur) : la référence, 5W-30, ne change rien au moteur chaud. */
+    OilGrade oilGrade = OilGrade::Sae5W30;
 
     bool operator==(const EngineConfig&) const = default;
 

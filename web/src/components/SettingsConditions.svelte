@@ -3,7 +3,7 @@
   import SettingsSection from './SettingsSection.svelte';
   import Slider from './Slider.svelte';
   import { ambientAirOf, REFERENCE_K, REFERENCE_PA } from '../lib/atmosphere';
-  import { LIMITS, START_TEMPS, type EngineConfig } from '../lib/config';
+  import { LIMITS, OIL_GRADES, START_TEMPS, type EngineConfig } from '../lib/config';
   import type { Spec } from '../lib/engine';
   import { fixed, t, whole } from '../lib/i18n.svelte';
 
@@ -49,6 +49,13 @@
       {#if Number.isFinite(spec.startCoolantC)}
         <p class="air" data-testid="start-state">{t('builder.startState', { coolant: whole(spec.startCoolantC), oil: whole(spec.startOilC) })}</p>
       {/if}
+    </div>
+  {/if}
+  <!-- L'huile du carter : elle ne change que le moteur froid (cold_start.hpp). Un électrique n'en a pas. -->
+  {#if !config.electric}
+    <div data-testid="oil-grade">
+      <Choices label={t('builder.oilGrade')} options={OIL_GRADES} value={config.oilGrade} onchange={(oilGrade) => onapply({ oilGrade })} />
+      <p class="help">{OIL_GRADES.find((item) => item.value === config.oilGrade)?.help}</p>
     </div>
   {/if}
 </SettingsSection>

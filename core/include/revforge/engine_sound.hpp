@@ -5,6 +5,7 @@
 #include <memory>
 #include <vector>
 
+#include "revforge/cold_start.hpp"
 #include "revforge/combustion.hpp"
 #include "revforge/ecu.hpp"
 #include "revforge/cam.hpp"
@@ -83,7 +84,12 @@ public:
      */
     void setCharge(float fill);
     /** Le démarreur : alimenté ; pignon engagé dans la couronne. Le contact des dents fait le son. */
-    void setStarter(bool powered, bool meshed, float load = 0.5f);
+    void setStarter(bool powered, bool meshed, float load = 0.5f, float supply = 0.0f);
+    /**
+     * Le lancement d'un moteur froid (cold_start.hpp) : chaque cylindre qui s'ouvre explose à la part que dit le modèle, tirée de
+     * son propre générateur, à la charge de ses explosions. Inactif, ou sans cet appel, rien ne change au son.
+     */
+    void setStart(const StartDrive& drive);
     /** Vitesse de la voiture et glissement des pneus : vent, roulement, crissement. */
     void setRoad(float speedMs, float slipMs);
     /** La boîte et son état : ses dents sifflent et ses roues folles claquent. Sans cet appel, elle reste muette et ne coûte rien. */

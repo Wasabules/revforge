@@ -27,6 +27,7 @@
   import { AIR_FILTERS, BODIES, BOX_KINDS, CUSTOM_ID, DRIVES, EXHAUSTS, PRESETS, ROUTINGS, decodeConfig, encodeConfig, findPreset, strokeMm, type EngineConfig, type ShiftModeId, ANTI_LAGS, CAMSHAFTS, SUPERCHARGER_KINDS, FUEL_SYSTEMS, isRotary } from './lib/config';
   import { BOOST_CONTROLS, DIESEL_INJECTIONS, FUEL_GRADES, INTERCOOLERS, REV_LIMITERS, TRACTION_CONTROLS, TUNING_FIELDS, TURBO_LAYOUTS, VALVE_TIMINGS, tuningArgs } from './lib/config';
   import { SITE_START_TEMP, START_TEMPS } from './lib/config';
+  import { OIL_GRADES } from './lib/config';
   import { heated, updateHeat, wallCelsius } from './lib/heat';
   import { TelemetryHistory } from './lib/history';
   import { Readings } from './lib/instruments';
@@ -241,6 +242,22 @@
     return target.tagName === 'SELECT' || (target.tagName === 'INPUT' && event.code !== 'Space');
   };
 
+  /** La clé tenue au doigt : elle revient quand on le lève, où qu'il soit. */
+  let keyHeld = $state(false);
+  function turnKey(event: PointerEvent) {
+    if (event.button !== 0) return;
+    engine.crank();
+    keyHeld = true;
+    const release = () => {
+      keyHeld = false;
+      engine.releaseKey();
+      window.removeEventListener('pointerup', release);
+      window.removeEventListener('pointercancel', release);
+    };
+    window.addEventListener('pointerup', release);
+    window.addEventListener('pointercancel', release);
+  }
+
   function onKey(event: KeyboardEvent, down: boolean) {
     // Échap ferme le volet, même si une touche de conduite ne fait rien à cet instant.
     if (down && event.key === 'Escape' && panel) {
@@ -249,7 +266,9 @@
       return;
     }
     if (!running || typing(event)) return;
+    // D tourne la clé, tant qu'on la tient : relâchée avant que le moteur ait pris, le calculateur la tient encore un temps.
     if (down && !event.repeat && event.code === 'KeyD' && telemetry.stalled) engine.crank();
+    if (!down && event.code === 'KeyD') engine.releaseKey();
     if (driveMode === 'lap') {
       // Pas de pédale en balade : Espace ne fait pas défiler, mais active encore un bouton sélectionné.
       if (event.code === 'Space' && (event.target as HTMLElement).tagName !== 'BUTTON') event.preventDefault();
@@ -491,6 +510,7 @@
         part(c.altitudeM !== 0 && t('summary.altitude', { m: whole(c.altitudeM) })),
         // Ce qui diffère du défaut du site, une nuit dehors (le C++ et la CLI, eux, partent chauds).
         part(!c.electric && c.startTemp !== SITE_START_TEMP && t('summary.startTemp', { state: label(START_TEMPS, c.startTemp) })),
+        part(!c.electric && c.oilGrade !== '5w30' && t('summary.oil', { oil: label(OIL_GRADES, c.oilGrade) })),
       ].join(''),
       listener: typeof listener === 'number' ? t(POSITION_LABEL[listener]) : t('listener.free'),
       share: preset?.name ?? t('builder.custom'),
@@ -554,8 +574,12 @@
 
       <!-- Une place réservée : le voyant qui s'allume ne déplace pas la pédale sous le doigt. -->
       <div class="flags">
-        {#if running && telemetry.stalled}
+        {#if running && telemetry.startFailed && telemetry.stalled}
+          <p class="flag danger"><span>{t('common.state')}</span><strong data-testid="start-failed">{t('state.startFailed')}</strong></p>
+        {:else if running && telemetry.stalled}
           <p class="flag danger"><span>{t('common.state')}</span><strong data-testid="stalled">{t('state.stalled')}</strong></p>
+        {:else if running && telemetry.preheat > 0}
+          <p class="flag info"><span>{t('common.state')}</span><strong data-testid="preheat">{t('state.preheat')}</strong></p>
         {:else if running && telemetry.boxBroken}
           <p class="flag danger"><span>{t('common.state')}</span><strong data-testid="box-broken">{t('state.boxBroken')}</strong></p>
         {:else if running && telemetry.grinding > 5}
@@ -586,8 +610,9 @@
           <button type="button" class="start plate" class:on={running} disabled={!loaded || starting} onclick={toggleEngine} data-testid="start">
             {#if !loaded}{t('start.loading')}{:else if starting}{t('start.starting')}{:else if running}{t('start.stop')}{:else}{t('start.start')}{/if}
           </button>
-          {#if running && telemetry.stalled}
-            <button type="button" class="restart plate" onclick={() => engine.crank()} data-testid="restart">{t('start.restart')}</button>
+          {#if running && (telemetry.stalled || keyHeld)}
+            <!-- La clé : le démarreur tourne tant qu'on appuie ; un clic court laisse le calculateur le tenir jusqu'à la prise. -->
+            <button type="button" class="restart plate" onpointerdown={turnKey} onclick={(event) => { if (event.detail === 0) engine.crank(); }} data-testid="restart">{t('start.restart')}</button>
           {/if}
           {#if running && telemetry.boxBroken}
             <button type="button" class="restart plate" onclick={() => engine.repairGearbox()} data-testid="box-repair">{t('start.repair')}</button>

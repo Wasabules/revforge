@@ -21,7 +21,7 @@ public:
 
     void setup(const StarterSpec& spec, float sizeScale);
     /** Alimenté ; pignon engagé dans la couronne ; couple transmis par les dents, rapporté au calage. */
-    void setState(bool powered, bool meshed, float load);
+    void setState(bool powered, bool meshed, float load, float supply = 0.0f);
     /** `cranking` : le moteur ne brûle encore rien. `rpm` : régime du vilebrequin. */
     float sample(float rpm, bool cranking, float level);
 
@@ -45,6 +45,8 @@ private:
     double pinionTurns_ = 0.0;
     double motorTurns_ = 0.0;
     float load_ = 0.0f;
+    // Le courant en plus ou en moins de celui de la batterie de référence, en part du courant de calage : 0 moteur chaud.
+    float supply_ = 0.0f;
     float force_ = 0.0f;
     float forceCoef_ = 0.0f;
     float forceMean_ = 0.2f;
