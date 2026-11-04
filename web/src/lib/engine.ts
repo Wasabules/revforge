@@ -654,7 +654,9 @@ export class Engine {
     this.send({ type: 'shiftMode', mode: this.driving.shiftMode });
     this.send({ type: 'scenario', scenario: this.driving.scenario });
     this.setMode(mode);
+    // Un clic : la clé tournée puis lâchée ; le calculateur tient le démarreur jusqu'à la prise, 10 s au plus.
     this.send({ type: 'crank' });
+    this.send({ type: 'releaseKey' });
   }
 
   stop(): void {
