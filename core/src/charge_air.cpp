@@ -216,6 +216,25 @@ double stockCoolerOutletK(double hotK, double flowShare, double ambientK) {
 
 // ── Air-air ──
 
+namespace {
+
+/**
+ * La dernière conductance dimensionnée. Un compresseur mécanique redemande son faisceau à chaque pas de `DrivingModel`
+ * (`superchargerSpecOf`, cinq fois dans la boucle de `superchargerSpecFor`, puis une fois) : soixante pas de dichotomie à chaque
+ * fois rendaient la conduite d'un compresseur douze fois plus lente, son 0 à 100 de la fiche compris (5,8 s dans le WASM). La
+ * conductance ne dépend que du débit nominal et de l'air : le même calcul, une fois, au bit près.
+ */
+struct AirCoolerMemo {
+    bool valid = false;
+    double ratedFlow = 0.0;
+    double ambientK = 0.0;
+    double ambientPa = 0.0;
+    double ha = 0.0;
+};
+AirCoolerMemo g_airCooler;
+
+}  // namespace
+
 ChargeCoolerSpec airToAirCoolerFor(double ratedFlow, double ratedHotK, const ChargeConditions& c) {
     ChargeCoolerSpec s;
     s.kind = Intercooler::AirToAir;
@@ -224,12 +243,19 @@ ChargeCoolerSpec airToAirCoolerFor(double ratedFlow, double ratedHotK, const Cha
     s.faceM2 = kFacePerFlow * ratedFlow;
     s.coreJK = kCoreKgPerFlow * ratedFlow * kAluminiumCp;
     // Deux faces d'air, de même conductance au point de calcul : celle qui rend l'efficacité d'origine au nominal, à la vitesse de référence.
-    const double hot = ratedFlow * kAirCp;
-    const double cold = roadAirFlowKgS(s.faceM2, kChargeReferenceSpeedMs, c.ambientK, c.ambientPa) * kAirCp;
-    const double wanted = kCoolerEffectLow - kCoolerEffectFall;
-    const double ha = solveConductance([hot, cold](double side) { return slicesEffectiveness(slicesOf(side, side, hot, cold)); }, wanted, 1e5 * ratedFlow);
-    s.chargeHaW = ha;
-    s.roadHaW = ha;
+    AirCoolerMemo& memo = g_airCooler;
+    if (!memo.valid || memo.ratedFlow != ratedFlow || memo.ambientK != c.ambientK || memo.ambientPa != c.ambientPa) {
+        const double hot = ratedFlow * kAirCp;
+        const double cold = roadAirFlowKgS(s.faceM2, kChargeReferenceSpeedMs, c.ambientK, c.ambientPa) * kAirCp;
+        const double wanted = kCoolerEffectLow - kCoolerEffectFall;
+        memo.ha = solveConductance([hot, cold](double side) { return slicesEffectiveness(slicesOf(side, side, hot, cold)); }, wanted, 1e5 * ratedFlow);
+        memo.ratedFlow = ratedFlow;
+        memo.ambientK = c.ambientK;
+        memo.ambientPa = c.ambientPa;
+        memo.valid = true;
+    }
+    s.chargeHaW = memo.ha;
+    s.roadHaW = memo.ha;
     return s;
 }
 
@@ -292,7 +318,8 @@ namespace {
 
 /**
  * Le dernier échangeur dimensionné. Les courbes de la fiche redemandent le même à chaque régime, et un compresseur mécanique
- * à chaque pas (`superchargerSpecOf`) : deux dichotomies imbriquées, une fois suffit. Rien d'autre ne garde d'état ici.
+ * à chaque pas (`superchargerSpecOf`) : deux dichotomies imbriquées, une fois suffit. Rien d'autre ne garde d'état ici, que la
+ * conductance de l'air-air (`g_airCooler`, plus haut).
  */
 struct CoolerMemo {
     bool valid = false;

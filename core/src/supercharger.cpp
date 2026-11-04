@@ -235,7 +235,48 @@ Point pointAt(const SuperchargerSpec& spec, double rpm, double breathing, double
 
 // ── Le dimensionnement ──
 
+namespace {
+
+SuperchargerSpec sizeSupercharger(const EngineConfig& e, double breathingAtSizing, double breathingAtRated);
+
+/**
+ * Les derniers compresseurs dimensionnés. Le modèle de conduite en redemande à chaque pas, par `superchargerSpecOf` (le couple,
+ * la consommation, l'entraînement) et par le profil du son (`idleRpmOf`), avec deux moteurs différents : d'où quatre places.
+ * Fusion des finitions : depuis que le dimensionnement passe cinq fois par le faisceau ε-NTU, un pas de conduite d'un moteur à
+ * compresseur coûtait dix fois plus qu'à l'intégration (le 0 à 100 de la fiche du V8 à compresseur : 5,8 s dans le WASM).
+ * Le résultat ne dépend que de ce qu'on lui passe : le même calcul, au bit près, une fois par réglage.
+ */
+struct SizingMemo {
+    bool valid = false;
+    EngineConfig engine;
+    double atSizing = 0.0;
+    double atRated = 0.0;
+    SuperchargerSpec spec;
+};
+constexpr int kSizingMemos = 4;
+SizingMemo g_sizing[kSizingMemos];
+int g_sizingNext = 0;
+
+}  // namespace
+
 SuperchargerSpec superchargerSpecFor(const EngineConfig& e, double breathingAtSizing, double breathingAtRated) {
+    for (const SizingMemo& memo : g_sizing) {
+        if (memo.valid && memo.atSizing == breathingAtSizing && memo.atRated == breathingAtRated && memo.engine == e) return memo.spec;
+    }
+    const SuperchargerSpec spec = sizeSupercharger(e, breathingAtSizing, breathingAtRated);
+    SizingMemo& slot = g_sizing[g_sizingNext];
+    g_sizingNext = (g_sizingNext + 1) % kSizingMemos;
+    slot.engine = e;
+    slot.atSizing = breathingAtSizing;
+    slot.atRated = breathingAtRated;
+    slot.spec = spec;
+    slot.valid = true;
+    return spec;
+}
+
+namespace {
+
+SuperchargerSpec sizeSupercharger(const EngineConfig& e, double breathingAtSizing, double breathingAtRated) {
     SuperchargerSpec s;
     s.kind = e.superchargerKind;
     // Le volume avalé en deux tours d'arbre : tous les débits ci-dessous s'en déduisent avec rpm/120.
@@ -314,6 +355,8 @@ SuperchargerSpec superchargerSpecFor(const EngineConfig& e, double breathingAtSi
     s.bypassArea = fullFlow / (kDischarge * std::sqrt(2.0 * rho * kBypassRefPa));
     return s;
 }
+
+}  // namespace
 
 // ── L'équilibre ──
 
