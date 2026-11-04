@@ -70,6 +70,13 @@ Powertrain referencePowertrain();
 double steadyBoost(const Powertrain& p, double rpm);
 /** Le turbo que ce moteur monte. */
 TurboSpec turboSpecOf(const Powertrain& p);
+/**
+ * L'équilibre d'un turbo simple à pleine charge, à la pression que tient sa régulation dans l'air du jour : un ressort tient sa
+ * pression au-dessus de l'atmosphère ; un calculateur (`electronic`, `by_gear`) la pression absolue de sa calibration, que les roues
+ * bornent d'elles-mêmes. `boost` y est rapporté à la pression du réglage : plus de 1 en altitude, sous calculateur. Dans l'air de
+ * référence, ou sur un ressort, c'est `turboSteady(turboSpecOf(p), …)` au bit près. La fiche, comme la conduite.
+ */
+TurboSteady fullLoadTurboSteady(const Powertrain& p, double rpm);
 /** L'air à l'entrée du moteur ou du compresseur à pleine charge, derrière le filtre : sa température (K). */
 double intakeAirK(const Powertrain& p, double rpm);
 /** La perte de pression de ce filtre à pleine charge et à ce régime (Pa), boîte et prise d'air comprises. */

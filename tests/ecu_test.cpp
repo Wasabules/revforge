@@ -55,18 +55,24 @@ void floorInNeutral(Run& run, double seconds) {
 
 // ── La carte : avance et richesse ──
 
-TEST_CASE("calculateur : le couple selon l'avance suit la parabole des tables, et ne devient jamais négatif") {
+TEST_CASE("calculateur : le couple selon l'avance suit la corrélation d'Ayala et Heywood, et ne devient jamais négatif") {
     CHECK(sparkTorqueShare(0.0) == 1.0);
-    // 10° de retard : 2 % ; 20° : 9 % ; symétrique du côté avancé.
-    CHECK(sparkTorqueShare(10.0) == doctest::Approx(0.978).epsilon(0.002));
-    CHECK(sparkTorqueShare(20.0) == doctest::Approx(0.913).epsilon(0.002));
+    // 1 − 0,168·(√(1 + 0,004443·Δ²) − 1) : 0,9 % à 5°, 3,4 % à 10°, 11 % à 20° ; symétrique du côté avancé.
+    CHECK(sparkTorqueShare(5.0) == doctest::Approx(0.9909).epsilon(0.0005));
+    CHECK(sparkTorqueShare(10.0) == doctest::Approx(0.9661).epsilon(0.0005));
+    CHECK(sparkTorqueShare(20.0) == doctest::Approx(0.8880).epsilon(0.0005));
     CHECK(sparkTorqueShare(-10.0) == sparkTorqueShare(10.0));
-    CHECK(sparkTorqueShare(90.0) == 0.0);
+    CHECK(sparkTorqueShare(200.0) == 0.0);
+    // L'antipatinage la retourne : le retard qui laisse 90 % du couple redonne 90 %.
+    double retard = 0.0, fired = 1.0;
+    tractionActuation(0.9, kTractionMaxRetardDeg, retard, fired);
+    CHECK(fired == 1.0);
+    CHECK(sparkTorqueShare(retard) == doctest::Approx(0.9).epsilon(1e-9));
     // Le retard chauffe le gaz, l'avance non : le travail perdu y part dans les parois.
     CHECK(sparkExhaustGain(20.0) > sparkExhaustGain(10.0));
     CHECK(sparkExhaustGain(-10.0) == 0.0);
-    // Le même bilan que l'anti-lag à 55° : 0,375 × (1 − 0,346) × 0,8.
-    CHECK(sparkExhaustGain(55.0) == doctest::Approx(0.375 * (55.0 / 68.0) * (55.0 / 68.0) * 0.8));
+    // Le bilan de l'anti-lag : le rendement du cylindre, ce que l'étincelle perd, moins 20 % dans les parois.
+    CHECK(sparkExhaustGain(55.0) == doctest::Approx(0.375 * (1.0 - sparkTorqueShare(55.0)) * 0.8));
 }
 
 TEST_CASE("calculateur : l'avance du meilleur couple croît avec le régime et à faible charge") {
@@ -149,12 +155,13 @@ TEST_CASE("calculateur : la carte réglée change la courbe de couple, la consom
     const double gross = torqueCurveNm(stock, rpm) + friction;
     // λ 1 au lieu de 0,88 : 6 % de couple indiqué en moins. Les frottements, eux, restent.
     CHECK((torqueCurveNm(lean, rpm) + friction) / gross == doctest::Approx(lambdaTorqueShare(1.0) / lambdaTorqueShare(0.88)).epsilon(1e-6));
-    // Intégration : 10° de retard passent par la carte du cliquetis (combustion), qui part de la carte d'origine réelle, déjà en
-    // retard sur le meilleur couple : ils coûtent plus que les 2 % de la parabole autour du meilleur couple.
+    // 10° de retard passent par la carte du cliquetis (combustion). À 4500 tr/min, sa carte d'origine est au meilleur couple de
+    // son cycle : ils coûtent ce que dit la corrélation du calculateur, à un demi-point près. Un seul modèle, pas deux sommets.
     const KnockMap* knock = knockMapOf(retarded);
     REQUIRE(knock != nullptr);
+    CHECK(knock->at(rpm, 1.0).stockDeg == doctest::Approx(knock->at(rpm, 1.0).mbtDeg));
     CHECK((torqueCurveNm(retarded, rpm) + friction) / gross == doctest::Approx(knock->steadyTorqueShare(rpm)).epsilon(1e-6));
-    CHECK((torqueCurveNm(retarded, rpm) + friction) / gross < sparkTorqueShare(10.0));
+    CHECK((torqueCurveNm(retarded, rpm) + friction) / gross == doctest::Approx(sparkTorqueShare(10.0)).epsilon(0.005));
     // Même air, même carburant : l'étincelle retardée en tire moins, donc chaque kWh coûte plus.
     const double brake = 0.6 * torqueCurveNm(retarded, 3000.0);
     CHECK(brakeSpecificFuel(retarded, 3000.0, brake) > brakeSpecificFuel(stock, 3000.0, brake) * 1.015);

@@ -377,7 +377,8 @@ en sport, ralenti : 6 dB de trop à 125 Hz, 6 dB de moins à 500 Hz. Le comparat
 
 ## L'habitacle
 
-Trois groupes de sources (échappement, moteur, route et plancher) traversent chacun un filtre à phase minimale de 1024 points, calculé par cepstre à l'application
+Trois groupes de sources (échappement, moteur, route et plancher) traversent chacun un filtre à phase minimale de 1024 points à 48 kHz (21 ms, et autant de
+millisecondes à plus haute fréquence d'échantillonnage : à 192 kHz, 1024 points ne faisaient plus que 5 ms, et perdaient tout sous 200 Hz), calculé par cepstre à l'application
 d'une voiture, puis convolué. Ce filtre vient d'un bilan d'énergie sur dix parois (plancher, toit, deux portes, deux vitres, cloison, paroi arrière, pare-brise, vitre arrière), chacune
 avec sa loi de masse, sa fréquence de coïncidence pour le verre et sa part qui fuit (`cabinTransfer`). De près, chaque source voit plus fortement la paroi
 qu'elle regarde. Les supports moteur font entrer les bas ordres directement, sans passer par l'air (`structureGain`). La cabine y ajoute ses modes et sa
@@ -391,7 +392,9 @@ courte réverbération.
 | Confort | 10 | 13 | 17 | 0,008 % | 30,5 | 66,3 |
 | Luxe | 15 | 20 | 26 | 0,002 % | 26,5 | 62,1 |
 
-Les vitres ouvertes transforment la vitre du conducteur en trou (30 % de fuite) et font monter le bruit de route, par les passages de roues : +8,7 dB(A) sur une balade, réel +5 en route.
+Les vitres ouvertes transforment la vitre du conducteur en trou (30 % de fuite) et font monter le bruit de route, par les passages de roues : +8,7 dB(A) sur une balade, réel +5 en route. Au ralenti, sur le 2.0 atmosphérique à ligne sport, +2,4 dB(A) (43,7 → 46,1) : le bourdonnement de 80 à 160 Hz, qui passe par la caisse, reste devant ; à 1 kHz, +12 dB. Ce niveau bat de ±2 dB avec le ralenti, qui respire en 2,5 s environ.
+
+**La fréquence d'échantillonnage.** Le site calcule le son à 48 kHz quelle que soit la carte son (`SIMULATION_RATE`, engine.ts) : le simulateur n'y est pas invariant. Ses bruits filtrés gardent leur variance par échantillon, et perdent 6 dB de densité quand la fréquence quadruple ; à 192 kHz (celle que prend Chromium sans fenêtre), le ralenti dans l'habitacle passait de 43,7 à 46,5 dB(A), vitres ouvertes ne gagnaient plus que +0,7 dB, et le test des vitres échouait une fois sur deux. La CLI rend toujours à `--rate`, 44,1 kHz par défaut.
 
 **L'emplacement du moteur** (`placement`) change la place du bloc et de l'admission, celle du siège et de la cloison, la longueur de la ligne (environ 0,4 fois en central, 0,25 fois
 en arrière), et la part de la masse sur l'avant : ces effets sont liés. Dans l'habitacle, le bloc et l'admission gagnent de 3 à 5 dB derrière les sièges. **À plein gaz, sur une ligne
@@ -1238,8 +1241,8 @@ turbo perd deux fois moins : la pression relative revient.
 À 4000 tr/min, pleine charge, 2.0 turbo à 1,3 bar : rapport de pression 2,33 au niveau de la mer, 2,49 à 1000 m, 2,69 à
 2000 m, 2,91 à 3000 m ; l'arbre passe de 160 700 à 168 500, 177 100 puis 186 400 tr/min. À 5500 tr/min et 3000 m, la roue est
 à 99,8 % de sa vitesse limite (`tipLimit`) ; à 4500 m, le calculateur ouvre la soupape pour la protéger, et la pression
-demandée n'est plus tenue (82 %). C'est aussi ce qui fait reculer de 4150 à 2800 tr/min la puissance maximale du diesel à
-3000 m.
+demandée n'est plus tenue (82 %). À 3000 m, la puissance maximale du diesel recule de 4150 à 3900 tr/min (83,0 kW au lieu de
+113,5) ; elle reculait à 2800 tr/min tant que l'équilibre gardait la soupape fermée aux roues limites (voir « En altitude, la fiche »).
 
 Le retard, régime tenu, de 20 % à 100 % de remplissage, jusqu'à 90 % de la pression demandée : 1,21 s au niveau de la mer,
 1,41 s à 1000 m, 1,66 s à 2000 m, 1,96 s à 3000 m (à 2500 tr/min) ; 0,59, 0,67, 0,77 et 0,89 s à 4000 tr/min. En quatrième
@@ -1249,7 +1252,7 @@ moins de gaz.
 Une régulation électronique qui viserait la même pression **absolue** qu'au niveau de la mer (sujet « pression », qui lit
 `TurboSpec::ambientPa`) demanderait plus encore : rapport 3,38 à 3000 m et 4000 tr/min, la roue à sa limite dès 2000 m en haut
 du compte-tours et dès 3000 m à 4000 tr/min, et un retard de 2,17 s au lieu de 1,96 à 2500 tr/min. Ces chiffres sont calculés
-en remplaçant `targetBar` par la pression absolue moins l'atmosphère du jour ; rien de cela n'est branché.
+en remplaçant `targetBar` par la pression absolue moins l'atmosphère du jour : la fiche le fait maintenant (`fullLoadTurboSteady`).
 
 ### La route et la consommation
 
@@ -1458,8 +1461,8 @@ le claquement (`kDieselKnock`) et le bruit de combustion du bloc (loi d'Anderton
 
 **La chambre.** `endGasCycle` déroule une combustion à une zone, degré par degré, de la fermeture de l'admission (50° après le point
 mort bas, le calage d'origine du son) à l'ouverture de l'échappement : bielle de 3,2 fois le rayon de manivelle, γ = 1,3, combustion
-de Wiebe (a = 5, m = 2) sur 45° après un noyau de flamme de 0,35 ms, et 80 % de la chaleur du carburant au gaz (le reste aux parois et
-aux imbrûlés). La charge arrive du collecteur, réchauffée par les parois (20 % de l'écart à l'eau plus 40 K, moins quand elle est
+de Wiebe (a = 5, m = 2) sur 45° après un noyau de flamme de 0,35 ms, 95 % de l'énergie de l'air libérés, et les parois qui en reprennent
+leur part pas à pas (voir « Le meilleur couple », plus bas). La charge arrive du collecteur, réchauffée par les parois (20 % de l'écart à l'eau plus 40 K, moins quand elle est
 dense : h ∝ (ρv)^0,8), refroidie par la vaporisation, et mêlée à 4 % de gaz résiduels à 1000 K. Sa masse est celle que donne le
 remplissage du modèle de couple (0,92 × la respiration), à la température qu'elle a vraiment. Ce cycle donne, à 3000 tr/min et pleine
 charge, 60 bar au plus et 12 bar de pression moyenne indiquée sur un atmosphérique de 10,5:1 : l'ordre de grandeur des vrais.
@@ -1477,8 +1480,40 @@ Le cycle moyen cliquette si l'intégrale atteint 1 avant que la flamme n'ait br�
 **La carte.** Le calcul est trop lent pour chaque pas de 1 ms : `KnockMap` le fait une fois par réglage, sur 10 régimes et
 15 avances, et le garde (`knockMapOf`, quatre moteurs à la fois, sans allocation). La pression n'y est pas tabulée : à température
 égale, toute la trace de pression est proportionnelle à celle de la fermeture, et l'intégrale suit sa puissance 1,7. À une pression de
-charge `k` fois celle de la pleine charge, la limite est l'avance où l'intégrale vaut `k^−1,7`. Le meilleur couple (MBT) brûle la
-moitié du mélange 8° après le point mort haut (Heywood).
+charge `k` fois celle de la pleine charge, la limite est l'avance où l'intégrale vaut `k^−1,7`. Le meilleur couple (MBT) est le sommet
+du travail du cycle, ci-dessous.
+
+**Le meilleur couple, et ce que coûte un écart.** Le cycle perd sa chaleur aux parois pas à pas, de l'étincelle à l'ouverture de
+l'échappement, par la corrélation de Woschni (1967 ; Heywood, éq. 12.19) :
+
+```
+h = 3,26 · B^−0,2 · p^0,8 · T^−0,55 · w^0,8          W/m²K, B en m, p en kPa, T en K
+w = 2,28 · v_p + 3,24·10⁻³ · (V_d·T₁ / (p₁·V₁)) · (p − p_entraîné)
+dQ_parois = h · A · (T − T_paroi) · dt,  A = πB²/2 + πB·x,  T_paroi = T_eau + 60 K (supposé)
+```
+
+La combustion libère 95 % de l'énergie de l'air (Heywood, ch. 4 : 95 à 98 % de rendement de combustion, moins les imbrûlés des
+interstices ; supposé), au lieu des 80 % nets d'avant, qui ramassaient parois et imbrûlés en un seul chiffre. La compression reste
+adiabatique (la charge y est d'abord plus froide que les parois, puis plus chaude : un petit bilan, le même à toute avance). Un rotatif
+prend le cylindre carré de sa chambre, faute de mieux pour l'aire de ses parois. Le **meilleur couple** de la carte est le sommet du
+travail de ce cycle (`KnockMap::rowBest`, la parabole de `rowWork` par les trois points les plus hauts) ; la carte d'origine part de
+celui du moteur d'origine. Ce sommet tombe de lui-même là où le dit Heywood (la moitié du mélange brûlée 8 à 10° après le point mort
+haut) : 11 à 12° à 1500 tr/min, 7 à 8° à 3000, 5° à 6000, plus tard à bas régime, où les parois ont le temps de prendre leur chaleur.
+Sans les parois, il tombait au point mort haut, 9° plus tôt que le critère d'avant.
+
+| Retard face au meilleur couple | 5° | 10° | 20° | 25° |
+|---|---|---|---|---|
+| Le cycle (atmosphériques et turbos à 9,5-10,5:1, 1500 à 6000 tr/min) | 0,75 à 0,97 % | 2,9 à 3,6 % | 10,3 à 12,2 % | 15,2 à 17,6 % |
+| Ayala, Gerty et Heywood (SAE 2006-01-0229), en retard de la combustion | 0,9 % | 3,4 % | 11,2 % | 15,9 % |
+| CRC CM-137-11-1b (éq. 2, les mêmes mesures rapportées à l'étincelle) | 1,3 % | 5,1 % | 20,5 % | |
+
+Le cycle brûle à durée fixe : son étincelle et sa combustion reculent ensemble, et il retrouve la corrélation d'Ayala (sur la phase de
+la combustion, toutes charges, régimes et richesses) à un point près jusqu'à 15°, deux à 25°. Rapportées à l'étincelle, les mêmes mesures
+coûtent un peu plus (CRC) : une étincelle tardive brûle aussi plus lentement, dans une charge qui se détend, et le modèle ne le fait pas.
+Le calculateur prend cette corrélation, `1 − 0,168·(√(1 + 0,004443·Δ²) − 1)`, là où il n'a pas de carte (voir « Le calculateur ») ; un
+test la tient au cycle. La Cadillac à 5,35:1 est moins sensible (sa détente dépend moins de l'instant où le gaz brûle), le rotatif aussi
+en degrés d'arbre : ni l'un ni l'autre n'entre dans le domaine des mesures (9,8 à 13,4:1). Ces pertes aux parois rapprochent aussi la
+limite de cliquetis de 3 à 5° : la combustion libère plus de chaleur pendant que les gaz frais attendent.
 
 **Un cycle n'est pas l'autre.** La phase de combustion varie d'un cycle à l'autre (supposé : 1,5° d'écart type, une cloche bornée à
 trois écarts types, somme de trois tirages uniformes). La **limite de cliquetis** est l'avance où un cycle sur cinquante cliquette,
@@ -1491,34 +1526,37 @@ quand on change le taux ou le carburant : c'est la carte du calculateur, pas cel
 
 | Préréglage | Taux | Marge la plus faible | à | Retard le plus grand face au MBT | à | MBT atteint dès |
 |---|---|---|---|---|---|---|
-| `city_14` | 10,5 | 2,0° | 1000 tr/min | 9,4° | 1000 tr/min | 2250 tr/min |
-| `four_cyl_sport` | 10,5 | 2,0° | 1000 | 10,1° | 1000 | 2250 |
-| `three_cyl_turbo` | 9,5 | 2,0° | 1000 | 22,1° | 2000 | 6000 |
-| `hot_hatch_turbo` | 9,5 | 2,0° | 1000 | 22,3° | 2250 | 6500 |
-| `hot_hatch_na` | 10,5 | 2,0° | 1000 | 10,0° | 1000 | 2250 |
-| `five_cyl_turbo` | 9,5 | 2,0° | 1000 | 24,3° | 2250 | jamais |
-| `inline_six` | 10,5 | 2,0° | 1000 | 10,0° | 1000 | 2250 |
-| `v6_gt` | 10,5 | 2,0° | 1000 | 10,6° | 1000 | 2500 |
-| `flat_six` | 10,5 | 2,0° | 1000 | 9,8° | 1000 | 2250 |
-| `boxer_four_turbo` | 9,5 | 2,0° | 1000 | 20,7° | 2250 | 6500 |
-| `v8_cross_plane` | 10,5 | 2,0° | 1000 | 11,1° | 1000 | 2500 |
-| `v10_open` | 10,5 | 2,0° | 1000 | 8,0° | 1000 | 2000 |
-| `v12` | 10,5 | 2,0° | 1000 | 8,7° | 1000 | 2000 |
-| `retro_coupe` | 10,5 | 2,0° | 1000 | 10,2° | 1000 | 2500 |
-| `v8_supercharged` | 9,5 | 2,0° | 1000 | 17,6° | 1000 | 5000 |
-| `carb_twin_cam` | 10,5 | 2,0° | 1000 | 10,6° | 1000 | 2500 |
-| `twin_rotor_13` | 9,4 | 2,0° | 1000 | 20,6° (d'arbre) | 1000 | 2500 |
+| `city_14` | 10,5 | 2,0° | 1000 tr/min | 4,7° | 1000 tr/min | 3000 tr/min |
+| `four_cyl_sport` | 10,5 | 2,0° | 1000 | 6,5° | 1000 | 3500 |
+| `three_cyl_turbo` | 9,5 | 2,0° | 1000 | 25,2° | 2000 | jamais |
+| `hot_hatch_turbo` | 9,5 | 2,0° | 1000 | 26,3° | 2250 | jamais |
+| `hot_hatch_na` | 10,5 | 2,0° | 1000 | 6,8° | 1000 | 3500 |
+| `five_cyl_turbo` | 9,5 | 2,0° | 1000 | 28,5° | 2250 | jamais |
+| `inline_six` | 10,5 | 2,0° | 1000 | 6,6° | 1000 | 3500 |
+| `v6_gt` | 10,5 | 2,0° | 1000 | 7,0° | 1000 | 3500 |
+| `flat_six` | 10,5 | 2,0° | 750 | 6,7° | 750 | 3250 |
+| `boxer_four_turbo` | 9,5 | 2,0° | 750 | 24,5° | 2250 | jamais |
+| `v8_cross_plane` | 10,5 | 2,0° | 750 | 8,4° | 750 | 3750 |
+| `v10_open` | 10,5 | 2,0° | 1000 | 4,5° | 1000 | 2750 |
+| `v12` | 10,5 | 2,0° | 1000 | 4,4° | 1000 | 3000 |
+| `retro_coupe` | 10,5 | 2,0° | 1000 | 5,7° | 1000 | 3000 |
+| `v8_supercharged` | 9,5 | 2,0° | 750 | 17,6° | 1500 | 6000 |
+| `carb_twin_cam` | 10,5 | 2,0° | 1000 | 5,5° | 1000 | 3000 |
+| `twin_rotor_13` | 9,4 | 2,0° | 750 | 9,6° (d'arbre) | 750 | 2750 |
+| `vr6_golf` | 10,5 | 2,0° | 1000 | 6,7° | 1000 | 3000 |
+| `w12_continental` | 9,5 | 2,0° | 1000 | 15,8° | 2250 | 5750 |
+| `w16_hypercar` | 9,5 | 2,0° | 1000 | 23,3° | 2250 | jamais |
 | `diesel_four`, `electric` | | sans étincelle | | | | |
 
 Pleine charge stabilisée, de 1000 tr/min au régime maximal, par `revforge-render --out none --preset X --scenario steady --seconds 1 --knock 1`,
 qui écrit la carte régime par régime ; le test « aucun préréglage ne cliquette à ses réglages » le vérifie de 50 en 50 tr/min, depuis le
-ralenti. Les atmosphériques sont limités sous 2000 à 2500 tr/min, ce que font les vrais à 10,5:1 au SP95 ; les turbos de 9,5:1 à 1,2 à
-1,5 bar le sont jusqu'en haut, avec une demi-combustion vers 29° après le point mort haut à 2000 tr/min sur la GTI, l'ordre de grandeur
+ralenti. Les atmosphériques sont limités sous 2750 à 3750 tr/min, ce que font les vrais à 10,5:1 au SP95 ; les turbos de 9,5:1 à 1,2 à
+1,5 bar le sont jusqu'en haut, avec une demi-combustion vers 33° après le point mort haut à 2250 tr/min sur la GTI, l'ordre de grandeur
 des moteurs suralimentés à 20 bar de pression moyenne (de mémoire : 25 à 35°, sans source relue).
 
-Ce que le modèle donne, à 1500 tr/min pleine charge sur la citadine : −4,2° par point de compression, +0,69° par point d'octane,
-−0,85° pour 10 °C d'air en plus. Soit environ 6 points d'octane par point de compression, quand la règle des motoristes en dit 3 à 5 (de
-mémoire, sans source relue) : le modèle est sans doute un peu trop sensible au taux.
+Ce que le modèle donne, à 1500 tr/min pleine charge sur la citadine : −3,4° par point de compression, +0,65° par point d'octane,
+−0,71° pour 10 °C d'air en plus. Soit environ 5 points d'octane par point de compression, quand la règle des motoristes en dit 3 à 5, et
+la CRC (CM-137-11-1b) 4 à 5 : avant les pertes aux parois pas à pas, le modèle en disait 6.
 
 **Le capteur.** Chaque cliquetis détecté retire 1,5° à son cylindre, l'avance revient de 1° par seconde quand il se tait, jamais plus de
 20° retirés (supposés, ordres de grandeur des calculateurs de série). En moyenne : `dρ/dt = 1,5° × part des cycles qui cliquettent ×
@@ -1630,11 +1668,22 @@ Le calculateur (`core/src/ecu.cpp`, `ecu.hpp`) a deux parties. Sa **carte**, l'a
 
 ### La carte d'avance
 
-Le couple indiqué suit une parabole autour du meilleur couple (MBT) : `T/T_MBT = 1 − (Δ/68°)²`, Δ l'écart au MBT en degrés de vilebrequin, à peu près symétrique de part et d'autre (Heywood, *Internal Combustion Engine Fundamentals*, chap. 9 : une courbe plate au sommet, quelques pour cent à ±10°). C'est la parabole de l'anti-lag : 2,2 % à 10°, 8,7 % à 20°. **Supposé :** la carte d'origine est au MBT. Le cliquetis (sujet « combustion ») l'en éloignera : `knockRetardDeg` est déjà un paramètre de `demandedAdvanceDeg`, `mapRetardDeg` et `ecuFullLoadShare`, à 0 tant qu'il n'est pas branché. Le décalage `--advance` de ±10° ne peut donc ici que perdre du couple ; l'avance ne gagne qu'en sortant d'un cliquetis. Intégration : sur un quatre-temps à étincelle, la carte d'origine et la part de couple du décalage viennent maintenant de la carte du cliquetis (voir « Quand les réglages se rencontrent (2) ») ; la parabole reste celle du carburant, de la chaleur du gaz, d'un diesel et d'un deux-temps.
+Le couple selon l'avance vient d'un seul modèle : le cycle de la carte du cliquetis, avec ses pertes aux parois pas à pas (voir « Le
+meilleur couple, et ce que coûte un écart », dans « La combustion »). Il place le meilleur couple (MBT) au sommet de son travail, la moitié
+de la combustion 5 à 12° après le point mort haut, et il coûte 0,8 à 1,0 % à 5°, 2,9 à 3,6 % à 10°, 10 à 12 % à 20°. Là où le calculateur
+n'a pas de carte construite (le pas du launch control, de l'antipatinage et du rupteur, le rendement de la consommation, la chaleur du gaz),
+`sparkTorqueShare` prend la corrélation publiée que ce cycle retrouve, celle d'Ayala, Gerty et Heywood (SAE 2006-01-0229) :
+`T/T_MBT = 1 − 0,168·(√(1 + 0,004443·Δ²) − 1)`, Δ l'écart au meilleur couple en degrés de vilebrequin : 0,9 % à 5°, 3,4 % à 10°, 11 % à
+20°, quadratique près du MBT et presque droite au-delà. Un test les tient l'un à l'autre (un point jusqu'à 15°, deux à 25°). Avant, une
+parabole `1 − (Δ/68°)²` (2,2 % à 10°) disait le coût, et le cycle plaçait son sommet 9° plus tôt que le critère du calculateur : +6°
+gagnaient 1,6 %. Au défaut, l'avance demandée reste la carte d'origine, et rien ne se calcule. L'anti-lag garde sa parabole pour ses 40 et
+55° de retard, au-delà des mesures (25 à 30°) et de ce que le cycle sait faire (une combustion si tardive brûle mal, ce qu'il ne compte
+pas).
 
-L'avance demandée, en degrés avant le point mort haut (`demandedAdvanceDeg`), part de `mbtAdvanceDeg` : l'étincelle qui place la moitié de la combustion vers 8° après le point mort haut. De l'étincelle à cette moitié, 34° à 3000 tr/min plein gaz, × (N/3000)^0,25 (la turbulence suit le piston : la durée en degrés croît peu), × (1 + 0,6 (1 − remplissage)) à faible charge. Il en sort 26° à 3000 tr/min plein gaz, 32° à 6000, 31° à mi-charge à 1500 ; des cartes publiées d'atmosphériques donnent 25 à 35° à pleine charge. Ordre de grandeur, supposé : rien d'autre ne le lit encore que la fiche.
+Sur un quatre-temps à étincelle, l'avance demandée est celle de la carte d'origine de la carte du cliquetis, plus le décalage. Sur un
+deux-temps ou un diesel, qui n'en ont pas, la fiche prend `demandedAdvanceDeg`, qui part de `ecuMbtAdvanceDeg` : l'étincelle qui place la moitié de la combustion vers 8° après le point mort haut. De l'étincelle à cette moitié, 34° à 3000 tr/min plein gaz, × (N/3000)^0,25 (la turbulence suit le piston : la durée en degrés croît peu), × (1 + 0,6 (1 − remplissage)) à faible charge. Il en sort 26° à 3000 tr/min plein gaz, 32° à 6000, 31° à mi-charge à 1500 ; des cartes publiées d'atmosphériques donnent 25 à 35° à pleine charge. Ordre de grandeur, supposé : seule la fiche d'un deux-temps ou d'un diesel le lit.
 
-Le travail que le piston ne reçoit pas part dans le gaz, moins 20 % dans les parois : `ΔQ_gaz = η_i (1 − T/T_MBT) × 0,8` de l'énergie du carburant, η_i = 0,405 (0,375 suralimenté), le rendement de `ConsumptionModel`. Du côté avancé, ce travail part dans les parois, pas dans le gaz. **Limite :** près du MBT, la hausse de température d'échappement est sans doute sous-estimée, puisque la baisse des pertes aux parois avec le retard n'est pas comptée (Heywood, chap. 12) : +17 K pour 10° de retard à pleine charge, quand on cite souvent quelques dizaines.
+Le travail que le piston ne reçoit pas part dans le gaz, moins 20 % dans les parois : `ΔQ_gaz = η_i (1 − T/T_MBT) × 0,8` de l'énergie du carburant, η_i = 0,405 (0,375 suralimenté), le rendement de `ConsumptionModel`. Du côté avancé, ce travail part dans les parois, pas dans le gaz. **Limite :** près du MBT, la hausse de température d'échappement est sans doute sous-estimée, puisque la baisse des pertes aux parois avec le retard n'est pas comptée (Heywood, chap. 12) : +27 K pour 10° de retard à pleine charge, quand on cite souvent quelques dizaines.
 
 ### La richesse
 
@@ -1644,27 +1693,27 @@ L'échauffement du gaz suit la température de flamme adiabatique d'un hydrocarb
 
 ### Ce que la carte change
 
-Le couple de pleine charge (`fullLoadTorqueNm`, donc les courbes, la fiche et la conduite) est multiplié hors frottements : `(T + T_f) × part − T_f`. La consommation suit l'air : à air égal, une étincelle décalée tire moins de chaque gramme, donc le rendement de `ConsumptionModel` est multiplié par la même part, et la richesse règle ce qu'il faut de carburant par gramme d'air. La turbine reçoit le gaz plus chaud ou plus froid (`TurboSpec::ecu`, le turbo restant celui d'origine), et le son ouvre la soupape sur autant de pression en plus (`evoRatio`, le même bilan que l'anti-lag).
+Le couple de pleine charge (`fullLoadTorqueNm`, donc les courbes, la fiche et la conduite) est multiplié hors frottements : `(T + T_f) × part − T_f`. La consommation suit l'air : à air égal, une étincelle décalée tire moins de chaque gramme, et la richesse règle ce qu'il faut de carburant par gramme d'air. Sur un quatre-temps à étincelle, le décalage passe par la carte du cliquetis, après l'air : le couple que la conduite donne à la consommation suit déjà cet air, et le rendement de `ConsumptionModel` ne le compte plus une seconde fois (il le faisait depuis l'intégration : 9,80 L/100 au lieu de 9,46 à −10°) ; la fiche retrouve l'air par la part de la carte. La turbine reçoit le gaz plus chaud ou plus froid (`TurboSpec::ecu`, le turbo restant celui d'origine), et le son ouvre la soupape sur autant de pression en plus (`evoRatio`, le même bilan que l'anti-lag).
 
 Mesuré sur `hot_hatch_na` (2,0 L, 7300 tr/min) ; consommation en WLTC, à chaud :
 
 | | Origine | Avance −10° | −5° | +5° | λ 1,0 | λ 0,80 | λ 0,75 | λ 1,1 |
 |---|---|---|---|---|---|---|---|---|
-| Couple maximal (Nm) | 194,1 | 189,2 | 192,9 | 192,9 | 179,7 | 194,0 | 191,3 | 165,5 |
-| Puissance maximale (kW) | 117,8 | 114,5 | 117,0 | 117,0 | 108,2 | 117,7 | 115,9 | 98,6 |
-| g/kWh à la puissance maximale | 304 | 313 | 306 | 306 | 291 | 334 | 362 | 290 |
-| Gaz à la sortie des cylindres, puissance maximale | 863 °C | +17 K | +4 K | 0 | +20 K | −41 K | −69 K | −18 K |
-| WLTC (L/100 km) | 9,07 | 9,30 | 9,13 | 9,13 | 9,05 | 9,07 | 9,07 | 9,03 |
-| 0-100 km/h (s) | 8,72 | 8,82 | 8,75 | 8,75 | 9,14 | 8,72 | 8,80 | 9,60 |
+| Couple maximal (Nm) | 194,1 | 187,1 | 192,3 | 192,3 | 179,7 | 194,0 | 191,3 | 165,5 |
+| Puissance maximale (kW) | 117,8 | 113,3 | 116,6 | 116,6 | 108,2 | 117,7 | 115,9 | 98,6 |
+| g/kWh à la puissance maximale | 304 | 316 | 307 | 307 | 291 | 334 | 362 | 290 |
+| Gaz à la sortie des cylindres, puissance maximale | 863 °C | +27 K | +7 K | 0 | +20 K | −41 K | −69 K | −18 K |
+| WLTC (L/100 km) | 9,07 | 9,46 | 9,17 | 9,18 | 9,05 | 9,07 | 9,07 | 9,03 |
+| 0-100 km/h (s) | 8,72 | 8,90 | 8,78 | 8,76 | 9,14 | 8,72 | 8,80 | 9,60 |
 
-Sur `hot_hatch_turbo` : λ 1 retire 6,9 % de couple (0-100 en 7,15 s au lieu de 6,86), 10° de retard 2,3 % et 1,9 % de carburant en WLTC (9,07 L/100 km au lieu de 8,90).
+Sur `hot_hatch_turbo` : λ 1 retire 6,9 % de couple (0-100 en 7,15 s au lieu de 6,86), 10° de retard 13 % du couple maximal (309 Nm au lieu de 357 : sa carte d'origine, bornée par le cliquetis, est déjà à 26° du meilleur couple, et le coût croît avec l'écart) et 5,4 % de carburant en WLTC (9,38 L/100 km au lieu de 8,90).
 
 λ 0,80 ne change presque rien au couple, mais coûte 10 % de carburant de plus à la puissance maximale ; λ 1 en économise 4 %, pour 8 % de puissance en moins. Le WLTC touche rarement la pleine charge : la richesse n'y change presque rien, l'avance si.
 
 ### Le rupteur
 
 - **D'origine (`stock`), le comportement d'avant ce calculateur, inchangé.** Au régime maximal, la combustion est coupée, injection et étincelle (un carburateur, lui, continue de débiter), pendant 30 ms au moins, et ne reprend que 2,6 à 5,4 % plus bas : 4 % × (0,65 + 0,7 u), u tiré d'un générateur à congruence à chaque reprise, pour que deux rebonds ne soient jamais identiques. Le papillon reste ouvert : peu de pompage, pas de décharge du turbo. Au son, la pression des bouffées tombe de 95 %, et tout ce qui suit le débit avec elle (voir « Le rupteur », plus haut).
-- **Progressif (`soft`).** Sur les 3 % sous le régime maximal, l'étincelle recule jusqu'à 15° (5 % de couple) ; au-delà, une part croissante des cylindres est coupée, tous à +2 % : une coupure d'injection, explosion par explosion, dans l'ordre d'allumage (au son, un accumulateur qui en saute la part voulue). Sur un 2,0 L au point mort, pied au plancher, il tient à +1,4 % sans une seule coupure franche, avec 40 % des explosions.
+- **Progressif (`soft`).** Sur les 3 % sous le régime maximal, l'étincelle recule jusqu'à 15° (7 % de couple) ; au-delà, une part croissante des cylindres est coupée, tous à +2 % : une coupure d'injection, explosion par explosion, dans l'ordre d'allumage (au son, un accumulateur qui en saute la part voulue). Sur un 2,0 L au point mort, pied au plancher, il tient à +1,4 % sans une seule coupure franche, avec 40 % des explosions.
 - **Coupure d'allumage (`ignition_cut`).** Le même rebond que l'origine, mais seule l'étincelle est coupée : le carburant est toujours injecté. Le mélange du cylindre coupé arrive au collecteur, où 45 % en brûle si le gaz y dépasse 800 K, entièrement à 1100 K : les chiffres de la coupure de cylindres de l'anti-lag. Sur un turbo, cette chaleur va à la turbine ; sur un atmosphérique, c'est le gaz à la sortie des cylindres, suivi avec la même inertie des parois que celui de la turbine (0,35 s pour chauffer, 0,9 s pour refroidir), qui dit s'il s'enflamme. Au son, chaque ouverture d'un cylindre coupé a 45 % × allumage de chances de détoner, à l'amplitude √(E/90 J) d'une détonation ordinaire, E l'énergie de ce qui brûle : environ 760 J par cylindre sur un 2,0 L à 7200 tr/min, deux fois celle d'un cylindre coupé par l'anti-lag. Trois coups de gaz au rupteur sur un 2,0 L : 23 détonations contre aucune, et 47 mL d'essence contre 25 en 14 s. **Pas fait :** le gaz à l'écran montre cette coupure comme celle d'origine, des bouffées qui n'ont pas brûlé, sans la flamme du collecteur.
 
 Un diesel n'a pas d'étincelle : sa coupure d'allumage redevient la coupure d'injection d'origine, et le progressif n'y coupe que l'injection. Le régime du rupteur passe par `limiterRpmFor` : le régime maximal, ou 2 % sous l'affolement des soupapes s'il arrive avant (sujet « culbuteurs », 0 tant qu'il n'est pas branché).
@@ -1688,7 +1737,7 @@ Il s'arme pied au plancher (90 %), voiture arrêtée, moteur désaccouplé : emb
 
 ### L'antipatinage
 
-Une régulation proportionnelle et intégrale du glissement des roues motrices que calcule déjà `DrivingModel` (m/s), vers la part du couple à retirer : `u = 0,1 e + ∫ 1,0 e dt`, des gains réglés à l'essai pour que la régulation ne batte pas avec la torsion des arbres de roue (2 à 3 Hz en première), donc supposés. L'intégrale ne prend qu'un mètre par seconde d'écart au plus, et ne grossit pas dans le sens où la commande sature (anti-emballement) : sans cela, une fois les roues reprises, elle tenait le moteur coupé jusqu'à 550 tr/min. Le retard d'abord, jusqu'à 25° (13,5 % de couple), puis des cylindres coupés, à l'injection. Sur une voiture électrique, le couple du moteur directement. Il n'agit que roues tenues par le moteur : un embrayage qui patine ne transmet que sa capacité, et couper l'allumage ne ferait que caler le moteur.
+Une régulation proportionnelle et intégrale du glissement des roues motrices que calcule déjà `DrivingModel` (m/s), vers la part du couple à retirer : `u = 0,1 e + ∫ 1,0 e dt`, des gains réglés à l'essai pour que la régulation ne batte pas avec la torsion des arbres de roue (2 à 3 Hz en première), donc supposés. L'intégrale ne prend qu'un mètre par seconde d'écart au plus, et ne grossit pas dans le sens où la commande sature (anti-emballement) : sans cela, une fois les roues reprises, elle tenait le moteur coupé jusqu'à 550 tr/min. Le retard d'abord, jusqu'à 25° (15,9 % de couple), puis des cylindres coupés, à l'injection. Sur une voiture électrique, le couple du moteur directement. Il n'agit que roues tenues par le moteur : un embrayage qui patine ne transmet que sa capacité, et couper l'allumage ne ferait que caler le moteur.
 
 **La cible, et ce que le pneu en fait.** Le pneu du modèle, `F = μN s/√(1+s²)`, s en m/s, **n'a pas de sommet** : il pousse d'autant plus qu'il glisse. La cible se lit donc sur sa courbe, comme la part de l'adhérence que le mode laisse en réserve pour tenir en virage : 90 % en sport (2,1 m/s), 80 % en complet (1,3 m/s), supposées. Le glissement moyen en première, une fois l'embrayage serré, tient à ces cibles à 15 % près (testé). Un vrai pneu a son sommet vers 10 % de glissement, au-delà duquel il perd de l'adhérence, et l'antipatinage y fait gagner du temps ; ici, il ne peut que retenir le patinage, et le payer. Changer le pneu changerait le défaut : ce n'est pas fait.
 
@@ -1953,6 +2002,54 @@ Le rapport engagé se lit dans `DrivingModel` ; au point mort, la première. Sur
 
 **Ce qui est supposé, et ce qui manque.** Les temps de l'électrovanne et du tuyau sont des ordres de grandeur, pas des mesures. Le découpage est moyenné : l'ondulation à 25 Hz de la membrane n'est pas calculée, ni le claquement de l'électrovanne. Pas de cible à charge partielle : le papillon garde son rôle, et la pression monte avant lui comme avec le ressort. Pas de marge au pompage dans la cible. Un diesel garde ici une wastegate ; la géométrie variable est un autre réglage. Écoute à faire : `--scenario turbo` et `--scenario launch`, avec et sans `--boost-control electronic`.
 
+### Deux turbos : une électrovanne, étalonnée sur leur banc
+
+Sur deux turbos en parallèle ou en séquence, et sur des aubes, la régulation électronique (et selon le rapport) ne donnait que sa cible à
+la loi des soupapes du biturbo : son PID, identifié sur le banc d'un turbo seul, dépassait de 0,49 bar en séquentiel, et l'étagement
+battait. Une seule électrovanne commande maintenant les deux soupapes (ou les aubes) à la fois, comme sur un N54 ou un 2JZ-GTE, et tout
+est étalonné sur ce montage par la même méthode qu'un turbo seul : le banc à quatre régimes (`identifyTwinBoostPlant`, la méthode des deux
+points de Smith, factorisée avec `identifyBoostPlant`), les gains SIMC (`simcPid`), la précommande tirée de l'équilibre du montage
+(`twinSteadyGate` : le primaire seul avant la bascule, chaque moitié après ; la course des aubes en part de leur plage). Les roues sont
+protégées par chaque arbre (`TwinTurbo::step`), pas par la cible. Pendant l'étagement d'un séquentiel, vanne d'échappement du second ouverte
+et clapet encore fermé, le calculateur, qui commande lui-même les vannes, garde son intégrale à zéro : elle avait appris un seul turbo.
+Tenir aussi sa commande creusait le creux jusqu'à faire retomber l'étagement sur un turbo ; fermer les soupapes, lui, donnait 0,45 bar de
+dépassement. Un twincharger garde son volet, qui règle sa pression, et ne lit que la cible.
+
+| V6 de 3 L à 1 bar, reprise en troisième | Depuis 2000 tr/min : 90 % de la pression | Dépassement | Depuis 3000 tr/min | Dépassement |
+|---|---|---|---|---|
+| Un turbo, ressort | 1,77 s | +0,016 bar (dérive) | 1,01 s | +0,019 bar |
+| Un turbo, électronique | 1,75 s | +0,058 bar | 0,97 s | +0,049 bar |
+| Parallèle, loi des soupapes | 1,43 s | +0,018 bar (dérive) | 0,83 s | +0,021 bar |
+| Parallèle, électronique | 1,41 s | +0,110 bar | 0,78 s | +0,057 bar |
+| Séquentiel, loi des soupapes | 0,70 s | +0,242 bar | 0,51 s | +0,225 bar |
+| Séquentiel, électronique | 0,72 s | +0,155 bar | 0,56 s | +0,149 bar |
+
+Plus de dérive en haut (écart final sous 0,005 bar), un dépassement d'un tiers plus faible à l'étagement, pas d'étagement qui retombe ;
+le parallèle dépasse plus qu'un turbo seul, ses arbres plus légers montant plus vite que l'électrovanne et son tuyau ne suivent (les
+pointes de pression à l'enfoncement d'un N54 sont connues, de cet ordre : de mémoire, sans source relue). Marges de phase de 60 à 61°
+sur les huit bancs. Le creux de l'étagement est plus profond qu'avec la loi des soupapes (jusqu'à 0,49 bar sous la cible pendant 0,3 s,
+contre 0,05) : c'est le prix d'un PID réglé pour la robustesse, plus lent qu'une loi à anticipation. Test : « deux turbos : une
+électrovanne pour les deux soupapes », contre-éprouvé en étalonnant sur un turbo seul (0,54 bar) et sans l'intégrale tenue (0,37 bar).
+
+### En altitude, la fiche
+
+La fiche d'une régulation électronique restait un équilibre en pression relative, celle du ressort. `fullLoadTurboSteady` donne
+maintenant l'équilibre de pleine charge à la cible de la régulation : relative au ressort, absolue sous calculateur (la pression de la
+calibration, dans l'air de référence). La fiche, la pression d'équilibre (`steadyBoost`), le filtre et la carte du cliquetis le lisent.
+Dans l'air de référence, ou sur un ressort, rien ne change au bit près. Là où les roues atteignent leur vitesse limite, l'équilibre
+(`turboSteady`) gardait la soupape fermée et envoyait tout le gaz à la turbine : 5 bar avant elle, 34 à 41 Nm de contre-pression, quand la
+conduite ouvre la soupape pour tenir les roues (3,4 bar). Il l'ouvre désormais juste assez pour les y tenir.
+
+| 2.0 turbo, fiche | Ressort | Électronique |
+|---|---|---|
+| Niveau de la mer | 357,0 Nm, 194,4 kW | identique |
+| 1500 m | 327,1 Nm, 175,5 kW | 333,1 Nm, 189,0 kW |
+| 3000 m | 301,1 Nm, 157,8 kW | 312,6 Nm, 157,8 kW |
+| 4500 m | 278,5 Nm, 125,1 kW | 295,4 Nm, 125,1 kW |
+
+En haut du compte-tours, les roues bornent les deux : même puissance maximale. Un reste : à 6500 tr/min et 3000 m, la fiche électronique
+retombe encore à 196 Nm, quand la conduite en tient 228.
+
 ## Deux turbos, twincharger et géométrie variable
 
 `turboLayout` (`single`, `twin_parallel`, `twin_sequential`, `twincharger`) et `variableGeometry` choisissent le montage. Le turbo simple à soupape reste `TurboCharger`, au bit près : `TwinTurbo` (`core/src/twin_turbo.cpp`) ne s'exécute que pour les autres montages, et pour un turbo simple à aubes (`usesTwinTurbo`). Il reprend les lois de `turbo.cpp` (compresseur de Moore et Greitzer, turbine de Stodola, paliers, ventilation, échangeur, soupape de décharge) par un renvoi, `turbo_laws.hpp`, et celles du compresseur mécanique par `supercharger_laws.hpp` : rien n'est recopié.
@@ -2207,13 +2304,13 @@ Les douze sujets du moteur réunis : architectures, atmosphère, thermique, comb
 
 **La carte du cliquetis** se construit dès que change ce qu'elle lit (`knockConditionsStock`), plus seulement la combustion : l'air, la came (la fermeture de l'admission), l'injection directe (ce que sa vaporisation refroidit de plus qu'une injection indirecte), l'avance du calculateur et l'air de charge (la charge au collecteur). Un jour à 45 °C la rapproche de sa limite ; la carte d'origine, réglée dans l'air de référence, ne bouge pas.
 
-**L'avance du calculateur.** Sur un quatre-temps à étincelle, la part de couple que change le décalage d'avance vient de la carte du cliquetis seule (`ecuAdvanceInKnockMap`) : elle part de la carte d'origine réelle, en retard sur le meilleur couple là où le cliquetis la borne, là où le calculateur supposait le meilleur couple. Le cycle de cette carte rend pourtant son meilleur travail environ 9° plus tôt que son critère de meilleur couple (la moitié de la combustion à 8° après le point mort haut) : à 3000 comme à 6000 tr/min, −10° coûtent 6,5 %, −6° 3,4 %, et +6° gagnent 1,6 %, +10° 1,7 %, là où la parabole du calculateur perdait 2,2 et 0,8 % des deux côtés. La courbure est celle de la parabole ; c'est le sommet qui est décalé. À trancher : aligner le critère sur le sommet du cycle (pertes aux parois), ou garder la parabole pour le décalage. Carburant et chaleur du gaz gardent le retard du calculateur. Ce que le capteur retire, `ecuAdvanceDeg` le lit. Sur le 2.0 atmosphérique, +6° : 194,1 → 197,9 Nm, 117,8 → 120,3 kW ; sous 2250 tr/min la carte d'origine n'est qu'à 2° de sa limite à pleine charge, la marge tombe à −4,0° (−2,2° en SP98), et le capteur reprend de l'avance en reprise. La fiche (`rf_knock_margin_deg`, `--knock`) lit cette même carte.
+**L'avance du calculateur.** Sur un quatre-temps à étincelle, la part de couple que change le décalage d'avance vient de la carte du cliquetis seule (`ecuAdvanceInKnockMap`) : elle part de la carte d'origine réelle, en retard sur le meilleur couple là où le cliquetis la borne, là où le calculateur supposait le meilleur couple. Finitions : le cycle de cette carte rendait son meilleur travail environ 9° plus tôt que son critère de meilleur couple, et le calculateur coûtait l'écart par une parabole de 68° : +6° gagnaient 1,6 %. Un seul modèle dit maintenant les deux, le cycle avec ses pertes aux parois (voir « Le meilleur couple, et ce que coûte un écart ») ; le calculateur prend la corrélation publiée qu'il retrouve (Ayala, Gerty et Heywood). Au-dessus de 3500 tr/min, la carte d'origine est au meilleur couple : ±6° y coûtent 1,5 % de puissance (2.0 atmosphérique : 194,1 → 191,4 Nm à +6°, 191,5 à −6° ; 117,8 → 116,0 et 116,1 kW). Plus bas, elle est bornée par le cliquetis : la marge tombe à −4,0° à +6° (−2,3° en SP98), et le capteur reprend de l'avance en reprise. Le carburant suit l'air, et ne compte plus l'avance une seconde fois au rendement. Ce que le capteur retire, `ecuAdvanceDeg` le lit. La fiche (`rf_knock_margin_deg`, `--knock`) lit cette même carte.
 
 **La thermique.** Après un départ à froid, l'eau du réseau fait le film de l'injection indirecte et l'enrichissement du calculateur (une seule loi, `coldEnrichment`) ; la paroi froide, à la température du métal, réchauffe moins l'air piégé (`trappedAirK`). Le ralenti accéléré garde l'autorité du démarrage (0,8 du remplissage, contre 0,45 moteur chaud) : limité comme moteur chaud, il ne tenait pas l'huile froide de la Cadillac peu comprimée. Parti chaud, rien de tout cela, au bit près.
 
 **La vaporisation** n'est comptée qu'une fois : le carburant choisi en donne la chaleur latente (`fuelPropertiesOf`), l'alimentation la part prise à l'air (`mixtureAirShare` : 0,5 au carburateur, 0,2 en injection indirecte ; l'injection directe a son calcul de gouttes). La combustion, l'injection directe (`injectedFuelOf`), l'air de charge et la carte du cliquetis lisent les mêmes chiffres. Avant, la combustion prenait 0,15 pour toute alimentation, et l'injection 305 kJ/kg pour toute essence, éthanol compris.
 
-**Le biturbo.** Une turbine par culasse : un W en compte deux (`architectureOf`). L'échangeur commun refroidit vers l'air du jour. La régulation électronique et selon le rapport ne donnent que leur cible à la loi des soupapes du biturbo. Leur PID et leur anticipation sont étalonnés sur le banc d'un turbo seul : branchés tels quels, en reprise en troisième depuis 2000 tr/min (V6 de 3 L, 1 bar), ils dépassaient la cible de 0,49 bar sur un séquentiel, dont l'étagement oscillait, et de 0,13 bar en parallèle, contre 0,24 et 0,02 bar pour la loi du biturbo. Un étalonnage sur le banc de deux turbos reste à faire. Selon le rapport, la cible du W12 baisse en première de 0,29 bar, et ses deux arbres la suivent.
+**Le biturbo.** Une turbine par culasse : un W en compte deux (`architectureOf`). L'échangeur commun refroidit vers l'air du jour. La régulation électronique et selon le rapport pilotent les deux soupapes (ou les aubes) par une seule électrovanne, étalonnée sur le banc des deux turbos (voir « Deux turbos : une électrovanne » dans « La régulation de pression ») ; un twincharger ne lit que la cible. Selon le rapport, la cible du W12 baisse en première de 0,29 bar, et ses deux arbres la suivent.
 
 **Le deux-temps.** Le taux réglé est son taux géométrique (7,5 d'origine) : il change le taux réel que laisse la lumière d'échappement, et la combustion ne le compte pas une seconde fois (`compressionEfficiencyShare` vaut 1). La carte du cliquetis comprime depuis la fermeture de la lumière. À 9:1, le couple gagne plus de 3 %. Au plus six cylindres, et ni VR, ni W, ni vilebrequin croisé : ils reviennent au V.
 
@@ -2232,9 +2329,8 @@ Les douze sujets du moteur réunis : architectures, atmosphère, thermique, comb
 
 - L'air du cycle de la came reste à 20 °C et 101 325 Pa : elle donne un rapport entre deux cycles dans le même air, d'ordre deux.
 - La carte du cliquetis et la chaleur du compartiment que lit l'air de charge restent celles d'un moteur chaud : elles se construisent une fois par réglage, et un moteur froid cliquette moins.
-- Les arbres du biturbo comptent dans l'air de référence (`turbo_laws::constants().atmosphere`) : seuls l'échangeur et la cible le voient. Le PID sur deux turbos : ci-dessus.
-- La fiche d'une régulation électronique en altitude reste un équilibre en pression relative : 301 Nm à 3000 m comme au ressort ; seule la conduite voit la cible absolue (0 à 100 km/h en 8,56 s contre 8,65).
-- La consommation ne voit pas le couple de l'avance lu par la carte du cliquetis ; la chaleur du gaz garde la parabole du calculateur.
+- Les arbres du biturbo comptent dans l'air de référence (`turbo_laws::constants().atmosphere`) : seuls l'échangeur et la cible le voient.
+- La chaleur du gaz lit l'avance par la corrélation du calculateur, que le cycle de la carte du cliquetis retrouve à un point près ; la fiche du carburant prend la part de la carte à pleine charge, à toute charge.
 - La volatilité du carburant dans le film d'une injection indirecte reste celle de l'essence.
 
 ### Les rencontres, en chiffres
@@ -2244,12 +2340,12 @@ Les douze sujets du moteur réunis : architectures, atmosphère, thermique, comb
 | E85 et injection directe, 2.0 turbo à 11:1 | SP95 : 349 Nm, 192 kW, marge −6,4° ; E85 : 396 Nm, +2,9° ; SP95 directe : 382 Nm, −4,0° ; E85 directe : 455 Nm, 252 kW, +12,7°. La directe gagne 2,4° en SP95 et 9,8° en E85 : trois fois plus de chaleur latente, une fois et demie plus de carburant. |
 | Départ à froid en altitude (citadine, WLTC) | Au niveau de la mer, 6,76 → 6,90 L/100 (+2,1 %) ; à 2500 m et −10 °C, 6,16 → 6,54 (+6,2 %), avec une relance après un calage. |
 | Came pointue et ressorts d'origine (2.0, zone rouge 7300) | Affolement à 8140 tr/min d'origine ; 12,5 mm sur 200° : 6490 (−11 %), sous le rupteur ; ressorts durs : 7394 (+1,3 %) ; deux profils : 8752. |
-| Biturbo séquentiel et électronique (V6 3 L, 1 bar, reprise depuis 2000) | 90 % de la pression en 1,76 s sur un turbo, 0,62 s en séquentiel, 0,43 s en twincharger, 1,41 s en parallèle ; le séquentiel dépasse de 0,24 bar à l'étagement. |
+| Biturbo séquentiel et électronique (V6 3 L, 1 bar, reprise depuis 2000) | 90 % de la pression en 1,75 s sur un turbo, 0,72 s en séquentiel, 0,43 s en twincharger, 1,41 s en parallèle ; avec l'électrovanne étalonnée sur les deux turbos, le séquentiel dépasse de 0,155 bar à l'étagement (0,24 avec la loi des soupapes, 0,49 avec le PID d'un turbo seul), le parallèle de 0,11 bar. |
 | W16 en biturbo parallèle | Même équilibre (1306 Nm) ; 0 à 100 km/h en 3,61 s contre 3,82 sur un turbo ; 90 % de la pression en 1,13 s contre 1,38 depuis 2500 tr/min. |
 | Deux-temps en altitude | 56,5 Nm et 20,2 kW au niveau de la mer ; à 2000 m, 43,1 Nm (−24 %, quand l'air ne perd que 22 %) et 15,3 kW : 100 km/h n'est plus atteint ; 7,73 → 7,16 L/100 à 90 km/h. |
 | Protoxyde et came de course (2.0, 75 kW) | 194 → 417 Nm, 118 → 192 kW ; came de 280° seule : 174 Nm, 121 kW, marge 29,7° (fermeture tardive) ; les deux : 379 Nm, 194 kW. |
 | Launch control et twincharger (2.0 turbo) | 0 à 100 km/h : 6,86 s ; launch à 4500 : 6,13 ; twincharger : 6,35 ; les deux : 6,15. Le compresseur remplit déjà au départ : le launch ne lui apporte que 0,2 s. |
-| Altitude et régulation (2.0 turbo, 3000 m) | 357 → 301 Nm ; 0 à 100 km/h en 8,65 s au ressort, 8,56 en électronique, qui dépasse sa cible de 0,18 bar en reprise. |
+| Altitude et régulation (2.0 turbo, 3000 m) | Fiche : 357 → 301 Nm au ressort, 312,6 Nm en électronique, qui vise la pression absolue ; 0 à 100 km/h en 8,65 s au ressort, 8,56 en électronique, qui dépasse sa cible de 0,18 bar en reprise. |
 
 ### Le reste
 

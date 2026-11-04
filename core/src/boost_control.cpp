@@ -3,6 +3,7 @@
 #include <cmath>
 
 #include "revforge/powertrain.hpp"
+#include "revforge/twin_turbo.hpp"
 
 namespace revforge {
 
@@ -139,19 +140,19 @@ BoostPid simcPid(const BoostPlant& plant, const BoostActuatorSpec& actuator) {
     return pid;
 }
 
-BoostPlant identifyBoostPlant(TurboCharger& turbo, double rpm, double breathing, double gate, double settleS) {
-    TurboInput in;
-    in.rpm = rpm;
-    in.fill = 1.0;
-    in.breathing = breathing;
-    in.burning = true;
-    in.gateDemand = gate;
+namespace {
+
+/**
+ * Le banc, quel que soit le montage : `stepAt(gate)` avance l'arbre d'un pas, soupape(s) à cette ouverture, et rend la pression de
+ * charge. Tenu `settleS` à `gate`, puis un échelon d'un point.
+ */
+template <class StepAt>
+BoostPlant identifyPlant(StepAt&& stepAt, double rpm, double gate, double settleS) {
     const int settle = ticks(settleS, kStep);
-    for (int i = 0; i < settle; ++i) turbo.step(kStep, in);
-    const double before = turbo.state().chargePa;
+    double before = 0.0;
+    for (int i = 0; i < settle; ++i) before = stepAt(gate);
     // On ferme d'un point si l'on peut, sinon on ouvre : la pente est la même au premier ordre.
     const double step = gate >= kBenchStep ? -kBenchStep : kBenchStep;
-    in.gateDemand = gate + step;
     const int window = ticks(kBenchWindowS, kStep);
     // Trois points également espacés de la fin : la queue d'une exponentielle, que le Δ² d'Aitken prolonge jusqu'au bout.
     const int third = window / 4;
@@ -160,11 +161,11 @@ BoostPlant identifyBoostPlant(TurboCharger& turbo, double rpm, double breathing,
     static double trace[4096];
     const int kept = window < 4096 ? window : 4096;
     for (int i = 0; i < window; ++i) {
-        turbo.step(kStep, in);
-        if (i < kept) trace[i] = turbo.state().chargePa;
-        if (i == window - 1 - 2 * third) p1 = turbo.state().chargePa;
-        if (i == window - 1 - third) p2 = turbo.state().chargePa;
-        if (i == window - 1) p3 = turbo.state().chargePa;
+        const double pa = stepAt(gate + step);
+        if (i < kept) trace[i] = pa;
+        if (i == window - 1 - 2 * third) p1 = pa;
+        if (i == window - 1 - third) p2 = pa;
+        if (i == window - 1) p3 = pa;
     }
     const double bend = p1 + p3 - 2.0 * p2;
     double last = p3;
@@ -192,6 +193,49 @@ BoostPlant identifyBoostPlant(TurboCharger& turbo, double rpm, double breathing,
     if (plant.deadS < kStep) plant.deadS = kStep;
     if (plant.gainPa < 1.0) plant.gainPa = 1.0;
     return plant;
+}
+
+}  // namespace
+
+BoostPlant identifyBoostPlant(TurboCharger& turbo, double rpm, double breathing, double gate, double settleS) {
+    TurboInput in;
+    in.rpm = rpm;
+    in.fill = 1.0;
+    in.breathing = breathing;
+    in.burning = true;
+    return identifyPlant(
+        [&](double opening) {
+            in.gateDemand = opening;
+            turbo.step(kStep, in);
+            return turbo.state().chargePa;
+        },
+        rpm, gate, settleS);
+}
+
+BoostPlant identifyTwinBoostPlant(TwinTurbo& twin, double rpm, double breathing, double gate, double settleS) {
+    TwinTurboInput in;
+    in.rpm = rpm;
+    in.fill = 1.0;
+    in.breathing = breathing;
+    in.burning = true;
+    return identifyPlant(
+        [&](double opening) {
+            in.wastegate = opening;
+            twin.step(kStep, in);
+            return twin.state().unit[0].chargePa;
+        },
+        rpm, gate, settleS);
+}
+
+double boostProtectPa(const TurboSpec& reference, double rpm, double breathing, double boostBar, double noLimitPa) {
+    // Les roues limitent-elles ? Oui si, sans leur limite, le turbo tiendrait plus de pression.
+    TurboSpec probe = reference;
+    probe.targetBar = kProtectProbeShare * boostBar + kProtectProbeBar;
+    TurboSpec free = probe;
+    free.tipLimit = 1e9;
+    const TurboSteady limited = turboSteady(probe, rpm, breathing);
+    const TurboSteady unlimited = turboSteady(free, rpm, breathing);
+    return unlimited.chargePa > limited.chargePa + 100.0 ? limited.chargePa : noLimitPa;
 }
 
 double gearTorqueCapNm(const Powertrain& p, const Gearing& gearing, int gear, double tyreGrip) {
@@ -222,43 +266,53 @@ BoostControlSpec boostControlSpecFor(const Powertrain& p, const Gearing& gearing
     spec.firstRpm = 1000.0;
     spec.stepRpm = (redline - spec.firstRpm) / static_cast<double>(kBoostGrid - 1);
     if (spec.stepRpm < 50.0) spec.stepRpm = 50.0;
+    // Deux turbos ou des aubes : le même étalonnage, sur le banc de ce montage. Un twincharger garde son volet (voir `twin`), et
+    // ne lit de tout ceci que la cible.
+    spec.twin = usesTwinTurbo(e) && e.turboLayout != TurboLayout::Twincharger;
     const TurboSpec turbo = turboSpecOf(p);
+    const TwinTurboSpec twinSpec = spec.twin ? twinTurboSpecOf(p) : TwinTurboSpec{};
 
     // ── La cible et la précommande : l'équilibre de l'arbre, plein gaz, à chaque régime de la grille ──
     TurboSpec half = turbo;
     half.targetBar = 0.5 * spec.boostBar;
-    TurboSpec probe = turbo;
-    probe.targetBar = kProtectProbeShare * spec.boostBar + kProtectProbeBar;
-    TurboSpec free = probe;
-    free.tipLimit = 1e9;
     for (int i = 0; i < kBoostGrid; ++i) {
         const double rpm = spec.firstRpm + spec.stepRpm * static_cast<double>(i);
         const double breathing = breathingOf(p, rpm);
         const std::size_t at = static_cast<std::size_t>(i);
+        if (spec.twin) {
+            // Chaque arbre ouvre sa soupape dès que sa roue approche de sa vitesse limite (`TwinTurbo::step`) : la cible n'a pas à
+            // la protéger. La précommande : l'ouverture commune qui tient la pression, avec le primaire seul avant la bascule.
+            spec.gateAtCalibrated[at] = twinSteadyGate(twinSpec, rpm, breathing, spec.boostBar);
+            spec.gateAtHalf[at] = twinSteadyGate(twinSpec, rpm, breathing, 0.5 * spec.boostBar);
+            spec.protectPa[at] = 10.0 * spec.calibratedPa;
+            continue;
+        }
         spec.gateAtCalibrated[at] = turboSteady(turbo, rpm, breathing).wastegate;
         spec.gateAtHalf[at] = turboSteady(half, rpm, breathing).wastegate;
-        // Les roues limitent-elles ? Oui si, sans leur limite, le turbo tiendrait plus de pression.
-        const TurboSteady limited = turboSteady(probe, rpm, breathing);
-        const TurboSteady unlimited = turboSteady(free, rpm, breathing);
-        spec.protectPa[at] = unlimited.chargePa > limited.chargePa + 100.0 ? limited.chargePa : 10.0 * spec.calibratedPa;
+        spec.protectPa[at] = boostProtectPa(turbo, rpm, breathing, spec.boostBar, 10.0 * spec.calibratedPa);
     }
 
     // ── Le banc : l'arbre et sa pression, là où la wastegate travaille ──
     TurboCharger bench;
-    bench.setSpec(turbo);
+    TwinTurbo twinBench;
+    if (spec.twin) twinBench.setSpec(twinSpec);
+    else bench.setSpec(turbo);
+    const auto identify = [&](double rpm, double gate, double settleS) {
+        return spec.twin ? identifyTwinBoostPlant(twinBench, rpm, breathingOf(p, rpm), gate, settleS) : identifyBoostPlant(bench, rpm, breathingOf(p, rpm), gate, settleS);
+    };
     bool first = true;
     for (const double share : kBenchShares) {
         const double rpm = share * redline;
         const double gate = boostGridAt(spec, spec.gateAtCalibrated, rpm);
         if (gate < kBenchMinGate) continue;
-        spec.plants[static_cast<std::size_t>(spec.plantCount)] = identifyBoostPlant(bench, rpm, breathingOf(p, rpm), gate, first ? 5.0 : 3.0);
+        spec.plants[static_cast<std::size_t>(spec.plantCount)] = identify(rpm, gate, first ? 5.0 : 3.0);
         ++spec.plantCount;
         first = false;
     }
     // Rien à jeter nulle part : le turbo n'atteint jamais sa cible. On mesure quand même au point nominal, wastegate entrouverte.
     if (spec.plantCount == 0) {
         const double rpm = kBenchShares[3] * redline;
-        spec.plants[0] = identifyBoostPlant(bench, rpm, breathingOf(p, rpm), kBenchMinGate, 5.0);
+        spec.plants[0] = identify(rpm, kBenchMinGate, 5.0);
         spec.plantCount = 1;
     }
 
@@ -330,6 +384,9 @@ double BoostController::step(const BoostControlSpec& spec, double dt, const Boos
         const double filter = pid.tauD / kDerivativeFilter;
         derivative_ = (filter * derivative_ - pid.kc * pid.tauD * (input.chargePa - lastPa_)) / (filter + ts);
         lastPa_ = input.chargePa;
+        // L'étagement d'un séquentiel : ce que l'intégrale a appris sur un seul turbo ne vaut plus pour deux. Elle reste à zéro tant
+        // que le second ne débite pas ; la précommande, la proportionnelle et la dérivée tiennent la pression.
+        if (input.staging) integral_ = 0.0;
         const double unsaturated = feedForward + pid.kc * error + integral_ + derivative_;
         command_ = clamp(unsaturated, 0.0, 1.0);
         // Anti-emballement par intégration conditionnelle (Åström et Hägglund) : l'intégrale s'arrête quand l'électrovanne est en
@@ -339,7 +396,7 @@ double BoostController::step(const BoostControlSpec& spec, double dt, const Boos
         const double rate = pid.kc * pid.tauD > 0.0 ? -derivative_ / (pid.kc * pid.tauD) : 0.0;
         const bool closing = (error > 0.0 && rate > 0.0) || (error < 0.0 && rate < 0.0);
         const bool soon = closing && (rate > 0.0 ? rate : -rate) * pid.tauI > (error > 0.0 ? error : -error);
-        if (!spec.antiWindup || (!pinned && !soon)) integral_ += pid.kc * ts / pid.tauI * error;
+        if (!input.staging && (!spec.antiWindup || (!pinned && !soon))) integral_ += pid.kc * ts / pid.tauI * error;
         // Bien sous la cible, électrovanne en butée, la boucle est ouverte : ce que l'intégrale avait appris ne vaut plus pour la
         // prochaine montée, comme quand un calculateur sort de la régulation. Elle repart de zéro, la précommande tient le reste.
         if (spec.antiWindup && pinned && unsaturated - integral_ > 1.0) integral_ = 0.0;

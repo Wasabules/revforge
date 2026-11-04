@@ -414,6 +414,25 @@ double twinIntakeDropPa(const Powertrain& p, double rpm) {
     return spec.reference.filterDrop * flow * flow;
 }
 
+double twinSteadyGate(const TwinTurboSpec& spec, double rpm, double breathing, double targetBar) {
+    if (rpm <= 0.0 || breathing <= 0.0) return 0.0;
+    TwinTurboSpec s = spec;
+    s.targetBar = targetBar;
+    s.reference.targetBar = targetBar;
+    for (TurboSpec& unit : s.unit) unit.targetBar = targetBar;
+    // L'arbre qui porte le débit à ce régime : le primaire seul d'un séquentiel avant la bascule, sinon chaque moitié.
+    TurboSpec carried = s.unit[0];
+    if (s.layout == TurboLayout::TwinSequential) {
+        double vane = 1.0;
+        const TurboSpec alone = primaryAlone(s);
+        if (vaneSteady(s, alone, rpm, breathing, &vane).flow < s.switchFlow) carried = alone;
+    }
+    if (!s.variableGeometry) return turboSteady(carried, rpm, breathing).wastegate;
+    double vane = 1.0;
+    vaneSteady(s, carried, rpm, breathing, &vane);
+    return clamp((vane - s.vaneMin) / (s.vaneMax - s.vaneMin), 0.0, 1.0);
+}
+
 void twinchargerProfile(const Powertrain& p, EngineProfile& profile) {
     const SuperchargerSpec charger = twinTurboSpecOf(p).charger;
     profile.supercharged = true;

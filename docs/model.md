@@ -377,7 +377,8 @@ perceptual comparator (`tools/perceptual_compare.py`) says so too.
 
 ## The cabin
 
-Three groups of sources (exhaust, engine, road and underfloor) each go through a 1024-point minimum-phase filter, computed by
+Three groups of sources (exhaust, engine, road and underfloor) each go through a 1024-point minimum-phase filter at 48 kHz (21 ms,
+and as many milliseconds at a higher sample rate: at 192 kHz, 1024 points only made 5 ms, and lost everything below 200 Hz), computed by
 cepstrum when a car is applied, then convolved. This filter comes from an energy balance over ten walls (floor, roof, two doors,
 two windows, firewall, rear wall, windshield, rear window), each with its own mass law, its coincidence frequency for glass, and its leaking
 share (`cabinTransfer`). Up close, each source couples more strongly to the wall it faces. The engine mounts let the low
@@ -392,7 +393,14 @@ orders in directly, without going through the air (`structureGain`). The cabin a
 | Luxury | 15 | 20 | 26 | 0.002% | 26.5 | 62.1 |
 
 Open windows turn the driver's window into a hole (30% leak) and raise road noise, through the wheel arches: +8.7 dB(A) over
-a ride (« balade »), real +5 on the road.
+a ride (« balade »), real +5 on the road. At idle, on the naturally aspirated 2.0 with a sport line, +2.4 dB(A) (43.7 → 46.1): the
+80 to 160 Hz boom, which comes through the body, stays in front; at 1 kHz, +12 dB. That level beats by ±2 dB with the idle, which
+breathes over about 2.5 s.
+
+**The sample rate.** The site computes the sound at 48 kHz whatever the sound card (`SIMULATION_RATE`, engine.ts): the simulator is not
+invariant to it. Its filtered noises keep their per-sample variance, and lose 6 dB of density when the rate quadruples; at 192 kHz (the
+one headless Chromium picks), idle in the cabin went from 43.7 to 46.5 dB(A), open windows only gained +0.7 dB, and the windows test
+failed one time in two. The CLI still renders at `--rate`, 44.1 kHz by default.
 
 **Engine placement** (`placement`) changes the position of the block and the intake, that of the seat and the firewall, the
 length of the line (about 0.4 times for mid-engine, 0.25 times for rear-engine), and the share of mass on the front: these
@@ -1213,7 +1221,8 @@ half as much: the gauge pressure comes back.
 At 4000 rpm, full load, 2.0 turbo at 1.3 bar: pressure ratio 2.33 at sea level, 2.49 at 1000 m, 2.69 at 2000 m, 2.91 at
 3000 m; the shaft goes from 160,700 to 168,500, 177,100 then 186,400 rpm. At 5500 rpm and 3000 m, the wheel is at 99.8% of its
 speed limit (`tipLimit`); at 4500 m, the ECU opens the wastegate to protect it, and the requested pressure is no longer held
-(82%). This is also what pulls the diesel's peak power back from 4150 to 2800 rpm at 3000 m.
+(82%). At 3000 m, the diesel's peak power moves back from 4150 to 3900 rpm (83.0 kW instead of 113.5); it moved back to 2800 rpm
+while the equilibrium kept the wastegate shut at the wheels' limit (see "At altitude, the spec sheet").
 
 Lag, engine speed held, from 20% to 100% fill, up to 90% of the requested pressure: 1.21 s at sea level, 1.41 s at 1000 m,
 1.66 s at 2000 m, 1.96 s at 3000 m (at 2500 rpm); 0.59, 0.67, 0.77 and 0.89 s at 4000 rpm. In fourth from 1800 rpm
@@ -1222,7 +1231,7 @@ Lag, engine speed held, from 20% to 100% fill, up to 90% of the requested pressu
 Electronic control aiming at the same **absolute** pressure as at sea level ("boost" topic, which reads
 `TurboSpec::ambientPa`) would ask even more: ratio 3.38 at 3000 m and 4000 rpm, the wheel at its limit from 2000 m at the top of
 the rev range and from 3000 m at 4000 rpm, and 2.17 s of lag instead of 1.96 at 2500 rpm. These figures are computed by
-replacing `targetBar` with the absolute pressure minus the day's atmosphere; none of this is wired in.
+replacing `targetBar` with the absolute pressure minus the day's atmosphere: the spec sheet now does it (`fullLoadTurboSteady`).
 
 ### Road and consumption
 
@@ -1426,7 +1435,7 @@ in proportion: +2 dB at 15:1, −1 dB at 22:1.
 
 **The chamber.** `endGasCycle` steps a single-zone combustion degree by degree, from intake closing (50° after bottom dead centre, the
 sound's stock timing) to exhaust opening: a connecting rod 3.2 times the crank radius, γ = 1.3, Wiebe combustion (a = 5, m = 2) over 45°
-after a 0.35 ms flame kernel, and 80% of the fuel's heat to the gas (the rest to the walls and unburnt fuel). The charge arrives from the
+after a 0.35 ms flame kernel, 95% of the air's energy released, and the walls taking their share step by step (see "Best torque", below). The charge arrives from the
 manifold, warmed by the walls (20% of the gap to the coolant plus 40 K, less when it is dense: h ∝ (ρv)^0.8), cooled by vaporisation,
 and mixed with 4% residual gas at 1000 K. Its mass is what the torque model's filling gives (0.92 × breathing), at the temperature it
 really has. At 3000 rpm and full load, this cycle gives a 60 bar peak and 12 bar of indicated mean pressure on a 10.5:1 naturally
@@ -1445,7 +1454,38 @@ The mean cycle knocks if the integral reaches 1 before the flame has burnt 90% o
 **The map.** The calculation is too slow for every 1 ms step: `KnockMap` does it once per setting, on 10 speeds and 15 advances, and keeps
 it (`knockMapOf`, four engines at a time, no allocation). Pressure is not tabulated: at equal temperature, the whole pressure trace is
 proportional to the intake-closing pressure, and the integral follows its 1.7th power. At a charge pressure `k` times full load, the
-limit is the advance where the integral equals `k^−1.7`. Best torque (MBT) burns half the mixture 8° after top dead centre (Heywood).
+limit is the advance where the integral equals `k^−1.7`. Best torque (MBT) is the top of the cycle's work, below.
+
+**Best torque, and what a deviation costs.** The cycle loses its heat to the walls step by step, from the spark to exhaust opening,
+through Woschni's correlation (1967; Heywood, eq. 12.19):
+
+```
+h = 3.26 · B^−0.2 · p^0.8 · T^−0.55 · w^0.8          W/m²K, B in m, p in kPa, T in K
+w = 2.28 · v_p + 3.24·10⁻³ · (V_d·T₁ / (p₁·V₁)) · (p − p_motored)
+dQ_walls = h · A · (T − T_wall) · dt,  A = πB²/2 + πB·x,  T_wall = T_coolant + 60 K (assumed)
+```
+
+Combustion releases 95% of the air's energy (Heywood, ch. 4: 95 to 98% combustion efficiency, less the unburnt fuel of the crevices;
+assumed), instead of the former net 80%, which lumped walls and unburnt fuel into one figure. Compression stays adiabatic (the charge is
+first colder than the walls, then hotter: a small balance, the same at every advance). A rotary takes its chamber's square cylinder, for
+want of a better wall area. The map's **best torque** is the top of this cycle's work (`KnockMap::rowBest`, the parabola of `rowWork`
+through the three highest points); the stock map starts from the stock engine's. That top falls by itself where Heywood puts it (half the
+mixture burnt 8 to 10° after top dead centre): 11 to 12° at 1500 rpm, 7 to 8° at 3000, 5° at 6000, later at low speed, where the walls
+have time to take their heat. Without the walls, it fell at top dead centre, 9° earlier than the former criterion.
+
+| Retard from best torque | 5° | 10° | 20° | 25° |
+|---|---|---|---|---|
+| The cycle (NA and turbo engines at 9.5-10.5:1, 1500 to 6000 rpm) | 0.75 to 0.97% | 2.9 to 3.6% | 10.3 to 12.2% | 15.2 to 17.6% |
+| Ayala, Gerty and Heywood (SAE 2006-01-0229), in combustion retard | 0.9% | 3.4% | 11.2% | 15.9% |
+| CRC CM-137-11-1b (eq. 2, the same measurements against the spark) | 1.3% | 5.1% | 20.5% | |
+
+The cycle burns over a fixed duration: its spark and its combustion move together, and it matches Ayala's correlation (on combustion
+phasing, all loads, speeds and mixtures) within one point up to 15°, two at 25°. Against the spark, the same measurements cost a little
+more (CRC): a late spark also burns more slowly, in an expanding charge, which the model does not do. The ECU uses that correlation,
+`1 − 0.168·(√(1 + 0.004443·Δ²) − 1)`, where it has no map (see "The engine management"); a test holds it to the cycle. The Cadillac at
+5.35:1 is less sensitive (its expansion depends less on when the gas burns), and so is the rotary in shaft degrees: neither is within the
+range of the measurements (9.8 to 13.4:1). These wall losses also bring the knock limit 3 to 5° closer: combustion releases more heat while
+the fresh gas waits.
 
 **No two cycles alike.** Combustion phasing varies from cycle to cycle (assumed: 1.5° standard deviation, a bell bounded at three standard
 deviations, the sum of three uniform draws). The **knock limit** is the advance at which one cycle in fifty knocks, two standard
@@ -1458,34 +1498,37 @@ not a retuned engine's.
 
 | Preset | Ratio | Smallest margin | at | Largest retard from MBT | at | MBT reached from |
 |---|---|---|---|---|---|---|
-| `city_14` | 10.5 | 2.0° | 1000 rpm | 9.4° | 1000 rpm | 2250 rpm |
-| `four_cyl_sport` | 10.5 | 2.0° | 1000 | 10.1° | 1000 | 2250 |
-| `three_cyl_turbo` | 9.5 | 2.0° | 1000 | 22.1° | 2000 | 6000 |
-| `hot_hatch_turbo` | 9.5 | 2.0° | 1000 | 22.3° | 2250 | 6500 |
-| `hot_hatch_na` | 10.5 | 2.0° | 1000 | 10.0° | 1000 | 2250 |
-| `five_cyl_turbo` | 9.5 | 2.0° | 1000 | 24.3° | 2250 | never |
-| `inline_six` | 10.5 | 2.0° | 1000 | 10.0° | 1000 | 2250 |
-| `v6_gt` | 10.5 | 2.0° | 1000 | 10.6° | 1000 | 2500 |
-| `flat_six` | 10.5 | 2.0° | 1000 | 9.8° | 1000 | 2250 |
-| `boxer_four_turbo` | 9.5 | 2.0° | 1000 | 20.7° | 2250 | 6500 |
-| `v8_cross_plane` | 10.5 | 2.0° | 1000 | 11.1° | 1000 | 2500 |
-| `v10_open` | 10.5 | 2.0° | 1000 | 8.0° | 1000 | 2000 |
-| `v12` | 10.5 | 2.0° | 1000 | 8.7° | 1000 | 2000 |
-| `retro_coupe` | 10.5 | 2.0° | 1000 | 10.2° | 1000 | 2500 |
-| `v8_supercharged` | 9.5 | 2.0° | 1000 | 17.6° | 1000 | 5000 |
-| `carb_twin_cam` | 10.5 | 2.0° | 1000 | 10.6° | 1000 | 2500 |
-| `twin_rotor_13` | 9.4 | 2.0° | 1000 | 20.6° (shaft) | 1000 | 2500 |
+| `city_14` | 10.5 | 2.0° | 1000 rpm | 4.7° | 1000 rpm | 3000 rpm |
+| `four_cyl_sport` | 10.5 | 2.0° | 1000 | 6.5° | 1000 | 3500 |
+| `three_cyl_turbo` | 9.5 | 2.0° | 1000 | 25.2° | 2000 | never |
+| `hot_hatch_turbo` | 9.5 | 2.0° | 1000 | 26.3° | 2250 | never |
+| `hot_hatch_na` | 10.5 | 2.0° | 1000 | 6.8° | 1000 | 3500 |
+| `five_cyl_turbo` | 9.5 | 2.0° | 1000 | 28.5° | 2250 | never |
+| `inline_six` | 10.5 | 2.0° | 1000 | 6.6° | 1000 | 3500 |
+| `v6_gt` | 10.5 | 2.0° | 1000 | 7.0° | 1000 | 3500 |
+| `flat_six` | 10.5 | 2.0° | 750 | 6.7° | 750 | 3250 |
+| `boxer_four_turbo` | 9.5 | 2.0° | 750 | 24.5° | 2250 | never |
+| `v8_cross_plane` | 10.5 | 2.0° | 750 | 8.4° | 750 | 3750 |
+| `v10_open` | 10.5 | 2.0° | 1000 | 4.5° | 1000 | 2750 |
+| `v12` | 10.5 | 2.0° | 1000 | 4.4° | 1000 | 3000 |
+| `retro_coupe` | 10.5 | 2.0° | 1000 | 5.7° | 1000 | 3000 |
+| `v8_supercharged` | 9.5 | 2.0° | 750 | 17.6° | 1500 | 6000 |
+| `carb_twin_cam` | 10.5 | 2.0° | 1000 | 5.5° | 1000 | 3000 |
+| `twin_rotor_13` | 9.4 | 2.0° | 750 | 9.6° (shaft) | 750 | 2750 |
+| `vr6_golf` | 10.5 | 2.0° | 1000 | 6.7° | 1000 | 3000 |
+| `w12_continental` | 9.5 | 2.0° | 1000 | 15.8° | 2250 | 5750 |
+| `w16_hypercar` | 9.5 | 2.0° | 1000 | 23.3° | 2250 | never |
 | `diesel_four`, `electric` | | no spark | | | | |
 
 Steady full load, from 1000 rpm to the redline, by `revforge-render --out none --preset X --scenario steady --seconds 1 --knock 1`, which
 prints the map speed by speed; the test "aucun préréglage ne cliquette à ses réglages" checks it every 50 rpm from idle. The naturally
-aspirated engines are knock-limited below 2000 to 2500 rpm, as real 10.5:1 engines are on RON 95; the 9.5:1 turbos at 1.2 to 1.5 bar are
-limited all the way up, with half the mixture burnt around 29° after top dead centre at 2000 rpm on the GTI, the order of magnitude of
+aspirated engines are knock-limited below 2750 to 3750 rpm, as real 10.5:1 engines are on RON 95; the 9.5:1 turbos at 1.2 to 1.5 bar are
+limited all the way up, with half the mixture burnt around 33° after top dead centre at 2250 rpm on the GTI, the order of magnitude of
 boosted engines at 20 bar mean pressure (from memory: 25 to 35°, no source re-read).
 
-What the model gives at 1500 rpm full load on the city car: −4.2° per point of compression, +0.69° per octane number, −0.85° for 10 °C
-more air. That is about 6 octane numbers per point of compression, where the engine builders' rule says 3 to 5 (from memory, no source
-re-read): the model is probably a little too sensitive to the ratio.
+What the model gives at 1500 rpm full load on the city car: −3.4° per point of compression, +0.65° per octane number, −0.71° for 10 °C
+more air. That is about 5 octane numbers per point of compression, where the engine builders' rule says 3 to 5, and the CRC
+(CM-137-11-1b) 4 to 5: before the step-by-step wall losses, the model said 6.
 
 **The sensor.** Each detected knock takes 1.5° from its cylinder, the advance returns at 1° per second once it is quiet, never more than
 20° taken (assumed, orders of magnitude of production ECUs). On average: `dρ/dt = 1.5° × share of knocking cycles × combustions per second
@@ -1593,11 +1636,21 @@ The engine management (`core/src/ecu.cpp`, `ecu.hpp`) has two parts. Its **map**
 
 ### The spark map
 
-Indicated torque follows a parabola around the best-torque timing (MBT): `T/T_MBT = 1 − (Δ/68°)²`, Δ the crank-angle offset from MBT, roughly symmetric on both sides (Heywood, *Internal Combustion Engine Fundamentals*, ch. 9: a flat top, a few percent at ±10°). It is the anti-lag's parabola: 2.2 % at 10°, 8.7 % at 20°. **Assumed:** the stock map sits at MBT. Knock (the "combustion" topic) will pull it away: `knockRetardDeg` is already a parameter of `demandedAdvanceDeg`, `mapRetardDeg` and `ecuFullLoadShare`, at 0 until it is wired. The ±10° `--advance` offset can therefore only lose torque here; advance only gains by getting out of knock. Integration: on a four-stroke spark engine, the stock map and the offset's torque now come from the knock map (see "When settings meet (2)"); the parabola stays for fuel, gas heat, a diesel and a two-stroke.
+Torque against spark timing comes from a single model: the knock map's cycle, with its step-by-step wall losses (see "Best torque, and
+what a deviation costs", in "Combustion"). It puts best torque (MBT) at the top of its work, half the burn 5 to 12° after top dead centre,
+and costs 0.8 to 1.0% at 5°, 2.9 to 3.6% at 10°, 10 to 12% at 20°. Where the engine management has no map built (the launch control,
+slip control and rev limiter steps, the fuel model's efficiency, the gas heat), `sparkTorqueShare` takes the published correlation that
+this cycle matches, Ayala, Gerty and Heywood's (SAE 2006-01-0229): `T/T_MBT = 1 − 0.168·(√(1 + 0.004443·Δ²) − 1)`, Δ the offset from best
+torque in crank degrees: 0.9% at 5°, 3.4% at 10°, 11% at 20°, quadratic near MBT and almost straight beyond. A test holds them to each
+other (one point up to 15°, two at 25°). Before, a parabola `1 − (Δ/68°)²` (2.2% at 10°) gave the cost, and the cycle put its top 9°
+earlier than the ECU's criterion: +6° gained 1.6%. At the defaults the requested advance stays the stock map, and nothing is computed. The
+anti-lag keeps its parabola for its 40 and 55° of retard, beyond the measurements (25 to 30°) and beyond what the cycle can do (such a late
+burn burns poorly, which it does not count).
 
-The requested advance, in degrees before top dead centre (`demandedAdvanceDeg`), starts from `mbtAdvanceDeg`: the spark that puts half the burn about 8° after top dead centre. From spark to that half, 34° at 3000 rpm full throttle, × (N/3000)^0.25 (turbulence follows the piston: the duration in degrees grows little), × (1 + 0.6 (1 − fill)) at light load. That gives 26° at 3000 rpm full throttle, 32° at 6000, 31° at half load at 1500; published maps of naturally aspirated engines give 25 to 35° at full load. An assumed order of magnitude: only the spec sheet reads it so far.
+On a four-stroke spark engine, the requested advance is the knock map's stock map, plus the offset. On a two-stroke or a diesel, which
+have none, the spec sheet takes `demandedAdvanceDeg`, which starts from `ecuMbtAdvanceDeg`: the spark that puts half the burn about 8° after top dead centre. From spark to that half, 34° at 3000 rpm full throttle, × (N/3000)^0.25 (turbulence follows the piston: the duration in degrees grows little), × (1 + 0.6 (1 − fill)) at light load. That gives 26° at 3000 rpm full throttle, 32° at 6000, 31° at half load at 1500; published maps of naturally aspirated engines give 25 to 35° at full load. An assumed order of magnitude: only a two-stroke's or a diesel's spec sheet reads it.
 
-The work the piston does not get goes into the gas, minus 20 % into the walls: `ΔQ_gas = η_i (1 − T/T_MBT) × 0.8` of the fuel energy, η_i = 0.405 (0.375 boosted), the efficiency of `ConsumptionModel`. On the advanced side that work goes into the walls, not the gas. **Limit:** near MBT the rise in exhaust temperature is probably underestimated, since the lower wall losses with retard are not counted (Heywood, ch. 12): +17 K for 10° of retard at full load, where a few tens are often quoted.
+The work the piston does not get goes into the gas, minus 20 % into the walls: `ΔQ_gas = η_i (1 − T/T_MBT) × 0.8` of the fuel energy, η_i = 0.405 (0.375 boosted), the efficiency of `ConsumptionModel`. On the advanced side that work goes into the walls, not the gas. **Limit:** near MBT the rise in exhaust temperature is probably underestimated, since the lower wall losses with retard are not counted (Heywood, ch. 12): +27 K for 10° of retard at full load, where a few tens are often quoted.
 
 ### The mixture
 
@@ -1607,20 +1660,20 @@ Gas heating follows the adiabatic flame temperature of a hydrocarbon in air at 2
 
 ### What the map changes
 
-Full-load torque (`fullLoadTorqueNm`, hence the curves, the spec sheet and the driving) is scaled outside friction: `(T + T_f) × share − T_f`. The fuel follows the air: for the same air, a shifted spark gets less from each gram, so the efficiency of `ConsumptionModel` is scaled by the same share, and the mixture sets the fuel needed per gram of air. The turbine gets hotter or cooler gas (`TurboSpec::ecu`, the turbo staying the stock one), and the sound opens the valve on that much more pressure (`evoRatio`, the anti-lag's balance).
+Full-load torque (`fullLoadTorqueNm`, hence the curves, the spec sheet and the driving) is scaled outside friction: `(T + T_f) × share − T_f`. The fuel follows the air: for the same air, a shifted spark gets less from each gram, and the mixture sets the fuel needed per gram of air. On a four-stroke spark engine the offset goes through the knock map, after the air: the torque the driving model gives the fuel model already follows that air, and the efficiency of `ConsumptionModel` no longer counts it a second time (it did since the integration: 9.80 L/100 instead of 9.46 at −10°); the spec sheet finds the air back through the map's share. The turbine gets hotter or cooler gas (`TurboSpec::ecu`, the turbo staying the stock one), and the sound opens the valve on that much more pressure (`evoRatio`, the anti-lag's balance).
 
 Measured on `hot_hatch_na` (2.0 L, 7300 rpm); fuel on a warm WLTC:
 
 | | Stock | Advance −10° | −5° | +5° | λ 1.0 | λ 0.80 | λ 0.75 | λ 1.1 |
 |---|---|---|---|---|---|---|---|---|
-| Peak torque (Nm) | 194.1 | 189.2 | 192.9 | 192.9 | 179.7 | 194.0 | 191.3 | 165.5 |
-| Peak power (kW) | 117.8 | 114.5 | 117.0 | 117.0 | 108.2 | 117.7 | 115.9 | 98.6 |
-| g/kWh at peak power | 304 | 313 | 306 | 306 | 291 | 334 | 362 | 290 |
-| Gas at the cylinder outlet, peak power | 863 °C | +17 K | +4 K | 0 | +20 K | −41 K | −69 K | −18 K |
-| WLTC (L/100 km) | 9.07 | 9.30 | 9.13 | 9.13 | 9.05 | 9.07 | 9.07 | 9.03 |
-| 0-100 km/h (s) | 8.72 | 8.82 | 8.75 | 8.75 | 9.14 | 8.72 | 8.80 | 9.60 |
+| Peak torque (Nm) | 194.1 | 187.1 | 192.3 | 192.3 | 179.7 | 194.0 | 191.3 | 165.5 |
+| Peak power (kW) | 117.8 | 113.3 | 116.6 | 116.6 | 108.2 | 117.7 | 115.9 | 98.6 |
+| g/kWh at peak power | 304 | 316 | 307 | 307 | 291 | 334 | 362 | 290 |
+| Gas at the cylinder outlet, peak power | 863 °C | +27 K | +7 K | 0 | +20 K | −41 K | −69 K | −18 K |
+| WLTC (L/100 km) | 9.07 | 9.46 | 9.17 | 9.18 | 9.05 | 9.07 | 9.07 | 9.03 |
+| 0-100 km/h (s) | 8.72 | 8.90 | 8.78 | 8.76 | 9.14 | 8.72 | 8.80 | 9.60 |
 
-On `hot_hatch_turbo`: λ 1 removes 6.9 % of torque (0-100 in 7.15 s instead of 6.86), 10° of retard 2.3 %, and costs 1.9 % fuel on the WLTC (9.07 L/100 km instead of 8.90).
+On `hot_hatch_turbo`: λ 1 removes 6.9 % of torque (0-100 in 7.15 s instead of 6.86), 10° of retard 13% of peak torque (309 Nm instead of 357: its stock map, held back by knock, is already 26° from best torque, and the cost grows with the offset), and 5.4% fuel on the WLTC (9.38 L/100 km instead of 8.90).
 
 λ 0.80 barely changes the torque, but costs 10 % more fuel at peak power; λ 1 saves 4 %, for 8 % less power. The WLTC rarely reaches full load: the mixture barely changes it there, the advance does.
 
@@ -1916,6 +1969,54 @@ The engaged gear is read in `DrivingModel`; in neutral, first gear. On `three_cy
 
 **What is assumed, and what is missing.** The valve's and hose's times are orders of magnitude, not measurements. The PWM is averaged: the diaphragm's 25 Hz ripple is not computed, nor the valve's click. No part-load target: the throttle keeps its role, and pressure builds ahead of it as with the spring. No surge margin in the target. A diesel keeps a wastegate here; variable geometry is another setting. Listening still to do: `--scenario turbo` and `--scenario launch`, with and without `--boost-control electronic`.
 
+### Two turbos: one solenoid, calibrated on their bench
+
+On two turbos in parallel or in sequence, and on vanes, electronic (and by-gear) control only handed its target to the twin's wastegate
+law: its PID, identified on a single-turbo bench, overshot by 0.49 bar on a sequential pair, and the staging oscillated. A single solenoid
+now drives both wastegates (or the vanes) together, as on an N54 or a 2JZ-GTE, and everything is calibrated on that layout by the same
+method as a single turbo: the bench at four speeds (`identifyTwinBoostPlant`, Smith's two-point method, shared with `identifyBoostPlant`),
+SIMC gains (`simcPid`), and the feed-forward taken from the layout's equilibrium (`twinSteadyGate`: the primary alone before the switch,
+each half after; the vane travel as a share of its range). The wheels are protected by each shaft (`TwinTurbo::step`), not by the target.
+While a sequential pair stages, the second turbo's exhaust valve open and its check valve still shut, the ECU, which drives the valves
+itself, holds its integral at zero: it had learnt a single turbo. Also holding its command deepened the dip until the staging fell back to
+one turbo; shutting the wastegates instead gave a 0.45 bar overshoot. A twincharger keeps its flap, which sets its pressure, and only reads
+the target.
+
+| 3 L V6 at 1 bar, third-gear tip-in | From 2000 rpm: 90% of boost | Overshoot | From 3000 rpm | Overshoot |
+|---|---|---|---|---|
+| One turbo, spring | 1.77 s | +0.016 bar (creep) | 1.01 s | +0.019 bar |
+| One turbo, electronic | 1.75 s | +0.058 bar | 0.97 s | +0.049 bar |
+| Parallel, wastegate law | 1.43 s | +0.018 bar (creep) | 0.83 s | +0.021 bar |
+| Parallel, electronic | 1.41 s | +0.110 bar | 0.78 s | +0.057 bar |
+| Sequential, wastegate law | 0.70 s | +0.242 bar | 0.51 s | +0.225 bar |
+| Sequential, electronic | 0.72 s | +0.155 bar | 0.56 s | +0.149 bar |
+
+No more creep at the top (final error under 0.005 bar), a third less overshoot at staging, no staging falling back; the parallel pair
+overshoots more than a single turbo, its lighter shafts rising faster than the solenoid and its hose can follow (an N54's boost spikes on
+tip-in are known, of that order: from memory, no source re-read). Phase margins of 60 to 61° on the eight benches. The staging dip is
+deeper than with the wastegate law (up to 0.49 bar under the target for 0.3 s, against 0.05): the price of a PID tuned for robustness,
+slower than a law with anticipation. Test: "deux turbos : une électrovanne pour les deux soupapes", counter-tested by calibrating on a
+single turbo (0.54 bar) and without the held integral (0.37 bar).
+
+### At altitude, the spec sheet
+
+The spec sheet of electronic control stayed an equilibrium at relative pressure, the spring's. `fullLoadTurboSteady` now gives the
+full-load equilibrium at the control's target: relative on a spring, absolute under an ECU (the calibration's pressure, in reference air).
+The spec sheet, the equilibrium pressure (`steadyBoost`), the filter and the knock map read it. In reference air, or on a spring, nothing
+changes, bit for bit. Where the wheels reach their speed limit, the equilibrium (`turboSteady`) kept the wastegate shut and sent all the
+gas to the turbine: 5 bar before it, 34 to 41 Nm of back-pressure, when driving opens the wastegate to hold the wheels (3.4 bar). It now
+opens it just enough to hold them there.
+
+| Turbo 2.0, spec sheet | Spring | Electronic |
+|---|---|---|
+| Sea level | 357.0 Nm, 194.4 kW | identical |
+| 1500 m | 327.1 Nm, 175.5 kW | 333.1 Nm, 189.0 kW |
+| 3000 m | 301.1 Nm, 157.8 kW | 312.6 Nm, 157.8 kW |
+| 4500 m | 278.5 Nm, 125.1 kW | 295.4 Nm, 125.1 kW |
+
+At the top of the rev range the wheels bound both: the same peak power. A remainder: at 6500 rpm and 3000 m, the electronic spec sheet
+still drops to 196 Nm, where driving holds 228.
+
 ## Two turbos, twincharger and variable geometry
 
 `turboLayout` (`single`, `twin_parallel`, `twin_sequential`, `twincharger`) and `variableGeometry` choose the layout. The single wastegated turbo stays `TurboCharger`, bit for bit: `TwinTurbo` (`core/src/twin_turbo.cpp`) only runs for the other layouts, and for a single turbo with vanes (`usesTwinTurbo`). It uses the laws of `turbo.cpp` (Moore-Greitzer compressor, Stodola turbine, bearings, windage, intercooler, blow-off valve) through a forwarding header, `turbo_laws.hpp`, and those of the supercharger through `supercharger_laws.hpp`: nothing is copied.
@@ -2170,13 +2271,13 @@ The twelve engine topics together: architectures, atmosphere, thermal, combustio
 
 **The knock map** is built as soon as anything it reads changes (`knockConditionsStock`), not only the combustion: the air, the cam (intake closing), direct injection (how much more its vaporisation cools than port injection), the ECU's advance and the charge air (the manifold charge). A 45 °C day brings it closer to its limit; the stock map, set in reference air, does not move.
 
-**The ECU's advance.** On a four-stroke spark engine, the torque the advance offset changes comes from the knock map alone (`ecuAdvanceInKnockMap`): it starts from the real stock map, retarded from best torque where knock bounds it, where the ECU assumed best torque. Yet that map's cycle gives its best work about 9° earlier than its best-torque criterion (half the burn 8° after top dead centre): at 3000 as at 6000 rpm, −10° costs 6.5 %, −6° 3.4 %, and +6° gains 1.6 %, +10° 1.7 %, where the ECU's parabola lost 2.2 and 0.8 % on both sides. The curvature is the parabola's; the peak is offset. To be decided: align the criterion with the cycle's peak (wall losses), or keep the parabola for the offset. Fuel and gas heat keep the ECU's retard. What the sensor takes away, `ecuAdvanceDeg` reads. On the naturally aspirated 2.0, +6°: 194.1 → 197.9 Nm, 117.8 → 120.3 kW; below 2250 rpm the stock map is only 2° from its full-load limit, so the margin drops to −4.0° (−2.2° on RON 98), and the sensor takes advance back under load. The spec sheet (`rf_knock_margin_deg`, `--knock`) reads that same map.
+**The ECU's advance.** On a four-stroke spark engine, the torque the advance offset changes comes from the knock map alone (`ecuAdvanceInKnockMap`): it starts from the real stock map, retarded from best torque where knock bounds it, where the ECU assumed best torque. Finishing: that map's cycle gave its best work about 9° earlier than its best-torque criterion, and the ECU costed the offset by a 68° parabola: +6° gained 1.6%. A single model now says both, the cycle with its wall losses (see "Best torque, and what a deviation costs"); the ECU takes the published correlation it matches (Ayala, Gerty and Heywood). Above 3500 rpm the stock map sits at best torque: ±6° cost 1.5% of power there (naturally aspirated 2.0: 194.1 → 191.4 Nm at +6°, 191.5 at −6°; 117.8 → 116.0 and 116.1 kW). Lower, it is bounded by knock: the margin drops to −4.0° at +6° (−2.3° on RON 98), and the sensor takes advance back under load. Fuel follows the air, and no longer counts the advance a second time in the efficiency. What the sensor takes away, `ecuAdvanceDeg` reads. The spec sheet (`rf_knock_margin_deg`, `--knock`) reads that same map.
 
 **Thermal.** After a cold start, the network's coolant drives the port-injection film and the ECU's enrichment (one law, `coldEnrichment`); the cold wall, at the metal's temperature, warms the trapped air less (`trappedAirK`). Fast idle keeps the starting authority (0.8 of the fill, against 0.45 when warm): capped as when warm, it could not hold the low-compression Cadillac's cold oil. After a warm start, none of this, bit-exact.
 
 **Vaporisation** is counted once: the chosen fuel gives the latent heat (`fuelPropertiesOf`), the fuel system the share taken from the air (`mixtureAirShare`: 0.5 for a carburetor, 0.2 for port injection; direct injection has its droplet calculation). Combustion, direct injection (`injectedFuelOf`), charge air and the knock map read the same figures. Before, combustion took 0.15 for every fuel system, and injection 305 kJ/kg for every petrol, ethanol included.
 
-**Twin turbo.** One turbine per head: a W counts two (`architectureOf`). The shared intercooler cools towards the day's air. Electronic and by-gear boost control only hand their target to the twin's wastegate law. Their PID and anticipation are calibrated on a single-turbo bench: plugged in as they were, on a third-gear tip-in from 2000 rpm (3 L V6, 1 bar), they overshot the target by 0.49 bar on a sequential pair, whose staging oscillated, and by 0.13 bar in parallel, against 0.24 and 0.02 bar for the twin's own law. A calibration on a twin-turbo bench remains to be done. By gear, the W12's target drops by 0.29 bar in first, and its two shafts follow it.
+**Twin turbo.** One turbine per head: a W counts two (`architectureOf`). The shared intercooler cools towards the day's air. Electronic and by-gear boost control drive both wastegates (or the vanes) through a single solenoid, calibrated on the twin-turbo bench (see "Two turbos: one solenoid" in "Boost control"); a twincharger only reads the target. By gear, the W12's target drops by 0.29 bar in first, and its two shafts follow it.
 
 **The two-stroke.** The set ratio is its geometric ratio (7.5 stock): it changes the trapped ratio the exhaust port leaves, and combustion does not count it a second time (`compressionEfficiencyShare` is 1). The knock map compresses from port closing. At 9:1, torque gains more than 3 %. Six cylinders at most, and no VR, W or cross-plane crank: they fall back to a V.
 
@@ -2195,9 +2296,8 @@ The twelve engine topics together: architectures, atmosphere, thermal, combustio
 
 - The cam cycle's air stays at 20 °C and 101,325 Pa: it gives a ratio between two cycles in the same air, a second-order effect.
 - The knock map and the under-bonnet heat read by the charge air stay those of a warm engine: they are built once per setting, and a cold engine knocks less.
-- The twin turbo's shafts work in reference air (`turbo_laws::constants().atmosphere`): only the intercooler and the target see the day's air. The twin-turbo PID: above.
-- The spec sheet of electronic boost control at altitude stays an equilibrium at relative pressure: 301 Nm at 3000 m, as with the spring; only driving sees the absolute target (0-100 km/h in 8.56 s against 8.65).
-- Consumption does not see the advance's torque as read by the knock map; gas heat keeps the ECU's parabola.
+- The twin turbo's shafts work in reference air (`turbo_laws::constants().atmosphere`): only the intercooler and the target see the day's air.
+- Gas heat reads the advance through the ECU's correlation, which the knock map's cycle matches within a point; the fuel spec sheet takes the map's full-load share at every load.
 - The fuel's volatility in the port-injection film stays that of petrol.
 
 ### Where they meet, in figures
@@ -2207,12 +2307,12 @@ The twelve engine topics together: architectures, atmosphere, thermal, combustio
 | E85 and direct injection, turbo 2.0 at 11:1 | RON 95: 349 Nm, 192 kW, margin −6.4°; E85: 396 Nm, +2.9°; RON 95 direct: 382 Nm, −4.0°; E85 direct: 455 Nm, 252 kW, +12.7°. Direct injection gains 2.4° on RON 95 and 9.8° on E85: three times the latent heat, one and a half times the fuel. |
 | Cold start at altitude (city car, WLTC) | At sea level, 6.76 → 6.90 L/100 (+2.1 %); at 2500 m and −10 °C, 6.16 → 6.54 (+6.2 %), with one restart after a stall. |
 | Wild cam and stock springs (2.0, redline 7300) | Float at 8140 rpm stock; 12.5 mm over 200°: 6490 (−11 %), below the limiter; stiff springs: 7394 (+1.3 %); two-step: 8752. |
-| Sequential twin and electronic control (3 L V6, 1 bar, tip-in from 2000) | 90 % of boost in 1.76 s on one turbo, 0.62 s sequential, 0.43 s twincharger, 1.41 s parallel; the sequential pair overshoots by 0.24 bar at staging. |
+| Sequential twin and electronic control (3 L V6, 1 bar, tip-in from 2000) | 90% of boost in 1.75 s on one turbo, 0.72 s sequential, 0.43 s twincharger, 1.41 s parallel; with the solenoid calibrated on both turbos, the sequential pair overshoots by 0.155 bar at staging (0.24 with the wastegate law, 0.49 with a single turbo's PID), the parallel pair by 0.11 bar. |
 | W16 with parallel twins | Same equilibrium (1306 Nm); 0-100 km/h in 3.61 s against 3.82 on one turbo; 90 % of boost in 1.13 s against 1.38 from 2500 rpm. |
 | Two-stroke at altitude | 56.5 Nm and 20.2 kW at sea level; at 2000 m, 43.1 Nm (−24 %, while the air loses only 22 %) and 15.3 kW: 100 km/h is no longer reached; 7.73 → 7.16 L/100 at 90 km/h. |
 | Nitrous and a race cam (2.0, 75 kW) | 194 → 417 Nm, 118 → 192 kW; 280° cam alone: 174 Nm, 121 kW, margin 29.7° (late closing); both: 379 Nm, 194 kW. |
 | Launch control and twincharger (turbo 2.0) | 0-100 km/h: 6.86 s; launch at 4500: 6.13; twincharger: 6.35; both: 6.15. The supercharger already fills at the start: launch control only brings it 0.2 s. |
-| Altitude and boost control (turbo 2.0, 3000 m) | 357 → 301 Nm; 0-100 km/h in 8.65 s with the spring, 8.56 with electronic control, which overshoots its target by 0.18 bar on a tip-in. |
+| Altitude and boost control (turbo 2.0, 3000 m) | Spec sheet: 357 → 301 Nm with the spring, 312.6 Nm with electronic control, which aims at the absolute pressure; 0-100 km/h in 8.65 s with the spring, 8.56 with electronic control, which overshoots its target by 0.18 bar on a tip-in. |
 
 ### The rest
 

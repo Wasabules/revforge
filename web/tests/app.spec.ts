@@ -375,24 +375,37 @@ test('aucun débordement horizontal sur téléphone', async ({ page }) => {
 
 // ── Où l'on écoute ──
 
-/** Le niveau estimé, une fois la tête arrivée (elle glisse, à 6 m/s) et le sonomètre posé (constante de temps « fast », 125 ms). */
-async function settledDb(page: Page) {
-  const at = () => telemetry(page).then((t) => [t.listenerX, t.listenerY]);
+/**
+ * Le niveau estimé, comme le lit un sonomètre posé : la tête arrivée (elle glisse, à 6 m/s), le ralenti retombé après le démarrage
+ * (il redescend de 1200 à 800 tr/min en deux secondes, et le niveau avec lui), puis la moyenne en énergie sur `averageMs`. Le
+ * ralenti respire : il bat de ±1,5 % en 2,5 s environ, et le niveau de l'habitacle de ±2 dB avec lui. Une lecture seule, au « fast »
+ * de 125 ms, ou une moyenne plus courte qu'un battement, lisent ce battement plutôt que ce qu'on cherche : pour un écart de quelques
+ * dB, cinq secondes, deux battements.
+ */
+async function settledDb(page: Page, averageMs = 1500) {
+  const at = () => telemetry(page).then((t) => [t.listenerX, t.listenerY, t.rpm]);
   let before = await at();
   await expect
     .poll(
       async () => {
-        await page.waitForTimeout(150);
+        await page.waitForTimeout(1000);
         const now = await at();
         const moved = Math.hypot(now[0] - before[0], now[1] - before[1]);
+        // Le ralenti bat de ±1,5 % autour de sa consigne : 3 % en une seconde, c'est qu'il redescend encore.
+        const revved = Math.abs(now[2] - before[2]) / Math.max(before[2], 1);
         before = now;
-        return moved;
+        return moved < 0.01 && revved < 0.03;
       },
       { timeout: 15_000 },
     )
-    .toBeLessThan(0.01);
-  await page.waitForTimeout(700);
-  return (await telemetry(page)).levelDbA;
+    .toBe(true);
+  let energy = 0;
+  let count = 0;
+  for (const end = Date.now() + averageMs; Date.now() < end; count++) {
+    energy += 10 ** ((await telemetry(page)).levelDbA / 10);
+    await page.waitForTimeout(50);
+  }
+  return 10 * Math.log10(energy / count);
 }
 
 const position = (page: Page, name: string) => page.getByRole('group', { name: "Position d'écoute" }).getByRole('button', { name, exact: true });
@@ -485,9 +498,9 @@ test("les vitres ne se proposent qu'à bord, et font entrer le dehors", async ({
   await expect(windows).toHaveCount(0);
   await position(page, 'Habitacle').click();
   await expect(windows).toBeVisible();
-  const closed = await settledDb(page);
+  const closed = await settledDb(page, 5000);
   await windows.getByRole('button', { name: 'Ouvertes' }).click();
-  await expect.poll(() => settledDb(page), { timeout: 8000 }).toBeGreaterThan(closed + 1);
+  expect(await settledDb(page, 5000)).toBeGreaterThan(closed + 1);
 });
 
 test("changer d'échappement se voit sur la fiche : niveau et ce que retient la ligne", async ({ page }) => {

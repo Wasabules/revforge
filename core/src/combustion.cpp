@@ -81,14 +81,22 @@ constexpr double kRotaryRatioMax = 11.9;
 // Une seule zone : compression et combustion à γ = 1,3 ; les gaz frais, comprimés à part, perdent un peu de chaleur aux parois.
 constexpr double kZoneGamma = 1.3;
 constexpr double kUnburnedGamma = 1.30;
-// Part de la chaleur du carburant que reçoit le gaz pendant la combustion : rendement de combustion et pertes aux parois.
-constexpr double kHeatShare = 0.80;
+// La chaleur reçue nette, combustion moins parois, d'un cycle d'Otto ramassé en un point : celle de `releasePressureShare`.
+constexpr double kNetHeatShare = 0.80;
+// Part de l'énergie de l'air que la combustion libère vraiment (Heywood, ch. 4 : 95 à 98 % à la stœchiométrie et au-delà, moins
+// les imbrûlés des interstices ; riche, l'oxygène manque, et l'énergie par kilogramme d'air reste à peu près celle de λ 1). Supposé.
+constexpr double kCombustionShare = 0.95;
+// Les parois, pas à pas : Woschni (1967), Heywood éq. 12.19. h = 3,26·B^−0,2·p^0,8·T^−0,55·w^0,8 (W/m²K, B en m, p en kPa,
+// T en K, w en m/s), w = 2,28·vp + 3,24·10⁻³·(Vd·T₁/(p₁·V₁))·(p − p_entraîné), le second terme pendant la combustion et la détente.
+constexpr double kWoschniH = 3.26;
+constexpr double kWoschniPiston = 2.28;
+constexpr double kWoschniCombustion = 3.24e-3;
+// Culasse, piston et chemise : 400 à 600 K à pleine charge (Heywood, ch. 12). Leur moyenne, 60 K au-dessus de l'eau : supposé.
+constexpr double kChamberWallOverCoolantK = 60.0;
 // Loi de Wiebe à a = 5, m = 2 (Heywood), sur 45° de cycle, après le noyau de flamme : un temps, donc un angle qui croît avec le régime.
 constexpr double kWiebeA = 5.0;
 constexpr double kBurnDeg = 45.0;
 constexpr double kKernelS = 0.00035;
-// Au meilleur couple, la moitié du mélange a brûlé 8° après le point mort haut (Heywood).
-constexpr double kMbtCa50Deg = 8.0;
 // Le cliquetis ne compte que tant qu'il reste des gaz frais à faire détoner.
 constexpr double kKnockEndBurned = 0.9;
 // La charge prend la chaleur du conduit et de la chemise, plus chauds que l'eau ; d'autant moins qu'elle est dense (h ∝ (ρv)^0,8).
@@ -133,9 +141,6 @@ double densityAfterEvaporation(const FuelProperties& fuel, double lambda, double
 double fullLoadLambda(const EngineConfig& e) { return e.aspiration == Aspiration::Natural ? kFullLoadLambda : kFullLoadLambdaBoosted; }
 
 double kernelDeg(double rpm, double cycleSpeedShare) { return kKernelS * 6.0 * rpm * cycleSpeedShare; }
-
-/** Part de la loi de Wiebe à 50 % : (ln 2 / a)^(1/3). */
-double wiebeHalf() { return portable::pow(portable::kLn2 / kWiebeA, 1.0 / 3.0); }
 
 }  // namespace
 
@@ -236,7 +241,7 @@ double combustionTorqueShare(const EngineConfig& e) { return compressionEfficien
 double releasePressureShare(double ratio, double stockRatio) {
     // Otto : p4/p1 = 1 + q/(cv·T1·r^(γ−1)). La chaleur reçue par kilogramme de gaz, rapportée à cv·T1, d'une charge à 340 K.
     const double cv = kAirR / (kZoneGamma - 1.0);
-    const double heat = kHeatShare * energyPerAirJPerKg(kRon95) / (1.0 + 1.0 / (kFullLoadLambda * kRon95.stoichiometricAfr)) / (cv * 340.0);
+    const double heat = kNetHeatShare * energyPerAirJPerKg(kRon95) / (1.0 + 1.0 / (kFullLoadLambda * kRon95.stoichiometricAfr)) / (cv * 340.0);
     const double now = 1.0 + heat * portable::pow(ratio, 1.0 - kZoneGamma);
     const double before = 1.0 + heat * portable::pow(stockRatio, 1.0 - kZoneGamma);
     return now / before;
@@ -283,19 +288,33 @@ EndGasCycle endGasCycle(const EndGasSetup& s, double advanceDeg) {
     // La masse que le remplissage fait entrer, à la température qu'elle a vraiment dans le cylindre.
     const double ivcPa = s.fillShare * s.manifoldPa * (ivcK / s.manifoldK) / volume / (1.0 - s.residualShare);
     const double mass = ivcPa * volume / (kAirR * ivcK);
-    const double heat = kHeatShare * mass * (1.0 - s.residualShare) * s.energyPerAir;
+    const double fuelHeat = mass * (1.0 - s.residualShare) * s.energyPerAir;
+    const double heat = kCombustionShare * fuelHeat;
     const double secondsPerDeg = 1.0 / (6.0 * std::max(s.rpm, 1.0) * s.cycleSpeedShare);
     const double ignition = -advanceDeg + kernelDeg(s.rpm, s.cycleSpeedShare);
     // Douaud-Eyzat, sans les termes qui ne changent pas d'un pas à l'autre : 1/τ = exp(1,7·ln(p/p_atm) − 3800/T) / τ₀.
     const double tauZero = 17.68e-3 * portable::pow(s.octane / 100.0, 3.402);
     const double unburnedExponent = (kUnburnedGamma - 1.0) / kUnburnedGamma;
     const double logIvc = portable::log(ivcPa / kAtmosphere);
+    // Woschni, de l'étincelle à l'ouverture de l'échappement : la compression reste adiabatique (la charge y est d'abord plus
+    // froide que les parois, puis plus chaude ; le bilan est petit, et le même à toute avance). Tout ce qui suit est rapporté à la
+    // cylindrée, comme `volume` : une chaleur en J par m³ balayé, comme p·V. Aire des parois : culasse et piston plats, et la
+    // chemise découverte, πB²/2 + πB·x, x la hauteur de gaz (supposé : sans le toit de la culasse).
+    const double bore = std::max(s.boreM, 0.02);
+    const double stroke = std::max(s.strokeM, 0.02);
+    const double pistonSpeed = 2.0 * stroke * std::max(s.rpm, 1.0) * s.cycleSpeedShare / 60.0;
+    const double wallK = s.coolantK + kChamberWallOverCoolantK;
+    const double boreTerm = kWoschniH * portable::pow(bore, -0.2);
+    const double swirl = kWoschniCombustion * ivcK / (ivcPa * volume);
     double pressure = ivcPa;
+    double motored = ivcPa;  // le même cylindre, entraîné sans combustion : la référence du terme de combustion de Woschni
     double burned = 0.0;
     double integral = 0.0;
     double work = 0.0;
+    double walls = 0.0;
     double peak = ivcPa;
     double gasK = 0.0;
+    double ca50 = 0.0;
     bool ended = false;
     for (double theta = start; theta < 130.0; theta += kStepDeg) {
         const double next = theta + kStepDeg;
@@ -305,8 +324,19 @@ EndGasCycle endGasCycle(const EndGasSetup& s, double advanceDeg) {
             const double t = (next - ignition) / kBurnDeg;
             nextBurned = t >= 1.0 ? 1.0 : 1.0 - portable::exp(-kWiebeA * t * t * t);
         }
-        const double dq = heat * (nextBurned - burned);
+        if (burned < 0.5 && nextBurned >= 0.5) ca50 = theta + kStepDeg * (0.5 - burned) / (nextBurned - burned);
         const double dv = nextVolume - volume;
+        double wall = 0.0;
+        if (theta >= ignition) {
+            // Les parois prennent leur part à l'état du début du pas : h·A·(T − T_paroi)·dt.
+            const double meanK = pressure * volume / (mass * kAirR);
+            const double gasSpeed = kWoschniPiston * pistonSpeed + swirl * std::max(pressure - motored, 0.0);
+            const double h = boreTerm * portable::exp(0.8 * portable::log(pressure / 1000.0) - 0.55 * portable::log(meanK) + 0.8 * portable::log(gasSpeed));
+            wall = h * (2.0 / stroke + 4.0 * volume / bore) * (meanK - wallK) * kStepDeg * secondsPerDeg;
+            walls += wall;
+        }
+        motored = (motored * volume / (kZoneGamma - 1.0) - 0.5 * motored * dv) / (nextVolume / (kZoneGamma - 1.0) + 0.5 * dv);
+        const double dq = heat * (nextBurned - burned) - wall;
         // Premier principe, gaz parfait à γ constant, pression moyenne sur le pas : U = pV/(γ−1).
         const double inner = pressure * volume / (kZoneGamma - 1.0);
         const double nextPressure = (inner + dq - 0.5 * pressure * dv) / (nextVolume / (kZoneGamma - 1.0) + 0.5 * dv);
@@ -329,15 +359,15 @@ EndGasCycle endGasCycle(const EndGasSetup& s, double advanceDeg) {
     }
     out.knockIntegral = integral;
     // Le travail en part de la chaleur apportée : le rapport d'une avance à l'autre est celui du couple.
-    out.workShare = work / (heat / kHeatShare);
+    out.workShare = work / fuelHeat;
+    out.wallShare = walls / fuelHeat;
     out.peakPa = peak;
     out.gasK = gasK > 0.0 ? gasK : 2500.0;
     out.ivcPa = ivcPa;
     out.ivcK = ivcK;
+    out.ca50Deg = ca50;
     return out;
 }
-
-double mbtAdvanceDeg(double rpm, double cycleSpeedShare) { return kernelDeg(rpm, cycleSpeedShare) + kBurnDeg * wiebeHalf() - kMbtCa50Deg; }
 
 double knockingShare(double excessDeg) {
     // Somme de trois tirages uniformes, ramenée à un écart type : une cloche bornée à trois écarts types. Le cycle cliquette si sa phase
@@ -384,10 +414,14 @@ EndGasSetup setupAt(const Powertrain& p, const KnockMap::Inputs& in, double rpm,
     s.octane = fuel.ron;
     s.energyPerAir = energyPerAirJPerKg(fuel);
     s.rpm = rpm;
+    // Un rotatif : le cylindre carré de sa chambre (`strokeMm`), faute de mieux pour l'aire de ses parois (supposé).
+    s.boreM = (rotary ? static_cast<double>(e.strokeMm()) : static_cast<double>(e.boreMm)) / 1000.0;
+    s.strokeM = static_cast<double>(e.strokeMm()) / 1000.0;
     const double breathing = breathingOf(p, rpm);
     fullBoost = 0.0;
     if (e.aspiration == Aspiration::Turbo) {
-        const TurboSteady steady = turboSteady(turboSpecOf(p), rpm, breathing);
+        // La pression que tient la régulation dans l'air du jour : absolue sous calculateur (`fullLoadTurboSteady`).
+        const TurboSteady steady = fullLoadTurboSteady(p, rpm);
         s.manifoldPa = steady.chargePa;
         s.manifoldK = steady.coolK + (in.ambientK - 293.15);
         fullBoost = steady.boost;
@@ -458,9 +492,35 @@ void KnockMap::build(const Powertrain& p, const Inputs& in) {
             base.logIntegral[static_cast<std::size_t>(j)] = portable::log(std::max(stockCycle.knockIntegral, 1e-20));
             base.work[static_cast<std::size_t>(j)] = stockCycle.workShare;
         }
-        row.gasK = endGasCycle(setup, mbtAdvanceDeg(rpm, setup.cycleSpeedShare)).gasK;
+        // Le meilleur couple : le sommet du travail, celui du cycle lui-même. La carte d'origine part de celui du moteur d'origine.
+        row.mbtDeg = rowBest(row);
+        base.mbtDeg = rowBest(base);
+        row.gasK = endGasCycle(setup, row.mbtDeg).gasK;
         base.gasK = row.gasK;
     }
+}
+
+double KnockMap::rowBest(const Row& row) {
+    // Le point de la grille le plus haut, puis le sommet de la parabole que `rowWork` passe par lui et ses deux voisins.
+    int best = 0;
+    for (int j = 1; j < kAdvancePoints; ++j) {
+        if (row.work[static_cast<std::size_t>(j)] > row.work[static_cast<std::size_t>(best)]) best = j;
+    }
+    const int middle = best < 1 ? 1 : (best > kAdvancePoints - 2 ? kAdvancePoints - 2 : best);
+    const double before = row.work[static_cast<std::size_t>(middle - 1)];
+    const double here = row.work[static_cast<std::size_t>(middle)];
+    const double after = row.work[static_cast<std::size_t>(middle + 1)];
+    const double curvature = after - 2.0 * here + before;
+    const double x = curvature < 0.0 ? clamp(0.5 * (before - after) / curvature, -1.0, 1.0) : static_cast<double>(best - middle);
+    return kAdvanceMin + kAdvanceStep * (middle + x);
+}
+
+double KnockMap::rowsAt(const std::array<Row, kRpmPoints>& rows, double rpm, double Row::*field) const {
+    const double at = clamp((rpm - idleRpm_) / std::max(redlineRpm_ - idleRpm_, 1.0), 0.0, 1.0) * (kRpmPoints - 1);
+    const int low = std::min(static_cast<int>(at), kRpmPoints - 2);
+    const double share = at - low;
+    const double a = rows[static_cast<std::size_t>(low)].*field;
+    return a + (rows[static_cast<std::size_t>(low + 1)].*field - a) * share;
 }
 
 double KnockMap::invert(const Row& row, double target) {
@@ -489,16 +549,13 @@ double KnockMap::meanLimit(const std::array<Row, kRpmPoints>& rows, double rpm, 
 
 KnockPoint KnockMap::at(double rpm, double chargeShare) const {
     KnockPoint point;
-    const double cycleSpeed = 1.0 / degPerCycle_;
-    point.mbtDeg = mbtAdvanceDeg(rpm, cycleSpeed) * degPerCycle_;
+    point.mbtDeg = rowsAt(actual_, rpm, &Row::mbtDeg) * degPerCycle_;
     point.meanLimitDeg = meanLimit(actual_, rpm, chargeShare);
     point.limitDeg = point.meanLimitDeg - kLimitSpreads * kPhaseSpreadDeg;
     const double stockLimit = meanLimit(stock_, rpm, chargeShare) - kLimitSpreads * kPhaseSpreadDeg;
-    point.stockDeg = std::min(point.mbtDeg, stockLimit - kCalibrationMarginDeg);
-    const double at = clamp((rpm - idleRpm_) / std::max(redlineRpm_ - idleRpm_, 1.0), 0.0, 1.0) * (kRpmPoints - 1);
-    const int low = std::min(static_cast<int>(at), kRpmPoints - 2);
-    const double share = at - low;
-    point.gasK = actual_[static_cast<std::size_t>(low)].gasK + (actual_[static_cast<std::size_t>(low + 1)].gasK - actual_[static_cast<std::size_t>(low)].gasK) * share;
+    // La carte d'origine : le meilleur couple du moteur d'origine, sauf là où il cliquetterait.
+    point.stockDeg = std::min(rowsAt(stock_, rpm, &Row::mbtDeg) * degPerCycle_, stockLimit - kCalibrationMarginDeg);
+    point.gasK = rowsAt(actual_, rpm, &Row::gasK);
     return point;
 }
 

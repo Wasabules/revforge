@@ -11,8 +11,12 @@ namespace revforge {
 
 namespace {
 
-// ── L'avance : la parabole et le bilan de l'anti-lag (anti_lag.cpp), pour que les deux disent la même chose ──
-constexpr double kNoTorqueDeg = 68.0;
+// ── L'avance : ce que coûte un écart au meilleur couple. Ayala, Gerty et Heywood (SAE 2006-01-0229), corrélation mesurée sur
+// la phase de la combustion, de toutes charges, régimes et richesses : T/T_MBT = 1 − 0,168·(√(1 + 0,004443·Δ²) − 1). Le cycle de
+// la carte du cliquetis (combustion.cpp), qui brûle à durée fixe, la retrouve à moins d'un point jusqu'à 25° (testé). ──
+constexpr double kSparkLossScale = 0.168;
+constexpr double kSparkLossCurvature = 0.004443;
+// Le bilan de l'anti-lag (anti_lag.cpp) : la part du travail perdu qui part dans les parois.
 constexpr double kLateWallShare = 0.2;
 
 // ── Le meilleur couple : la moitié de la combustion vers 8° après le point mort haut (Heywood, chap. 9) ──
@@ -54,8 +58,7 @@ double enrichment(double load) { return clamp((load - kEnrichFromShare) / (1.0 -
 }  // namespace
 
 double sparkTorqueShare(double fromMbtDeg) {
-    const double ratio = fromMbtDeg / kNoTorqueDeg;
-    const double share = 1.0 - ratio * ratio;
+    const double share = 1.0 - kSparkLossScale * (std::sqrt(1.0 + kSparkLossCurvature * fromMbtDeg * fromMbtDeg) - 1.0);
     return share > 0.0 ? share : 0.0;
 }
 
@@ -212,8 +215,9 @@ void tractionActuation(double torqueShare, double maxRetardDeg, double& retardDe
     const double wanted = clamp(torqueShare, 0.0, 1.0);
     const double floor = sparkTorqueShare(maxRetardDeg);
     if (wanted >= floor) {
-        // L'inverse de la parabole : le retard qui laisse juste cette part.
-        retardDeg = kNoTorqueDeg * std::sqrt(1.0 - wanted);
+        // L'inverse de `sparkTorqueShare` : le retard qui laisse juste cette part.
+        const double root = 1.0 + (1.0 - wanted) / kSparkLossScale;
+        retardDeg = std::sqrt((root * root - 1.0) / kSparkLossCurvature);
         firedShare = 1.0;
     } else {
         retardDeg = maxRetardDeg;

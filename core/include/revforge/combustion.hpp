@@ -101,6 +101,9 @@ struct EndGasSetup {
     double vaporizationCoolingK = 0.0;
     double rpm = 3000.0;
     double cycleSpeedShare = 1.0;  // degrés de cycle par degré d'arbre : 2/3 sur un rotatif
+    // La chambre en vrai (m) : l'aire des parois et la vitesse des gaz des pertes de Woschni. Un rotatif : un cylindre carré équivalent.
+    double boreM = 0.086;
+    double strokeM = 0.086;
 };
 
 /** Ce que donne une combustion à cette avance (degrés de cycle avant le point mort haut). */
@@ -111,11 +114,15 @@ struct EndGasCycle {
     double gasK = 0.0;           // température moyenne du gaz à 90 % brûlé : la vitesse du son de la résonance
     double ivcPa = 0.0;
     double ivcK = 0.0;
+    double wallShare = 0.0;      // chaleur perdue aux parois (Woschni), en part de la chaleur du carburant
+    double ca50Deg = 0.0;        // la moitié du mélange brûlée, degrés de cycle après le point mort haut
 };
 
+/**
+ * Le cycle, de la fermeture de l'admission à l'ouverture de l'échappement. Les parois prennent leur chaleur pas à pas (Woschni) :
+ * c'est ce qui place le meilleur couple, et ce que coûte une étincelle qui s'en écarte. Voir « Le cliquetis » dans docs/modele.md.
+ */
 EndGasCycle endGasCycle(const EndGasSetup& setup, double advanceDeg);
-/** L'avance du meilleur couple (degrés de cycle) : la moitié du mélange brûlée à 8° après le point mort haut. */
-double mbtAdvanceDeg(double rpm, double cycleSpeedShare);
 /** Dispersion d'un cycle à l'autre de la phase de combustion (degrés) : un cycle sur cinquante cliquette à la limite (supposé). */
 inline constexpr double kPhaseSpreadDeg = 1.5;
 /** Écart entre la limite du cycle moyen et la limite de cliquetis : deux écarts types. */
@@ -142,7 +149,7 @@ struct KnockDrive {
 
 /** Un point de la carte, à ce régime et à cette pression de charge. Avances en degrés d'arbre avant le point mort haut. */
 struct KnockPoint {
-    double mbtDeg = 0.0;
+    double mbtDeg = 0.0;         // le meilleur couple de ce moteur : le sommet du travail de son cycle
     double stockDeg = 0.0;       // carte d'origine : le meilleur couple, sauf 2° sous la limite de cliquetis du moteur d'origine
     double limitDeg = 0.0;       // limite de cliquetis de ce moteur, à ce carburant
     double meanLimitDeg = 0.0;   // limite du cycle moyen
@@ -194,10 +201,13 @@ private:
         std::array<double, kAdvancePoints> logIntegral{};
         std::array<double, kAdvancePoints> work{};
         double gasK = 2500.0;
+        double mbtDeg = 0.0;     // degrés de cycle : le sommet de `work`, tel que le lit `rowWork`
     };
     double meanLimit(const std::array<Row, kRpmPoints>& rows, double rpm, double chargeShare) const;
     static double invert(const Row& row, double target);
     double rowWork(const Row& row, double cycleDeg) const;
+    static double rowBest(const Row& row);
+    double rowsAt(const std::array<Row, kRpmPoints>& rows, double rpm, double Row::*field) const;
 
     std::array<Row, kRpmPoints> actual_{};
     std::array<Row, kRpmPoints> stock_{};

@@ -236,13 +236,17 @@ public:
     void reset();
 
     static constexpr int kGroups = 3;
+    /** La réponse de la caisse : 1024 points à 48 kHz, 21 ms. À plus haute fréquence d'échantillonnage, autant de millisecondes. */
     static constexpr int kFirLength = 1024;
     static int groupOf(Source source);
+    /** Le nombre de points de la réponse à cette fréquence : une puissance de deux, au moins `kFirLength`, la même durée qu'à 48 kHz. */
+    static int firLengthFor(float rate);
 
 private:
     void design(int group, const CarAcoustics& car);
 
     float rate_;
+    int firLength_ = kFirLength;
     dsp::Fft fft_;
     std::vector<float> re_, im_, fir_;
     std::array<dsp::Convolver, kGroups> filters_;

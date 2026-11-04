@@ -19,8 +19,10 @@ namespace revforge {
 
 /**
  * Le couple indiqué, en part de celui du meilleur couple (MBT), pour une étincelle à `fromMbtDeg` du MBT (positif :
- * plus tard). Une parabole `1 − (Δ/68°)²`, à peu près symétrique près du MBT : la forme des tables « torque ratio »
- * des calculateurs, la même que l'anti-lag. Jamais négatif.
+ * plus tard) : `1 − 0,168·(√(1 + 0,004443·Δ²) − 1)`, la corrélation d'Ayala, Gerty et Heywood (SAE 2006-01-0229).
+ * 0,9 % à 5°, 3,4 % à 10°, 11 % à 20° ; quadratique près du MBT, presque droite au-delà. Le cycle de la carte du cliquetis
+ * (`KnockMap`, avec ses pertes aux parois) la retrouve à moins d'un point jusqu'à 25° : c'est lui qui fait foi quand il est
+ * construit, elle sert au pas du calculateur (launch control, antipatinage, rupteur) et à la consommation. Jamais négatif.
  */
 double sparkTorqueShare(double fromMbtDeg);
 /**
@@ -30,9 +32,9 @@ double sparkTorqueShare(double fromMbtDeg);
  */
 double sparkExhaustGain(double fromMbtDeg, double indicatedEfficiency = 0.375);
 /**
- * L'avance du meilleur couple (° avant le point mort haut) : celle qui place la moitié de la combustion vers 8° après le
- * point mort haut. La durée jusque-là croît avec le régime (en degrés, la turbulence suit le piston, pas tout à fait le
- * temps) et à faible remplissage (gaz résiduels, mélange moins dense). Ordres de grandeur de Heywood, chap. 9, supposés.
+ * L'avance du meilleur couple (° avant le point mort haut) d'un moteur sans carte du cliquetis, pour la fiche d'un deux-temps
+ * ou d'un diesel : celle qui place la moitié de la combustion vers 8° après le point mort haut. Un quatre-temps à étincelle
+ * lit la sienne dans le cycle de sa carte (`KnockPoint::mbtDeg`). Ordres de grandeur de Heywood, chap. 9, supposés.
  */
 double ecuMbtAdvanceDeg(double rpm, double load);
 

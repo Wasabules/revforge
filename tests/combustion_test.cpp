@@ -9,6 +9,7 @@
 #include "revforge/combustion.hpp"
 #include "revforge/consumption.hpp"
 #include "revforge/driving_model.hpp"
+#include "revforge/ecu.hpp"
 #include "revforge/engine_sound.hpp"
 #include "revforge/two_stroke.hpp"
 #include "revforge/powertrain.hpp"
@@ -240,6 +241,56 @@ TEST_CASE("aucun préréglage ne cliquette à ses réglages : marges listées en
         MESSAGE(id << " : marge " << margin << "° à " << marginRpm << " tr/min ; la carte retarde au plus de " << retard << "° face au meilleur couple, à " << retardRpm << " tr/min");
         CHECK(margin >= kCalibrationMarginDeg - 1e-9);
     }
+}
+
+TEST_CASE("le meilleur couple et ce que coûte un écart viennent du cycle, pertes aux parois comprises") {
+    // Heywood (chap. 9) et Ayala, Gerty et Heywood (SAE 2006-01-0229) : au meilleur couple, la moitié du mélange brûle 8 à 10° après
+    // le point mort haut ; 5° de retard de la combustion coûtent 0,9 %, 10° en coûtent 3,4 %. La CRC (CM-137-11-1b, éq. 2), sur les
+    // mêmes mesures rapportées à l'étincelle : 1,3 % et 5,1 %. Le cycle brûle à durée fixe : étincelle et combustion reculent ensemble.
+    std::size_t count = 0;
+    const Preset* all = presets(count);
+    double worstGap = 0.0;
+    for (std::size_t i = 0; i < count; ++i) {
+        const Powertrain p = all[i].powertrain();
+        if (p.electric || p.engine.burnsDiesel() || p.engine.twoStroke()) continue;
+        const std::string id = all[i].id;
+        CAPTURE(id);
+        KnockMap map;
+        map.build(p);
+        // Un rotatif compte son avance en degrés d'arbre, une fois et demie ceux de son cycle.
+        const double perCycle = isRotary(p.engine) ? 1.5 : 1.0;
+        for (double rpm = 1500.0; rpm <= redlineRpmOf(p); rpm += 1500.0) {
+            CAPTURE(rpm);
+            const double mbt = map.at(rpm, 1.0).mbtDeg;
+            EndGasSetup setup;
+            setup.rpm = rpm;
+            setup.cycleSpeedShare = 1.0 / perCycle;
+            const double ca50 = endGasCycle(setup, mbt / perCycle).ca50Deg;
+            CHECK(ca50 > 3.0);
+            // Plus tard à bas régime, où les parois ont le temps de prendre leur chaleur ; plus encore sur un rotatif.
+            CHECK(ca50 < (isRotary(p.engine) ? 17.0 : 13.0));
+            // Le sommet est bien là : rien de mieux de part et d'autre.
+            CHECK(map.torqueShare(rpm, mbt + 2.0 * perCycle, mbt) < 1.0);
+            CHECK(map.torqueShare(rpm, mbt - 2.0 * perCycle, mbt) < 1.0);
+            // Les mesures publiées : des moteurs à pistons de 9,8 à 13,4:1. Ni le rotatif, ni la Cadillac à 5,35:1, moins sensible
+            // (sa détente dépend moins de l'instant où le gaz brûle), n'y entrent.
+            if (isRotary(p.engine) || compressionRatioOf(p.engine) < 8.0f) continue;
+            const double five = 1.0 - map.torqueShare(rpm, mbt - 5.0, mbt);
+            const double ten = 1.0 - map.torqueShare(rpm, mbt - 10.0, mbt);
+            CHECK(five > 0.006);
+            CHECK(five < 0.015);
+            CHECK(ten > 0.025);
+            CHECK(ten < 0.051);
+            // La corrélation du calculateur, qui sert sans carte, dit la même chose : à un point près jusqu'à 15°, deux à 25° (à bas
+            // régime, où le meilleur couple est déjà plus tard).
+            for (double late = 5.0; late <= 25.0; late += 5.0) {
+                const double gap = std::fabs(map.torqueShare(rpm, mbt - late, mbt) - sparkTorqueShare(late));
+                worstGap = std::max(worstGap, gap);
+                CHECK(gap < (late <= 15.0 ? 0.01 : 0.02));
+            }
+        }
+    }
+    MESSAGE("écart le plus grand entre le cycle et la corrélation d'Ayala, jusqu'à 25° : " << worstGap * 100.0 << " point");
 }
 
 TEST_CASE("plus de compression ou un air plus chaud rapprochent la limite, plus d'octane l'éloigne") {

@@ -318,6 +318,7 @@ namespace {
 
 struct Balance {
     double surplusW = 0.0;
+    bool tipLimited = false;  // c'est la vitesse des roues qui manque, pas l'énergie
     double omega = 0.0;
     double turbineInPa = kAtmosphere;
     double flow = 0.0;
@@ -381,7 +382,10 @@ Balance balanceAt(const TurboSpec& spec, double rpm, double breathing, double ch
     // Sous la limite de pompage, le compresseur ne tient pas cette pression, quelle que soit l'énergie disponible.
     if (x < kHoldX) b.surplusW = -1.0;
     // Ni au-delà de la vitesse que supportent les roues : le calculateur ouvre la soupape pour les protéger.
-    if (tip > spec.tipLimit) b.surplusW = -1.0;
+    if (tip > spec.tipLimit) {
+        b.surplusW = -1.0;
+        b.tipLimited = true;
+    }
     b.omega = omega;
     b.turbineInPa = inPa;
     b.flow = flow;
@@ -428,6 +432,23 @@ TurboSteady turboSteady(const TurboSpec& spec, double rpm, double breathing) {
             }
             chargePa = 0.5 * (low + high);
             found = balanceAt(spec, rpm, breathing, chargePa, 0.0);
+            // Ce sont les roues qui bornent la pression, pas l'énergie : la soupape s'ouvre juste assez pour les tenir à leur
+            // vitesse limite, comme au pas de temps. Fermée, elle enverrait tout le gaz à la turbine, et une contre-pression que
+            // l'arbre ne peut pas absorber.
+            if (balanceAt(spec, rpm, breathing, high, 0.0).tipLimited && found.surplusW > 0.0) {
+                double shut = 0.0;
+                double open = 1.0;
+                if (balanceAt(spec, rpm, breathing, chargePa, 1.0).surplusW > 0.0) {
+                    gate = 1.0;
+                } else {
+                    for (int i = 0; i < 10; ++i) {
+                        const double middle = 0.5 * (shut + open);
+                        (balanceAt(spec, rpm, breathing, chargePa, middle).surplusW > 0.0 ? shut : open) = middle;
+                    }
+                    gate = 0.5 * (shut + open);
+                }
+                found = balanceAt(spec, rpm, breathing, chargePa, gate);
+            }
         }
     }
     out.chargePa = chargePa;
