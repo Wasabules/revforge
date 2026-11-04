@@ -12,6 +12,7 @@
 #include "revforge/cam.hpp"
 #include "revforge/carburetor.hpp"
 #include "revforge/charge_air.hpp"
+#include "revforge/cold_start.hpp"
 #include "revforge/combustion.hpp"
 #include "revforge/driving_model.hpp"
 #include "revforge/ecu.hpp"
@@ -715,4 +716,75 @@ TEST_CASE("jonction culbuteurs, came et calculateur : le rupteur garde la zone r
     CHECK(camLobeOf(wild.engine).liftMm == doctest::Approx(camProfileOf(wild.engine).liftMm));
     CHECK(camLobeOf(wild.engine).durationDeg == doctest::Approx(camProfileOf(wild.engine).durationDeg));
     CHECK(valveFloatRpm(wild.engine) < static_cast<double>(wild.engine.redlineRpm));
+}
+
+TEST_CASE("jonction départ et démarreur : la batterie suit l'arrêt moteur coupé avec sa propre inertie, et le démarreur la lit") {
+    Powertrain p = findPreset("city_14")->powertrain();
+    p.engine.ambientC = -30.0f;
+    const auto parked = [&](StartTemp start) {
+        Powertrain q = p;
+        q.engine.startTemp = start;
+        return q;
+    };
+    const double warmBay = batteryStartC(-30.0, kWarmCoolantC, EnginePlacement::Front);
+    // Chaud : la batterie de référence du démarreur, au compartiment, au bit près ; une nuit : l'air du dehors.
+    CHECK(DrivingModel(parked(StartTemp::Warm)).thermal().batteryC() == warmBay);
+    CHECK(DrivingModel(parked(StartTemp::Cold)).thermal().batteryC() == -30.0);
+    // Entre les deux, le même arrêt que l'eau et l'huile : refroidie, mais en retard sur l'air du compartiment qui suit l'eau
+    // (12,6 kg de plomb-acide, τ ≈ 2,2 h). Sans son inertie, elle serait à l'air du compartiment.
+    double previous = warmBay;
+    for (const StartTemp start : {StartTemp::HalfHour, StartTemp::TwoHours}) {
+        CAPTURE(static_cast<int>(start));
+        const ThermalNetwork net = DrivingModel(parked(start)).thermal();
+        const double bay = batteryStartC(-30.0, net.coolantC(), EnginePlacement::Front);
+        CHECK(net.batteryC() < previous);
+        CHECK(net.batteryC() > bay + 1.0);
+        previous = net.batteryC();
+    }
+    // Pas à pas moteur coupé (réseau à 10 ms), ou d'un coup (`soakThermal`, pas de 1 s) : la même batterie.
+    DrivingModel stepped(parked(StartTemp::Warm));
+    stepped.halt();
+    for (int i = 0; i < 1800 * 10; ++i) stepped.stepOff(0.1);
+    DrivingModel soaked(parked(StartTemp::Warm));
+    soaked.halt();
+    soaked.soakThermal(1800.0);
+    CHECK(std::abs(stepped.thermal().batteryC() - soaked.thermal().batteryC()) < 0.01);
+    CHECK(soaked.thermal().batteryC() == DrivingModel(parked(StartTemp::HalfHour)).thermal().batteryC());
+    // Le démarreur lit cette batterie, pas l'étiquette du départ.
+    DrivingModel two(parked(StartTemp::TwoHours));
+    const double battery = two.thermal().batteryC();
+    two.halt();
+    two.crank();
+    CHECK(two.start().battery().celsius == battery);
+    // Un moteur central : sa batterie reste à l'air du dehors, même chaud.
+    Powertrain mid = findPreset("v10_open")->powertrain();
+    REQUIRE(placementOf(mid.car) == EnginePlacement::Mid);
+    mid.engine.ambientC = -30.0f;
+    CHECK(DrivingModel(mid).thermal().batteryC() == -30.0);
+}
+
+TEST_CASE("jonction départ et démarreur : la batterie se repose pendant l'arrêt rattrapé, et un modèle reconstruit la garde") {
+    // La Cadillac en huile d'été par -30 °C ne prend pas : la batterie s'est vidée de ses plaques.
+    Powertrain p = findPreset("v16_cadillac")->powertrain();
+    p.engine.startTemp = StartTemp::Cold;
+    p.engine.ambientC = -30.0f;
+    DrivingModel model(p);
+    model.halt();
+    model.crank();
+    model.releaseKey();
+    for (int i = 0; i < 11000; ++i) model.stepNeutral(0.001, 0.0);
+    REQUIRE(model.startFailed());
+    // Reconstruit (changer de mode, sur le site) : la même batterie, tension et acide compris.
+    DrivingModel rebuilt(p);
+    rebuilt.carryThermal(model.thermal());
+    rebuilt.carryBattery(model.start().battery());
+    CHECK(rebuilt.start().battery().drawnAs == model.start().battery().drawnAs);
+    CHECK(rebuilt.start().battery().charge == model.start().battery().charge);
+    // Deux minutes d'arrêt rattrapées d'un coup (`rf_soak`) : l'acide revient comme pas à pas, moteur coupé.
+    DrivingModel stepped = model;
+    for (int i = 0; i < 120000; ++i) stepped.stepOff(0.001);
+    const double tired = model.batteryVolts();
+    model.soakThermal(120.0);
+    CHECK(model.batteryVolts() > tired + 0.02);
+    CHECK(model.batteryVolts() == doctest::Approx(stepped.batteryVolts()).epsilon(0.002));
 }

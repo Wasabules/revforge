@@ -16,10 +16,11 @@ const ROTARY = '2.rotary.1308.84.9000.stock.natural.petrol.0.off.dump_valve~coup
 
 /** Chaque réglage du socle, loin de son défaut. */
 const CHANGED: Record<string, string | number | boolean> = {
-  ambientC: -12, altitudeM: 2400, startTemp: 'cold', compressionRatio: 12.3, fuelGrade: 'methanol', ignitionOffsetDeg: -7, fullLoadLambda: 0.82,
+  // Le site part d'une nuit dehors (`cold`) : loin du défaut, c'est désormais un arrêt de deux heures, ajouté en fin de liste.
+  ambientC: -12, altitudeM: 2400, startTemp: 'two_hours', compressionRatio: 12.3, fuelGrade: 'methanol', ignitionOffsetDeg: -7, fullLoadLambda: 0.82,
   revLimiter: 'ignition_cut', launchRpm: 4800, flatShift: true, tractionControl: 'sport', dieselInjection: 'common_rail', egr: true, particulateFilter: true,
   camDurationDeg: 286, camLiftMm: 12.4, lobeSeparationDeg: 106, valveTiming: 'two_step', valveSprings: 'stiff', turboLayout: 'twin_sequential',
-  variableGeometry: true, boostControl: 'electronic', intercooler: 'none', waterInjection: true, nitrousKw: 110, cycle: 'two_stroke',
+  variableGeometry: true, boostControl: 'electronic', intercooler: 'none', waterInjection: true, nitrousKw: 110, cycle: 'two_stroke', oilGrade: 'sae30',
 };
 
 async function open(page: Page, hash = BASE) {
@@ -91,7 +92,8 @@ test.describe('le lien de partage', () => {
     const old = await read(TURBO);
     expect(old.ambientC).toBe(20);
     expect(old.altitudeM).toBe(0);
-    expect(old.startTemp).toBe('warm');
+    // Le défaut du site a changé : un ancien lien, qui n'écrivait pas le départ chaud, part après une nuit dehors (documenté).
+    expect(old.startTemp).toBe('cold');
     expect(old.compressionRatio).toBe(0);
     expect(old.intercooler).toBe('air_to_air');
     expect(old.cycle).toBe('four_stroke');
@@ -132,7 +134,7 @@ test.describe('le même ordre partout', () => {
       const { tuningArgs, config } = (window as any).__revforge;
       return tuningArgs({ ...config(), ...changed });
     }, CHANGED);
-    expect(args).toEqual([-12, 2400, 1, 12.3, 4, -7, 0.82, 2, 4800, 1, 1, 1, 1, 1, 286, 12.4, 106, 2, 1, 2, 1, 1, 2, 1, 110, 1]);
+    expect(args).toEqual([-12, 2400, 3, 12.3, 4, -7, 0.82, 2, 4800, 1, 1, 1, 1, 1, 286, 12.4, 106, 2, 1, 2, 1, 1, 2, 1, 110, 1, 5]);
   });
 });
 
@@ -188,9 +190,11 @@ test.describe('les commandes, là où elles ont un sens', () => {
     await ouvrir(page, 'car');
     const panel = page.getByTestId('panel-car');
     for (const id of ['ambient', 'altitude', 'start-temp']) await expect(panel.getByTestId(id), id).toBeVisible();
-    await panel.getByTestId('start-temp').getByRole('button', { name: 'Froid' }).click();
-    await expect(page.getByTestId('open-car-summary')).toContainText('départ à froid');
-    expect(await link(page)).toContain('~~start=cold');
+    // Le résumé dit ce qui diffère du défaut du site, une nuit dehors : ici, le moteur qui vient de rouler.
+    await expect(page.getByTestId('open-car-summary')).not.toContainText('départ');
+    await panel.getByTestId('start-temp').getByRole('button', { name: 'Vient de rouler' }).click();
+    await expect(page.getByTestId('open-car-summary')).toContainText('départ : Vient de rouler');
+    expect(await link(page)).toContain('~~start=warm');
     expect(errors).toEqual([]);
 
     errors = await open(page, 'electric~compact.1800.19.rear');

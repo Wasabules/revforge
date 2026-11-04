@@ -3,7 +3,7 @@
  * ce qui a changé : ni rendu de composant à 30 Hz, ni texte fabriqué à chaque image.
  */
 import type { EngineConfig } from './config';
-import type { Telemetry } from './engine';
+import type { RestingState, Telemetry } from './engine';
 import { lang, type Lang } from './i18n.svelte';
 import type { Motion } from './motion';
 
@@ -90,25 +90,34 @@ export class Readings {
   accelG = 0;
   /** Sortie du son, crête sur la dernière période, en dB sous la pleine échelle. */
   peakDb = -60;
-  /** Eau et huile (°C), du réseau thermique : l'air ambiant tant que le son n'a pas démarré. */
+  /** Eau et huile (°C), du réseau thermique : celles de l'état choisi au départ tant que le son n'a pas démarré. */
   coolantC = 20;
   oilC = 20;
+  /** La batterie : sa tension (V) et sa température (°C), de même. 0 V tant que rien n'est calculé. */
+  batteryV = 0;
+  batteryC = 20;
   private lastNow = -1;
 
   constructor(private motion: Motion) {}
 
-  update(now: number, t: Telemetry, config: EngineConfig, running: boolean): void {
+  /**
+   * `resting` : l'eau, l'huile et la batterie quand le son ne les donne pas, calculées par le C++ : l'état choisi au départ
+   * avant le premier démarrage (`Spec.startCoolantC`…), puis le moteur coupé qui refroidit (`Engine.restingThermal`). NaN : pas
+   * encore calculé, l'air ambiant en attendant.
+   */
+  update(now: number, t: Telemetry, config: EngineConfig, running: boolean, resting: RestingState): void {
     if (now === this.lastNow) return;
     const seconds = this.lastNow < 0 ? 0 : Math.min((now - this.lastNow) / 1000, 0.1);
     this.lastNow = now;
     const motion = this.motion;
     this.accelG = motion.acceleration / 9.81;
     this.peakDb = t.peak > 1e-3 ? 20 * Math.log10(t.peak) : -60;
-    // Le réseau thermique tourne même moteur coupé : il refroidit. Avant le premier son, le moteur est tel qu'on l'a choisi :
-    // chaud, à la référence (eau 90 °C, huile 100 °C, celles de `kWarmCoolantC` et `kWarmOilC`), ou froid, à l'air ambiant.
-    const cold = config.startTemp === 'cold';
-    this.coolantC = running ? t.coolantC : cold ? config.ambientC : 90;
-    this.oilC = running ? t.oilC : cold ? config.ambientC : 100;
+    // Le réseau thermique tourne même moteur coupé : il refroidit. Rien n'est écrit ici : tout vient du réseau en C++.
+    const known = (value: number) => (Number.isFinite(value) ? value : config.ambientC);
+    this.coolantC = running ? t.coolantC : known(resting.coolantC);
+    this.oilC = running ? t.oilC : known(resting.oilC);
+    this.batteryC = running ? t.batteryC : known(resting.batteryC);
+    this.batteryV = running ? t.batteryV : Number.isFinite(resting.batteryV) ? resting.batteryV : 0;
 
     const net = config.electric ? null : motion.meters;
     const ready = net !== null && net.n > 0 && net.zP[net.zonePlenum] > 0;

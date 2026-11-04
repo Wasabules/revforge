@@ -108,10 +108,11 @@ StarterSound::StarterSound(float sampleRate) : sr_(sampleRate) {
     body_.init(kBodyPartition, kBodyPartitions);
 }
 
-void StarterSound::setState(bool powered, bool meshed, float load) {
+void StarterSound::setState(bool powered, bool meshed, float load, float supply) {
     powered_ = powered;
     meshed_ = meshed;
     load_ = load;
+    supply_ = supply;
 }
 
 /**
@@ -287,6 +288,8 @@ float StarterSound::sample(float rpm, bool cranking, float level) {
     if (meshed_) {
         pinionOmega_ = ringOmega * gear;
         current = static_cast<float>(std::max(1.0 - pinionOmega_ / pinionFreeOmega_, 0.0));
+        // Le vrai courant : celui que la batterie laisse passer, en écart à la batterie de référence (cold_start.hpp). Nul moteur chaud.
+        if (supply_ != 0.0f) current = km::max(current + supply_, 0.0f);
         ringTurns_ += ringOmega * turnsPerRad * dt;
         ringTurns_ -= std::floor(ringTurns_);
         pinionTurns_ += pinionOmega_ * turnsPerRad * dt;

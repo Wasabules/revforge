@@ -43,10 +43,13 @@ class RevforgeProcessor extends AudioWorkletProcessor {
       case 'scenario': rf.rf_set_scenario(command.scenario); break;
       case 'shift': rf.rf_shift(command.direction); break;
       case 'crank': rf.rf_crank(); break;
+      case 'releaseKey': rf.rf_release_key(); break;
       case 'listener': rf.rf_set_listener(command.listener); break;
       case 'listenerAt': rf.rf_set_listener_position(command.x, command.y, command.z); break;
       case 'windows': rf.rf_set_windows(command.open ? 1 : 0); break;
       case 'volume': rf.rf_set_volume(command.volume); break;
+      // Le son est resté suspendu moteur coupé : le réseau thermique refroidit d'autant avant qu'on redémarre.
+      case 'soak': rf.rf_soak(command.seconds); break;
       default: break;
     }
   }
@@ -199,6 +202,13 @@ class RevforgeProcessor extends AudioWorkletProcessor {
         nitrousBar: rf.rf_nitrous_bar(),
         nitrousKg: rf.rf_nitrous_kg(),
         nitrousFlow: rf.rf_nitrous_flow(),
+        batteryV: rf.rf_battery_v(),
+        starterA: rf.rf_starter_a(),
+        startFailed: rf.rf_start_failed(),
+        preheat: rf.rf_preheat(),
+        batteryCharge: rf.rf_battery_state(0),
+        batteryDrawnAs: rf.rf_battery_state(1),
+        batteryC: rf.rf_battery_state(2),
         peak: this.peak,
       });
       this.peak = 0;

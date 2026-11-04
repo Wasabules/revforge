@@ -39,7 +39,7 @@ const SHIFT = { normal: 0, eco: 1, sport: 2, track: 3, paddles: 4 };
 const SCENARIO = { city: 0, stop_go: 1, country: 2, motorway: 3, mountain: 4, drag: 5, track: 6, hill_start: 7, towing: 8 };
 
 // ── Les réglages du socle moteur : même ordre que les énumérations C++ et les tableaux de config.ts ──
-const START = { warm: 0, cold: 1 };
+const START = { warm: 0, cold: 1, half_hour: 2, two_hours: 3 };
 const GRADE = { ron95: 0, ron98: 1, race102: 2, e85: 3, methanol: 4 };
 const LIMITER = { stock: 0, soft: 1, ignition_cut: 2 };
 const TRACTION = { off: 0, sport: 1, full: 2 };
@@ -50,12 +50,13 @@ const TURBO_LAYOUT = { single: 0, twin_parallel: 1, twin_sequential: 2, twinchar
 const BOOST_CONTROL = { spring: 0, electronic: 1, by_gear: 2 };
 const INTERCOOLER = { air: 0, water: 1, none: 2 };
 const CYCLE = { four_stroke: 0, two_stroke: 1 };
+const OIL = { '5w30': 0, '0w20': 1, '10w40': 2, '15w40': 3, '20w50': 4, sae30: 5 };
 /** Les arguments de `rf_set_tuning`, dans son ordre, à leur défaut : le moteur d'aujourd'hui. */
 const TUNING = {
   ambientC: 20, altitudeM: 0, startTemp: 0, compressionRatio: 0, fuelGrade: 0, ignitionOffsetDeg: 0, fullLoadLambda: 0, revLimiter: 0,
   launchRpm: 0, flatShift: 0, tractionControl: 0, dieselInjection: 0, egr: 0, particulateFilter: 0, camDurationDeg: 0, camLiftMm: 0,
   lobeSeparationDeg: 0, valveTiming: 0, valveSprings: 0, turboLayout: 0, variableGeometry: 0, boostControl: 0, intercooler: 0,
-  waterInjection: 0, nitrousKw: 0, cycle: 0,
+  waterInjection: 0, nitrousKw: 0, cycle: 0, oilGrade: 0,
 };
 // Les noms et l'ordre de `TUNING` sont ceux de la signature de `rf_set_tuning` : un écart décalerait tous les réglages qui suivent.
 {
@@ -1001,5 +1002,76 @@ for (const [name, code] of [['electronic', BOOST_CONTROL.electronic], ['by_gear'
   const rf = twoStroke(EXHAUST.stock);
   driveLikeNative(rf, 30);
   checkFigures('deux-temps, consommation et huile', rf, nativeFigures('--preset', 'two_stroke_triple', '--scenario', 'lap', '--seconds', '30'));
+}
+// L'arrêt avant le départ : deux heures par -20 °C au démarreur, une demi-heure posée au ralenti par 10 °C. Le refroidissement
+// moteur coupé (`ThermalNetwork::soak`) se compare aussi seul : l'état au départ, que lisent les jauges du site.
+{
+  const parkedCity = (start, ambientC) => {
+    const rf = load();
+    rf.rf_set_car(BODY.city, 1100, 15, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+    tune(rf, { ambientC, startTemp: start });
+    rf.rf_set_config(4, LAYOUT.inline, 1360, 75, 6200, EXHAUST.stock, 0, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+    return rf;
+  };
+  const crankArgs = ['--preset', 'city_14', '--ambient', '-20', '--start', 'two_hours', '--scenario', 'start', '--seconds', '10'];
+  const cranked = () => {
+    const rf = parkedCity(START.two_hours, -20);
+    rf.rf_set_mode(1);
+    rf.rf_crank();
+    return rf;
+  };
+  check('arrêt de 2 h, démarrage par -20 °C', render(cranked(), 10, 128), native(...crankArgs));
+  const rf = cranked();
+  const atStart = [rf.rf_start_thermal(0), rf.rf_start_thermal(1), rf.rf_start_thermal(3)];
+  driveLikeNative(rf, 10);
+  const figures = nativeFigures(...crankArgs);
+  checkFigures('arrêt de 2 h, démarrage par -20 °C', rf, figures);
+  check('arrêt de 2 h, eau au départ', String(atStart[0]), String(figures.start_coolant_c));
+  check('arrêt de 2 h, huile au départ', String(atStart[1]), String(figures.start_oil_c));
+  // Intégration du froid : la batterie, nœud du même réseau, que lit le démarreur.
+  check('arrêt de 2 h, batterie au départ', String(atStart[2]), String(figures.start_battery_c));
+  const minus30 = parkedCity(START.two_hours, -30);
+  minus30.rf_set_mode(1);
+  minus30.rf_crank();
+  check('arrêt de 2 h, démarrage par -30 °C', render(minus30, 6, 128), native('--preset', 'city_14', '--ambient', '-30', '--start', 'two_hours', '--scenario', 'start', '--seconds', '6'));
+  const posed = parkedCity(START.half_hour, 10);
+  posed.rf_set_mode(FRESH);
+  check('arrêt de 30 min, posé au ralenti', render(posed, 20, 128), native('--preset', 'city_14', '--ambient', '10', '--start', 'half_hour', '--scenario', 'lap', '--seconds', '20'));
+}
+// Le démarreur (froid-démarreur) : la batterie froide, l'huile d'une autre époque et la prise cycle par cycle, au son et aux
+// chiffres ; puis un diesel préchauffé, et la clé lâchée sur un moteur qui ne prend pas.
+{
+  const coldCity = () => {
+    const rf = citadine();
+    tune(rf, { ambientC: -30, startTemp: START.cold, oilGrade: OIL['10w40'] });
+    rf.rf_set_config(4, LAYOUT.inline, 1360, 75, 6200, EXHAUST.stock, 0, 0, 0, 0, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0, FUEL_SYSTEM.injection);
+    rf.rf_set_mode(1);
+    rf.rf_crank();
+    return rf;
+  };
+  const args = ['--preset', 'city_14', '--ambient', '-30', '--start', 'cold', '--oil', '10w40', '--scenario', 'start', '--seconds', '8'];
+  check('démarreur, citadine par -30 °C en 10W-40', render(coldCity(), 8, 128), native(...args));
+  const rf = coldCity();
+  driveLikeNative(rf, 8);
+  checkFigures('démarreur, citadine par -30 °C', rf, nativeFigures(...args));
+  const diesel = load();
+  diesel.rf_set_car(BODY.van, 1950, 16, DRIVE.front, PLACEMENT.front, INSULATION.standard);
+  tune(diesel, { ambientC: -20, startTemp: START.cold });
+  diesel.rf_set_config(4, LAYOUT.inline, 2000, 81, 4500, EXHAUST.stock, 1, 1, 0, 0, 0, 1, ROUTING.single, TURBO.medium, 0, 0, 400, 0, 0);
+  diesel.rf_set_mode(1);
+  diesel.rf_crank();
+  check('démarreur, diesel préchauffé par -20 °C', render(diesel, 10, 128), native('--cylinders', '4', '--cc', '2000', '--bore', '81', '--redline', '4500', '--aspiration', 'turbo', '--fuel', 'diesel', '--body', 'van', '--mass', '1950', '--rim', '16', '--drive', 'front', '--placement', 'front', '--insulation', 'standard', '--ambient', '-20', '--start', 'cold', '--scenario', 'start', '--seconds', '10'));
+  const thick = load();
+  thick.rf_set_car(BODY.coupe, 2400, 18, DRIVE.rear, PLACEMENT.front, INSULATION.standard);
+  tune(thick, { ambientC: -25, startTemp: START.cold, oilGrade: OIL.sae30 });
+  thick.rf_set_config(8, LAYOUT.cross_plane, 5000, 96, 6000, EXHAUST.sport, 0, 0, 0, 1, 0, 1, ROUTING.dual, TURBO.medium, 0, 0, 400, 0, 0);
+  thick.rf_set_mode(1);
+  thick.rf_crank();
+  thick.rf_release_key();
+  check('démarreur, clé lâchée, SAE 30 par -25 °C', render(thick, 14, 128), native('--cylinders', '8', '--layout', 'cross_plane', '--cc', '5000', '--bore', '96', '--redline', '6000', '--exhaust', 'sport', '--pops', 'light', '--routing', 'dual', '--body', 'coupe', '--mass', '2400', '--rim', '18', '--drive', 'rear', '--placement', 'front', '--insulation', 'standard', '--ambient', '-25', '--start', 'cold', '--oil', 'sae30', '--crank-max', '0', '--scenario', 'start', '--seconds', '14'));
+  if (thick.rf_start_failed() !== 1) {
+    console.log('DIFFÉRENT  démarreur, clé lâchée : le démarrage aurait dû rater');
+    failed++;
+  }
 }
 process.exit(failed ? 1 : 0);

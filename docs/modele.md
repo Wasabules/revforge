@@ -2528,3 +2528,279 @@ Le dimensionnement d'un compresseur mécanique, que le modèle de conduite redem
 - Le pilote automatique ne lève pas le pied quand les roues patinent : sans antipatinage, il garde le pied au plancher. L'essayeur de la fiche ne dose que la pédale : l'embrayage reste au robot, les rapports passent au régime de pleine charge. Sa bande passante, son retard et ses quatre pédales de départ sont supposés ; la fiche étant le meilleur de neuf départs, elle garde un peu du hasard d'un départ, quelques centièmes à quelques dixièmes selon la pédale. Elle coûte aussi plus cher à calculer : dans le WASM (mesuré sous Chromium sans fenêtre), de 0,05 s (`hot_hatch_turbo`, qui ne patine pas) à 0,64 s (`two_stroke_triple`), 0,19 s pour `v8_cross_plane` et 0,30 s pour `city_14`. Recalculée à chaque mouvement d'un curseur sur le thread de la page, elle le figeait autant : le site la calcule maintenant dans un worker, une fois le réglage posé (« … » en attendant ; voir « La fiche, hors du thread de la page »).
 - **Des tests ont changé de conditions, pas de seuils.** Trois vérifiaient en conduite une affirmation qui supposait l'adhérence illimitée : le sport n'est jamais plus lent que l'éco et l'éco monte avant le normal (`shift_modes_test`), le film d'un carburateur soufflé (`jonctions_test`). Sans antipatinage, le pneu à sommet les contredit pour une raison physique (la voiture patine) ; ils se mesurent maintenant antipatinage sport, à seuils inchangés. Trois autres, sur la fiche (la masse décide du 0 à 100, `powertrain_test` ; le protoxyde fait gagner 0,5 s, `charge_air_test` ; la caisse rétro légère bat la compacte, `retro_body_test`), étaient passés à l'antipatinage sport avec le pneu à sommet : l'essayeur les fait passer de nouveau tels qu'ils étaient écrits. Deux tests de la boîte ont aussi changé de mesure : l'oscillation de la chaîne se lit au sommet de son spectre, et non plus au compte des passages à zéro, que la dérive lente faussait une fois l'oscillation amortie (3,45 Hz en deuxième pour 3,56 attendus, 1,66 avec l'ancien compte) ; le rapport « sous charge » attend que l'embrayage soit serré. À vérifier par la relecture.
 - L'écoute reste à faire : le crissement des pneus suit le glissement en m/s, désormais plus fort et plus long sur les propulsions sans antipatinage (`--preset v8_cross_plane --scenario launch`, puis `--traction sport`), et le départ à froid posé (`--preset city_14 --start cold --ambient -20 --scenario lap --seconds 30`).
+
+## Le départ : le temps d'arrêt avant le démarrage
+
+Le site partait d'un moteur chaud (`startTemp: warm`) : par −30 °C, l'eau et l'huile étaient à 90 et 100 °C au premier démarrage. Il part maintenant comme une voiture garée dehors depuis la nuit : eau, huile, métal et radiateur à l'air ambiant. Le choix devient un temps d'arrêt : **vient de rouler** (`warm`, la référence chaude), **30 min** (`half_hour`), **2 h** (`two_hours`), **une nuit** (`cold`, tout à l'air). Les deux arrêts intermédiaires sont venus en fin de `StartTemp`, qui garde `Warm` = 0 et `Cold` = 1.
+
+### Le calcul : le même réseau, moteur coupé
+
+Une demi-heure ou deux heures d'arrêt partent de l'état chaud (eau 90 °C, huile 100 °C, métal 95 °C, faisceau à mi-chemin de l'air) et intègrent le réseau de « La thermique » moteur coupé, à l'air du jour (`ThermalNetwork::soak`) : ni carburant, ni frottements, ni pompe, ni vent. Ce qui reste des équations, la pompe arrêtée :
+
+```
+C_m dT_m/dt = − G_me·(T_m − T_e) − 0,3·G_mh·(T_m − T_h) − G_ma·(T_m − T_air)
+C_e dT_e/dt =   G_me·(T_m − T_e)
+C_h dT_h/dt =   0,3·G_mh·(T_m − T_h) − G_ha·(T_h − T_air)
+C_r dT_r/dt = − G_r,calme·(T_r − T_air)
+```
+
+Aucune courbe saisie : les capacités, les conductances et la convection naturelle (8 W/(m²·K) sur le bloc et le carter, le tirage du faisceau) sont celles qu'utilise le modèle de conduite à l'arrêt. Le pas est de 1 s, contre 10 ms dans le modèle de conduite : le plus court du réseau moteur coupé est l'échange du métal et de l'eau (8 à 11 s). L'écart reste sous 0,002 K après 30 min par −30 °C (test). Il en sort :
+
+- **La remontée à l'arrêt.** L'eau, immobile, se réchauffe d'abord au métal et à l'huile plus chauds : 93,5 °C au bout d'une minute, partie de 90. L'huile rejoint l'eau en une dizaine de minutes, comme le décrit le brevet Ford US 6 393 357 (l'huile tend vers l'eau, qui tend vers l'air ; sur un arrêt court, l'huile peut monter vers une eau plus chaude, lu).
+- **Une constante de temps.** Ensuite, tout refroidit ensemble : τ ≈ (C_m + C_e + C_h)/(G_ma + G_ha), 2,2 h pour la citadine de 1,4 L, 2,9 h pour le V8 de 5 L, 3,4 h pour le W16. Les capacités suivent la cylindrée, les surfaces sa puissance 2/3 : τ croît comme la racine cubique de la cylindrée.
+- **Le faisceau** rejoint l'air en quelques minutes : la pompe arrêtée, il ne reçoit plus l'eau du moteur.
+
+**Pas de nœud pour l'air du compartiment.** Le bloc et le carter rendent leur chaleur directement à l'air extérieur, par un coefficient global d'air calme. C'est la méthode d'identification publiée : le mémoire de Chalmers sur le modèle d'eau d'un calculateur Volvo (*Modelisation of the engine coolant warming-up behavior*, lu) tire le produit h·S d'une courbe de refroidissement mesurée entre l'eau et l'air extérieur, l'air sous le capot n'étant pas connu du calculateur. Un nœud de compartiment demanderait deux conductances et une capacité sans donnée pour les caler, et changerait le réseau moteur tournant, donc toutes les empreintes chaudes.
+
+### Les chiffres
+
+Eau et huile au départ (°C), parties chaudes ; `--fuel 1` les écrit (« At the start ») :
+
+| Préréglage | 30 min, 20 °C | 2 h, 20 °C | Une nuit, 20 °C | 30 min, −30 °C | 2 h, −30 °C | Une nuit, −30 °C |
+|---|---|---|---|---|---|---|
+| `city_14` | 80,1 / 80,6 | 50,2 / 50,5 | 20 / 20 | 69,7 / 70,7 | 20,2 / 20,6 | −30 / −30 |
+| `hot_hatch_turbo` | 81,1 / 81,6 | 52,2 / 52,4 | 20 / 20 | 71,4 / 72,2 | 23,4 / 23,9 | −30 / −30 |
+| `diesel_four` | 81,1 / 81,6 | 52,2 / 52,5 | 20 / 20 | 71,4 / 72,3 | 23,5 / 23,9 | −30 / −30 |
+| `v8_cross_plane` | 83,9 / 84,3 | 58,4 / 58,7 | 20 / 20 | 76,0 / 76,8 | 33,7 / 34,2 | −30 / −30 |
+| `v16_cadillac` | 85,1 / 85,5 | 61,3 / 61,6 | 20 / 20 | 78,0 / 78,7 | 38,5 / 39,0 | −30 / −30 |
+| `w16_hypercar` | 85,3 / 85,7 | 61,9 / 62,1 | 20 / 20 | 78,3 / 79,1 | 39,5 / 39,9 | −30 / −30 |
+
+La nuit reste exactement l'air ambiant, l'ancien `cold` au bit près : laissé 12 h, le réseau finirait de 0,3 K (citadine) à 2,2 K (W16) au-dessus, dans les ±2 K que demandent les essais refroidis de force.
+
+| Mesure | Modèle | Publié | Source |
+|---|---|---|---|
+| Eau d'un moteur coupé à 93 °C par 26,7 °C, au bout de 7 h | 2,8 K au-dessus de l'air (citadine) | « égale à l'air en 7 heures environ », sur des courbes relevées par 4,4, 15,6, 26,7 et 37,8 °C | brevet US 9 790 842 B2, diagnostic du circuit de refroidissement (lu) |
+| Départ « froid » : moteur à 5,6 K (10 °F) de l'air | 5,7 h (citadine) à 8,8 h (W16) par 20 °C | définition de l'EPA (1993) ; l'essai FTP attend 12 à 36 h | EPA 1993 et CFR, cités par Kockelman et al., TRB 2015 (lu) |
+| Rythme du refroidissement | 57 % de l'écart perdu en 2 h, 99,6 % en 12 h (citadine) | « jusqu'à 12 heures pour refroidir entièrement, l'essentiel des pertes dans les deux premières » | Kockelman et al., TRB 2015 (lu) |
+| Une nuit d'essai | 9 h à 14 °C : eau à 15,3 °C (citadine, +1,3 K) | 9 h au moins à 14 °C pour l'essai ATCT, qui représente une nuit ; refroidi de force, le moteur doit être à ±2 °C de la consigne | règlement (UE) 2017/1151, sous-annexe 6a (lu) |
+| Ce que retient un capot isolé | sans isolation, la citadine est encore à 12 K de l'air au bout de 4 h | une isolation sous le capot garde 9 K d'eau et 11 K d'huile de plus au bout de 4 h ; 6 et 10 K au bout de 9 h | Jaguar Land Rover et Autoneum, cités par Yuan et al., *Applied Thermal Engineering* 164 (2020) ; SAE 2020-01-0158 (lus, valeurs absolues confidentielles) |
+
+Le modèle refroidit un peu plus lentement que la voiture du brevet : il faudrait une constante de temps de 1,7 à 2 h, et non 2,2, pour que l'eau soit à 1 ou 2 K de l'air au bout de 7 h. Rien n'a été recalé : le coefficient d'air calme est celui du réseau, supposé, et le recaler changerait la conduite.
+
+**La consommation** (`city_14`, WLTC complet, `--fuel 1`) : par 20 °C, 6,76 L/100 km parti chaud, 6,76 après 30 min (l'eau est déjà au-dessus de 70 °C, la fin de la mise en température), 6,79 après 2 h, 6,90 après une nuit ; par −30 °C, 7,15, 7,16, 7,31 et 7,70. L'eau atteint 70 °C en 143 s après 2 h d'arrêt par 20 °C, en 271 s après une nuit.
+
+### Sur le site
+
+- **Le défaut.** `DEFAULTS.startTemp` vaut `cold`, une nuit ; le C++, la CLI et `gen_presets.py` gardent `warm`, la référence de banc des empreintes, de la fiche et des tests : c'est l'exception à « valeurs par défaut d'un moteur » dans `CLAUDE.md`. Le résumé du bouton de la voiture dit ce qui diffère d'une nuit (« départ : 2 h »). **Un ancien lien sans le code `start` part désormais froid** : il n'écrivait pas `warm`, qui était le défaut ; un lien `start=cold` reste une nuit.
+- **Les jauges avant le premier démarrage.** Elles écrivaient 90 et 100 °C, ou l'air ambiant. Elles lisent maintenant l'état choisi, calculé par le C++ de la page (`rf_start_thermal`, `Spec.startCoolantC`), que le volet affiche aussi.
+- **Moteur coupé.** Le modèle refroidit pas à pas tant que le son tourne. Mais 2,2 s après la coupure, le son se suspend, et le modèle avec lui : avant, le moteur restait figé à sa température, et les jauges retombaient à l'état choisi au départ. Les jauges lisent maintenant le refroidissement calculé depuis la dernière télémétrie (`rf_rest_thermal`), et le worklet rattrape le temps suspendu en reprenant (`rf_soak`), avant de relancer le démarreur. Changer l'air ou l'état au départ remet le moteur à l'état choisi.
+- **La balade.** Passer en balade, ou en revenir, reconstruit le modèle de conduite : il repartait de l'état choisi, et un moteur chaud redevenait froid. Il garde maintenant ses températures (`carryThermal`).
+- **Le modèle posé au ralenti** (balade, trajets, tests) part avec l'air d'un ralenti établi tant que l'eau n'a pas fini sa mise en température (le calculateur tient encore un ralenti accéléré), comme après une nuit (« Le démarrage à froid ») ; au-delà, comme un moteur chaud. Parti du collecteur vide d'un moteur chaud, le régime creuse au premier dixième : jusqu'à 530 tr/min pour 777 sur les carburateurs de `carb_twin_cam` par −30 °C. Sur le deux-temps, l'air d'un ralenti établi à 80 °C d'eau le faisait creuser plus (551 tr/min contre 762) : d'où la limite à la mise en température.
+
+### Les tests, les empreintes et la parité
+
+`tests/depart_test.cpp` : les arrêts se rangent entre le moteur chaud et la nuit pour chaque préréglage, à 20 et −30 °C ; l'arrêt est le refroidissement du modèle de conduite moteur coupé à 0,01 K près ; l'eau remonte d'abord, et la nuit laisse moins de 2,5 K ; le modèle posé après 2 h ne creuse pas ; un modèle reconstruit reprend les températures. Chacun échoue quand on retire ce qu'il protège : le refroidissement au départ, le même chemin que le modèle (du vent dans le pas d'arrêt), le métal plus chaud que l'eau, une convection triplée, le collecteur d'un ralenti établi, `carryThermal`, `soakThermal`. `web/tests/depart.spec.ts` : par défaut, les jauges lisent l'air par −30 °C, puis l'état calculé de 2 h et de 30 min ; moteur coupé, son suspendu, les jauges refroidissent et le moteur repart de là ; changer l'état au départ le remet à l'état choisi. Contre-épreuves : jauges écrites en dur, défaut chaud, pas de rattrapage en reprenant, état gardé après un changement. Les specs qui mesurent un moteur chaud le demandent ; `socle.spec.ts` suit le nouveau défaut.
+
+Aucune empreinte ne change : `Warm` et `Cold` suivent le même chemin qu'avant, au bit près. `check_wasm.mjs` compare un arrêt de 2 h au démarreur par −20 °C (son, consommation, températures, et l'état au départ : `start_coolant_c` et `start_oil_c`, ajoutés à la ligne `raw`) et une demi-heure posée au ralenti par 10 °C.
+
+### Ce qui manque
+
+- **Pas d'air du compartiment** : ni la chaleur qui stagne sous le capot à l'arrêt, ni le capot qui rayonne, ni une isolation. Le coefficient d'air calme est supposé, et fixe : la convection naturelle croîtrait comme (ΔT)^1/4, le rayonnement baisserait par grand froid ; ni vent, ni pluie, ni neige sur une voiture garée dehors.
+- **Le faisceau à l'arrêt** ne reçoit plus rien du moteur : pas de thermosiphon, pas de ventilateur qui tourne après la coupure.
+- **La nuit est l'air ambiant exact**, comme l'ancien départ à froid ; une voiture rentrée au garage n'est pas proposée.
+- **La batterie** : sa température, et ce qu'elle donne au démarreur, sont le sujet du démarreur. Depuis l'intégration, le réseau en a un nœud, qui suit l'arrêt avec son inertie : voir « Quand les réglages se rencontrent (3) ».
+- Les deux arrêts intermédiaires valent pour tous les moteurs, rotatif et deux-temps compris : le réseau est le même, aux masses supposées par litre.
+
+### Ce qui se lit, ce qui s'expose
+
+Exposé : `parkedSeconds(StartTemp)`, `ThermalNetwork::soak(secondes, air)` et `place(eau, huile, métal)`, `DrivingModel::startThermal()` (l'état choisi, sans rien changer au modèle), `soakThermal(secondes)` et `carryThermal(réseau)` ; `rf_start_thermal`, `rf_soak`, `rf_rest_thermal`. Le démarreur peut lire l'eau et l'huile au départ dans `DrivingModel::thermal()` dès la construction, et le temps d'arrêt dans `parkedSeconds` (−1 pour une nuit) pour la température de sa batterie.
+
+L'écoute reste à faire, là où le ralenti accéléré change avec l'arrêt : `revforge-render --out depart_2h.wav --preset city_14 --start two_hours --ambient -30 --scenario start --seconds 20`, face à `--start cold` et `--start half_hour`.
+
+## Le démarreur, la batterie et la prise à froid
+
+Avant, par −30 °C, la citadine se lançait à 250-290 tr/min, comme chaude, et prenait au bout de 0,82 s : le démarreur ne voyait ni la batterie froide, ni l'huile épaisse (la loi en racine du moteur qui tourne n'ajoutait que 30 % de frottements au lancement), et le moteur prenait à une heure fixe. Maintenant, la batterie au plomb, le démarreur qu'elle alimente, l'huile de l'époque du moteur et chaque explosion du lancement sont calculés. Code : `core/src/cold_start.cpp` (fonctions pures et `StartModel`), la branche du lancement de `DrivingModel::updateEngine`, `EngineSound::setStart` ; essais : `tests/demarreur_test.cpp` ; constantes refaites par `tools/cold_start_fits.py`.
+
+### Moteur chaud, rien ne change
+
+Le démarreur d'origine est calé sur sa batterie de référence : pleine, au compartiment d'un moteur chaud par 20 °C (32 °C). La batterie réelle n'agit que par l'écart de son courant à celui de cette référence au même régime, `ΔT_pignon = k·(I − I_réf)`, intégrées toutes deux pas à pas : moteur chaud par 20 °C, l'écart vaut exactement zéro, et le couple, le régime et le son sont ceux d'origine, au bit près (des 77 empreintes d'avant, seuls les deux départs à froid changent). Au-dessus de 80 °C d'huile, le lancement garde aussi sa loi de frottements et son heure de synchronisation, en secondes ; et si chaque cycle allume à coup sûr, dispersion comprise, le moteur prend à la première explosion, comme à l'origine.
+
+### La batterie
+
+Une batterie de 12 V dimensionnée sur le moteur, comme au catalogue (Varta Blue Dynamic, de mémoire : 44 Ah 440 A, 60 Ah 540 A, 74 Ah 680 A, 95 Ah 800 A) : `CCA = 300 + 120 A/L`, 1,25 fois sur un diesel, de 300 à 1000 A ; capacité `CCA/9` Ah.
+
+```
+V = E(SOC) − I·R(T, SOC) − V_K·x/(1 − x),   x = q/Q(T, SOC)       (Shepherd)
+E = 11,8 + 0,9·SOC     dq/dt = I − q/60 s     R(T) ∝ exp(706 K·(1/T − 1/255 K))     Q(T) ∝ exp(−1060 K·(1/T − 1/255 K))
+```
+
+- **Calée sur l'essai EN 50342-1** à −18 °C : 7,5 V après 10 s au courant nominal, puis 6 V au bout de 73 s à 60 % de ce courant, après 10 s de repos ; le coude atteint à la fin de l'essai (supposé), la charge qui baisse comprise : `I·R = 5,06 V`, `V_K = 0,139 V`, `Q = 33,3 s × I`. Une batterie qui tient juste sa valeur nominale ; une neuve fait mieux.
+- **Le froid.** La résistance suit la convention des courants nominaux (BCI : le courant à 0 °C vaut 1,2 fois celui à −18 °C), 706 K : à 25 °C, 30 % de moins qu'à −18 °C ; à −30 °C, 15 % de plus. La charge à fort débit tombe plus vite (55 % à −18 °C de celle à 25 °C, de l'ordre de Battery University) : c'est elle qui fait qu'une batterie qu'on fait insister s'épuise. La table d'Exide reproduite partout (puissance disponible 100, 65, 40, 25 % à 27, 0, −18, −35 °C) est plus sévère : elle mêle sans doute les deux.
+- **L'électrolyte gèle** selon la charge : −60 °C pleine, −24 °C à mi-charge, −7 °C vide (tables de densité). Gelée, la batterie a trente fois sa résistance (supposé).
+- **Le courant consommé** fait baisser la charge ; au repos, l'acide revient dans les plaques (60 s, supposé) ; moteur tournant, l'alternateur tient 14,2 V et rend ce que la batterie accepte, quatre fois sa résistance de décharge (supposé), au plus un quart de sa capacité en ampères. Il ne coûte rien au moteur : les frottements calés le comprennent déjà.
+- **Sa température.** Une nuit dehors, celle de l'air ; moteur chaud, celle du compartiment, 12 K au-dessus (comme l'air du compartiment du filtre à air, supposé) ; entre les deux, à la part de chemin que l'eau a faite (ce que calcule l'autre sujet, « l'état au départ »). Un moteur central ou arrière a sa batterie à l'avant : à l'air. Les bougies de préchauffage tirent 48 A (quatre fois 12 A, supposé). Depuis l'intégration, c'est l'air autour de la batterie : elle-même le suit avec son inertie, nœud du réseau thermique (« Quand les réglages se rencontrent (3) »).
+
+### Le démarreur
+
+Moteur à courant continu : `I = (E − V_p − k·ω)/(R_bat + R_câbles + R_induit)`, `T = k·I` au pignon, puis la réduction et la couronne (`starterTeeth`). La droite d'origine fixe `k = E_réf/ω_libre` et la résistance totale `E_réf²/(4P)`, celle qui donne la puissance du démarreur ; les câbles font 1,5 mΩ, l'induit le reste. Son cuivre (60 % de sa résistance, supposé) suit 0,393 %/K : par −30 °C, il compense presque la batterie. Le démarreur est à mi-chemin entre l'air et l'eau (supposé). Le régime d'entraînement sort de l'équilibre de ce couple face aux compressions (`compressionLoadNm`) et aux frottements de l'huile à sa température.
+
+### L'huile de chaque époque
+
+Une loi de Vogel par grade, ajustée sur trois points : KV40 et KV100 d'une huile typique, et la limite CCS de la SAE J300 de sa classe W (0W : 6200 mPa·s à −35 °C, 10W et 15W : 7000 à −25 et −20 °C, 20W : 9500 à −15 °C), à la même marge que la 5W-30 de référence (4250 mPa·s pour 6600 à −30 °C). La monograde SAE 30, sans classe d'hiver, prend l'extrapolation ASTM D341 (Walther) à −10 °C. À −20 °C : 0W-20 1,0 Pa·s, 5W-30 1,7, 10W-40 2,9, 15W-40 4,5, 20W-50 10, SAE 30 19.
+
+| Préréglage | Huile | Pourquoi |
+|---|---|---|
+| `three_cyl_turbo` | 0W-20 | petit moteur suralimenté des années 2010 (VW 508, Ford WSS-M2C947) |
+| `retro_coupe` | 15W-40 | six cylindres des années 1980, huile minérale |
+| `vr6_golf` | 10W-40 | années 1990 (VW 500.00) |
+| `carb_twin_cam` | 20W-50 | double arbre à carburateurs des années 1970, minérale |
+| `v16_cadillac` | SAE 30 | monograde d'été de 1930 ; on passait à une huile d'hiver |
+| les autres | 5W-30 | la référence, années 1995 à 2015 |
+
+**Les frottements.** Au-dessus de 80 °C, chaque grade frotte comme la référence, au bit près : le moteur chaud y est calé, et ses empreintes ne bougent pas. Au-dessous, la forme de sa courbe : moteur tournant, la loi en racine de la thermique (Sandoval et Heywood), raccordée à 80 °C. **Au lancement**, l'huile froide pèse plus : `(μ/μ₈₀)^0,86`, raccordé à 80 °C. L'exposant est ajusté sur la table d'Exide (puissance que demande un moteur au démarreur : 100, 155, 210, 350 % à 27, 0, −18, −35 °C), citadine à 150 tr/min ; Petroff donnerait 1, et la racine 0,5 ne demandait que 129 % à −35 °C : c'est ce qui rendait le démarrage à froid si facile. Le passage d'une loi à l'autre se fait d'un coup, quand le moteur prend.
+
+### La prise
+
+Huile sous 80 °C, le calculateur se synchronise en tours, autant que le démarrage d'origine en fait à son régime d'entraînement moteur chaud (`referenceCrankRpm`) : lancé deux fois moins vite, il attend deux fois plus. Ensuite, chaque cylindre qui passe son point mort haut tente sa chance, d'un générateur à lui :
+
+- **Essence.** Une essence d'hiver en neuf corps purs (butane à décane, Antoine, parts réglées sur la classe d'hiver de l'EN 228 : E70 25 %, E100 48 %, E150 87 %, tension de vapeur vraie à 37,8 °C de 79 kPa). Ce qui arrive au cylindre (le film x-τ de l'injection, celui de la pipe d'un carburateur) se vaporise à l'équilibre dans l'air enfermé, à la température de la paroi (Raoult, Rachford-Rice avec un gaz qui ne condense pas). Par −30 °C, 13 % d'une injection à 8 fois la stœchiométrie ; à 20 °C, 88 % à la stœchiométrie. Le calculateur vise une vapeur riche (φ 1,3, supposé), au plus 20 fois la stœchiométrie par cycle (supposé), et ne compense que le film d'un moteur chaud : les premiers cycles d'un moteur froid sont pauvres de 40 %. Un starter, sans calculateur, compense d'avance la part que mouille une pipe sèche. Le cycle allume si la vapeur, dispersée de ±15 % d'un cycle à l'autre (supposé, loi bornée), tombe entre 0,6 (limite pauvre mesurée au lancement par Shin et al., 1997) et 3 (vapeur légère, Zabetakis). La pompe de reprise jette son essence dans la pipe à chaque coup de pédale.
+- **Diesel.** La fin de compression s'intègre de la fermeture de l'admission au point mort haut, avec les pertes aux parois de Hohenberg (qui gardent un échange piston presque immobile) et une fuite aux segments calée sur l'essai de compression (14,7 bar à 10,5:1, 31,6 bar à 18:1 à 250 tr/min moteur chaud ; manuels : 12 à 14 et 25 à 31 bar). Par −30 °C à 150 tr/min : 24 bar, 490 K, exposant 1,25 ; à 90 tr/min, 16 bar, 406 K, exposant 1,18. Le délai est celui du modèle existant (Hardenberg et Hase) ; l'injection rate s'il dépasse 30° (supposé, dispersé de ±20 %). La bougie de préchauffage (métallique : 1000 °C, 3 s) chauffe jusqu'à 850 °C sous 20 °C d'eau, environ 5,8 s, et réchauffe du quart de l'écart le gaz où naît la flamme (supposé).
+- **L'explosion** dégage la moitié de la chaleur de la charge à sa richesse (parois froides, flamme lente : supposé) ; ajoutée en pression au point mort haut et détendue en 1,3, elle rend le travail d'un cycle d'Otto. Le moteur a pris quand il dépasse la vitesse libre du pignon, ou une fois et demie son régime d'entraînement (et au moins 150 tr/min : le conducteur l'entend partir, supposé) ; le modèle de conduite reprend la main, la part des cycles qui allument en plus tant qu'il n'a pas atteint son ralenti. S'il retombe, la clé tenue, le pignon le relance.
+
+**Deux-temps et rotatif.** Batterie, démarreur et huile valent pour eux ; l'huile d'un deux-temps est mêlée à l'essence et ses paliers roulent : il garde la loi de référence (limite). Le deux-temps passe par son carburateur et ses compressions de lumière, une explosion par tour et par cylindre ; le rotatif par son injection, une par rotor et par tour d'arbre, ses chambres se détendant sur 270°. Ni le noyage d'un rotatif, ni l'essence qui mouille le carter d'un deux-temps ne sont modélisés.
+
+### La clé
+
+Le démarreur tourne tant qu'on tient la clé (`crank`, `releaseKey`). Lâchée avant que le moteur ait pris, le calculateur tient encore le démarreur 10 s au plus (`kAutoCrankS`, l'ordre des manuels : pas plus de 10 s par essai), comme un démarrage par bouton : c'est ainsi qu'un clic court démarre un moteur chaud comme avant. Au-delà, le démarrage est raté : le moteur s'arrête, et l'on peut réessayer. Sur le site, le bouton de redémarrage se tient au doigt (ou la touche D) ; un voyant dit « Préchauffage » et « Ne démarre pas », et une jauge de la batterie montre sa tension et le courant du démarreur. La ligne de commande : `--scenario start` écrit le relevé (temps jusqu'à la prise, régime d'entraînement, ratés, tension minimale, courant, charge), avec `--oil`, `--battery PCT`, `--crank-max S`, `--attempts N` (30 s de repos entre deux) et `--crank FICHIER` (CSV toutes les 10 ms).
+
+### Le son
+
+Le démarreur reçoit le vrai courant, en écart à la batterie de référence (`setStarter`, `supply`) : les balais le suivent, et le contact des dents suit le couple, qui se relâche à chaque explosion. Pendant le lancement, chaque cylindre qui s'ouvre explose à la part que dit le modèle, tirée d'un générateur à lui (`setStart`, `startRandom`) : une explosion rejette sa charge, un raté l'air comprimé seul. Moteur chaud, rien de cela ne s'exécute. Mesuré (`--db 1`, face au démarrage d'avant) : +0,3 dB à 20 °C, +2,2 dB par −30 °C (deux fois plus de démarreur, et le ralenti qui part), −3,4 dB pour le diesel par −20 °C (5,8 s de préchauffage muet).
+
+### Les chiffres
+
+Départ à froid, tout à la température de l'air, batterie pleine : `revforge-render --out none --preset X --scenario start --start cold --ambient T --seconds 14`. Régime d'entraînement moyen avant la première explosion, temps de la clé à la prise, ratés/explosions pendant le lancement, tension la plus basse.
+
+| Préréglage | Huile | 20 °C | −10 °C | −20 °C | −30 °C |
+|---|---|---|---|---|---|
+| `city_14` | 5W-30 | 283 tr/min, 0,99 s, 0/1, 9,5 V | 249, 1,13 s, 0/1, 8,6 V | 214, 1,30 s, 0/1, 8,3 V | 154, 1,80 s, 0/1, 7,8 V |
+| `four_cyl_sport` | 5W-30 | 262, 0,96 s, 0/1, 9,5 V | 225, 1,12 s, 0/1, 8,6 V | 187, 1,33 s, 0/1, 8,2 V | 121, 2,08 s, 0/1, 7,8 V |
+| `three_cyl_turbo` | 0W-20 | 293, 1,00 s, 0/1, 9,6 V | 261, 1,12 s, 0/1, 8,7 V | 229, 1,27 s, 0/1, 8,3 V | 172, 1,69 s, 0/1, 7,9 V |
+| `hot_hatch_turbo` | 5W-30 | 263, 0,96 s, 0/1, 9,5 V | 224, 1,12 s, 0/1, 8,6 V | 187, 1,34 s, 0/1, 8,2 V | 121, 2,05 s, 0/1, 7,8 V |
+| `hot_hatch_na` | 5W-30 | 263, 0,96 s, 0/1, 9,5 V | 223, 1,13 s, 0/1, 8,6 V | 183, 1,36 s, 0/1, 8,2 V | 113, 2,22 s, 0/1, 7,8 V |
+| `five_cyl_turbo` | 5W-30 | 247, 1,01 s, 0/1, 9,4 V | 209, 1,19 s, 0/1, 8,5 V | 174, 1,42 s, 0/1, 8,1 V | 116, 2,12 s, 0/1, 7,7 V |
+| `inline_six` | 5W-30 | 232, 0,99 s, 0/1, 9,4 V | 197, 1,15 s, 0/1, 8,5 V | 164, 1,38 s, 0/1, 8,1 V | 111, 2,01 s, 0/1, 7,7 V |
+| `v6_gt` | 5W-30 | 235, 0,98 s, 0/1, 9,4 V | 203, 1,12 s, 0/1, 8,5 V | 173, 1,31 s, 0/1, 8,1 V | 122, 1,84 s, 0/1, 7,7 V |
+| `flat_six` | 5W-30 | 226, 0,93 s, 0/1, 9,3 V | 198, 1,06 s, 0/1, 8,4 V | 169, 1,23 s, 0/1, 8,0 V | 121, 1,70 s, 0/1, 7,6 V |
+| `boxer_four_turbo` | 5W-30 | 250, 1,00 s, 0/1, 9,4 V | 216, 1,15 s, 0/1, 8,5 V | 182, 1,36 s, 0/1, 8,1 V | 119, 1,89 s, 0/1, 7,7 V |
+| `v8_cross_plane` | 5W-30 | 180, 0,95 s, 0/1, 9,3 V | 165, 1,05 s, 0/1, 8,4 V | 148, 1,16 s, 0/1, 8,0 V | 118, 1,44 s, 0/1, 7,6 V |
+| `v10_open` | 5W-30 | 181, 0,91 s, 0/1, 9,2 V | 164, 1,00 s, 0/1, 8,3 V | 147, 1,11 s, 0/1, 7,9 V | 116, 1,39 s, 0/1, 7,5 V |
+| `v12` | 5W-30 | 169, 0,93 s, 0/1, 8,9 V | 156, 1,02 s, 0/1, 8,0 V | 141, 1,12 s, 0/1, 7,6 V | 115, 1,35 s, 0/1, 7,2 V |
+| `diesel_four` | 5W-30 | 223, 0,98 s, 0/1, 9,7 V | 201, 6,81 s (préchauffage 5,7 s), 0/1, 8,5 V | 178, 6,97 s (5,8 s), 0/1, 8,1 V | 130, 8,17 s (5,8 s), 8/1, 7,7 V |
+| `retro_coupe` | 15W-40 | 238, 0,97 s, 0/1, 9,4 V | 192, 1,19 s, 0/1, 8,5 V | 149, 1,52 s, 0/1, 8,1 V | 89, 2,54 s, 0/1, 7,7 V |
+| `v8_supercharged` | 5W-30 | 171, 0,92 s, 0/1, 9,1 V | 156, 1,01 s, 0/1, 8,2 V | 141, 1,11 s, 0/1, 7,8 V | 113, 1,38 s, 0/1, 7,4 V |
+| `carb_twin_cam` | 20W-50 | 257, 0,98 s, 0/1, 9,5 V | 184, 1,36 s, 0/1, 8,6 V | 115, 2,17 s, 0/1, 8,2 V | 44, 5,65 s, 0/3, 7,8 V |
+| `twin_rotor_13` | 5W-30 | 271, 0,93 s, 0/1, 9,4 V | 258, 0,97 s, 0/1, 8,5 V | 245, 1,02 s, 0/1, 8,1 V | 217, 1,15 s, 0/1, 7,7 V |
+| `vr6_golf` | 10W-40 | 233, 0,99 s, 0/1, 9,4 V | 193, 1,18 s, 0/1, 8,5 V | 157, 1,44 s, 0/1, 8,1 V | 105, 2,15 s, 0/1, 7,7 V |
+| `w12_continental` | 5W-30 | 170, 0,95 s, 0/1, 9,2 V | 155, 1,05 s, 0/2, 8,3 V | 139, 1,15 s, 0/1, 7,9 V | 111, 1,41 s, 0/1, 7,5 V |
+| `w16_hypercar` | 5W-30 | 162, 0,99 s, 1/2, 8,3 V | 147, 1,04 s, 0/2, 7,3 V | 133, 1,15 s, 0/2, 6,9 V | 106, 1,40 s, 0/1, 6,5 V |
+| `v16_cadillac` | SAE 30 | 154, 1,07 s, 1/3, 8,7 V | 103, 1,46 s, 0/3, 7,7 V | 55 tr/min, **ne démarre pas** (108 explosions en 10 s), 7,3 V | 16 tr/min, **ne démarre pas**, 6,8 V |
+| `two_stroke_triple` | 5W-30 | 310, 1,00 s, 0/1, 9,5 V | 271, 1,41 s, 3/2, 8,6 V | 232, 1,76 s, 3/4, 8,2 V | 169, 2,57 s, 10/7, 7,8 V |
+
+| Mesure | Modèle | Publié | Source |
+|---|---|---|---|
+| Régime d'entraînement à froid | 106 à 172 tr/min par −30 °C en 5W-30 ou 0W-20 (le rotatif, sans jupes, 217) ; 44 à 105 en huiles plus anciennes | 60 à 150 tr/min | ordre de grandeur courant ; minimum d'allumage d'un moteur à essence, 60 à 100 tr/min (Bosch, de mémoire) |
+| Régime d'entraînement à chaud | 160 à 310 tr/min | 150 à 300 | idem |
+| Puissance demandée au démarreur | ×1,16 à 0 °C, ×1,64 à −18 °C, ×4,0 à −35 °C (citadine, 150 tr/min) | ×1,55, ×2,1, ×3,5 | table d'Exide, reprise par des manuels et forums (vue citée) : l'exposant 0,86 y est ajusté |
+| Tension sous le démarreur | 8,3 à 9,7 V à 20 °C, 6,5 à 7,9 V par −30 °C | au moins 9,6 V à mi-courant nominal (essai de charge) ; 7,2 à 7,5 V au courant nominal à −18 °C | EN 50342-1, SAE J537 (de mémoire) |
+| Première vapeur | 31 % de l'injecté à 20 °C (5 fois la stœchiométrie), 6 % par −30 °C | 15 à 20 % (premier cycle, à température ambiante), moins de 10 % par grand froid | Shin et al., KSME Int. J. 1997 ; Lang et Cheng, SAE 2004-01-3057 (résumés vus cités) |
+| Limite pauvre au lancement | 0,6 (pris) | 0,6 | Shin et al. 1997 |
+| Démarrage à −30 °C | 1,4 à 2,2 s, modernes ; la Cadillac en huile d'été ne démarre pas | « environ 5 s » (V6 au méthanol, allumage plasma) ; au-dessous de −30 °C, un réchauffeur est conseillé pour une injection directe | SAE 930331 ; GM TechLink (vus cités) |
+
+Ce qui se lit : la citadine se lance à 154 tr/min par −30 °C au lieu de 250-290, prend en 1,8 s au lieu de 0,82, et sa batterie tombe à 7,8 V. Les huiles anciennes ralentissent le lancement bien plus que le froid seul : la 20W-50 de l'Alfa la lance à 44 tr/min par −30 °C (5,7 s), la SAE 30 de la Cadillac l'empêche de partir dès −20 °C. Le diesel prend vite une fois préchauffé ; par −30 °C, à 130 tr/min, quelques injections ratent avant la prise.
+
+### Ce qui est supposé, et ce qui manque
+
+- **Supposés** : la vapeur visée et le plafond d'injection du calculateur, la dispersion du mélange (±15 %) et du délai (±20 %), la fenêtre du diesel (30°), la chaleur gardée par une explosion (la moitié), la part de la bougie (le quart de l'écart), le seuil de prise (une fois et demie l'entraînement, 150 tr/min au moins), le compartiment (12 K), la part du cuivre du démarreur, les câbles, la recharge de l'alternateur, la marge des huiles du commerce sous leur limite J300.
+- **Le premier cycle se vaporise trop bien** : à l'équilibre, tout ce qui arrive au cylindre, quand Shin et al. mesurent deux fois moins ; ni le film sur la chemise et le piston froids, ni le temps de l'évaporation ne sont comptés. Si bien que par −30 °C, un moteur moderne prend dès ses premières explosions : ce sont l'entraînement lent et les tours de la synchronisation qui font sa peine, plus que les ratés.
+- **Le délai d'un diesel** (Hardenberg et Hase, le modèle du diesel qui tourne) est calé moteur tournant, de 700 à 900 K : au lancement, son terme de pression domine, et la température y pèse peu. Le préchauffage n'y abaisse le régime minimal que de quelques dizaines de tr/min (entre 90 et 120 tr/min par −30 °C, il ne fait partir qu'une part des injections). Avec la loi de Wolfer, en exp(4650/T), la température dominerait.
+- **Le film d'huile ne chauffe pas** pendant le lancement : la loi du lancement vaut jusqu'à la prise, celle du moteur qui tourne ensuite. Un moteur qui allume déjà à chaque cycle mais tourne trop lentement (la Cadillac en SAE 30 par −20 °C, 108 explosions en 10 s) ne prend pas, quand un film qui chauffe l'aiderait sans doute.
+- Ni le gazole qui fige (un gazole d'hiver français, à −15 ou −20 °C de filtrabilité, bouche son filtre par −30 °C), ni l'injection directe au lancement (pression de rampe pas encore établie : « un peu plus long » selon GM), ni l'E10 (l'éthanol rend l'essence plus volatile que Raoult ne le dit), ni l'aimant d'un démarreur (une ferrite donne plus de flux au froid), ni l'échauffement de son induit sur un long lancement.
+- **Un test a changé de conditions** : l'essai des démarrages à froid (`cold_start_test.cpp`) jugeait le ralenti 2 s après la clé ; il le juge 2 s après la prise, le démarrage prenant maintenant son temps réel (5,8 s de préchauffage pour le diesel). Il ne demande plus à une monograde d'été (la Cadillac) de démarrer par −20 °C ni de tenir posée par −30 °C : elle ne le peut pas (contre-épreuve : avec elle, l'essai échoue ; avec une 0W-20, elle démarre, `demarreur_test.cpp`). À vérifier par la relecture.
+
+### Ce qui est lu, et ce qui est exposé
+
+Lu : la température de l'air (`ambientC`), l'eau et l'huile au moment de la clé (`ThermalNetwork`, que l'état au départ calcule), la pression de l'air (atmosphère), le carburant (`FuelGrade`), le taux de compression du démarreur. Exposé : `batteryStartC`, `starterWindingC`, `batterySpecOf`, `batteryVolts`, `stepBattery`, `crankingViscosityExcess`, `runningViscosityExcess`, `oilViscosityPaS(OilGrade, T)`, `crankCompression`, `vaporizedShare`, `startFuelShare`, `petrolFiringChance`, `crankIgnitionDelayDeg`, `glowPreheatS` ; dans `DrivingModel` : `releaseKey`, `startFailed`, `batteryVolts`, `starterAmps`, `preheatLeft`, `start()` (le relevé).
+
+L'écoute reste à faire, sur fichiers : `revforge-render --out froid.wav --preset city_14 --start cold --ambient -30 --scenario start --seconds 8`, le diesel préchauffé (`--preset diesel_four --start cold --ambient -20 --scenario start --seconds 10`), le deux-temps qui rate (`--preset two_stroke_triple --start cold --ambient -30 --scenario start --seconds 8`), et la Cadillac qui ne prend pas (`--preset v16_cadillac --start cold --ambient -20 --scenario start --seconds 14`).
+
+## Quand les réglages se rencontrent (3) : l'arrêt et le démarreur
+
+Les deux sections précédentes ont été écrites en même temps, chacune sans l'autre : « Le départ » calcule le moteur après un arrêt, « Le démarreur » la batterie, le démarreur, l'huile et la prise. Réunies (`feat/froid`), elles se rencontrent en quatre endroits. Code : le nœud de batterie de `ThermalNetwork` (`thermal.cpp`), `batteryThermalOf` (`cold_start.cpp`), `StartConditions::batteryC` ; essais : la fin de `tests/jonctions_test.cpp` et de `web/tests/jonctions.spec.ts`.
+
+### La batterie après un arrêt
+
+Le démarreur ne connaissait que la nuit (batterie à l'air) et le moteur chaud (au compartiment, 12 K au-dessus) ; entre les deux, il posait la batterie à l'air du compartiment, à la part de chemin que l'eau a faite, d'un coup. Deux choix s'offraient : lire la température du compartiment que donne le réseau, ou donner à la batterie sa propre masse dans le réseau. Le calcul tranche :
+
+```
+Varta Blue Dynamic D24 : 60 Ah, 540 A, 14,7 kg, 242 × 175 × 190 mm          (fiches des revendeurs)
+masse         m = Ah × 14,7/60 kg                       citadine, 51,5 Ah : 12,6 kg
+capacité      C = m × 896 J/(kg·K)                      (plomb-acide, valeur de la littérature citée par le NREL ; 872 mesurés)
+                                                        11,3 kJ/K
+surface       S = 0,201 m² × (m/14,7)^(2/3)             les cinq faces hors du bac : 0,181 m²
+conductance   G = 8 W/(m²·K) × S                        l'air calme du réseau, celui du bloc et du carter : 1,45 W/K
+              τ = C/G = 7 800 s ≈ 2,2 h                 diesel de 2 L (75 Ah) : 2,5 h ; Cadillac (111 Ah) : 2,8 h
+```
+
+Une batterie met donc autant de temps à refroidir que l'eau du moteur (2,2 h pour la même citadine) : la poser à l'air du compartiment après une demi-heure ou deux heures d'arrêt revenait à lui ôter toute inertie. D'où un **nœud de batterie** dans le réseau, sans rien de saisi :
+
+```
+C_b dT_b/dt = G_b·(T_autour − T_b)        T_autour = batteryStartC(T_air, T_eau, place)
+```
+
+L'air autour d'elle reste celui du démarreur : celui du compartiment, qui suit l'eau, ou celui du dehors pour un moteur central ou arrière (sa batterie est devant). Le nœud ne rend rien au reste du réseau : ni l'eau, ni l'huile, ni la conduite ne changent. Il avance au pas du réseau, moteur tournant comme coupé, et dans `soak` (pas de 1 s : à 0,01 K du pas de 10 ms, test). Parti chaud, il vaut exactement la batterie de référence du démarreur ; une nuit, l'air : les 80 empreintes d'avant ne bougent pas.
+
+Batterie au départ (°C) et démarrage de la citadine (`city_14`), face à la batterie sans inertie d'avant la réunion :
+
+| Air | Arrêt | Batterie | Sans inertie | Démarrage |
+|---|---|---|---|---|
+| −30 °C | vient de rouler | −18,0 | −18,0 | 277 tr/min, prise à 0,82 s, 8,67 V |
+| −30 °C | 30 min | −18,2 | −20,0 | 282 tr/min, 0,99 s, 8,60 V (8,54 sans inertie) |
+| −30 °C | 2 h | −20,6 | −25,0 | 277 tr/min, 1,01 s, 8,35 V (8,21 sans inertie) |
+| −30 °C | une nuit | −30,0 | −30,0 | 154 tr/min, 1,80 s, 7,84 V |
+| 20 °C | 30 min | 31,9 | | 286 tr/min, 0,82 s, 9,90 V |
+| 20 °C | 2 h | 29,5 | | 289 tr/min, 0,97 s, 9,79 V |
+
+Après deux heures par −30 °C, l'huile n'est plus qu'à 20,6 °C, mais le moteur se lance presque comme chaud : sous 80 °C d'huile, le lancement se joue cycle par cycle, mais à 20 °C l'huile freine peu, et la batterie a gardé dix degrés de plus que l'air. Les autres moteurs suivent (`revforge-render --out none --preset X --scenario start --start two_hours --ambient -30`) : le diesel (−20,3 °C, 219 tr/min, sans préchauffage, l'eau étant à 23,5 °C), la 20W-50 de l'Alfa (−20,4 °C, 253 tr/min), la Cadillac (−19,5 °C, 153 tr/min, elle démarre quand la nuit l'en empêche), le flat-six central (sa batterie reste à −30 °C).
+
+**Le tableau des démarrages à froid** de « Le démarreur » est remesuré tel quel : les 23 préréglages à 20, −10, −20 et −30 °C donnent les mêmes chiffres, une nuit mettant la batterie à l'air comme avant. Seule différence dans le code, sans effet sur ces préréglages : le démarreur rangeait un moteur de place « naturelle » à l'avant ; il prend maintenant la place de la caisse (`placementOf`), et une supercar laissée à sa place naturelle (centrale) garde sa batterie à l'air.
+
+Aucune courbe publiée de refroidissement d'une batterie sous le capot n'a été trouvée : τ n'est pas confronté à une mesure.
+
+### Arrêt et redémarrage sur le site
+
+- **Le temps suspendu.** Moteur coupé, le son se suspend 2,2 s après ; en reprenant, le worklet rattrape ce temps (`rf_soak`) : la batterie refroidit avec le reste du réseau, et l'acide revient dans ses plaques (`StartModel::rest`, la solution exacte de `stepBattery` sans courant, constante d'une minute). Le démarreur part de cette batterie-là.
+- **La balade.** Passer en balade, ou en revenir, reconstruit le modèle : il gardait ses températures (`carryThermal`), il garde aussi sa batterie, charge et acide compris (`carryBattery`) ; un démarrage raté juste avant ne laisse plus une batterie neuve.
+- **Les jauges.** Eau, huile et batterie viennent toutes du C++. Avant le premier démarrage, l'état au départ (`rf_start_thermal` : 0 l'eau, 1 l'huile, 3 la batterie ; `rf_rest_battery_v` pour la tension à vide d'une batterie pleine et reposée, 12,7 V) ; moteur coupé, son suspendu, le refroidissement depuis la dernière télémétrie (`rf_rest_thermal`, qui reçoit la batterie, et `rf_rest_battery_v` depuis `rf_battery_state` : charge, acide appauvri, température) ; en marche, la télémétrie. Sous sa jauge, la batterie dit sa température ; le volet dit la batterie au départ.
+- **Sa place.** Le démarreur avait mis la batterie en septième cadran des jauges de droite : une rangée de plus (189 px) repoussait le niveau sonore de 190 px et la dynamique de 30 px, hors de l'écran des essais du tableau (`tableau.spec.ts`, 1440 × 1100 et 1440 × 1320), qui échouaient à chaque passe. Elle est devenue une barre au poste de conduite, sous le démarreur qu'elle alimente (`BatteryGauge`) : de 6 à 16 V, rouge sous 9,6 V (le plus bas qu'admet l'essai de charge), repère à 12,7 V ; le poste, collé et défilant, ne fait pas grandir la rangée.
+
+### Le premier démarrage du site
+
+Le site part d'une nuit dehors : son premier démarrage passe par la prise à froid. Mesuré avec Playwright sur le moteur par défaut du site (4 cylindres de 2 L, citadine), de la clé à la prise, tension la plus basse lue à la télémétrie (30 fois par seconde, qui manque le creux de l'appel ; sur le même moteur, la ligne de commande donne 261 tr/min, 0,96 s et 9,47 V une nuit à 20 °C, 119 tr/min, 2,11 s et 7,76 V par −30 °C) :
+
+| Départ | Entraînement | Prise | Tension lue |
+|---|---|---|---|
+| une nuit, 20 °C | 257 tr/min | 1,0 s | 9,9 V |
+| une nuit, −30 °C | 115 tr/min | 2,1 s | 8,3 V |
+| 2 h, −30 °C (batterie −20,4 °C) | 270 tr/min | 0,9 s | 10,7 V |
+| vient de rouler, 20 °C | 280 tr/min | 0,8 s | 11,7 V |
+
+### Toutes les valeurs de `StartTemp`
+
+Rien dans le démarreur ne lit l'étiquette du départ : la synchronisation en tours et la loi du lancement (huile sous 80 °C), la prise à coup sûr (huile), le film qui reste d'un moteur qui vient de tourner (eau), le préchauffage (eau sous 20 °C) et la batterie (son nœud) lisent les températures. Le modèle posé au ralenti testait encore `startTemp != Warm` avant de lire l'eau : il ne lit plus que l'eau, et parti chaud elle est à 90 °C, sans ralenti accéléré, au bit près. Restent deux lectures de l'étiquette, hors du démarreur : la fiche se mesure parti chaud (`measurePerformance`), et le relevé de la ligne de commande dit l'arrêt choisi.
+
+### Les tests, les empreintes et la parité
+
+- `tests/jonctions_test.cpp` : chaud, la batterie de référence au bit près, une nuit l'air ; après 30 min et 2 h, plus froide qu'avant, plus chaude que l'air du compartiment ; pas à pas ou d'un coup, la même ; le démarreur lit ce nœud ; un moteur central garde sa batterie à l'air ; `rf_soak` laisse l'acide revenir comme pas à pas, et un modèle reconstruit garde sa batterie. Contre-épreuves, toutes en échec : batterie sans inertie (à l'air du compartiment), démarreur qui reprend l'interpolation sur l'eau, `soakThermal` sans repos de la batterie, `carryBattery` sans effet.
+- `web/tests/jonctions.spec.ts` : deux heures par −30 °C, eau, huile et batterie lues du C++ avant le démarrage, et retrouvées en marche ; arrêt puis redémarrage, la batterie refroidie deux heures et lue par le démarreur ; un démarrage raté puis l'arrêt, la tension qui remonte au repos. Contre-épreuves, toutes en échec : la jauge sans température, la batterie moteur coupé sans refroidissement, la tension sans repos, le worklet sans rattrapage.
+- **Empreintes** : une de plus, `start_two_hours_minus30` ; aucune autre ne change.
+- **Parité** : `check_wasm.mjs` compare la batterie au départ (`start_battery_c`, ajouté à la ligne `raw` de `--fuel 1`) et le démarrage après deux heures par −30 °C.
+- **`app.spec.ts:153`**, « la fiche technique suit les réglages », attendait le 0 à 100 du worker 5 s : il avait échoué quatre fois sur quatre en passe chargée sur la branche du départ. Mesuré dans Node sur les demandes que la page envoie (trois réglages, trois passes), le WASM de `main` et celui de la branche réunie calculent aussi vite (0 à 100 en 145 à 262 ms, fiche acoustique en 555 à 731 ms, des deux côtés, parti chaud ou d'une nuit) ; dans la page, 250 à 390 ms puis 1,0 à 1,2 s. Ce n'est pas une régression : il attend maintenant avec `CALCUL_A_PART`, comme ses voisins.
+
+### Ce qui manque
+
+- **L'air autour de la batterie** est celui que supposait le démarreur : le compartiment à 12 K au-dessus de l'air, moteur chaud, puis à la part de chemin que l'eau a faite. Ni la chaleur qui stagne sous le capot juste après la coupure (l'air du compartiment monte d'abord), ni le flux d'air en roulant (la batterie garde l'air calme), ni le manchon isolant de certaines voitures, ni la chaleur que la batterie dégage elle-même sous le démarreur.
+- **τ n'est confronté à aucune mesure** ; la masse et la surface suivent une seule batterie du catalogue.
+- Changer la place du moteur sur le site garde la batterie du réseau à sa température, jusqu'au prochain changement d'air ou d'état au départ.
+
+L'écoute reste à faire, sur fichiers, sans les jouer (rendus dans `sons2/froid/ecoute`) : la citadine par −30 °C après une nuit, 2 h, puis chaude (`--preset city_14 --ambient -30 --start cold|two_hours|warm --scenario start --seconds 12`), le diesel par −20 °C (`--preset diesel_four --ambient -20 --start cold --seconds 14`), le deux-temps par −30 °C (`--preset two_stroke_triple --ambient -30 --start cold --seconds 10`), la Cadillac par −20 °C qui ne démarre pas (`--preset v16_cadillac --ambient -20 --start cold --seconds 14`), l'Alfa en 20W-50 par −30 °C (`--preset carb_twin_cam --ambient -30 --start cold --seconds 12`), tous avec `--scenario start`.

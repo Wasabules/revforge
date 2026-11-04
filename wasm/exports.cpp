@@ -107,7 +107,8 @@ void rf_set_config(int cylinders, int layout, int displacementCc, int boreMm, in
 void rf_set_tuning(float ambientC, int altitudeM, int startTemp, float compressionRatio, int fuelGrade, int ignitionOffsetDeg,
                    float fullLoadLambda, int revLimiter, int launchRpm, int flatShift, int tractionControl, int dieselInjection, int egr,
                    int particulateFilter, int camDurationDeg, float camLiftMm, int lobeSeparationDeg, int valveTiming, int valveSprings,
-                   int turboLayout, int variableGeometry, int boostControl, int intercooler, int waterInjection, int nitrousKw, int cycle) {
+                   int turboLayout, int variableGeometry, int boostControl, int intercooler, int waterInjection, int nitrousKw, int cycle,
+                   int oilGrade) {
     EngineConfig& c = g_powertrain.engine;
     c.ambientC = ambientC;
     c.altitudeM = altitudeM;
@@ -135,6 +136,7 @@ void rf_set_tuning(float ambientC, int altitudeM, int startTemp, float compressi
     c.waterInjection = waterInjection != 0;
     c.nitrousKw = nitrousKw;
     c.cycle = static_cast<EngineCycle>(cycle);
+    c.oilGrade = static_cast<OilGrade>(oilGrade);
 }
 
 void rf_set_electric() {
@@ -176,8 +178,13 @@ void rf_set_windows(int open) {
 void rf_set_mode(int mode) {
     if (mode == g_mode) return;
     if (mode == kLap || g_mode == kLap) {
+        // La même voiture repart à l'arrêt, mais son moteur garde ses températures : il ne redevient pas froid pour autant.
+        const ThermalNetwork kept = g_model->thermal();
+        const BatteryState battery = g_model->start().battery();
         g_model->~DrivingModel();
         new (g_model) DrivingModel(g_powertrain);
+        g_model->carryThermal(kept);
+        g_model->carryBattery(battery);
         // Le pilote automatique ne sait conduire qu'une automatique : le choix de la manuelle attend qu'on reprenne le volant.
         g_model->setManual(g_manualGearbox && mode != kLap);
         g_model->setClutchAssist(g_clutchAssist);
@@ -225,6 +232,9 @@ void rf_crank() {
     g_model->crank();
 }
 
+/** La clé relâchée : sans moteur qui a pris, le calculateur tient encore le démarreur un temps, puis renonce. */
+void rf_release_key() { g_model->releaseKey(); }
+
 void rf_set_listener(int listener) { g_sound->setListener(static_cast<Listener>(listener)); }
 
 void rf_set_listener_position(float x, float y, float z) { g_sound->setListenerPosition(x, y, z); }
@@ -256,7 +266,8 @@ static void advance(int frames) {
         g_sound->setSupercharger(g_model->superchargerDrive());
         g_sound->setEcu(g_model->ecuDrive());
         g_sound->setCharge(static_cast<float>(g_model->chargeFill()));
-        g_sound->setStarter(g_model->starterPowered(), g_model->starterMeshed(), static_cast<float>(g_model->starterLoad()));
+        g_sound->setStarter(g_model->starterPowered(), g_model->starterMeshed(), static_cast<float>(g_model->starterLoad()), static_cast<float>(g_model->starterSupply()));
+        g_sound->setStart(g_model->startDrive());
         g_sound->setRoad(static_cast<float>(g_model->speedKmh() / 3.6), static_cast<float>(g_model->wheelSlip()));
         g_sound->setGearbox(g_model->box(), g_model->gearboxDrive());
         g_sound->setKnock(g_model->knockDrive());
@@ -374,6 +385,11 @@ int rf_pops() { return static_cast<int>(g_sound->pops()); }
 int rf_cut() { return g_model->cut() ? 1 : 0; }
 int rf_shifting() { return g_model->shifting() ? 1 : 0; }
 int rf_cranking() { return g_model->cranking() ? 1 : 0; }
+/** La batterie (V) et le démarreur (A), le démarrage raté, le préchauffage en cours (s) : voir cold_start.hpp. */
+float rf_battery_v() { return g_powertrain.electric ? 0.0f : static_cast<float>(g_model->batteryVolts()); }
+float rf_starter_a() { return static_cast<float>(g_model->starterAmps()); }
+int rf_start_failed() { return g_model->startFailed() ? 1 : 0; }
+float rf_preheat() { return static_cast<float>(g_model->preheatLeft()); }
 int rf_stalled() { return g_model->stalled() ? 1 : 0; }
 int rf_lugging() { return g_model->lugging() ? 1 : 0; }
 int rf_leg_kind() { return static_cast<int>(g_model->legKind()); }
@@ -737,6 +753,56 @@ void rf_nitrous_refill() { g_model->refillNitrous(); }
 float rf_nitrous_activation_rpm() {
     const ChargeAirSetup setup = chargeAirSetupOf(g_powertrain);
     return setup.nitrous.ratedKw > 0.0 ? static_cast<float>(setup.nitrous.activationRpm) : 0.0f;
+}
+
+// ── Le moteur à l'arrêt : l'état au départ, et le refroidissement moteur coupé (thermal.cpp) ──
+
+static float thermalPart(const ThermalNetwork& net, int which) {
+    return thermalReading(which == 0 ? net.coolantC() : (which == 1 ? net.oilC() : (which == 3 ? net.batteryC() : net.metalC())));
+}
+/** Le moteur tel qu'on l'a choisi au départ (`startTemp`, à l'air du jour) : 0 l'eau, 1 l'huile, 2 le métal, 3 la batterie (°C). */
+float rf_start_thermal(int which) { return thermalPart(g_model->startThermal(), which); }
+/**
+ * Le son est resté suspendu tant de secondes, moteur coupé : le réseau refroidit d'autant, comme s'il avait avancé pas à pas.
+ * Le worklet l'appelle en reprenant, avant de relancer le démarreur.
+ */
+void rf_soak(float seconds) { g_model->soakThermal(static_cast<double>(seconds)); }
+/**
+ * Un moteur coupé, parti de ces températures (eau, huile, métal, batterie, en °C), au bout de `seconds` : 0 l'eau, 1 l'huile,
+ * 2 le métal, 3 la batterie. Les mêmes capacités et la même convection que le modèle de ce réglage ; rien ne change dans le
+ * modèle. Les jauges le lisent pendant que le son est suspendu.
+ */
+float rf_rest_thermal(float coolantC, float oilC, float metalC, float batteryC, float seconds, int which) {
+    ThermalNetwork net = g_model->thermal();
+    net.place(static_cast<double>(coolantC), static_cast<double>(oilC), static_cast<double>(metalC), static_cast<double>(batteryC));
+    net.soak(static_cast<double>(seconds), static_cast<double>(g_powertrain.engine.ambientC));
+    return thermalPart(net, which);
+}
+
+/** La batterie, pour la télémétrie : 0 sa charge (0 à 1), 1 l'acide appauvri dans les plaques (A·s), 2 sa température (°C). */
+float rf_battery_state(int which) {
+    if (g_powertrain.electric) return 0.0f;
+    const BatteryState& b = g_model->start().battery();
+    if (which == 0) return static_cast<float>(b.charge);
+    if (which == 1) return static_cast<float>(b.drawnAs);
+    return thermalReading(g_model->thermal().batteryC());
+}
+
+/**
+ * La tension à vide (V) d'une batterie de ce réglage, de cette charge, de cet acide appauvri et de cette température, au bout
+ * de `seconds` de repos : l'acide revient dans les plaques (`StartModel::rest`). Ce que montre la jauge, son suspendu ; avec
+ * une batterie pleine et reposée, avant le premier démarrage.
+ */
+float rf_rest_battery_v(float charge, float drawnAs, float celsius, float seconds) {
+    if (g_powertrain.electric) return 0.0f;
+    BatteryState state;
+    state.charge = static_cast<double>(charge);
+    state.drawnAs = static_cast<double>(drawnAs);
+    state.celsius = static_cast<double>(celsius);
+    StartModel rest = g_model->start();
+    rest.restoreBattery(state);
+    rest.rest(static_cast<double>(seconds));
+    return static_cast<float>(rest.batteryVolts());
 }
 
 }  // extern "C"

@@ -24,7 +24,8 @@ export type Camshaft = 'dohc' | 'sohc' | 'ohv';
 export type AirFilter = 'stock' | 'panel' | 'cone' | 'stacks';
 export type FuelSystem = 'injection' | 'single' | 'multi' | 'direct';
 // Les réglages du socle moteur : mêmes valeurs que les énumérations C++, dans le même ordre.
-export type StartTemp = 'warm' | 'cold';
+/** Le temps d'arrêt avant le départ : `cold` est la nuit dehors, tout à l'air ; les arrêts intermédiaires sont en fin. */
+export type StartTemp = 'warm' | 'cold' | 'half_hour' | 'two_hours';
 export type FuelGrade = 'ron95' | 'ron98' | 'race102' | 'e85' | 'methanol';
 export type RevLimiter = 'stock' | 'soft' | 'ignition_cut';
 export type TractionControl = 'off' | 'sport' | 'full';
@@ -35,6 +36,7 @@ export type TurboLayout = 'single' | 'twin_parallel' | 'twin_sequential' | 'twin
 export type BoostControl = 'spring' | 'electronic' | 'by_gear';
 export type Intercooler = 'air_to_air' | 'air_to_water' | 'none';
 export type EngineCycle = 'four_stroke' | 'two_stroke';
+export type OilGrade = '5w30' | '0w20' | '10w40' | '15w40' | '20w50' | 'sae30';
 export type Body = 'city' | 'compact' | 'coupe' | 'supercar' | 'van' | 'retro';
 export type Drive = 'front' | 'rear' | 'all';
 export type BoxKind = 'synchro' | 'dog' | 'sequential' | 'dual_clutch' | 'converter';
@@ -106,6 +108,8 @@ export interface EngineConfig {
   /** Puissance du kit de protoxyde d'azote (kW) ; 0 : sans. */
   nitrousKw: number;
   cycle: EngineCycle;
+  /** L'huile du carter : elle ne change que le moteur froid, au démarreur et pendant la mise en température. */
+  oilGrade: OilGrade;
   electric: boolean;
   body: Body;
   massKg: number;
@@ -236,9 +240,12 @@ export const FUEL_SYSTEMS: { value: FuelSystem; label: string; help: string }[] 
   { value: 'direct', get label() { return t('fuelSystem.direct'); }, get help() { return t('fuelSystem.direct.help'); } },
 ];
 // ── Les réglages du socle moteur. La position dans chaque tableau donne la valeur envoyée au C++. ──
-export const START_TEMPS: { value: StartTemp; label: string; help: string }[] = [
-  { value: 'warm', get label() { return t('startTemp.warm'); }, get help() { return t('startTemp.warm.help'); } },
-  { value: 'cold', get label() { return t('startTemp.cold'); }, get help() { return t('startTemp.cold.help'); } },
+/** La position est la valeur de `StartTemp` en C++ : les arrêts intermédiaires sont venus en fin. `parkedHours` range l'affichage. */
+export const START_TEMPS: { value: StartTemp; label: string; help: string; parkedHours: number }[] = [
+  { value: 'warm', get label() { return t('startTemp.warm'); }, get help() { return t('startTemp.warm.help'); }, parkedHours: 0 },
+  { value: 'cold', get label() { return t('startTemp.cold'); }, get help() { return t('startTemp.cold.help'); }, parkedHours: 12 },
+  { value: 'half_hour', get label() { return t('startTemp.half_hour'); }, get help() { return t('startTemp.half_hour.help'); }, parkedHours: 0.5 },
+  { value: 'two_hours', get label() { return t('startTemp.two_hours'); }, get help() { return t('startTemp.two_hours.help'); }, parkedHours: 2 },
 ];
 export const FUEL_GRADES: { value: FuelGrade; label: string; help: string }[] = [
   { value: 'ron95', get label() { return t('fuelGrade.ron95'); }, get help() { return t('fuelGrade.ron95.help'); } },
@@ -290,6 +297,15 @@ export const INTERCOOLERS: { value: Intercooler; label: string; help: string }[]
 export const ENGINE_CYCLES: { value: EngineCycle; label: string; help: string }[] = [
   { value: 'four_stroke', get label() { return t('cycle.four_stroke'); }, get help() { return t('cycle.four_stroke.help'); } },
   { value: 'two_stroke', get label() { return t('cycle.two_stroke'); }, get help() { return t('cycle.two_stroke.help'); } },
+];
+/** L'huile, selon l'époque du moteur (SAE J300) : la position est la valeur de `OilGrade` en C++. */
+export const OIL_GRADES: { value: OilGrade; label: string; help: string }[] = [
+  { value: '5w30', label: '5W-30', get help() { return t('oil.5w30.help'); } },
+  { value: '0w20', label: '0W-20', get help() { return t('oil.0w20.help'); } },
+  { value: '10w40', label: '10W-40', get help() { return t('oil.10w40.help'); } },
+  { value: '15w40', label: '15W-40', get help() { return t('oil.15w40.help'); } },
+  { value: '20w50', label: '20W-50', get help() { return t('oil.20w50.help'); } },
+  { value: 'sae30', label: 'SAE 30', get help() { return t('oil.sae30.help'); } },
 ];
 /** Un réglage tout ou rien, dans une rangée de boutons : `Choices` ne prend pas de booléen. */
 export const ON_OFF: { value: 'off' | 'on'; label: string }[] = [
@@ -426,7 +442,9 @@ const DEFAULTS: EngineConfig = {
   fuelSystem: 'injection',
   ambientC: 20,
   altitudeM: 0,
-  startTemp: 'warm',
+  // Le site part d'une voiture garée dehors depuis la nuit : tout à l'air ambiant. Le C++, la CLI et gen_presets.py gardent
+  // `warm`, la référence de banc des empreintes et des tests (CLAUDE.md, « valeurs par défaut d'un moteur »).
+  startTemp: 'cold',
   compressionRatio: 0,
   fuelGrade: 'ron95',
   ignitionOffsetDeg: 0,
@@ -450,6 +468,7 @@ const DEFAULTS: EngineConfig = {
   waterInjection: false,
   nitrousKw: 0,
   cycle: 'four_stroke',
+  oilGrade: '5w30',
   electric: false,
   body: 'city',
   massKg: 1100,
@@ -469,6 +488,9 @@ const DEFAULTS: EngineConfig = {
   placement: 'front',
   insulation: 'standard',
 };
+
+/** L'état au départ du site, une nuit dehors : le résumé ne dit que ce qui en diffère. */
+export const SITE_START_TEMP: StartTemp = DEFAULTS.startTemp;
 
 export const PRESETS: Preset[] = (presetData as Record<string, unknown>[]).map((entry) => {
   const { id, name, description, ...config } = entry;
@@ -577,7 +599,7 @@ export function configArgs(c: EngineConfig): number[] {
 
 // ── Les réglages du socle moteur : une seule table pour `rf_set_tuning` et le lien de partage ──
 
-type TuningKey = 'ambientC' | 'altitudeM' | 'startTemp' | 'compressionRatio' | 'fuelGrade' | 'ignitionOffsetDeg' | 'fullLoadLambda' | 'revLimiter' | 'launchRpm' | 'flatShift' | 'tractionControl' | 'dieselInjection' | 'egr' | 'particulateFilter' | 'camDurationDeg' | 'camLiftMm' | 'lobeSeparationDeg' | 'valveTiming' | 'valveSprings' | 'turboLayout' | 'variableGeometry' | 'boostControl' | 'intercooler' | 'waterInjection' | 'nitrousKw' | 'cycle';
+type TuningKey = 'ambientC' | 'altitudeM' | 'startTemp' | 'compressionRatio' | 'fuelGrade' | 'ignitionOffsetDeg' | 'fullLoadLambda' | 'revLimiter' | 'launchRpm' | 'flatShift' | 'tractionControl' | 'dieselInjection' | 'egr' | 'particulateFilter' | 'camDurationDeg' | 'camLiftMm' | 'lobeSeparationDeg' | 'valveTiming' | 'valveSprings' | 'turboLayout' | 'variableGeometry' | 'boostControl' | 'intercooler' | 'waterInjection' | 'nitrousKw' | 'cycle' | 'oilGrade';
 interface TuningField {
   key: TuningKey;
   /** Son nom dans le lien de partage. Ne change jamais : les liens déjà partagés en dépendent. */
@@ -618,6 +640,7 @@ export const TUNING_FIELDS: readonly TuningField[] = [
   { key: 'waterInjection', code: 'water' },
   { key: 'nitrousKw', code: 'nos', limits: LIMITS.nitrousKw },
   { key: 'cycle', code: 'cycle', list: ENGINE_CYCLES },
+  { key: 'oilGrade', code: 'oil', list: OIL_GRADES },
 ];
 
 /** Arguments de rf_set_tuning, dans l'ordre du C : à envoyer juste avant rf_set_config ou rf_set_electric, qui les appliquent. */

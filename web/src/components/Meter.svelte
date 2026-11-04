@@ -18,6 +18,8 @@
     /** Les seuils d'alerte : au-delà, la barre change de couleur. */
     warnAt?: number | null;
     dangerAt?: number | null;
+    /** Un seuil par le bas : en dessous, la barre passe à la couleur d'alerte (une batterie qui s'effondre). */
+    dangerBelow?: number | null;
     digits?: number;
     signed?: boolean;
     clock: InstrumentClock;
@@ -25,7 +27,7 @@
     format: (value: number) => string;
     children?: Snippet;
   }
-  let { id, label, note, unit, min, max, zero, ticks = [], warnAt = null, dangerAt = null, digits = 0, signed = false, clock, read, format, children }: Props = $props();
+  let { id, label, note, unit, min, max, zero, ticks = [], warnAt = null, dangerAt = null, dangerBelow = null, digits = 0, signed = false, clock, read, format, children }: Props = $props();
 
   let root: HTMLElement;
   let fill: SVGRectElement;
@@ -60,7 +62,8 @@
         lastWidth = width;
         fill.setAttribute('width', WIDTHS[width]);
       }
-      const tone = dangerAt !== null && value >= dangerAt ? 2 : warnAt !== null && value >= warnAt ? 1 : 0;
+      // Par le bas, 0 n'est pas une alerte : rien n'est encore lu.
+      const tone = (dangerAt !== null && value >= dangerAt) || (dangerBelow !== null && value > 0 && value < dangerBelow) ? 2 : warnAt !== null && value >= warnAt ? 1 : 0;
       if (tone !== lastTone) {
         fill.classList.toggle('warn', tone === 1);
         fill.classList.toggle('danger', tone === 2);

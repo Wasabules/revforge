@@ -48,8 +48,12 @@ enum class AirFilter { Stock, Panel, Cone, Stacks };
 enum class FuelSystem { Injection, Carburetor, MultiCarb, Direct };
 
 // ── Les réglages du socle moteur : posés de bout en bout, sans effet sur le calcul. Voir CLAUDE.md. ──
-/** Moteur chaud au démarrage, ou à la température de l'air ambiant. */
-enum class StartTemp { Warm, Cold };
+/**
+ * Le moteur au démarrage, selon le temps qu'il est resté arrêté : il vient de rouler (chaud, à la référence), il a passé la
+ * nuit dehors (`Cold`, tout à l'air ambiant), ou entre les deux, une demi-heure ou deux heures d'arrêt, dont le réseau
+ * thermique calcule le refroidissement (`ThermalNetwork::soak`). Les valeurs ajoutées vont en fin : la position est la valeur.
+ */
+enum class StartTemp { Warm, Cold, HalfHour, TwoHours };
 /** Le carburant d'un moteur à essence : indice d'octane recherche, éthanol E85, méthanol. */
 enum class FuelGrade { Ron95, Ron98, Race102, E85, Methanol };
 /** Le rupteur : celui d'aujourd'hui, un retard puis une coupure partielle, ou une coupure d'allumage qui laisse passer l'essence. */
@@ -70,6 +74,11 @@ enum class BoostControl { Spring, Electronic, ByGear };
 enum class Intercooler { AirToAir, AirToWater, None };
 /** Le cycle : quatre temps, ou deux (lumières, carter-pompe : voir two_stroke.hpp). Un rotatif garde le sien. */
 enum class EngineCycle { FourStroke, TwoStroke };
+/**
+ * L'huile, selon l'époque du moteur (SAE J300) : la 5W-30 de référence, sur laquelle le moteur chaud est calé, puis 0W-20,
+ * 10W-40, 15W-40, 20W-50 et un monograde SAE 30. Elle ne change que le moteur froid : voir cold_start.hpp.
+ */
+enum class OilGrade { Sae5W30, Sae0W20, Sae10W40, Sae15W40, Sae20W50, Sae30 };
 
 /**
  * Ce qui dépend de l'échappement en dehors de sa géométrie, calculée par ExhaustLine :
@@ -455,6 +464,8 @@ struct EngineConfig {
     int nitrousKw = 0;
     /** Architecture : le cycle. */
     EngineCycle cycle = EngineCycle::FourStroke;
+    /** L'huile du carter (démarreur) : la référence, 5W-30, ne change rien au moteur chaud. */
+    OilGrade oilGrade = OilGrade::Sae5W30;
 
     bool operator==(const EngineConfig&) const = default;
 

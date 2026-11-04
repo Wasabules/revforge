@@ -112,9 +112,15 @@ test('glisser la cylindrée ne charge pas le thread du son : le moteur y est rec
 
   await ouvrir(page, 'engine');
   await glisser(page, 'Cylindrée', 2000, 2600);
+  // La reconstruction suit l'arrêt du curseur de 150 ms, puis revient du worklet : sous la charge d'une passe complète, plus de
+  // 0,5 s. On l'attend, puis on laisse 0,5 s à d'éventuelles autres reconstructions pour qu'elles se voient aussi.
+  const REBUILDS = ['car', 'gearbox', 'config', 'electric'];
+  await expect
+    .poll(() => page.evaluate((kinds) => (window as any).__costs.filter((cost: { command: string }) => kinds.includes(cost.command)).length, REBUILDS), { timeout: 10_000 })
+    .toBeGreaterThan(0);
   await page.waitForTimeout(500);
   const costs: { command: string; ms: number; cc?: number }[] = await page.evaluate(() => (window as any).__costs);
-  const rebuilds = costs.filter((cost) => ['car', 'gearbox', 'config', 'electric'].includes(cost.command));
+  const rebuilds = costs.filter((cost) => REBUILDS.includes(cost.command));
   const spent = rebuilds.reduce((sum, cost) => sum + cost.ms, 0);
   console.log(`thread du son pendant le glissé : ${rebuilds.length} reconstructions, ${spent} ms`);
   // Une seule, à l'arrêt du curseur, du seul moteur : ni la voiture ni la boîte n'ont changé (avant : 96, 2,7 s pour 0,5 s de geste).
