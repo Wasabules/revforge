@@ -115,7 +115,7 @@
   const current = $derived(DRIVE_MODES.find((mode) => mode.value === driveMode)!);
   // La fiche se calcule sur ce thread, de 20 à 120 ms par réglage : posé, tout de suite ; pendant le glissé d'un curseur, une fois
   // qu'il s'arrête, sans quoi chaque mouvement figeait la page autant (le son, lui, part avant, par `live`). Le 0 à 100, jusqu'à
-  // 0,5 s, se calcule dans un worker, une fois le réglage posé : « … » en attendant.
+  // 0,6 s, se calcule dans un worker, une fois le réglage posé : « … » en attendant.
   const settledSpec = $derived(loaded ? engine.spec(config) : EMPTY_SPEC);
   let draftSpec = $state<Spec | null>(null);
   let draftTimer: ReturnType<typeof setTimeout> | undefined;
